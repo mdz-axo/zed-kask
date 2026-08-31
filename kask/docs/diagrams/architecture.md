@@ -455,19 +455,20 @@ status: VERIFIED
 
 ## Credential Resolution Chain
 
-API keys are stored in zed's `CredentialsProvider` keychain namespace
-(`kask://credentials/<key>`). `build_mcp_server_env` reads from this
-namespace and injects as env vars into MCP server child processes. The
-server's `resolve_credential` reads API keys from env only — there is no
-keychain fallback for API keys. `HKASK_DB_PASSPHRASE` resolves via the
-canonical 2-tier helper (ctx.credentials → env →
-`kask://credentials/hkask_db_passphrase`); there is no
-`HKASK_SWARM_MEMORY_PASSPHRASE` — one passphrase covers every SQLCipher DB.
-The legacy `service=hkask` namespace is fully removed and purged at startup
-(`hkask-keystore/src/keychain.rs`).
-Writes/deletes to the `kask://credentials/...` namespace must call
+API keys are stored in zed's `CredentialsProvider` keychain — one key,
+one location: data-service keys under `kask://credentials/<key>`,
+inference-provider keys at their provider `api_url` slots.
+`build_mcp_server_env` reads both slot kinds and injects as env vars into
+MCP server child processes. The server's `resolve_credential` reads API
+keys from env only — there is no keychain fallback for API keys.
+`HKASK_DB_PASSPHRASE` resolves via the canonical 2-tier helper
+(ctx.credentials → env → `kask://credentials/hkask_db_passphrase`); there
+is no `HKASK_SWARM_MEMORY_PASSPHRASE` — one passphrase covers every
+SQLCipher DB. The legacy `service=hkask` namespace is fully removed and
+purged at startup (`hkask-keystore/src/keychain.rs`).
+Writes/deletes to any credential URL that feeds MCP server env must call
 `nudge_mcp_servers` to re-fire the `SettingsStore` observer and restart
-changed servers. Verified current 2026-08-29 (D-seam truth audit).
+changed servers. Verified current 2026-08-31.
 
 ```mermaid
 erDiagram

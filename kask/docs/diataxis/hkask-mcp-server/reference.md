@@ -402,8 +402,9 @@ Env-var-first lookup with keychain fallback for internal passphrases **only**:
 | any other | `std::env::var` only — no keychain fallback | `credentials.rs:36-61` |
 
 API keys are injected as env vars by `build_mcp_server_env` (which reads
-zed's `kask://credentials/...` keychain namespace); the server reads them
-from env only (`credentials.rs:9-15`). A miss returns
+zed's keychain — data-service keys from `kask://credentials/<key>`,
+inference-provider keys from their provider `api_url` slots); the server
+reads them from env only (`credentials.rs:9-15`). A miss returns
 `KeystoreError::NotFound` naming the env var and the launch requirement
 (`credentials.rs:49-59`).
 

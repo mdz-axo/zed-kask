@@ -395,25 +395,17 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 }
-/// `LazyInferencePort` overrides the trait defaults for `generate_vision`,
-/// `embed`, `list_models`, and `generate_batch` so every method tries the
-/// IPC bridge first and names the missing socket in its fallback error.
-/// `media_generate` is the exception: it is child-local (see
-/// `LOCAL_MEDIA_ROUTER`) because media APIs are not LanguageModel calls.
-/// The trait defaults are not socket-named: `list_models`
-/// defaults to `Ok(Vec::new())` (a broken bridge read as an empty registry),
-/// `generate_vision` to a generic `VisionUnsupported`, and `embed` to a
-/// generic `Connection`. Overriding them keeps the "every method names the
-/// missing socket" contract honest.
-//
-/// Direct HTTP embedding port for Ollama's OpenAI-compatible endpoint.
-///
-/// When the IPC bridge is unavailable (e.g. the corpus MCP server runs
-/// outside zed's governed launch), this port provides a direct fallback for
-/// embedding calls only. It talks to Ollama at `http://localhost:11434/v1`
-/// (configurable via `OLLAMA_API_URL` env var) using `reqwest`. Generation,
-/// vision, and tool-dispatch methods return clear errors — only `embed` is
-/// functional.
+// `LazyInferencePort` overrides the trait defaults for `generate_vision`,
+// `embed`, `list_models`, and `generate_batch` so every method tries the
+// IPC bridge first and names the missing socket in its fallback error.
+// `media_generate` is the exception: it is child-local (see
+// `LOCAL_MEDIA_ROUTER`) because media APIs are not LanguageModel calls.
+// The trait defaults are not socket-named: `list_models`
+// defaults to `Ok(Vec::new())` (a broken bridge read as an empty registry),
+// `generate_vision` to a generic `VisionUnsupported`, and `embed` to a
+// generic `Connection`. Overriding them keeps the "every method names the
+// missing socket" contract honest.
+
 /// A direct HTTP inference port for any OpenAI-compatible provider.
 ///
 /// Used as a fallback when the zed IPC bridge is unavailable. Resolves the

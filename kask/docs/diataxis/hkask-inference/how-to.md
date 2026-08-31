@@ -24,7 +24,7 @@ direct-fallback table, not a new struct in this crate).
 > ports, and an `UnavailableInference` stub returned at startup. Both were
 > removed: `resolve_inference_port()` now returns a `LazyInferencePort`
 > that retries the bridge per call and falls back to
-> `DirectEmbeddingPort` (`kask/crates/hkask-inference/src/hkask_inference.rs:94-292`).
+> `DirectEmbeddingPort` (`kask/crates/hkask-inference/src/hkask_inference.rs:95-397`).
 > Do not follow any procedure referencing `resolve_ports`, `InferencePorts`,
 > or `UnavailableInference`; they do not exist.
 
@@ -32,12 +32,12 @@ direct-fallback table, not a new struct in this crate).
 
 | Symbol | Location |
 |--------|----------|
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
-| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:713` |
-| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:753` |
-| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:59` |
-| `LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:102` |
-| `DIRECT_EMBEDDING_PROVIDERS` | `kask/crates/hkask-inference/src/hkask_inference.rs:359` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:95` |
+| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:795` |
+| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:835` |
+| `connect_bridge` | `kask/crates/hkask-inference/src/hkask_inference.rs:60` |
+| `LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:103` |
+| `DIRECT_EMBEDDING_PROVIDERS` | `kask/crates/hkask-inference/src/hkask_inference.rs:441` |
 | `InferenceIpcClient::from_env` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:330` |
 | `ProviderId` enum | `kask/crates/hkask-inference/src/config.rs:34` |
 | `ProviderId::parse_from_model` (`PREFIXES`) | `kask/crates/hkask-inference/src/config.rs:59` |
@@ -45,10 +45,10 @@ direct-fallback table, not a new struct in this crate).
 | `ProviderId::as_str` | `kask/crates/hkask-inference/src/config.rs:120` |
 | `InferenceConfig` struct | `kask/crates/hkask-inference/src/config.rs:135` |
 | `InferenceConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:179` |
-| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:285` |
-| `resolve_api_key` | `kask/crates/hkask-inference/src/config.rs:221` |
-| `INFERENCE_PROVIDERS` (kask_bridge) | `kask/crates/kask_bridge/src/inference_providers.rs:55` |
-| `InferenceProviderDescriptor` | `kask/crates/kask_bridge/src/inference_providers.rs:30` |
+| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:284` |
+| `resolve_api_key` | `kask/crates/hkask-inference/src/config.rs:220` |
+| `INFERENCE_PROVIDERS` (kask_bridge) | `kask/crates/kask_bridge/src/inference_providers.rs:58` |
+| `InferenceProviderDescriptor` | `kask/crates/kask_bridge/src/inference_providers.rs:33` |
 
 ## Procedure A: Wire an MCP server to the bridge
 
@@ -69,8 +69,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-WIRE
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:94 (resolve_inference_port), :102-292 (LazyInferencePort per-method fallbacks), :713 (resolve_tool_dispatch_port), :753 (resolve_worktree_spawn_port); kask/crates/hkask-inference/src/inference_ipc_client.rs:330 (from_env)
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:95 (resolve_inference_port), :103-397 (LazyInferencePort per-method fallbacks), :795 (resolve_tool_dispatch_port), :835 (resolve_worktree_spawn_port); kask/crates/hkask-inference/src/inference_ipc_client.rs:330 (from_env)
 status: VERIFIED
 -->
 
@@ -95,21 +95,24 @@ let inference = resolve_inference_port().await; // Arc<dyn InferencePort>
 ```
 
 `resolve_inference_port` returns a `LazyInferencePort`
-(`hkask_inference.rs:102`) — no connection is attempted at startup. Each
-trait method retries `InferenceIpcClient::from_env()`
+(`hkask_inference.rs:103`) — no connection is attempted at startup. Each
+bridge-routed trait method retries `InferenceIpcClient::from_env()`
 (`inference_ipc_client.rs:330`) and falls back per-method (chat/embed →
-`DirectEmbeddingPort`, media → standalone `MediaRouter`, vision/list/batch
-→ socket-named `Err`). This is deliberate: a server that starts before
-the IPC socket exists picks the bridge up on its next call without a
-restart (`hkask_inference.rs:86-93`).
+`DirectEmbeddingPort`, vision/list/batch → socket-named `Err`).
+`media_generate` is the exception — it is always child-local
+(`LOCAL_MEDIA_ROUTER`, `hkask_inference.rs:107-116`), never
+bridge-routed, because media APIs are not LanguageModel calls and the
+zed process never holds the media keys. This is deliberate: a server
+that starts before the IPC socket exists picks the bridge up on its next
+call without a restart (`hkask_inference.rs:87-93`).
 
-`resolve_tool_dispatch_port` (`hkask_inference.rs:713`) and
-`resolve_worktree_spawn_port` (`hkask_inference.rs:753`) are
-resolve-once: they call `connect_bridge` (`hkask_inference.rs:59`) and,
-when the bridge is down, return `UnavailableToolDispatch` (`:725`) /
-`UnavailableWorktreeSpawn` (`:764`) stubs whose every method returns a
+`resolve_tool_dispatch_port` (`hkask_inference.rs:795`) and
+`resolve_worktree_spawn_port` (`hkask_inference.rs:835`) are
+resolve-once: they call `connect_bridge` (`hkask_inference.rs:60`) and,
+when the bridge is down, return `UnavailableToolDispatch` (`:807`) /
+`UnavailableWorktreeSpawn` (`:846`) stubs whose every method returns a
 `Connection` error naming the missing socket
-(`IPC_BRIDGE_UNAVAILABLE`, `:48`). Tool dispatch and worktree spawn have
+(`IPC_BRIDGE_UNAVAILABLE`, `:49`). Tool dispatch and worktree spawn have
 no standalone fallback — they require the zed process.
 
 ### Step 2: Call port methods
@@ -153,8 +156,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-PROVIDER
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-inference/src/config.rs:34,59,94,120,135,179; kask/crates/hkask-inference/src/hkask_inference.rs:359 (DIRECT_EMBEDDING_PROVIDERS); kask/crates/kask_bridge/src/inference_providers.rs:55 (INFERENCE_PROVIDERS)
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-inference/src/config.rs:34,59,94,120,135,179; kask/crates/hkask-inference/src/hkask_inference.rs:441 (DIRECT_EMBEDDING_PROVIDERS); kask/crates/kask_bridge/src/inference_providers.rs:58 (INFERENCE_PROVIDERS)
 status: VERIFIED
 -->
 
@@ -188,19 +191,19 @@ Unrecognized segments fall back to `OpenRouter`.
 Add `base_url` and `api_key` fields to `InferenceConfig`
 (`config.rs:135`), initialize them in `Default` (`config.rs:154`) and
 `from_env` (`config.rs:179`). Use `ProviderConfig::from_env`
-(`config.rs:285`) — it sanitizes the prefix to uppercase and reads
+(`config.rs:284`) — it sanitizes the prefix to uppercase and reads
 `{PREFIX}_BASE_URL` / `{PREFIX}_API_KEY`. Do **not** fall back to the
 `hkask` keychain namespace; that namespace is reserved for sovereignty
-keys (see the `resolve_api_key` doc comment, `config.rs:210-217`).
+keys (see the `resolve_api_key` doc comment, `config.rs:209-216`).
 
 ### Step 6: Add a `DIRECT_EMBEDDING_PROVIDERS` entry
 
 Add a `DirectEmbeddingProvider { id, api_url, env_var }` to the static
-table at `hkask_inference.rs:359` so the standalone fallback can route
+table at `hkask_inference.rs:441` so the standalone fallback can route
 the new prefix. This table deliberately mirrors `kask_bridge`'s
 `INFERENCE_PROVIDERS` — keep both in sync (the duplication exists
 because `hkask-inference` cannot depend on `kask_bridge` without
-inverting the D8 seam; doc comment at `hkask_inference.rs:337-340`).
+inverting the D8 seam; doc comment at `hkask_inference.rs:437-440`).
 
 ### Step 7: Add an `INFERENCE_PROVIDERS` descriptor
 
@@ -226,8 +229,8 @@ toggle.
 Add `parse_from_model` / `as_str` / `from_prefix_segment` /
 `parse_provider_code` assertions for the new variant, and a
 `DIRECT_EMBEDDING_PROVIDERS` prefix-matching test mirroring the
-`try_new` contract (`hkask_inference.rs:387`). The IPC client's test
-module (`inference_ipc_client.rs:946-1121`) pins the transport contract
+`try_new` contract (`hkask_inference.rs:469`). The IPC client's test
+module (`inference_ipc_client.rs:966-1141`) pins the transport contract
 (id mismatch, malformed JSON, dead socket) — extend it only if the wire
 protocol changes.
 

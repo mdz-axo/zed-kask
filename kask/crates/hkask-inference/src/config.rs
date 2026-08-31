@@ -280,7 +280,7 @@ impl ProviderConfig {
     /// Resolve base URL and API key from environment using a full provider name.
     ///
     /// Reads `{prefix}_BASE_URL` (falls back to `default_base_url` if unset)
-    /// and `{prefix}_API_KEY` (keychain-first, then env).
+    /// and `{prefix}_API_KEY` (env only — `resolve_api_key`, no keychain fallback).
     pub fn from_env(prefix: &str, default_base_url: &str) -> Self {
         // Sanitize the prefix for env var names: uppercase, remove spaces
         // and dots. e.g. "fal.ai" → "FALAI", "ollama" → "OLLAMA".

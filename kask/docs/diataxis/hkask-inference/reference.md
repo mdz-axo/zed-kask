@@ -33,22 +33,22 @@ intentionally absent.
 
 | Symbol | Location |
 |--------|----------|
-| module list (`batch` … `scoring`) | `kask/crates/hkask-inference/src/hkask_inference.rs:29-37` |
-| public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:40-41` |
-| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:48` |
-| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:59` |
-| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:94` |
-| `LazyInferencePort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:102` |
-| `impl InferencePort for LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:114` |
-| `DirectEmbeddingPort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:337` |
-| `DirectEmbeddingProvider` descriptor (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:349` |
-| `DIRECT_EMBEDDING_PROVIDERS` static | `kask/crates/hkask-inference/src/hkask_inference.rs:359` |
-| `DirectEmbeddingPort::try_new` | `kask/crates/hkask-inference/src/hkask_inference.rs:377` |
-| `impl InferencePort for DirectEmbeddingPort` | `kask/crates/hkask-inference/src/hkask_inference.rs:431` |
-| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:713` |
-| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:725` |
-| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:753` |
-| `UnavailableWorktreeSpawn` (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:764` |
+| module list (`batch` … `scoring`) | `kask/crates/hkask-inference/src/hkask_inference.rs:29-38` |
+| public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:41-42` |
+| `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:49` |
+| `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:60` |
+| `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:95` |
+| `LazyInferencePort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:103` |
+| `impl InferencePort for LazyInferencePort` | `kask/crates/hkask-inference/src/hkask_inference.rs:126` |
+| `DirectEmbeddingPort` struct (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:419` |
+| `DirectEmbeddingProvider` descriptor (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:431` |
+| `DIRECT_EMBEDDING_PROVIDERS` static | `kask/crates/hkask-inference/src/hkask_inference.rs:441` |
+| `DirectEmbeddingPort::try_new` | `kask/crates/hkask-inference/src/hkask_inference.rs:469` |
+| `impl InferencePort for DirectEmbeddingPort` | `kask/crates/hkask-inference/src/hkask_inference.rs:513` |
+| `resolve_tool_dispatch_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:795` |
+| `UnavailableToolDispatch` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:807` |
+| `resolve_worktree_spawn_port` | `kask/crates/hkask-inference/src/hkask_inference.rs:835` |
+| `UnavailableWorktreeSpawn` (`pub(crate)`) | `kask/crates/hkask-inference/src/hkask_inference.rs:846` |
 
 ### `inference_ipc_client.rs`
 
@@ -91,12 +91,12 @@ intentionally absent.
 | `InferenceConfig` struct | `kask/crates/hkask-inference/src/config.rs:135` |
 | `impl Default for InferenceConfig` | `kask/crates/hkask-inference/src/config.rs:154` |
 | `InferenceConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:179` |
-| `resolve_api_key` (private) | `kask/crates/hkask-inference/src/config.rs:221` |
-| `resolve_default_provider` (private) | `kask/crates/hkask-inference/src/config.rs:237` |
-| `parse_provider_code` (private) | `kask/crates/hkask-inference/src/config.rs:247` |
-| `resolve_config_str` (private) | `kask/crates/hkask-inference/src/config.rs:262` |
-| `ProviderConfig` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/config.rs:275` |
-| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:285` |
+| `resolve_api_key` (private) | `kask/crates/hkask-inference/src/config.rs:220` |
+| `resolve_default_provider` (private) | `kask/crates/hkask-inference/src/config.rs:236` |
+| `parse_provider_code` (private) | `kask/crates/hkask-inference/src/config.rs:246` |
+| `resolve_config_str` (private) | `kask/crates/hkask-inference/src/config.rs:261` |
+| `ProviderConfig` struct (`pub(crate)`) | `kask/crates/hkask-inference/src/config.rs:274` |
+| `ProviderConfig::from_env` | `kask/crates/hkask-inference/src/config.rs:284` |
 
 There is no `ProviderConfig::is_configured` method in the current tree.
 
@@ -210,8 +210,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-REF
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-inference/src/config.rs:34,135; kask/crates/hkask-inference/src/inference_ipc_client.rs:295; kask/crates/hkask-inference/src/hkask_inference.rs:102,337,725,764; kask/crates/hkask-inference/src/media_router.rs:43
+verified_date: 2026-08-31
+verified_against: kask/crates/hkask-inference/src/config.rs:34,135; kask/crates/hkask-inference/src/inference_ipc_client.rs:295; kask/crates/hkask-inference/src/hkask_inference.rs:103,419,807,846; kask/crates/hkask-inference/src/media_router.rs:43
 status: VERIFIED
 -->
 
@@ -239,12 +239,13 @@ URLs + API keys for **OpenRouter, DeepInfra, and Ollama**, and
 "https://api.deepinfra.com"`, `ollama_base_url: "http://localhost:11434"`,
 and `default_model` from `DEFAULT_FALLBACK_MODEL`. `from_env`
 (`config.rs:179`) resolves each provider via `ProviderConfig::from_env`
-(`config.rs:285`), which uppercases the prefix (removing spaces/dots) and
+(`config.rs:284`), which uppercases the prefix (removing spaces/dots) and
 reads `{PREFIX}_BASE_URL` / `{PREFIX}_API_KEY`. API keys are read **only**
-from the environment — `resolve_api_key` (`config.rs:221`) documents why
+from the environment — `resolve_api_key` (`config.rs:220`) documents why
 it must not fall back to the `hkask` keychain namespace (reserved for
-sovereignty keys; the settings UI writes to zed's
-`kask://credentials/<key>` namespace instead).
+sovereignty keys; inference-provider keys are written to the provider's
+`api_url` keychain slot via Settings → AI → LLM Providers, never to the
+`hkask` keyring).
 
 ## `InferenceIpcClient`
 

@@ -490,7 +490,7 @@ impl CuratorServer {
                 Ok(mut h_mems) => {
                     // Freshest first: the newest turn under the entity is the
                     // closest thing it has to current state.
-                    h_mems.sort_by_key(|h_mem| std::cmp::Reverse(h_mem.observed_at.clone()));
+                    h_mems.sort_by_key(|h_mem| std::cmp::Reverse(h_mem.observed_at));
                     for h_mem in h_mems {
                         if per_entity_counts.get(&entity_ref).copied().unwrap_or(0)
                             >= MAX_FRAGMENTS_PER_ENTITY
