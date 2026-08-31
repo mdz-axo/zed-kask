@@ -115,6 +115,18 @@ pub fn word_range_to_time_range(
     Ok((start.start_ms, end.end_ms))
 }
 
+/// The rendered transcript text: words joined by single spaces — the form
+/// `text_to_word_ranges` matches against, and the form the corpus export
+/// writes (a corpus search hit on this text maps back to word ranges
+/// exactly, via the same rendering rule).
+pub fn rendered_transcript(words: &[TimedWord]) -> String {
+    words
+        .iter()
+        .map(|word| word.word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Resolve a transcript passage to every matching word range.
 ///
 /// Exact match over the rendered transcript text (words joined by single
@@ -133,18 +145,18 @@ pub fn text_to_word_ranges(words: &[TimedWord], text: &str) -> Vec<WordRange> {
         return Vec::new();
     }
 
-    // Rendered text with per-word character spans (byte offsets; word
-    // texts contain no multi-byte-splitting risks because spans are computed
-    // from String::len of whole pushes).
-    let mut rendered = String::new();
+    // Rendered text with per-word character spans, derived from the same
+    // rendering rule as `rendered_transcript` (single-space separators) so
+    // the two can never drift.
+    let rendered = rendered_transcript(words);
     let mut spans: Vec<(usize, usize)> = Vec::with_capacity(words.len());
+    let mut offset = 0;
     for word in words {
-        if !rendered.is_empty() {
-            rendered.push(' ');
+        if offset > 0 {
+            offset += 1; // the separator
         }
-        let start = rendered.len();
-        rendered.push_str(&word.word);
-        spans.push((start, rendered.len()));
+        spans.push((offset, offset + word.word.len()));
+        offset += word.word.len();
     }
 
     // All occurrences — advance one character past each hit so overlapping
@@ -462,6 +474,13 @@ mod tests {
             text_to_word_ranges(&words, "  a   b  "),
             vec![WordRange::new(0, 1)]
         );
+    }
+
+    #[test]
+    fn rendered_transcript_joins_with_single_spaces() {
+        let words = words_from_texts(&["Hello,", "world."]);
+        assert_eq!(rendered_transcript(&words), "Hello, world.");
+        assert_eq!(rendered_transcript(&[]), "");
     }
 
     #[test]

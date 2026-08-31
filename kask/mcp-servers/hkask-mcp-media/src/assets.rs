@@ -49,7 +49,10 @@ pub(crate) async fn persist_generated_asset(
     // Extract the asset data from the provider response.
     let (bytes, ext) = match kind {
         "image" => {
-            // DeepInfra: data[0].b64_json
+            // DeepInfra: data[0].b64_json. The extension comes from the
+            // decoded bytes, never a hardcoded label — DeepInfra's FLUX
+            // serve returns JPEG, and the old `(bytes, "png")` hardcode
+            // saved those files as .png.
             if let Some(b64) = result
                 .get("data")
                 .and_then(|d| d.get(0))
@@ -60,9 +63,11 @@ pub(crate) async fn persist_generated_asset(
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(b64)
                     .map_err(|e| MediaError::AssetPersistence(format!("decode b64_json: {e}")))?;
-                (bytes, "png")
+                let ext = image_ext_from_bytes(&bytes);
+                (bytes, ext)
             }
-            // OpenRouter: data[0].url — download
+            // OpenRouter: data[0].url — download. The bytes are sniffed
+            // after download; a URL's suffix is a label and can lie.
             else if let Some(url) = result
                 .get("data")
                 .and_then(|d| d.get(0))
@@ -70,7 +75,7 @@ pub(crate) async fn persist_generated_asset(
                 .and_then(|v| v.as_str())
             {
                 let bytes = download_asset(url).await?;
-                let ext = infer_image_ext(url);
+                let ext = image_ext_from_bytes(&bytes);
                 (bytes, ext)
             }
             // Legacy: output_urls[0]
@@ -81,10 +86,12 @@ pub(crate) async fn persist_generated_asset(
                 .and_then(|v| v.as_str())
             {
                 if url.starts_with("data:") {
-                    decode_data_uri(url)?
+                    let (bytes, _) = decode_data_uri(url)?;
+                    let ext = image_ext_from_bytes(&bytes);
+                    (bytes, ext)
                 } else {
                     let bytes = download_asset(url).await?;
-                    let ext = infer_image_ext(url);
+                    let ext = image_ext_from_bytes(&bytes);
                     (bytes, ext)
                 }
             } else {
@@ -247,19 +254,34 @@ pub(crate) fn decode_data_uri(uri: &str) -> Result<(Vec<u8>, &'static str), Medi
         .map_err(|e| MediaError::AssetPersistence(format!("decode data URI base64 payload: {e}")))
 }
 
-/// Infer image file extension from a URL.
-pub(crate) fn infer_image_ext(url: &str) -> &'static str {
-    let lower = url.to_lowercase();
-    if lower.contains(".png") {
-        "png"
-    } else if lower.contains(".jpg") || lower.contains(".jpeg") {
-        "jpg"
-    } else if lower.contains(".webp") {
-        "webp"
-    } else if lower.contains(".gif") {
-        "gif"
-    } else {
-        "png"
+/// Derive the image file extension from the actual bytes (magic-number
+/// sniffing via the `image` crate), not from provider labels, URL suffixes,
+/// or hardcoded defaults — the bytes are the only authoritative source.
+///
+/// PNG is the fallback because it is the default output format across
+/// image-generation APIs: OpenAI's Images API and OpenRouter's Image API
+/// both treat PNG as the canonical case (OpenRouter's docs call out non-PNG
+/// outputs — JPEG, WebP, SVG — as per-model exceptions), while JPEG is
+/// model-family-specific (BFL FLUX returns it). Every real raster image
+/// carries recognizable magic bytes, so the fallback fires only for
+/// unrecognizable payloads.
+///
+/// SVG (Recraft vector models) is text, not covered by magic-number
+/// sniffing — checked separately before the binary formats.
+pub(crate) fn image_ext_from_bytes(bytes: &[u8]) -> &'static str {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
+    if head.trim_start().starts_with('<') && head.contains("<svg") {
+        return "svg";
+    }
+    match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Png) => "png",
+        Ok(image::ImageFormat::Jpeg) => "jpg",
+        Ok(image::ImageFormat::WebP) => "webp",
+        Ok(image::ImageFormat::Gif) => "gif",
+        Ok(image::ImageFormat::Bmp) => "bmp",
+        Ok(image::ImageFormat::Tiff) => "tiff",
+        Ok(image::ImageFormat::Avif) => "avif",
+        _ => "png",
     }
 }
 
@@ -271,6 +293,45 @@ pub(crate) fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
             Err(_) => (0, 0),
         },
         Err(_) => (0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_ext_from_bytes;
+
+    #[test]
+    fn image_ext_from_bytes_sniffs_magic_numbers() {
+        assert_eq!(
+            image_ext_from_bytes(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            "png"
+        );
+        assert_eq!(image_ext_from_bytes(&[0xFF, 0xD8, 0xFF, 0xE0]), "jpg");
+        assert_eq!(image_ext_from_bytes(b"RIFF\x00\x00\x00\x00WEBP"), "webp");
+        assert_eq!(image_ext_from_bytes(b"GIF89a"), "gif");
+    }
+
+    #[test]
+    fn image_ext_from_bytes_detects_svg_text() {
+        // Recraft vector models return SVG — text bytes the magic-number
+        // sniffer does not cover.
+        assert_eq!(
+            image_ext_from_bytes(
+                b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>"
+            ),
+            "svg"
+        );
+        assert_eq!(image_ext_from_bytes(b"  <svg width=\"1\"/>"), "svg");
+    }
+
+    #[test]
+    fn image_ext_from_bytes_defaults_to_png_for_unknown_bytes() {
+        // PNG is the default output format across image-generation APIs
+        // (OpenAI Images, OpenRouter's Image API); JPEG is model-family
+        // specific (BFL FLUX). Real raster images always carry magic bytes,
+        // so the default fires only for unrecognizable payloads.
+        assert_eq!(image_ext_from_bytes(b"not an image at all"), "png");
+        assert_eq!(image_ext_from_bytes(&[]), "png");
     }
 }
 

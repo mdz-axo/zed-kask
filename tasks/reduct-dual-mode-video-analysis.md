@@ -257,6 +257,14 @@ overrides (`HKASK_MEDIA_STT_MODEL`-style); no local default exists.
    the default) reads the accumulated A/B. See design doc §4.
 7. **Exports** (SRT from `TimedWord`, CSV highlights) and **repository
    search wiring** (corpus composition, per decision 8).
+   **Landed 2026-08-31** — `educt_export` with three formats: `srt`
+   (cues from the word timings, split at sentence punctuation),
+   `highlights_csv` (every stored highlight with algebra-mapped time
+   ranges), and `corpus_text` (the rendered transcript for corpus
+   ingestion — a corpus hit on the rendered form maps back to word
+   ranges via `text_to_word_ranges`, closing the cross-recording loop:
+   search finds the passage, the algebra turns it into a media range).
+   Tool surface 81 → 82.
 8. **Redaction** (gap 8, hardest): time-varying face blur from existing
    face detection + ffmpeg filter chains; until then, cloud escalation.
 

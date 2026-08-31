@@ -1,4 +1,7 @@
-#![forbid(unsafe_code)]
+// `forbid(unsafe_code)` in production builds; test builds allow it for
+// `std::env::set_var` (artifacts-dir isolation in the persistence tests) —
+// the same `cfg_attr(not(test), …)` pattern as hkask-email/hkask-inference.
+#![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
 //! hKask MCP Media — AI media generation (image, video, voice via centralized inference router)
 //!
@@ -147,6 +150,7 @@ hkask_mcp_server::mcp_server!(
 
 mod style;
 pub mod transcript;
+pub mod transcript_export;
 pub mod transcript_layers;
 pub mod transcript_pass;
 pub mod transcript_select;
@@ -382,9 +386,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_81_registered_tools() {
+    fn tool_surface_is_exactly_82_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 81, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 82, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1045,6 +1049,55 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
         )
+    }
+
+    /// Extension-fidelity round trip: a persisted image's file extension
+    /// must match the format sniffed from its bytes. Regression pin for the
+    /// JPEG-saved-as-.png defect — DeepInfra's FLUX serve returns JPEG and
+    /// the old code hardcoded the "png" extension for every b64 payload.
+    #[tokio::test]
+    async fn persist_image_extension_matches_sniffed_format() {
+        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        // Isolate the artifacts dir so the test never writes into the real
+        // ~/Documents/zk-data tree. Env is process-global; no other test in
+        // this binary resolves the artifacts dir, and any that did would
+        // land in the tempdir — the safe direction. Save/restore per the
+        // kask env-test pattern.
+        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+
+        let server = make_server();
+
+        // JPEG payload — the magic prefix is all the sniffer reads, and the
+        // exact mismatch case observed in production (FLUX returns JPEG).
+        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+        let result = serde_json::json!({"data": [{"b64_json": b64}]});
+
+        let path = persist_generated_asset(&server, &result, "image")
+            .await
+            .expect("persist jpeg payload");
+
+        // The alignment invariant, checked three ways: the extension on
+        // disk, the byte round-trip, and a re-sniff of the written file.
+        assert_eq!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("jpg"),
+            "extension must come from the sniffed bytes, not a hardcoded label"
+        );
+        let written = std::fs::read(&path).expect("read persisted file back");
+        assert_eq!(written, jpeg, "file bytes must round-trip unchanged");
+        assert_eq!(
+            crate::assets::image_ext_from_bytes(&written),
+            "jpg",
+            "re-sniffing the persisted file must agree with its extension"
+        );
+
+        match prior {
+            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+        }
     }
 
     /// A no-op inference port — gallery_refresh without face analysis never
@@ -1898,6 +1951,168 @@ mod tool_behavior_tests {
         assert!(
             error.message.contains("no EDL layer"),
             "the missing layer must be named: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_export_srt_writes_captions() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "srt".to_string(),
+            }))
+            .await
+            .expect("srt export succeeds");
+        let content = content_of(&result);
+        let output = content["output"].as_str().expect("output path").to_string();
+        assert!(
+            std::path::Path::new(&output).exists(),
+            "exported SRT exists at {output}"
+        );
+        assert_eq!(content["cues"].as_u64(), Some(1));
+        let srt = std::fs::read_to_string(&output).expect("read SRT");
+        assert!(
+            srt.contains("1\n00:00:00,000 --> 00:00:00,900\nalpha beta\n"),
+            "the cue is the words' time range: {srt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_export_highlights_csv_writes_rows() {
+        use crate::transcript_layers::{
+            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
+        };
+        use crate::types::EductStoreLayerRequest;
+
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let highlight = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-08-31T00:00:00Z".to_string(),
+            },
+            highlights: vec![HighlightEntry {
+                start_word: 0,
+                end_word: 1,
+                label: "key-argument".to_string(),
+                note: "the curve".to_string(),
+            }],
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&highlight).expect("serialize highlight"),
+                ),
+            }))
+            .await
+            .expect("highlight stored");
+
+        let result = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "highlights_csv".to_string(),
+            }))
+            .await
+            .expect("csv export succeeds");
+        let content = content_of(&result);
+        assert_eq!(content["rows"].as_u64(), Some(1));
+        let output = content["output"].as_str().expect("output path").to_string();
+        let csv = std::fs::read_to_string(&output).expect("read CSV");
+        assert!(csv.starts_with("layer_id,model,start_word,end_word,start_ms,end_ms,label,note"));
+        assert!(csv.contains("key-argument"));
+        // The time range is the algebra's mapping of words [0,1].
+        assert!(csv.contains(",0,1,0,900,"));
+    }
+
+    #[tokio::test]
+    async fn educt_export_corpus_text_writes_the_rendered_form() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "corpus_text".to_string(),
+            }))
+            .await
+            .expect("corpus export succeeds");
+        let content = content_of(&result);
+        let output = content["output"].as_str().expect("output path").to_string();
+        let text = std::fs::read_to_string(&output).expect("read corpus text");
+        // The rendered form — exactly what text_to_word_ranges matches,
+        // so corpus hits map back to word ranges.
+        assert_eq!(text, "alpha beta");
+        assert!(content["composition"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn educt_export_corpus_text_surfaces_the_no_timings_degradation() {
+        use crate::transcript::TranscriptBundle;
+        use crate::types::EductStoreTranscriptRequest;
+
+        let server = make_pass_server("{}".to_string());
+        let degraded =
+            TranscriptBundle::new("/tmp/silent.wav".to_string(), 0.0, "just text".to_string());
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&degraded).expect("serialize"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("degraded transcript stored");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        let result = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "corpus_text".to_string(),
+            }))
+            .await
+            .expect("corpus export still succeeds for text-only search");
+        let content = content_of(&result);
+        assert!(
+            content["degradation"].as_str().is_some(),
+            "the degradation must be surfaced, not silent: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_export_rejects_unknown_format() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "bogus".to_string(),
+            }))
+            .await
+            .expect_err("unknown format must be rejected");
+        assert!(
+            error.message.contains("format must be"),
+            "the named error must surface: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn educt_export_highlights_csv_without_layers_is_not_found() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "highlights_csv".to_string(),
+            }))
+            .await
+            .expect_err("no highlight layers must be not-found");
+        assert!(
+            error.message.contains("no highlight layers"),
+            "the missing layers must be named: {}",
             error.message
         );
     }

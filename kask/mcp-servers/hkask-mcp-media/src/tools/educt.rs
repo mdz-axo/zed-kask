@@ -14,10 +14,10 @@ use crate::transcript_select::{Edl, EdlEntry, EdlOp, WordRange, edl_to_clip_plan
 use crate::transcript_store::{self, TranscriptFilter, TranscriptStoreError};
 use crate::types::{
     EductApplyCorrectionsRequest, EductCorrectionPassRequest, EductDeleteTranscriptRequest,
-    EductEdlFromHighlightsRequest, EductGetTranscriptRequest, EductHighlightPassRequest,
-    EductListLayersRequest, EductListTranscriptsRequest, EductParagraphPassRequest,
-    EductRenderEdlRequest, EductSpeakerPassRequest, EductStoreLayerRequest,
-    EductStoreTranscriptRequest,
+    EductEdlFromHighlightsRequest, EductExportRequest, EductGetTranscriptRequest,
+    EductHighlightPassRequest, EductListLayersRequest, EductListTranscriptsRequest,
+    EductParagraphPassRequest, EductRenderEdlRequest, EductSpeakerPassRequest,
+    EductStoreLayerRequest, EductStoreTranscriptRequest,
 };
 use crate::*;
 
@@ -775,6 +775,129 @@ impl MediaServer {
                 args,
                 None,
             ))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Export a stored transcript in a shareable or ingestable format. \"srt\": caption file from the word timings (cues split at sentence punctuation). \"highlights_csv\": every stored highlight as CSV rows with time ranges. \"corpus_text\": the rendered transcript text for corpus ingestion — run corpus_convert → corpus_chunk → corpus_embed on the exported file; corpus_query hits map back to word ranges over the stored transcript (repository-wide semantic search, by composition)."
+    )]
+    pub async fn educt_export(
+        &self,
+        Parameters(EductExportRequest {
+            transcript_id,
+            format,
+        }): Parameters<EductExportRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_export", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
+                .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            let dir = crate::assets::generated_assets_dir();
+            match format.as_str() {
+                "srt" => {
+                    if !summary.has_word_timings {
+                        return Err(McpToolError::invalid_argument(
+                            "transcript has no word-level timings; SRT cues cannot anchor \
+                             (NoWordTimings)",
+                        ));
+                    }
+                    let srt = crate::transcript_export::srt_from_words(&bundle.words).map_err(
+                        |error| McpToolError::invalid_argument(format!("SRT export: {error}")),
+                    )?;
+                    let cues = srt.matches("\n\n").count();
+                    let path = dir.join(format!("educt-{transcript_id}.srt"));
+                    std::fs::write(&path, &srt).map_err(|e| {
+                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                    })?;
+                    Ok(serde_json::json!({
+                        "status": "exported",
+                        "format": "srt",
+                        "output": path.display().to_string(),
+                        "cues": cues,
+                    }))
+                }
+                "highlights_csv" => {
+                    let layers = transcript_store::list_layers(driver, &transcript_id)
+                        .map_err(map_store_error)?;
+                    let highlight_records: Vec<_> = layers
+                        .into_iter()
+                        .filter(|record| record.layer.kind() == "highlight")
+                        .collect();
+                    if highlight_records.is_empty() {
+                        return Err(McpToolError::not_found(format!(
+                            "no highlight layers found for transcript {transcript_id}"
+                        )));
+                    }
+                    let rows = highlight_records
+                        .iter()
+                        .map(|record| match &record.layer {
+                            TranscriptLayer::Highlight(highlight) => highlight.highlights.len(),
+                            _ => 0,
+                        })
+                        .sum::<usize>();
+                    let csv =
+                        crate::transcript_export::highlights_csv(&bundle.words, &highlight_records)
+                            .map_err(|error| {
+                                McpToolError::invalid_argument(format!("CSV export: {error}"))
+                            })?;
+                    let path = dir.join(format!("educt-{transcript_id}-highlights.csv"));
+                    std::fs::write(&path, &csv).map_err(|e| {
+                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                    })?;
+                    Ok(serde_json::json!({
+                        "status": "exported",
+                        "format": "highlights_csv",
+                        "output": path.display().to_string(),
+                        "rows": rows,
+                    }))
+                }
+                "corpus_text" => {
+                    // The rendered form (words joined by single spaces) is
+                    // what text_to_word_ranges matches — a corpus hit on
+                    // this text maps back to word ranges exactly. Without
+                    // word timings, fall back to the provider's full_text
+                    // and surface the degradation (search works; clip
+                    // mapping does not).
+                    let (text, word_timings) = if summary.has_word_timings {
+                        (
+                            crate::transcript_select::rendered_transcript(&bundle.words),
+                            true,
+                        )
+                    } else {
+                        (bundle.full_text.clone(), false)
+                    };
+                    let path = dir.join(format!("educt-transcript-{transcript_id}.txt"));
+                    std::fs::write(&path, &text).map_err(|e| {
+                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                    })?;
+                    let mut result = serde_json::json!({
+                        "status": "exported",
+                        "format": "corpus_text",
+                        "output": path.display().to_string(),
+                        "words": bundle.words.len(),
+                        "composition": "run corpus_convert → corpus_chunk → corpus_embed on this \
+                         file; corpus_query hits map back to word ranges via \
+                         text_to_word_ranges over the stored transcript",
+                    });
+                    if !word_timings {
+                        result["degradation"] = serde_json::json!(
+                            "no word-level timings — exported the provider's full_text; \
+                             corpus hits cannot map back to word ranges (NoWordTimings)"
+                        );
+                    }
+                    Ok(result)
+                }
+                other => Err(McpToolError::invalid_argument(format!(
+                    "format must be \"srt\", \"highlights_csv\", or \"corpus_text\", got \
+                     \"{other}\""
+                ))),
+            }
         })
         .await
     }

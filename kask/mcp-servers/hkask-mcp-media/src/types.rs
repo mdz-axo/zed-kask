@@ -312,6 +312,16 @@ pub struct EductRenderEdlRequest {
     pub layer_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductExportRequest {
+    pub transcript_id: String,
+    /// Export format: "srt" (captions from the word timings, cues split
+    /// at sentence punctuation), "highlights_csv" (every stored highlight
+    /// with time ranges), or "corpus_text" (the rendered transcript for
+    /// corpus ingestion — repository-wide semantic search by composition).
+    pub format: String,
+}
+
 /// Lifecycle status of a face registry entry.
 /// Stored as TEXT in SQLite; the storage layer accepts `&str` and this enum
 /// implements `AsRef<str>` for a typed call site.
