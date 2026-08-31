@@ -194,6 +194,7 @@ impl MediaPanel {
                 "voice_",
                 "transcribe",
                 "record_",
+                "educt_",
                 "model_",
                 "job_",
                 "workflow_",
@@ -238,6 +239,10 @@ fn steer_system_prompt() -> SharedString {
          **Audio tools**: `transcribe`, `transcribe_bundle`, \
          `audio_capture`, `record_and_transcribe`, `audio_trim`, \
          `audio_concat`.\n\
+         **Transcript store tools**: `educt_store_transcript`, \
+         `educt_list_transcripts`, `educt_get_transcript`, \
+         `educt_delete_transcript`, `educt_store_layer`, \
+         `educt_list_layers`.\n\
          **Face tools**: `face_validate`, `face_register`, \
          `face_scan_folder`, `face_list`, `face_remove`, \
          `gallery_name_face`.\n\
@@ -403,6 +408,7 @@ mod tests {
                 "voice_",
                 "transcribe",
                 "record_",
+                "educt_",
                 "model_",
                 "job_",
                 "workflow_",

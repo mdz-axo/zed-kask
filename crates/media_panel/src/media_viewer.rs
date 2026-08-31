@@ -770,8 +770,14 @@ impl MediaViewer {
             .p_3()
             .child(widget);
 
+        // flex_1 + min_h_0, NOT size_full: this root is a flex-column child
+        // of the viewer (main axis = vertical), where h_full means 100% of
+        // the PARENT height — tab bar + 100% overflows the pane by the tab
+        // bar's height (the "player larger than the window" bug). flex_1
+        // takes the REMAINING height; min_h_0 lets it shrink below content.
         v_flex()
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .child(header)
             .child(toolbar)
             .child(content)
@@ -1374,6 +1380,20 @@ mod viewer_layout_tests {
             .debug_bounds("media-video-area")
             .expect("video area laid out in the viewer chain");
 
+        // THE FIT assertion — the one this bug class evaded: the whole
+        // widget (video area + transport) must fit INSIDE the window. The
+        // broken layout (h_full on the tab content, a flex-column main-axis
+        // child) made the widget extend past the window bottom by the tab
+        // bar's height while every scaling assertion passed.
+        let widget_bounds = cx
+            .debug_bounds("media-widget")
+            .expect("widget laid out with debug bounds");
+        assert!(
+            widget_bounds.bottom() <= px(600.) + px(1.),
+            "the player must fit inside a 600px window: widget bottom {:?}",
+            widget_bounds.bottom()
+        );
+
         cx.simulate_resize(size(px(800.), px(900.)));
         cx.run_until_parked();
         let tall_bounds = cx
@@ -1389,6 +1409,15 @@ mod viewer_layout_tests {
              {:?} at 600px vs {:?} at 900px (delta {height_delta:?})",
             short_bounds.size.height,
             tall_bounds.size.height
+        );
+
+        let tall_widget_bounds = cx
+            .debug_bounds("media-widget")
+            .expect("widget laid out after resize");
+        assert!(
+            tall_widget_bounds.bottom() <= px(900.) + px(1.),
+            "the player must fit inside a 900px window: widget bottom {:?}",
+            tall_widget_bounds.bottom()
         );
     }
 }

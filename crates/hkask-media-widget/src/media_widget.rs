@@ -874,6 +874,9 @@ impl gpui::Render for MediaWidget {
         div()
             .id("media-widget")
             .track_focus(&self.focus_handle)
+            // Test-support hook: exposes the widget's laid-out bounds to
+            // layout ground-truth tests (noop in release builds).
+            .debug_selector(|| "media-widget".into())
             .size_full()
             // In definite-height containers (the viewer pane) size_full
             // fills; in content-flow containers (conversation inline) it
