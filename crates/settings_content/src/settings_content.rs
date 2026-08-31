@@ -1790,7 +1790,7 @@ pub struct KaskSwarmSettingsContent {
     /// `model`. Operator-configurable so the default is not a code literal
     /// that goes stale when the provider renames/deprecates the model
     /// (KA-05). When empty, uses the server default
-    /// (`claude-haiku-4-5-20251001`).
+    /// (`qwen/qwen3-235b-a22b-thinking-2507`).
     pub default_agent_model: Option<String>,
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
     /// exposes local agents to external A2A clients). Default `false`

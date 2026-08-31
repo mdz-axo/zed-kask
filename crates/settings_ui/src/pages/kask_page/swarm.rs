@@ -381,7 +381,7 @@ pub(crate) fn render_swarm_page(
                     Label::new(
                         "Default model id for newly created ABW agents when the caller omits \
                          `model`. Leave empty for the server default \
-                         (claude-haiku-4-5-20251001). Or set \
+                         (qwen/qwen3-235b-a22b-thinking-2507). Or set \
                          HKASK_ABW_DEFAULT_AGENT_MODEL.",
                     )
                     .size(LabelSize::Small)

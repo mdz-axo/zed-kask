@@ -358,9 +358,10 @@ dropped. The zed side holds the API keys; the MCP server never sees them
 | `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
 | `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
 | `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |
-| `DEFAULT_AGENT_MODEL` | `claude-haiku-4-5-20251001` | — |
+| `DEFAULT_AGENT_MODEL` | `qwen/qwen3-235b-a22b-thinking-2507` | — |
 | `DEFAULT_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | — |
 | `DEFAULT_STT_MODEL` | `DeepInfra/whisper-large-v3` | — |
+| `DEFAULT_AUDIO_CHAT_MODEL` | `OpenRouter/mistralai/voxtral-small-24b-2507` | `HKASK_MEDIA_AUDIO_CHAT_MODEL` |
 | `DEFAULT_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | — |
 | `DEFAULT_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | — |
 | `DEFAULT_VIDEO_MODEL` | `DeepInfra/Wan-AI/Wan2.2-T2V-A14B` | — |

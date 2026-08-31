@@ -414,7 +414,7 @@ pub struct KaskSwarmSettings {
 
     /// Default model id for newly created ABW agents when the caller omits
     /// `model` (KA-05). When empty, uses the server default
-    /// (`claude-haiku-4-5-20251001`).
+    /// (`qwen/qwen3-235b-a22b-thinking-2507`).
     pub default_agent_model: String,
 
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that

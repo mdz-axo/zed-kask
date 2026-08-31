@@ -51,7 +51,10 @@ pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
 /// Default agent model for local swarm agents (the model the agent runs on).
 /// Used by `SwarmConfig::default()` and `KaskSwarmSettings::default()`.
-pub const DEFAULT_AGENT_MODEL: &str = "claude-haiku-4-5-20251001";
+/// Open-weight Qwen3-235B-A22B-Thinking (Apache-2.0) — the platform
+/// preference is open-weight defaults; the former closed-weight
+/// `claude-haiku-4-5-20251001` default was replaced 2026-08-31.
+pub const DEFAULT_AGENT_MODEL: &str = "qwen/qwen3-235b-a22b-thinking-2507";
 
 /// Default TTS model — Kokoro via DeepInfra.
 pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
@@ -62,7 +65,10 @@ pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
 /// Default audio-input chat model — LLM reasoning over audio via
 /// `input_audio` content parts (the OpenAI audio-chat format) on
 /// `/v1/chat/completions`. Override via `HKASK_MEDIA_AUDIO_CHAT_MODEL`.
-pub const DEFAULT_AUDIO_CHAT_MODEL: &str = "OpenRouter/openai/gpt-4o-audio-preview";
+/// Open-weight Voxtral Small 24B (Apache-2.0, audio-specialized) — no Qwen
+/// audio model exists on OpenRouter (verified against the live
+/// audio-input catalog 2026-08-31), so Voxtral is the open-weight pick.
+pub const DEFAULT_AUDIO_CHAT_MODEL: &str = "OpenRouter/mistralai/voxtral-small-24b-2507";
 
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";

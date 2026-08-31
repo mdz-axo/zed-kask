@@ -473,9 +473,13 @@ const OPENROUTER_VIDEO_MAX_POLLS: u32 = 600;
 /// OpenRouter provides dedicated endpoints for media generation:
 /// - **Image generation**: `/v1/images` (dedicated Image API; returns
 ///   `data[].b64_json` — the same shape the DeepInfra path returns)
-/// - **TTS**: `/v1/audio/speech` (OpenAI-compatible, returns raw audio bytes)
 /// - **STT**: `/v1/audio/transcriptions` (base64 JSON input, returns JSON)
 /// - **Video generation**: `/v1/videos` (async submit+poll, returns video URL)
+///
+/// TTS is deliberately NOT supported here: OpenRouter's audio-output
+/// catalog contains no open-weight speech models (verified 2026-08-31 —
+/// only closed Google Lyria and OpenAI gpt-audio models), so speech
+/// synthesis stays on the DeepInfra primary (open-weight Kokoro).
 ///
 /// Auth: `Authorization: Bearer {OPENROUTER_API_KEY}`.
 pub struct OpenRouterMediaProvider {
@@ -559,57 +563,6 @@ impl OpenRouterMediaProvider {
             ));
         }
         Ok(json)
-    }
-
-    /// Generate speech via OpenRouter's dedicated TTS endpoint.
-    ///
-    /// Uses `/v1/audio/speech` (OpenAI-compatible). Returns raw audio bytes
-    /// which we base64-encode into a data URI for portability.
-    async fn generate_speech(
-        &self,
-        text: &str,
-        voice: &str,
-        model: &str,
-    ) -> Result<Value, InferenceError> {
-        let url = format!("{}/v1/audio/speech", self.base_url);
-        let body = serde_json::json!({
-            "model": model,
-            "input": text,
-            "voice": voice,
-            "response_format": "mp3",
-        });
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("OpenRouter TTS failed: {e}")))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let error_text = resp.text().await.unwrap_or_default();
-            return Err(InferenceError::Connection(format!(
-                "OpenRouter TTS {status}: {}",
-                sanitize_error_body(&error_text)
-            )));
-        }
-
-        let audio_bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("OpenRouter TTS read failed: {e}")))?;
-
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
-        Ok(serde_json::json!({
-            "audio": format!("data:audio/mp3;base64,{b64}"),
-            "format": "mp3",
-            "model": model,
-            "voice_id": voice,
-        }))
     }
 
     /// Transcribe audio via OpenRouter's dedicated STT endpoint.
@@ -894,7 +847,6 @@ impl MediaProvider for OpenRouterMediaProvider {
         matches!(
             op,
             MediaOp::GenerateImage
-                | MediaOp::GenerateSpeech
                 | MediaOp::Transcribe
                 | MediaOp::GenerateVideo
                 | MediaOp::ImageToVideo
@@ -928,18 +880,6 @@ impl MediaProvider for OpenRouterMediaProvider {
                     self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
                         .await
                 }
-                MediaOp::GenerateSpeech => {
-                    let text = params.text.clone().unwrap_or_default();
-                    let voice = params.voice.clone().unwrap_or_else(|| "alloy".to_string());
-                    let model = params.model.clone().unwrap_or_else(|| {
-                        crate::model_constants::resolve(
-                            "HKASK_MEDIA_TTS_MODEL",
-                            "openai/gpt-4o-mini-tts",
-                        )
-                    });
-                    let model = strip_prefix(&model, "OpenRouter/");
-                    self.generate_speech(&text, &voice, &model).await
-                }
                 MediaOp::Transcribe => {
                     let audio_url = params.audio_url.clone().unwrap_or_default();
                     let model = params.model.clone().unwrap_or_else(|| {
@@ -966,10 +906,15 @@ impl MediaProvider for OpenRouterMediaProvider {
                 }
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
+                    // Open-weight Wan 2.7 (Apache-2.0, Alibaba) — OpenRouter
+                    // hosts the Wan family under the `alibaba/` vendor
+                    // prefix. The former `google/gemini-2.5-flash-video`
+                    // default was closed-weight and absent from the live
+                    // video catalog (verified 2026-08-31).
                     let model = params.model.clone().unwrap_or_else(|| {
                         crate::model_constants::resolve(
                             "HKASK_MEDIA_VIDEO_MODEL",
-                            "google/gemini-2.5-flash-video",
+                            "alibaba/wan-2.7",
                         )
                     });
                     let model = strip_prefix(&model, "OpenRouter/");
@@ -980,7 +925,7 @@ impl MediaProvider for OpenRouterMediaProvider {
                     let model = params.model.clone().unwrap_or_else(|| {
                         crate::model_constants::resolve(
                             "HKASK_MEDIA_VIDEO_MODEL",
-                            "google/gemini-2.5-flash-video",
+                            "alibaba/wan-2.7",
                         )
                     });
                     let model = strip_prefix(&model, "OpenRouter/");
