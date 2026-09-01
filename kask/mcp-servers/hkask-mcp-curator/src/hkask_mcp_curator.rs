@@ -1080,7 +1080,7 @@ impl CuratorServer {
     /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a new memory into the curator's store. Curator-only. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
+        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
     )]
     pub async fn memory_insert(
         &self,
@@ -1157,7 +1157,7 @@ impl CuratorServer {
     /// The new confidence is combined with the existing confidence using
     /// log-odds (Bayesian) pooling — not replacement.
     #[tool(
-        description = "Update an existing memory's confidence via Bayesian combination. Curator-only. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
+        description = "Update an existing memory's confidence via Bayesian combination. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
     )]
     pub async fn memory_update(
         &self,
@@ -1227,7 +1227,7 @@ impl CuratorServer {
     /// in the memory store by expiring, updating, or deleting contradictory
     /// h_mems.
     #[tool(
-        description = "Resolve a contradiction between memories. Curator-only. Strategies: 'expire' (soft-delete), 'update_confidence' (lower confidence), 'delete' (hard-delete). Requires a reason citing the contradiction."
+        description = "Resolve a contradiction between memories. Strategies: 'expire' (soft-delete), 'update_confidence' (lower confidence), 'delete' (hard-delete). Requires a reason citing the contradiction."
     )]
     pub async fn memory_resolve_contradiction(
         &self,

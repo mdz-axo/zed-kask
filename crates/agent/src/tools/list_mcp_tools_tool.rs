@@ -14,8 +14,8 @@ use crate::{
 /// server, with each tool's name and description.
 ///
 /// Your visible tool list can be smaller than the registered surface — tools
-/// are filtered by the active agent profile, a panel's server scope, or
-/// curator tool gating. Call this before concluding a tool is unavailable,
+/// are filtered by the active agent profile or a panel's server scope. Call
+/// this before concluding a tool is unavailable,
 /// and to find the exact tool name to ask the user to enable or to name in
 /// their next message. Pass `filter` to narrow the listing with a
 /// case-insensitive substring matched against server ids, tool names, and

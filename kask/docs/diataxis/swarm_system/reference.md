@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Reference: The 82-Tool Surface and Components"
 audience: [developers, operators]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "2.0.0"
 status: "Active"
 domain: "Swarm"
@@ -436,7 +436,7 @@ Key fields:
 | `local_swarms_dir`        | `mcp/swarm/swarms`            | `HKASK_LOCAL_SWARMS_DIR`         |
 | `a2a_http_enabled`        | `false`                       | `HKASK_A2A_HTTP_ENABLE`          |
 | `allowed_tool_servers`    | `None` (no filter)            | `HKASK_MCP_SERVER_IDS`           |
-| `memory_passphrase`       | `hkask_keystore::passphrase::DEFAULT_PASSPHRASE` | `HKASK_SWARM_MEMORY_PASSPHRASE` |
+| `memory_passphrase`       | `hkask_keystore::passphrase::DEFAULT_PASSPHRASE` (last-resort fallback) | `HKASK_DB_PASSPHRASE` |
 | `memory_db_path`          | `mcp/swarm/memory.db`         | `HKASK_SWARM_MEMORY_DB`           |
 | `embedding_dim`           | `1024`                        | `HKASK_SWARM_EMBEDDING_DIM`      |
 
@@ -447,6 +447,13 @@ one; the current struct (`config.rs:67-128`) has none. The server's
 seam). The ABW API key is not an env var read by `from_env` — it arrives
 via the `ServerContext` credentials map (`hkask_mcp_swarm.rs:206`) and is
 declared as an optional credential requirement (`:414-417`).
+`memory_passphrase` likewise arrives primarily as the `HKASK_DB_PASSPHRASE`
+credential (via the governed-launch allowlist), overriding the config in
+`run()` (`hkask_mcp_swarm.rs:210-224`); `from_env` reads
+`HKASK_DB_PASSPHRASE` as the env fallback (`config.rs:259-262`) and the
+struct default is the last resort. There is no
+`HKASK_SWARM_MEMORY_PASSPHRASE` — the separate swarm passphrase was
+removed; one passphrase covers every kask SQLCipher DB.
 
 ## Consent gate
 

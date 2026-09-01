@@ -65,7 +65,7 @@ pub struct SystemPromptTemplate<'a> {
     /// zed-kask: D44 — how many MCP server tools are registered but hidden
     /// from `available_tools` by the filter layers that remain now that the
     /// LazyToolRouter is removed (agent-profile allowlists, per-tab server
-    /// scope, curator edit-tool gating). Zero renders nothing. Non-zero
+    /// scope). Zero renders nothing. Non-zero
     /// renders a Tool Use bullet telling the model the visible list is a
     /// selection, not the whole surface — without it, the model reads a
     /// filtered list as the complete toolset and reports registered tools as
@@ -238,7 +238,7 @@ mod tests {
 
     // zed-kask: D44 pins — the tool-visibility marker. Tools hidden by the
     // filter layers that remain now that the LazyToolRouter is removed
-    // (profile allowlists, server scope, curator gating) must be named in
+    // (profile allowlists, server scope) must be named in
     // the system prompt, so the model never mistakes the visible list for
     // the complete surface (observed live 2026-08-30: an agent denied
     // `web_ping` existed because a filter layer hadn't selected it — the

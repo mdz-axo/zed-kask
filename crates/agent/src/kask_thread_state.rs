@@ -229,13 +229,6 @@ impl KaskThreadState {
         self.agent_id = Some(agent_id);
     }
 
-    /// Whether this thread is a curator thread (for memory-edit tool gating).
-    pub fn is_curator_thread(&self) -> bool {
-        self.agent_id
-            .as_ref()
-            .is_some_and(|id| id.as_ref() == crate::CURATOR_AGENT_ID.as_ref())
-    }
-
     // ── Tool retry cap (.rules) ──────────────────────────────────────
 
     /// Get a handle to the retry tracker for cloning into async blocks.

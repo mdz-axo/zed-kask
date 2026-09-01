@@ -1,7 +1,7 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "3.0.0"
 status: "Active"
 domain: "Lifecycle"
@@ -655,10 +655,13 @@ alone. Two reasons, both grounded in the calibration literature[^tetlock]:
 The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`)
 exposes the memory surface. Read tools (available to all threads):
 `curator_semantic_search` (`:485`), `curator_memory_recall` (`:560`),
-`curator_consult` (`:692`). Write tools (restricted to curator threads by
-the thread's tool classification, `crates/agent/src/thread.rs:4903-4907`,
-pinned by `test_curator_memory_edit_tool_classification` at
-`thread.rs:11049`):
+`curator_consult` (`:692`). Write tools (available to all threads since
+2026-09-01, when the curator-thread gate was removed by operator
+decision — models cannot reliably emit calls to tools absent from their
+visible list; the write invariants — evidence citation, 0.5 confidence
+floor — live in the curator server, pinned by
+`test_curator_memory_edit_tools_available_to_non_curator_threads` in
+`crates/agent/src/tests/mod.rs`):
 
 - **`memory_insert`** (`:1037`) — evidence-grounded insert; confidence
   starts at 0.5, calibrated by outcomes, not self-assessment
@@ -759,9 +762,11 @@ sovereignty:
   approval for every modification — no autonomous memory editing. The
   curator proposes; the user approves. The three write tools
   (`memory_insert`, `memory_update`, `memory_resolve_contradiction`) are
-  additionally restricted to curator threads by the thread's tool
-  classification (`crates/agent/src/thread.rs:4903-4907`, pinned by
-  `test_curator_memory_edit_tool_classification` at `thread.rs:11049`).
+  available to all threads (the curator-thread gate was removed 2026-09-01
+  by operator decision, pinned by
+  `test_curator_memory_edit_tools_available_to_non_curator_threads`); the
+  write invariants — evidence citation, 0.5 confidence floor — are
+  enforced by the curator server regardless of caller.
 
 - **The user can run without recall.** The zed agent (the default coding
   agent) has no recall — the `MemoryPort` trait impls are no-ops
@@ -777,7 +782,7 @@ sovereignty:
   private memory by choosing to work in the curator panel.
 
 - **The user can purge memory.** The `memory_resolve_contradiction` tool
-  (curator-only) allows the user to expire, de-confidence, or delete any
+  allows the user to expire, de-confidence, or delete any
   (`hkask_mcp_curator.rs:1175`). `curator_memory_prune` (`:1280`)
   and `curator_memory_dedup` (`:1319`) provide deterministic bulk hygiene.
   The user is never trapped by accumulated memory.
@@ -842,30 +847,36 @@ share one passphrase architecture:
   first-run provisioning always produces a DB the user can open; the
   keychain is the security boundary, not the default.
 - **Provisioning:** `provision_agent` resolves env override → existing
-  keychain entry → default-and-store
-  (`kask/crates/kask_bridge/src/identity.rs:92-132`, `:157-182`). The
-  username-independent half (`provision_db_passphrase`, `identity.rs:145`)
-  is called by `build_mcp_server_env` at MCP launch time so servers get a
-  passphrase even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:684-688`).
-  The swarm memory passphrase is provisioned by
-  `provision_swarm_memory_passphrase` (`identity.rs:208-242`), spawned as a
-  background task in `crates/zed/src/main.rs:1475-1477`.
+  keychain entry → default-and-store via the one canonical keystore chain
+  (`kask/crates/kask_bridge/src/identity.rs:106-110`, backed by
+  `hkask_keystore::provision_db_passphrase_string`,
+  `kask/crates/hkask-keystore/src/keychain.rs:357`). The username-independent
+  half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
+  `build_mcp_server_env` at MCP launch time so servers get a passphrase
+  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:771`).
+  There is no swarm-memory provisioning step: the separate
+  `HKASK_SWARM_MEMORY_PASSPHRASE` and its spawn site were removed — the
+  swarm memory DB opens with the ONE shared passphrase, resolved inside
+  the swarm server by the canonical helper (below).
 - **Keychain namespace:** unified `kask://credentials/<key>` with label
   `zed-github-account` — the same schema zed's `CredentialsProvider` uses.
   The legacy `service=hkask` namespace is dead surface, purged at startup
-  (`kask/crates/hkask-keystore/src/keychain.rs:1-12`). Keys:
-  `hkask_db_passphrase`, `hkask_swarm_memory_passphrase`
-  (`kask/crates/hkask-keystore/src/keychain_keys.rs:14`, `:24`).
+  (`kask/crates/hkask-keystore/src/keychain.rs:1-12`). One passphrase
+  key: `hkask_db_passphrase`
+  (`kask/crates/hkask-keystore/src/keychain_keys.rs:14`) — there is no
+  per-DB `hkask_swarm_memory_passphrase` key.
 - **MCP-server resolution:** the canonical helper is
   `hkask_mcp_server::server::resolve_db_passphrase(&credentials)` — a
   2-tier chain (credentials map → `resolve_credential`, which for
   `HKASK_DB_PASSPHRASE` delegates to the keystore's env → keychain chain)
   (`kask/crates/hkask-mcp-server/src/server/credentials.rs:80-90`,
   `:27-30`; keystore chain `keychain.rs:318-321`).
-- **Rotation ordering invariant:** `rotate_curator_db_passphrase` /
-  `rotate_swarm_memory_db_passphrase` must complete before the new
-  passphrase is written to the keychain; on failure the old DB is untouched
-  and the caller must NOT save (`identity.rs:316-344`, `:362-389`).
+- **Rotation ordering invariant:** `rotate_all_kask_db_passphrases`
+  (`kask/crates/kask_bridge/src/identity.rs:219`) must complete — every
+  shared-passphrase DB rotated, with rollback of already-rotated DBs on
+  failure — before the new passphrase is written to the keychain; on
+  failure the old passphrase remains in effect and the caller must NOT
+  save.
 
 ## 13. Configuration
 
@@ -900,8 +911,7 @@ override (`curator_stores.rs:225-233`).
 | `HKASK_EMBEDDING_MODEL`            | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | Embedding model (`kask/crates/hkask-inference/src/model_constants.rs:35`, `:78-80`) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:25-35`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
-| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override (`identity.rs:115-123`) |
-| `HKASK_SWARM_MEMORY_PASSPHRASE`   | keychain / `"allostery"`              | Swarm memory passphrase override (`identity.rs:210-214`) |
+| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`hkask-keystore/src/keychain.rs:321`) |
 
 ### Settings UI
 

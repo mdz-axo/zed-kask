@@ -5188,15 +5188,19 @@ async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppCon
     fake_model.end_last_completion_stream();
 }
 
-/// Pin D6 (curator-thread gating of `enabled_tools`): the three curator
-/// memory-edit tools are excluded from a plain thread's tool surface
-/// while the read-only `curator_memory_recall` remains available; a
-/// curator-agent thread (agent_id == CURATOR_AGENT_ID) surfaces all four.
-/// The classification predicate itself is pinned by
-/// `test_curator_memory_edit_tool_classification` in `thread.rs` — this
-/// pins the GATING in `enabled_tools`.
+/// Pin D6 (post-removal): the curator memory-edit tools are available to
+/// plain threads. The curator-thread gate that once excluded
+/// `memory_insert`/`memory_update`/`memory_resolve_contradiction` from
+/// non-curator sessions was removed 2026-09-01 by operator decision —
+/// models cannot reliably emit calls to tools absent from their visible
+/// list (observed 4/4 announce-then-stop failures on GLM 5.3), so the
+/// gate turned operator-approved memory writes into silent no-effect
+/// stops. This pins the gate's absence in `enabled_tools` through the
+/// context-server path: a plain thread (agent_id unset) surfaces all
+/// four curator tools. The kask-source registration path is pinned
+/// separately by `test_curator_memory_edit_tools_available_to_non_curator_threads`.
 #[gpui::test]
-async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAppContext) {
+async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut TestAppContext) {
     let ThreadTest {
         model,
         thread,
@@ -5222,7 +5226,7 @@ async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAp
         cx,
     );
 
-    // Plain thread: read-only recall surfaces, the memory-edit tools do not.
+    // Plain thread (agent_id unset): all four curator tools surface.
     thread.update(cx, |thread, cx| {
         thread
             .send(ClientUserMessageId::new(), ["recall"], cx)
@@ -5234,37 +5238,6 @@ async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAp
         .pop()
         .expect("completion after plain-thread send");
     let names = tool_names_for_completion(&completion);
-    assert!(
-        names.contains(&"curator_memory_recall".to_string()),
-        "read-only curator tools must remain available to plain threads: {names:?}"
-    );
-    for edit_tool in [
-        "memory_insert",
-        "memory_update",
-        "memory_resolve_contradiction",
-    ] {
-        assert!(
-            !names.contains(&edit_tool.to_string()),
-            "memory-edit tool {edit_tool} must be excluded from a plain thread: {names:?}"
-        );
-    }
-    fake_model.end_last_completion_stream();
-
-    // Curator thread: all four tools surface.
-    thread.update(cx, |thread, _| {
-        thread.kask.set_agent_id(CURATOR_AGENT_ID.clone());
-    });
-    thread.update(cx, |thread, cx| {
-        thread
-            .send(ClientUserMessageId::new(), ["recall again"], cx)
-            .unwrap()
-    });
-    cx.run_until_parked();
-    let completion = fake_model
-        .pending_completions()
-        .pop()
-        .expect("completion after curator-thread send");
-    let names = tool_names_for_completion(&completion);
     for tool in [
         "memory_insert",
         "memory_update",
@@ -5273,7 +5246,7 @@ async fn test_curator_memory_edit_tools_gated_to_curator_threads(cx: &mut TestAp
     ] {
         assert!(
             names.contains(&tool.to_string()),
-            "curator thread must surface {tool}: {names:?}"
+            "plain thread must surface {tool}: {names:?}"
         );
     }
     fake_model.end_last_completion_stream();
@@ -5388,7 +5361,7 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
 
 /// zed-kask: D44 integration pin — the tool-visibility marker. Tools can
 /// still be hidden from a turn by the non-router filter layers (profile
-/// allowlists, per-tab server scope, curator edit-tool gating); when any are,
+/// allowlists, per-tab server scope); when any are,
 /// the system prompt must name how many registered tools are hidden, so the
 /// model never mistakes the visible list for the complete surface (the live
 /// failure that motivated this: an agent reported `web_ping` as unavailable
@@ -5495,6 +5468,80 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
     assert!(
         system_prompt.contains("Never report a tool as unavailable"),
         "the marker must forbid absence claims: {system_prompt}"
+    );
+
+    fake_model.end_last_completion_stream();
+}
+
+/// zed-kask: D6 pin — the curator memory-edit tools are available to
+/// non-curator threads. The curator-thread gate that once filtered
+/// `memory_insert`/`memory_update`/`memory_resolve_contradiction` out of
+/// non-curator sessions was removed 2026-09-01 by operator decision:
+/// models cannot reliably emit calls to tools absent from their visible
+/// list (observed 4/4 announce-then-stop failures on GLM 5.3), so the
+/// gate produced silent no-effect stops indistinguishable from thread
+/// kills while blocking operator-approved memory writes. Drives the real
+/// path — kask source → registry poll → enabled_tools — and asserts the
+/// memory-edit tool reaches a default (zed-agent) thread, where the old
+/// gate would have dropped it.
+#[gpui::test]
+async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {},
+                        "context_servers": {}
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // A "curator" server whose registered surface includes the memory-edit
+    // tool. The default thread (zed agent — agent_id unset) must see it.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    set_kask_tool_source(source.clone());
+    source.set(vec![KaskToolDescriptor {
+        server_id: "curator".to_string(),
+        name: "memory_insert".to_string(),
+        description: "Insert a new memory into the curator's store.".to_string(),
+        input_schema: serde_json::json!({"type": "object", "properties": {}}),
+    }]);
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["please remember this"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"memory_insert".to_string()),
+        "the curator memory-edit tool must be visible to non-curator threads: {names:?}"
     );
 
     fake_model.end_last_completion_stream();

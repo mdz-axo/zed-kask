@@ -635,9 +635,13 @@ pub struct LoopFailureDistinctions {
 
     /// 4. **Reachable ≠ reached.** A gate is wired but never satisfied —
     /// a permission denial is the system working correctly, producing no
-    /// error. Enforcement: `is_curator_memory_edit_tool` restricts
-    /// `memory_insert`/`memory_update`/`memory_resolve_contradiction` to
-    /// curator threads; non-curator threads get no error, just no effect.
+    /// error. Enforcement: the curator memory-edit gate was removed
+    /// (operator decision, 2026-09-01) after the live finding that models
+    /// cannot emit calls to tools absent from their visible list — its
+    /// no-effect state was silent and indistinguishable from a thread
+    /// kill. The remaining filter layers (profile allowlists, server
+    /// scope) are surfaced by the D44 hidden-tools marker +
+    /// `list_mcp_tools`, so an unreached tool is named, not silent.
     pub reachable_not_reached: DistinctionState,
 
     /// 5. **Called ≠ succeeded.** A hop is called on every cycle but has
@@ -655,8 +659,9 @@ pub struct LoopFailureDistinctions {
     /// 7. **Gated by data, invoked by a constant.** A gate reads from data
     /// but the invoker hardcodes the value — undetectable while the data
     /// equals the constant. Enforcement: `CURATOR_AGENT_ID` is a constant,
-    /// but `is_curator_thread()` reads from `KaskThreadState.agent_id`,
-    /// which is set by `NativeAgent::new_session` from the agent variant.
+    /// but curator identity flows from data —
+    /// `NativeAgent::new_session` sets `KaskThreadState.agent_id` from
+    /// the agent variant, and the memory port routes on that field.
     pub gated_by_data_invoked_by_constant: DistinctionState,
 
     /// 8. **Deferred-work comment.** A comment asserts another component
@@ -709,10 +714,10 @@ impl LoopFailureDistinctions {
             written_not_readable: DistinctionState::Enforced,
             // 3. LoopView.reading == WiringClosed when NeverRun
             closed_not_turning: DistinctionState::Enforced,
-            // 4. is_curator_memory_edit_tool restricts to curator threads;
-            //    non-curator threads get no error, just no effect. The
-            //    distinction is enforced (the gate exists) but the
-            //    "never reached" state is not surfaced as a signal.
+            // 4. The curator memory-edit gate was removed (2026-09-01);
+            //    the remaining filter layers are surfaced by the D44
+            //    marker + list_mcp_tools, so an unreached tool is named,
+            //    not silent.
             reachable_not_reached: DistinctionState::Enforced,
             // 5. ToolReliabilitySensor aggregates success rates; 0%
             //    success triggers ToolReliabilityDegraded
@@ -720,11 +725,11 @@ impl LoopFailureDistinctions {
             // 6. resolve_db_passphrase is the canonical 2-tier chain;
             //    all MCP servers use it (per .rules)
             one_dependency_two_resolutions: DistinctionState::Enforced,
-            // 7. CURATOR_AGENT_ID is a constant, but is_curator_thread()
-            //    reads from KaskThreadState.agent_id set by new_session.
-            //    The gate reads from data; the invoker (new_session) reads
-            //    from the agent variant. The constant-vs-data risk exists
-            //    but is mitigated by the agent variant being the source.
+            // 7. CURATOR_AGENT_ID is a constant, but curator identity
+            //    flows from data: new_session sets KaskThreadState.agent_id
+            //    from the agent variant, and the memory port routes on
+            //    that field. The constant-vs-data risk exists but is
+            //    mitigated by the agent variant being the source.
             gated_by_data_invoked_by_constant: DistinctionState::Enforced,
             // 8. .rules trap-avoidance map + CI gates catch deferred-work
             //    comments that become traps. The distinction is enforced

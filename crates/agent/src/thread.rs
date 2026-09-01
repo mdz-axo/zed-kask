@@ -4977,22 +4977,16 @@ impl Thread {
             if !self.kask.mcp_server_in_scope(server_id.0.as_ref()) {
                 continue;
             }
-            // Curator memory edit tools (memory_insert, memory_update,
-            // memory_resolve_contradiction) are restricted to curator threads
-            // only. Non-curator threads (including the zed agent) cannot edit
-            // curator memory — therapy sessions must be run from a curator
-            // agent panel session so the curator remembers the act of therapy.
-            // Read-only curator tools (curator_memory_recall,
-            // curator_semantic_search, curator_consult, etc.) remain
-            // available to all threads.
-            let is_curator_thread = self.kask.is_curator_thread(); // zed-kask: D6
+            // zed-kask: D6 — the curator memory-edit tools (memory_insert,
+            // memory_update, memory_resolve_contradiction) were gated to
+            // curator threads until 2026-09-01. Removed by operator
+            // decision: models cannot reliably emit calls to tools absent
+            // from their visible list (observed 4/4 announce-then-stop
+            // failures on GLM 5.3), so the gate turned operator-approved
+            // memory writes into silent no-effect stops. The write
+            // invariants (evidence citation, 0.5 confidence floor) live in
+            // the curator server.
             for (tool_name, tool) in server_tools {
-                if !is_curator_thread
-                    && server_id.0.as_ref() == "curator"
-                    && is_curator_memory_edit_tool(tool_name.as_ref())
-                {
-                    continue;
-                }
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
                     let tool_name: SharedString =
                         provider_compatible_tool_name(tool_name.as_ref()).into();
@@ -5035,7 +5029,7 @@ impl Thread {
         // because that turn's routing hadn't selected it). The full
         // registered surface is presented every turn; tools hidden by the
         // remaining layers (per-tab server scope, profile allowlists,
-        // curator edit-tool gating, feature flags) are named by the
+        // feature flags) are named by the
         // system-prompt visibility marker (`mcp_tools_hidden`), and the
         // `list_mcp_tools` meta-tool lets the model enumerate the registered
         // surface on demand.
@@ -5215,7 +5209,7 @@ impl Thread {
 
         // zed-kask: D44 — count MCP tools registered but hidden from this
         // session's selection by the filter layers (agent-profile allowlists,
-        // per-tab server scope, curator edit-tool gating). Without this
+        // per-tab server scope). Without this
         // count in the prompt, the model reads the filtered list as the
         // complete toolset and reports registered tools as "unavailable"
         // (observed live: an agent denied `web_ping` existed because a filter
@@ -5681,17 +5675,6 @@ fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) 
     context
 }
 
-/// Check if a tool name is a curator memory edit tool. These tools are
-/// restricted to curator threads only — non-curator threads cannot edit
-/// curator memory. Read-only curator tools (curator_memory_recall,
-/// curator_semantic_search, curator_consult, etc.) are NOT restricted.
-fn is_curator_memory_edit_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "memory_insert" | "memory_update" | "memory_resolve_contradiction"
-    )
-}
-
 /// Compute a SHA-256 digest of the inputs that determine the rendered system
 /// prompt. If this digest is stable across consecutive requests, the rendered
 /// system-prompt bytes are identical and the provider's prefix cache hits.
@@ -5750,7 +5733,7 @@ fn system_prompt_digest(
 
 /// zed-kask: D44 — count registered MCP tools absent from this session's
 /// `available_tools`. The filter layers that hide tools (agent-profile
-/// allowlists, per-tab server scope, curator edit-tool gating) run in
+/// allowlists, per-tab server scope) run in
 /// `enabled_tools`, and the system prompt renders this count as a visibility
 /// marker so the model knows the visible list is a selection, not the whole
 /// surface. Pinned by `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
@@ -11211,32 +11194,6 @@ mod tests {
     // They must pass before AND after the KaskThreadState extraction.
     // The refactor plan (deleted after implementation) is in git history:
     // plans/thread-hooks-refactor-2026-08-26.md §2 (gaps).
-
-    /// Pin B6: `is_curator_memory_edit_tool` classifies exactly the three
-    /// curator memory-edit tools. Non-curator threads cannot edit curator
-    /// memory — therapy sessions must be run from a curator agent panel
-    /// session so the curator remembers the act of therapy. Read-only
-    /// curator tools are NOT restricted.
-    #[test]
-    fn test_curator_memory_edit_tool_classification() {
-        // The three restricted tools.
-        assert!(is_curator_memory_edit_tool("memory_insert"));
-        assert!(is_curator_memory_edit_tool("memory_update"));
-        assert!(is_curator_memory_edit_tool("memory_resolve_contradiction"));
-
-        // Read-only curator tools are NOT restricted.
-        assert!(!is_curator_memory_edit_tool("curator_memory_recall"));
-        assert!(!is_curator_memory_edit_tool("curator_semantic_search"));
-        assert!(!is_curator_memory_edit_tool("curator_consult"));
-        assert!(!is_curator_memory_edit_tool("curator_status"));
-        assert!(!is_curator_memory_edit_tool("curator_directive"));
-
-        // Non-curators tools are never restricted by this predicate.
-        assert!(!is_curator_memory_edit_tool("read_file"));
-        assert!(!is_curator_memory_edit_tool("edit_file"));
-        assert!(!is_curator_memory_edit_tool("terminal"));
-        assert!(!is_curator_memory_edit_tool("swarm_hire"));
-    }
 
     /// Pin B9/B10: `last_completion_truncated` distinguishes MaxTokens
     /// truncation from user cancel. When the flag is set (via

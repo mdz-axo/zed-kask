@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "1.2.0"
 status: "Active"
 domain: "Integration"
@@ -414,44 +414,52 @@ curator memory mid-session without an app restart.
 
 ## Identity and provisioning
 
-`provision_agent` (`identity.rs:92-125`) handles first-run setup as a set
+`provision_agent` (`identity.rs:87-119`) handles first-run setup as a set
 of lookups and directory creation — no interactive onboarding:
 
 1. Derive the agent name from the Zed username via `agent_name_from_username`
-   (`identity.rs:51`), which sanitizes for filesystem use and returns
+   (`identity.rs:46`), which sanitizes for filesystem use and returns
    `None` for empty/`unnamed` results.
 2. Create the agent directory structure under the hKask data dir
-   (`identity.rs:104-107`). D28: scaffolding subdirs removed — only the
+   (`identity.rs:100-102`). D28: scaffolding subdirs removed — only the
    agent root is created; DBs create their own parent dir on open.
 3. Resolve the DB passphrase: env override → existing keychain entry →
-   default `"allostery"` stored on first run (`identity.rs:110-118`). The
-   user can change it later via the settings UI (Security page), which
+   default `"allostery"` stored on first run, via the one canonical
+   keystore chain (`identity.rs:106-110`). The user can change it later
+   via the settings UI (Security page), which
    triggers atomic DB rotation.
 4. Compute the absolute `memory.db` path under the agent root
-   (`identity.rs:109`).
+   (`identity.rs:104`).
 
-The result is a `ProvisionedAgent` (`identity.rs:62`) carrying
+The result is a `ProvisionedAgent` (`identity.rs:57`) carrying
 `db_path`, `passphrase`, and `webid` — everything needed to construct a
 `RealMemoryPort` directly.
 
-`provision_swarm_memory_passphrase` (`identity.rs:208`) mirrors this
-pattern for the swarm memory DB, also defaulting to `"allostery"` on first
-run. The username-independent halves are exposed as `pub(crate)`
-`provision_db_passphrase` / `provision_swarm_memory_passphrase` so
-`build_mcp_server_env` can provision the default at MCP-launch time,
-login or not (`identity.rs:131-146`).
+There is no swarm-memory counterpart: the separate
+`HKASK_SWARM_MEMORY_PASSPHRASE` and its provisioning function were
+removed — two passphrases for one system was a setup trap and a rotation
+inconsistency (`identity.rs:138-141`). The swarm memory DB opens with the
+ONE shared passphrase, resolved inside the swarm server by the canonical
+helper `hkask_mcp_server::server::resolve_db_passphrase`
+(credentials → env → keychain) with `"allostery"` as the last-resort
+fallback (`hkask-mcp-swarm/src/hkask_mcp_swarm.rs:210-224`). The
+username-independent half `provision_db_passphrase` (`identity.rs:132`,
+`pub(crate)`) remains — `build_mcp_server_env` spawns it at MCP-launch
+time so the default is provisioned login or not (`mcp_servers.rs:771`).
 
 ### Passphrase rotation
 
-`rotate_curator_db_passphrase` (`identity.rs:321`) and
-`rotate_swarm_memory_db_passphrase` (`identity.rs:366`) wrap
-`hkask_storage::rotate_passphrase` to re-encrypt the DB under a new
-passphrase. Both resolve the old passphrase from the keychain and the DB
-path from env/data-dir, then call the storage-layer rotation. The caller
-writes the new passphrase to the keychain ONLY after `Ok(())` — a failed
-rotation leaves the old passphrase in effect.
+`rotate_all_kask_db_passphrases` (`identity.rs:219`) re-encrypts every
+SQLCipher DB that uses the shared passphrase — curator, swarm memory,
+kata-kanban, research, and training; corpus DBs are excluded (they take
+caller-supplied per-workflow paths, so there is no fixed path to rotate).
+It resolves the old passphrase from the keychain, rotates sequentially,
+and rolls back the DBs already rotated if a later one fails; if a rollback
+itself fails, the error names the DB left on the new passphrase. The
+caller writes the new passphrase to the keychain ONLY after `Ok(())` — a
+failed rotation leaves the old passphrase in effect.
 
-`BridgeRotationError` (`identity.rs:251`) wraps `RotationError` with
+`BridgeRotationError` (`identity.rs:150`) wraps `RotationError` with
 context about which DB was being rotated.
 
 ## Inference ports
@@ -524,9 +532,9 @@ memory as data, not instructions.
 The crate root (`kask_bridge.rs:40-105`) re-exports the public surface:
 `BridgeThreadCondenser`, `BridgeContextInjector`, the `DEFAULT_*_MODEL`
 constants from `hkask_inference::model_constants`, `resolve_data_dir`,
-identity types (`provision_agent`, `provision_swarm_memory_passphrase`,
-`rotate_*_passphrase`, `ProvisionedAgent`, `ProvisionError`,
-`BridgeRotationError`, `agent_name_from_username`), inference ports
+identity types (`provision_agent`, `rotate_all_kask_db_passphrases`,
+`ProvisionedAgent`, `ProvisionError`, `BridgeRotationError`,
+`agent_name_from_username`), inference ports
 (`LanguageModelInferencePort`, `NoModelInferencePort`,
 `BridgeEditPredictionPort`, `LanguageModelEmbeddingPort`), the IPC server
 (`InferenceIpcServer`, `WorktreeSpawner`, `set_worktree_spawner`),

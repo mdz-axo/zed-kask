@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — How-to: Add a New Store or Rotate a Passphrase"
 audience: [developers]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "2.1.0"
 status: "Active"
 domain: "Persistence"
@@ -156,10 +156,11 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
 To re-encrypt a SQLCipher DB under a new passphrase (e.g., after a key
 compromise or routine rotation), use `rotate_passphrase`
 (`rotation.rs:122`). The bridge layer wraps this in
-`rotate_curator_db_passphrase` (`kask_bridge/src/identity.rs:321`) and
-`rotate_swarm_memory_db_passphrase` (`kask_bridge/src/identity.rs:366`),
-which resolve the old passphrase from the keychain and the DB path from
-env/data-dir.
+`rotate_all_kask_db_passphrases` (`kask_bridge/src/identity.rs:219`),
+which rotates every shared-passphrase DB (curator, swarm memory,
+kata-kanban, research, training) in one call — resolving the old
+passphrase from the keychain and each DB path from the data dir, with
+best-effort rollback of already-rotated DBs on failure.
 
 The rotation is atomic and fail-safe:
 
@@ -179,18 +180,18 @@ The rotation is atomic and fail-safe:
 The caller (settings UI) writes the new passphrase to the keychain ONLY
 after `Ok(())` — a failed rotation leaves the old passphrase in effect.
 
-**From the settings UI**: use the Security sub-page (for the curator DB
-passphrase) or the Swarm page (for the swarm memory DB passphrase). Both
-trigger rotation before saving the new passphrase.
+**From the settings UI**: use the Security sub-page. It rotates every
+kask SQLCipher DB (one shared passphrase — there is no separate
+swarm-memory rotation) before saving the new passphrase.
 
 **From code**:
 
 ```rust,ignore
-use kask_bridge::rotate_curator_db_passphrase;
+use kask_bridge::rotate_all_kask_db_passphrases;
 
-// Rotate the curator DB passphrase. The old passphrase is resolved
+// Rotate every shared-passphrase DB. The old passphrase is resolved
 // from the keychain; the new passphrase must be >=8 chars.
-rotate_curator_db_passphrase("new-passphrase")?;
+rotate_all_kask_db_passphrases("new-passphrase")?;
 
 // After rotation succeeds, write the new passphrase to the keychain
 // and nudge MCP servers to restart.
