@@ -6,6 +6,7 @@
 //! safe to relocate (unlike the tool handlers, which rmcp requires in a
 //! single `impl` block — see the `tool_router` macro in `rmcp-macros`).
 
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -478,7 +479,7 @@ pub struct CreateLocalAgentRequest {
     pub valence: Option<ValenceInput>,
     /// Optional output contract for the agent's structured output.
     #[serde(default)]
-    pub output_contract: Option<serde_json::Value>,
+    pub output_contract: Option<AnyJsonValue>,
     /// Per-card declared evaluators (the evaluator contract). When present,
     /// every `swarm_delegate_local` call to this agent runs them against the
     /// response and stamps a deterministic `task_success` verdict.
@@ -1185,11 +1186,11 @@ pub struct CreateAppDirectRequest {
     /// Schema slug (references a registered document schema).
     pub schema_slug: Option<String>,
     /// Inline JSON schema for the canonical document.
-    pub schema_json: Option<serde_json::Value>,
+    pub schema_json: Option<AnyJsonValue>,
     /// Workspace template: initial_budget, auto_hire, initial_files, etc.
-    pub workspace_template: Option<serde_json::Value>,
+    pub workspace_template: Option<AnyJsonValue>,
     /// Arbitrary metadata.
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<AnyJsonValue>,
     /// Visibility: "private" (default), "unlisted", or "public".
     pub visibility: Option<String>,
 }
@@ -1207,10 +1208,10 @@ pub struct UpdateAppRequest {
     pub icon_url: Option<String>,
     pub composition_slug: Option<String>,
     pub schema_slug: Option<String>,
-    pub schema_json: Option<serde_json::Value>,
-    pub workspace_template: Option<serde_json::Value>,
+    pub schema_json: Option<AnyJsonValue>,
+    pub workspace_template: Option<AnyJsonValue>,
     pub description: Option<String>,
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<AnyJsonValue>,
     pub visibility: Option<String>,
 }
 
@@ -1255,7 +1256,7 @@ pub struct SpawnAppWorkspaceRequest {
     pub auto_hire_override: Option<Vec<String>>,
     /// Arbitrary parameters bound to this workspace instance (written to
     /// `.app/params.json`).
-    pub params: Option<serde_json::Value>,
+    pub params: Option<AnyJsonValue>,
     /// Upstream workspace IDs this workspace depends on.
     pub depends_on: Option<Vec<String>>,
 }
@@ -1323,7 +1324,7 @@ pub struct MutateDocumentRequest {
     /// Document path relative to workspace root (e.g. "simops/process.yaml").
     pub path: String,
     /// The patch to apply. Format is app-specific; stored verbatim.
-    pub patch: serde_json::Value,
+    pub patch: AnyJsonValue,
     /// Human-readable rationale for the change.
     pub rationale: Option<String>,
     /// "auto" = apply immediately; "ask" = pend for human confirmation.
@@ -1352,7 +1353,7 @@ pub struct ForkStateRequest {
     /// Slug of source state; "base" or a variant slug.
     pub from: Option<String>,
     /// The patch to apply to the source state.
-    pub patch: serde_json::Value,
+    pub patch: AnyJsonValue,
     /// Optional hypothesis for the fork.
     pub hypothesis: Option<String>,
     /// Optional source message id.
@@ -1372,7 +1373,7 @@ pub struct AcceptActionRequest {
     /// was not supplied at action creation time).
     pub content: Option<String>,
     /// Apply result to record (for actions applied client-side, e.g. compare).
-    pub apply_result: Option<serde_json::Value>,
+    pub apply_result: Option<AnyJsonValue>,
 }
 
 /// Reject a pending action — `POST /api/workspaces/:id/actions/:action_id/reject`.

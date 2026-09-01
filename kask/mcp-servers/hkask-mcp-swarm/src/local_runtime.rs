@@ -78,7 +78,12 @@ impl LazyEventStore {
         let store = self.open()?;
         // A racing first-write may have won; either store is equivalent
         // (same schema, same file), so keep whichever is present.
-        let _ = self.inner.set(std::sync::Arc::clone(&store));
+        if self.inner.set(std::sync::Arc::clone(&store)).is_err() {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "event store already initialized by a racing first-write — keeping the winner"
+            );
+        }
         Ok(store)
     }
 

@@ -1,4 +1,4 @@
-//! MCP Servers sub-page — toggle which of the 10 built-in kask MCP servers
+//! MCP Servers sub-page — toggle which of the built-in kask MCP servers
 //! are loaded, plus a master `load_default` toggle.
 
 use super::*;
@@ -20,7 +20,7 @@ pub(crate) fn render_mcp_servers_page(
         "kask-mcp-load-default",
         Some("Load Default MCP Servers"),
         Some(
-            "When enabled, all 10 built-in kask MCP servers are loaded unless \
+            "When enabled, all built-in kask MCP servers are loaded unless \
              individually overridden below. Disable to load no kask MCP servers."
                 .into(),
         ),
@@ -72,7 +72,7 @@ pub(crate) fn render_mcp_servers_page(
                 .child(SettingsSectionHeader::new("MCP Servers"))
                 .child(
                     Label::new(
-                        "Toggle which of the 10 built-in kask MCP servers are loaded. \
+                        "Toggle which of the built-in kask MCP servers are loaded. \
                          Individual overrides take precedence over the master toggle.",
                     )
                     .size(LabelSize::Small)

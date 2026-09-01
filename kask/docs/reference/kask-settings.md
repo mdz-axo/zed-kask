@@ -41,19 +41,24 @@ storage-root fields:
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 10 built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 10 servers (`BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:330`):
-`companies`, `corpus`, `curator`, `kata-kanban`, `portfolio`, `prediction-markets`,
+Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
+The 11 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+IDs via `builtin_mcp_server_ids()`):
+`companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`,
 `research`, `scenarios`, `swarm`, `training`. The crates live under `kask/mcp-servers/`
-(10 `hkask-mcp-*` crates).
+(11 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
-| `load_default` | `bool` | `true` — load all 10 servers |
-| `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. `"curator": false`) |
+| `load_default` | `bool` | `true` — load all built-in servers |
+| `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. "curator": false) |
 
 The master `load_default` toggle controls all servers; individual `overrides`
 take precedence. Set `load_default: false` to disable all kask MCP servers.
+Load/unload toggles take effect at runtime: the `SettingsStore` observer
+(`sync_kask_mcp_runtime_servers`, D45) stops/starts the governed server
+through the `McpRuntime`'s own primitives. The servers also appear in
+Settings → AI → MCP Servers as managed rows (D45).
 
 ## Data Services
 

@@ -386,10 +386,16 @@ impl SqliteConsentStore {
         // Lazy expiry sweep — correctness is the TTL check on consume.
         let cutoff =
             (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS)).to_rfc3339();
-        let _ = self.driver.execute(
+        if let Err(e) = self.driver.execute(
             "DELETE FROM consent_grants WHERE created_at < ?1",
             &[DbValue::Text(cutoff)],
-        );
+        ) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "consent grant TTL sweep failed — expired grants remain until consumed"
+            );
+        }
         self.driver
             .execute(
                 "INSERT OR REPLACE INTO consent_grants \
@@ -439,10 +445,16 @@ impl SqliteConsentStore {
             })?;
         // Expired — remove and treat as unknown (never spendable).
         if is_expired(created) {
-            let _ = self.driver.execute(
+            if let Err(e) = self.driver.execute(
                 "DELETE FROM consent_grants WHERE token = ?1",
                 &[DbValue::Text(token.to_string())],
-            );
+            ) {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    error = %e,
+                    "failed to delete expired consent grant — it is already unusable"
+                );
+            }
             return Err(SwarmError::ConsentDenied("consent token expired".into()));
         }
         let grant_action = row.get_str(0).map_err(consent_store_err)?.to_string();
@@ -506,10 +518,16 @@ impl SqliteConsentStore {
         // Lazy expiry sweep — correctness is the TTL check on consume.
         let cutoff =
             (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS)).to_rfc3339();
-        let _ = self.driver.execute(
+        if let Err(e) = self.driver.execute(
             "DELETE FROM consent_sessions WHERE created_at < ?1",
             &[DbValue::Text(cutoff)],
-        );
+        ) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "consent session TTL sweep failed — expired sessions remain until consumed"
+            );
+        }
         self.driver
             .execute(
                 "INSERT OR REPLACE INTO consent_sessions \
@@ -552,10 +570,16 @@ impl SqliteConsentStore {
                 SwarmError::Unavailable(format!("consent store corrupt created_at: {e}"))
             })?;
         if is_expired(created) {
-            let _ = self.driver.execute(
+            if let Err(e) = self.driver.execute(
                 "DELETE FROM consent_sessions WHERE token = ?1",
                 &[DbValue::Text(token.to_string())],
-            );
+            ) {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    error = %e,
+                    "failed to delete expired consent session — it is already unusable"
+                );
+            }
             return Err(SwarmError::ConsentDenied("session expired".into()));
         }
         // Check action — empty actions string means all actions allowed.

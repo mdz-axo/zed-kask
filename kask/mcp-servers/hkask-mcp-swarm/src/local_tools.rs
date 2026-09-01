@@ -1045,7 +1045,7 @@ impl SwarmServer {
                         self.client.config().allowed_tool_servers.as_deref(),
                     ),
                     skills: req.skills,
-                    output_contract: req.output_contract,
+                    output_contract: req.output_contract.map(serde_json::Value::from),
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },

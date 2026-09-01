@@ -148,7 +148,13 @@ fn handle_request(
                         data: None,
                     },
                 );
-                let _ = request.respond(json_rpc_raw_response(err));
+                if let Err(e) = request.respond(json_rpc_raw_response(err)) {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        error = %e,
+                        "failed to respond to A2A HTTP request — peer likely disconnected"
+                    );
+                }
                 return;
             }
             let resp = handle_jsonrpc(
@@ -169,7 +175,13 @@ fn handle_request(
         ),
     };
 
-    let _ = request.respond(response);
+    if let Err(e) = request.respond(response) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            error = %e,
+            "failed to respond to A2A HTTP request — peer likely disconnected"
+        );
+    }
 }
 
 /// Build the gateway `AgentCard` from the current registry. One

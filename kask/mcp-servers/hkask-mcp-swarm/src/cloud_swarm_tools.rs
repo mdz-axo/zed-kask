@@ -1929,13 +1929,13 @@ impl SwarmServer {
                 obj.insert("schema_slug".into(), serde_json::json!(v));
             }
             if let Some(v) = req.schema_json {
-                obj.insert("schema_json".into(), v);
+                obj.insert("schema_json".into(), v.into());
             }
             if let Some(v) = req.workspace_template {
-                obj.insert("workspace_template".into(), v);
+                obj.insert("workspace_template".into(), v.into());
             }
             if let Some(v) = req.metadata {
-                obj.insert("metadata".into(), v);
+                obj.insert("metadata".into(), v.into());
             }
             if let Some(v) = req.visibility {
                 obj.insert("visibility".into(), serde_json::json!(v));
@@ -1992,16 +1992,16 @@ impl SwarmServer {
                 obj.insert("schema_slug".into(), serde_json::json!(v));
             }
             if let Some(v) = req.schema_json {
-                obj.insert("schema_json".into(), v);
+                obj.insert("schema_json".into(), v.into());
             }
             if let Some(v) = req.workspace_template {
-                obj.insert("workspace_template".into(), v);
+                obj.insert("workspace_template".into(), v.into());
             }
             if let Some(v) = req.description {
                 obj.insert("description".into(), serde_json::json!(v));
             }
             if let Some(v) = req.metadata {
-                obj.insert("metadata".into(), v);
+                obj.insert("metadata".into(), v.into());
             }
             if let Some(v) = req.visibility {
                 obj.insert("visibility".into(), serde_json::json!(v));
@@ -2134,7 +2134,7 @@ impl SwarmServer {
                 obj.insert("auto_hire_override".into(), serde_json::json!(v));
             }
             if let Some(v) = req.params {
-                obj.insert("params".into(), v);
+                obj.insert("params".into(), v.into());
             }
             if let Some(v) = req.depends_on {
                 obj.insert("depends_on".into(), serde_json::json!(v));
@@ -2491,7 +2491,7 @@ impl SwarmServer {
                 obj.insert("content".into(), serde_json::json!(v));
             }
             if let Some(v) = req.apply_result {
-                obj.insert("apply_result".into(), v);
+                obj.insert("apply_result".into(), v.into());
             }
             let data = self
                 .client

@@ -576,7 +576,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.mcp"),
             description: Some(
-                "Toggle which of the 10 built-in kask MCP servers are loaded.".into(),
+                "Toggle which of the built-in kask MCP servers are loaded.".into(),
             ),
             search_aliases: &["mcp", "model context protocol", "server", "tool"],
             in_json: true,

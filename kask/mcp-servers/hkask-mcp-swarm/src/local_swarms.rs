@@ -99,6 +99,21 @@ impl LocalSwarmRegistry {
         }
     }
 
+    /// Lock the swarm cache, recovering from poisoning. Every mutation of
+    /// this cache is a whole-value swap, so a panic between lock and store
+    /// leaves the previous value intact — the poisoned guard still guards
+    /// consistent data, and recovering beats cascading the original panic
+    /// into every caller of a long-running server.
+    fn lock_swarms(&self) -> std::sync::MutexGuard<'_, Option<Vec<LocalSwarm>>> {
+        self.swarms.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "swarm cache lock poisoned — recovering with the last swapped value"
+            );
+            poisoned.into_inner()
+        })
+    }
+
     /// The swarms directory (where `swarm.json` and `task_board.json` files
     /// live). Exposed so the task board can persist alongside swarm rosters
     /// without a separate storage path.
@@ -113,7 +128,7 @@ impl LocalSwarmRegistry {
     pub fn load(&self) -> Result<usize, LocalSwarmError> {
         let path = std::path::Path::new(&self.dir);
         if !path.exists() {
-            *self.swarms.lock().unwrap() = Some(Vec::new());
+            *self.lock_swarms() = Some(Vec::new());
             return Ok(0);
         }
         let mut swarms = Vec::new();
@@ -143,7 +158,7 @@ impl LocalSwarmRegistry {
         }
         swarms.sort_by(|a, b| a.swarm_id.cmp(&b.swarm_id));
         let count = swarms.len();
-        *self.swarms.lock().unwrap() = Some(swarms);
+        *self.lock_swarms() = Some(swarms);
         Ok(count)
     }
 
@@ -157,7 +172,7 @@ impl LocalSwarmRegistry {
                 "local swarms reload failed (keeping cached swarms): {e}"
             );
         }
-        self.swarms.lock().unwrap().clone().unwrap_or_default()
+        self.lock_swarms().clone().unwrap_or_default()
     }
 
     /// Look up a single swarm by id, reloading from disk first. Returns `None`
@@ -169,9 +184,7 @@ impl LocalSwarmRegistry {
                 "local swarms reload failed (keeping cached swarms): {e}"
             );
         }
-        self.swarms
-            .lock()
-            .unwrap()
+        self.lock_swarms()
             .as_ref()
             .and_then(|swarms| swarms.iter().find(|s| s.swarm_id == swarm_id).cloned())
     }

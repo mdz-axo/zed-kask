@@ -41,6 +41,7 @@ mod swarm_ops;
 use app_edit::AppForm;
 use author::AuthorForm;
 use compose::ComposeForm;
+use fetch::FetchState;
 
 pub use panel_button::SwarmPanelButton;
 // The `ToolInvoker` trait + global accessor live in the `hkask-tool-invoker` leaf
@@ -103,28 +104,6 @@ const SWARM_SERVER: &str = "swarm";
 /// trivially on an empty/trivial swarm-state. The operator must add agents and
 /// a mission in the compose form before the "Create" button is enabled.
 const MIN_AGENTS_TO_LAUNCH: usize = 3;
-
-/// First automatic-retry delay after a retryable fetch failure. Doubles per
-/// attempt (1s, 2s, 4s, 8s, 16s).
-const FETCH_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
-
-/// Maximum consecutive automatic retries before the panel settles on a visible
-/// error and waits for a manual refresh. Bounded so a permanently broken server
-/// does not become an unbounded background poll.
-const MAX_FETCH_RETRIES: u32 = 5;
-
-/// The backoff delay for the next retry, or `None` once the attempt budget is
-/// spent.
-///
-/// Kept free of panel state and the GPUI executor so the retry *policy* is
-/// unit-testable without constructing a `Workspace` (the same reason
-/// `hkask-kanban-widget` splits its dispatch decision out of the handler).
-fn fetch_retry_delay(attempts_so_far: u32) -> Option<Duration> {
-    if attempts_so_far >= MAX_FETCH_RETRIES {
-        return None;
-    }
-    Some(FETCH_RETRY_BASE_DELAY * 2u32.pow(attempts_so_far))
-}
 
 /// The kanban MCP server id. References the canonical single source of truth
 /// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
@@ -627,34 +606,11 @@ pub struct SwarmPanel {
     compose_scroll: ScrollHandle,
     /// Scroll handle for the App authoring form's scrollable surface.
     app_scroll: ScrollHandle,
-    /// Number of fetch operations currently in flight (agents + swarms spawn
-    /// independently). `is_fetching()` is true while any are in the air —
-    /// avoids one fetch's completion hiding the other's spinner.
-    in_flight: usize,
-    /// Per-source fetch errors. Split so a slow agents fetch can't clobber a
-    /// swarms error (and vice versa) — the H1 cross-clobber finding.
-    agents_error: Option<SharedString>,
-    swarms_error: Option<SharedString>,
-    /// Whether the swarm MCP server reports the ABW API key as configured
-    /// (`authenticated` field from the `swarm_list_agents` response). Read
-    /// from the same source the server uses (`ctx.credentials.get(
-    /// "HKASK_ABW_API_KEY")`), so the panel's "no API key" warning is
-    /// accurate rather than inferred from the `swarm_get_swarm` error
-    /// message (which conflates "no key" with "key rejected by ABW").
-    /// `None` until the first `swarm_list_agents` response arrives.
-    cloud_authenticated: Option<bool>,
-    /// Pending automatic retry after a *retryable* fetch failure (MCP transport
-    /// closed, invoker not yet wired). Held so it is cancelled on drop and so a
-    /// manual refresh can supersede it.
-    ///
-    /// Without this the panel fetched exactly once, in the constructor: a single
-    /// MCP server restart — which happens routinely when settings change or the
-    /// inference socket resolves after launch — left the panel permanently empty
-    /// with only a `log::warn!` the operator never sees.
-    retry_task: Option<Task<()>>,
-    /// Consecutive retryable-failure count, for backoff. Reset on any success or
-    /// manual refresh.
-    retry_attempt: u32,
+    /// The fetch lifecycle — in-flight count, per-source errors, the
+    /// cloud-auth signal, and the retry/backoff state. Owned by `fetch.rs`;
+    /// render reads it through `self.fetch.is_fetching()` /
+    /// `self.fetch.visible_error()` / `self.fetch.cloud_authenticated()`.
+    fetch: FetchState,
     filter: SwarmFilter,
     /// Browse-list source filter (All/Cloud/Local). Orthogonal to `filter`
     /// (kind). Drives the source half of `filter_entries`; the kind half is
@@ -993,12 +949,7 @@ impl SwarmPanel {
                 author_scroll,
                 compose_scroll,
                 app_scroll,
-                in_flight: 0,
-                agents_error: None,
-                swarms_error: None,
-                cloud_authenticated: None,
-                retry_task: None,
-                retry_attempt: 0,
+                fetch: FetchState::default(),
                 filter: SwarmFilter::All,
                 source_filter: SourceFilter::All,
                 entries: Vec::new(),
@@ -1049,150 +1000,6 @@ impl SwarmPanel {
             this.fetch_all(cx);
             this
         })
-    }
-
-    /// True while any fetch (agents or swarms) is in the air.
-    fn is_fetching(&self) -> bool {
-        self.in_flight > 0
-    }
-
-    /// The single visible error, preferring agents then swarms. Rendered as a
-    /// status strip whenever present (not only in the empty state).
-    fn visible_error(&self) -> Option<&SharedString> {
-        self.agents_error.as_ref().or(self.swarms_error.as_ref())
-    }
-
-    /// Re-fetch now, cancelling any pending automatic retry and resetting the
-    /// backoff. Bound to the refresh affordance.
-    pub(crate) fn refresh_now(&mut self, cx: &mut Context<Self>) {
-        self.retry_task = None;
-        self.retry_attempt = 0;
-        self.fetch_all(cx);
-    }
-
-    /// Schedule a re-fetch after a retryable failure, with exponential backoff.
-    ///
-    /// Called by the fetchers when a failure is transport-level rather than
-    /// semantic. Backoff is capped at [`MAX_FETCH_RETRIES`] attempts so a
-    /// genuinely broken server produces a bounded number of retries and then a
-    /// stable visible error, rather than an unbounded poll.
-    pub(crate) fn schedule_fetch_retry(&mut self, cx: &mut Context<Self>) {
-        if self.retry_task.is_some() {
-            // A retry is already pending; the sibling fetch's failure rides on it
-            // rather than stacking a second timer.
-            return;
-        }
-        let Some(delay) = fetch_retry_delay(self.retry_attempt) else {
-            log::warn!(
-                "swarm-panel: giving up after {MAX_FETCH_RETRIES} retries — \
-                 use the Retry button once the MCP server is available"
-            );
-            return;
-        };
-        self.retry_attempt += 1;
-        log::info!(
-            "swarm-panel: fetch failed transiently — retrying in {}s (attempt {}/{})",
-            delay.as_secs(),
-            self.retry_attempt,
-            MAX_FETCH_RETRIES
-        );
-        self.retry_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(delay).await;
-            this.update(cx, |this, cx| {
-                this.retry_task = None;
-                this.fetch_all(cx);
-            })
-            .ok();
-        }));
-    }
-
-    /// Clear the retry backoff after a successful fetch, so a later transient
-    /// failure starts from the short delay again.
-    pub(crate) fn note_fetch_success(&mut self) {
-        self.retry_attempt = 0;
-    }
-
-    /// Classify a swarm-list fetch failure and update `swarms_error`.
-    ///
-    /// Shared by the `Err(_)` branch of `invoke_tool` (transport-level failure)
-    /// and the `Ok(output)` branch when the server returned a tool error envelope
-    /// `{"error": ..., "kind": ...}` (e.g. `permission_denied` for "no API key
-    /// configured"). Before this helper existed, the envelope case fell through to
-    /// `WorkspaceListResponse` parsing and surfaced as the misleading
-    /// "Failed to parse workspaces: {…}".
-    ///
-    /// - Retryable (`Unavailable`/`Timeout`/`RateLimited`, or a retryable
-    ///   transport error): show the reconnect banner and schedule a retry.
-    /// - `PermissionDenied` (no API key, etc.): a quiet agents-only degradation is
-    ///   the right behavior, but the operator previously had no signal that the
-    ///   swarm list was empty *because* of auth rather than because they have no
-    ///   swarms. Surface a short, non-alarming status so the cause is visible
-    ///   without a retry loop (retrying with no key is pointless).
-    /// - Other non-retryable: log at warn and stay quiet (agents-only mode).
-    ///
-    /// API-key status is read from `cloud_authenticated` (the `authenticated`
-    /// field the server returns in the `swarm_list_agents` response), NOT from
-    /// the error message. The error message conflates "no key configured"
-    /// (from `require_auth()`) with "key configured but rejected by ABW"
-    /// (from the ABW 401 body) — both surface as `permission_denied`, and a
-    /// 401 body can contain "no API key" text, which would misclassify a
-    /// rejected key as "not configured." The `authenticated` field is the
-    /// server's own report of whether `ctx.credentials` has the key, so it is
-    /// the same source the MCP server uses.
-    pub(crate) fn handle_swarm_fetch_failure(
-        &mut self,
-        retryable: bool,
-        kind: Option<hkask_types::McpErrorKind>,
-        message: &str,
-        cx: &mut Context<Self>,
-    ) {
-        if retryable {
-            self.swarms_error =
-                Some(format!("Reconnecting to the swarm server… ({message})").into());
-            self.schedule_fetch_retry(cx);
-        } else if matches!(kind, Some(hkask_types::McpErrorKind::PermissionDenied)) {
-            // Auth failure: either no ABW key is configured, or the key is
-            // configured but rejected by ABW (401/403). Retry is pointless in
-            // both cases (a missing key won't appear without a settings
-            // change; an invalid key won't become valid). Surface the cause as
-            // a quiet status so an empty swarm list is not mistaken for "you
-            // have no swarms".
-            //
-            // Distinguish the two causes using `cloud_authenticated` (the
-            // server's own report of whether the key is configured) rather
-            // than the error message. The message-based check
-            // (`message.contains("no API key")`) was a false positive when ABW
-            // returned a 401 body containing "no API key" text for a key that
-            // WAS configured but rejected — the panel showed "no ABW API key
-            // configured" even though the key was present.
-            //
-            // `cloud_authenticated` is set by the `swarm_list_agents` fetch,
-            // which is sequenced BEFORE the `swarm_get_swarm` fetch in the same
-            // task (see `fetch_all`). So by the time this runs,
-            // `cloud_authenticated` is `Some(_)` in the normal case. `None` is
-            // a defensive fallback (e.g. the agents fetch failed before
-            // reaching the parse step) — treat it as "key not confirmed" rather
-            // than guessing.
-            let status: SharedString = match self.cloud_authenticated {
-                Some(true) => format!(
-                    "Cloud swarms unavailable — ABW rejected the API key: {message}. \
-                     Check the key in Settings > Kask > Swarm."
-                )
-                .into(),
-                Some(false) => "Cloud swarms unavailable — no ABW API key configured. \
-                 Local agents and swarms still work. Set HKASK_ABW_API_KEY or add it \
-                 in Settings > Kask > Swarm."
-                    .into(),
-                None => "Cloud swarms unavailable — API key status not yet confirmed. \
-                 Local agents and swarms still work. Retry to refresh."
-                    .into(),
-            };
-            self.swarms_error = Some(status);
-            log::warn!("swarm-panel: swarm list unavailable (agents-only mode): {message}");
-        } else {
-            log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {message}");
-        }
-        self.filter_entries(cx);
     }
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -2524,16 +2331,16 @@ impl SwarmPanel {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message: SharedString = if self.is_fetching() {
+        let message: SharedString = if self.fetch.is_fetching() {
             "Loading agents and swarms…".into()
-        } else if let Some(err) = self.visible_error() {
+        } else if let Some(err) = self.fetch.visible_error() {
             format!("Failed to load swarm data: {err}").into()
         } else {
             // When the API key is not configured, the empty-state messages
             // suggest setting it. When it IS configured (or status is unknown),
             // the hint is dropped — the operator genuinely has no swarms, not
             // a missing-key problem.
-            let key_hint = match self.cloud_authenticated {
+            let key_hint = match self.fetch.cloud_authenticated() {
                 Some(false) => " or set HKASK_ABW_API_KEY to see your cloud swarms",
                 _ => "",
             };
@@ -2573,7 +2380,7 @@ impl SwarmPanel {
             message
         };
 
-        marketplace_empty_state(message, self.visible_error().is_some())
+        marketplace_empty_state(message, self.fetch.visible_error().is_some())
     }
 
     /// The cost/consent gate banner. Renders only when a hire is pending
@@ -3107,7 +2914,7 @@ impl Render for SwarmPanel {
                                     })
                                     // Always-visible manual refresh, mirroring the
                                     // kanban panel's refresh button. Automatic retries
-                                    // are bounded (MAX_FETCH_RETRIES); once exhausted,
+                                    // are bounded (MAX_FETCH_RETRIES in `fetch.rs`); once exhausted,
                                     // the operator needs a way back without closing
                                     // and reopening the panel. Disabled while a fetch
                                     // is in flight to prevent duplicate dispatch.
@@ -3115,7 +2922,7 @@ impl Render for SwarmPanel {
                                         IconButton::new("swarm-refresh", IconName::RotateCw)
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
-                                            .disabled(self.is_fetching())
+                                            .disabled(self.fetch.is_fetching())
                                             .tooltip(Tooltip::text(
                                                 "Refresh agents and swarms",
                                             ))
@@ -3140,11 +2947,11 @@ impl Render for SwarmPanel {
                     // finding — a working list can hide a failed source).
                     //
                     // The strip carries a manual retry: automatic retries are
-                    // bounded (`MAX_FETCH_RETRIES`), so once they are exhausted the
+                    // bounded (`MAX_FETCH_RETRIES` in `fetch.rs`), so once they are exhausted the
                     // operator needs a way back without closing and reopening the
                     // panel. Two elements in this row (label + button), measured
                     // against the `ui-layout-discipline` congestion rule.
-                    .when_some(self.visible_error().cloned(), |this, err| {
+                    .when_some(self.fetch.visible_error().cloned(), |this, err| {
                         this.child(
                             h_flex()
                                 .gap_2()
@@ -3158,7 +2965,7 @@ impl Render for SwarmPanel {
                                     Button::new("swarm-retry-fetch", "Retry")
                                         .style(ButtonStyle::Subtle)
                                         .label_size(LabelSize::XSmall)
-                                        .disabled(self.is_fetching())
+                                        .disabled(self.fetch.is_fetching())
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.refresh_now(cx);
                                         })),
@@ -3605,48 +3412,6 @@ impl SerializableItem for SwarmPanel {
 mod tests {
     use super::*;
     use crate::parse::{AgentListResponse, WorkspaceListResponse};
-
-    // ── Fetch retry policy ──────────────────────────────────────────────────
-    //
-    // The panel used to fetch exactly once, in its constructor. A single MCP
-    // server restart — routine when settings change, or when the inference
-    // socket resolves after launch — left it permanently empty with only a
-    // `log::warn!` the operator never saw. These pin the recovery policy.
-
-    /// The backoff doubles and is bounded, so a permanently broken server
-    /// produces a finite number of retries rather than an unbounded poll.
-    #[test]
-    fn fetch_retry_backs_off_then_gives_up() {
-        assert_eq!(fetch_retry_delay(0), Some(Duration::from_secs(1)));
-        assert_eq!(fetch_retry_delay(1), Some(Duration::from_secs(2)));
-        assert_eq!(fetch_retry_delay(2), Some(Duration::from_secs(4)));
-        assert_eq!(fetch_retry_delay(3), Some(Duration::from_secs(8)));
-        assert_eq!(fetch_retry_delay(4), Some(Duration::from_secs(16)));
-        assert_eq!(
-            fetch_retry_delay(MAX_FETCH_RETRIES),
-            None,
-            "the attempt budget must be finite so a broken server settles on a \
-             visible error instead of polling forever"
-        );
-    }
-
-    /// The retry budget is spent monotonically — no attempt count within the
-    /// budget may yield `None`, and none beyond it may yield `Some`.
-    #[test]
-    fn fetch_retry_budget_is_monotonic() {
-        for attempt in 0..MAX_FETCH_RETRIES {
-            assert!(
-                fetch_retry_delay(attempt).is_some(),
-                "attempt {attempt} is within the budget of {MAX_FETCH_RETRIES}"
-            );
-        }
-        for attempt in MAX_FETCH_RETRIES..(MAX_FETCH_RETRIES + 3) {
-            assert!(
-                fetch_retry_delay(attempt).is_none(),
-                "attempt {attempt} exceeds the budget of {MAX_FETCH_RETRIES}"
-            );
-        }
-    }
 
     // ── Backend context carry ────────────────────────────────────────────────
     //

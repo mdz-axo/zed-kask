@@ -230,13 +230,42 @@ impl LocalAgentRegistry {
         }
     }
 
+    /// Lock the card cache, recovering from poisoning. Every mutation of
+    /// this cache is a whole-value swap, so a panic between lock and store
+    /// leaves the previous value intact — the poisoned guard still guards
+    /// consistent data, and recovering beats cascading the original panic
+    /// into every caller of a long-running server.
+    fn lock_cards(&self) -> std::sync::MutexGuard<'_, Option<Vec<LocalAgentCard>>> {
+        self.cards.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "agent-card cache lock poisoned — recovering with the last swapped value"
+            );
+            poisoned.into_inner()
+        })
+    }
+
+    /// Lock the port-extension map, recovering from poisoning (same
+    /// whole-value-swap discipline as [`Self::lock_cards`]).
+    fn lock_port_extensions(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, PortTypeEntry>> {
+        self.port_extensions.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "port-extension lock poisoned — recovering with the last swapped value"
+            );
+            poisoned.into_inner()
+        })
+    }
+
     /// The effective port registry: built-in seed plus file-backed
     /// extensions. Built from scratch per call and returned by value so
     /// import-time labels are visible to every caller (validation, metrics,
     /// output-schema checks) without shared mutability.
     pub fn port_registry(&self) -> PortRegistry {
         let mut merged = self.port_registry.clone();
-        let extensions = self.port_extensions.lock().unwrap();
+        let extensions = self.lock_port_extensions();
         merged.merge_entries(&extensions);
         merged
     }
@@ -258,7 +287,7 @@ impl LocalAgentRegistry {
                     &json,
                 ) {
                     Ok(map) => {
-                        *self.port_extensions.lock().unwrap() = map;
+                        *self.lock_port_extensions() = map;
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -271,7 +300,7 @@ impl LocalAgentRegistry {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                *self.port_extensions.lock().unwrap() = std::collections::HashMap::new();
+                *self.lock_port_extensions() = std::collections::HashMap::new();
             }
             Err(e) => {
                 tracing::warn!(
@@ -312,7 +341,7 @@ impl LocalAgentRegistry {
                 dir.display()
             ))
         })?;
-        let mut extensions = self.port_extensions.lock().unwrap();
+        let mut extensions = self.lock_port_extensions();
         for label in &fresh {
             extensions.insert(label.clone(), PortTypeEntry::default());
         }
@@ -340,7 +369,7 @@ impl LocalAgentRegistry {
         // the effective registry before any card's typing check runs.
         self.load_port_extensions();
         if !path.exists() {
-            *self.cards.lock().unwrap() = Some(Vec::new());
+            *self.lock_cards() = Some(Vec::new());
             return Ok(0);
         }
         let registry = self.port_registry();
@@ -394,7 +423,7 @@ impl LocalAgentRegistry {
         }
         cards.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
         let count = cards.len();
-        *self.cards.lock().unwrap() = Some(cards);
+        *self.lock_cards() = Some(cards);
         Ok(count)
     }
 
@@ -410,7 +439,7 @@ impl LocalAgentRegistry {
                 "local registry reload failed (keeping cached cards): {e}"
             );
         }
-        self.cards.lock().unwrap().clone().unwrap_or_default()
+        self.lock_cards().clone().unwrap_or_default()
     }
 
     /// Look up a single card by agent id, reloading from disk first (same
@@ -423,9 +452,7 @@ impl LocalAgentRegistry {
                 "local registry reload failed (keeping cached cards): {e}"
             );
         }
-        self.cards
-            .lock()
-            .unwrap()
+        self.lock_cards()
             .as_ref()
             .and_then(|cards| cards.iter().find(|c| c.agent_id == agent_id).cloned())
     }
@@ -447,7 +474,7 @@ impl LocalAgentRegistry {
                 "local registry reload failed during clone-id allocation (proceeding with cached cards): {e}"
             );
         }
-        let cards = self.cards.lock().unwrap();
+        let cards = self.lock_cards();
         let taken = |candidate: &str| -> bool {
             cards
                 .as_ref()

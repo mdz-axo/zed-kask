@@ -268,7 +268,7 @@ fn render_kask_managed_servers_section(cx: &App) -> AnyElement {
             v_flex()
                 .w_full()
                 .gap_1()
-                .children(itertools::intersperse_with(server_rows.into_iter(), || {
+                .children(itertools::intersperse_with(server_rows, || {
                     Divider::horizontal_dashed().into_any_element()
                 })),
         )

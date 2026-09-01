@@ -137,7 +137,7 @@ impl Default for KaskGeneralSettings {
 /// system deserializes `SettingsContent` and converts via `From`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMcpSettings {
-    /// Whether to load the default MCP server set (12 servers).
+    /// Whether to load the default MCP server set (`BUILT_IN_MCP_SERVERS`).
     /// Set to `false` to disable all kask MCP servers.
     pub load_default: bool,
 
