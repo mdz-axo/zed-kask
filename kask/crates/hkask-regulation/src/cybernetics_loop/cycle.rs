@@ -806,21 +806,28 @@ impl super::CyberneticsLoop {
                         let before_ratio = *healthy_count as f64 / (*total_count).max(1) as f64;
                         (before_ratio, SignalMetric::ContextServerHealth)
                     }
+                    RegulationData::ToolReliabilityDegraded { reliability, .. } => {
+                        // Before-value is the aggregate success rate sensed at
+                        // escalation time; after-value is re-sensed from the
+                        // ledger below. Higher is better.
+                        (*reliability, SignalMetric::ToolReliability)
+                    }
                     _ => {
-                        // Actions with NoData (the 18 meta-regulatory and
+                        // Actions whose RegulationData variant carries no
+                        // before-value (NoData and the meta-regulatory /
                         // observational arms) can't be verified via the
-                        // struct-walk because NoData carries no before-value.
-                        // Warn so the skip is visible — a silent continue would
-                        // make "no verification ran" indistinguishable from
-                        // "verification ran and passed" (the .rules
-                        // broken-feedback-loop trap). Full impact verification
-                        // for these actions requires carrying the before-value
-                        // in a typed RegulationData variant (follow-up).
+                        // struct-walk. Warn so the skip is visible — a silent
+                        // continue would make "no verification ran"
+                        // indistinguishable from "verification ran and passed"
+                        // (the .rules broken-feedback-loop trap). Full impact
+                        // verification for these actions requires carrying the
+                        // before-value in a typed RegulationData variant
+                        // (follow-up).
                         tracing::warn!(
                             target: "reg.cybernetics",
                             metric = action.metric_name.as_deref().unwrap_or("unknown"),
                             reason = %action.parameters.reason,
-                            "verify_impact: action carries NoData — no before-value to verify against, skipping"
+                            "verify_impact: unhandled RegulationData variant — no before-value to verify against, skipping"
                         );
                         continue;
                     }
@@ -833,6 +840,33 @@ impl super::CyberneticsLoop {
                         .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
                         .fold(1.0, f64::min),
                     SignalMetric::VarietyDeficit => current_deficit,
+                    SignalMetric::ToolReliability => {
+                        // Re-sense the aggregate success rate from the ledger
+                        // using the same equal-weighted domain aggregation as
+                        // `ToolReliabilitySensor::sense` so the before/after
+                        // values are comparable. Zero tracked domains is no
+                        // data — warn and skip rather than reporting 0.0,
+                        // which would read as "fully degraded" (the .rules
+                        // unwrap_or(0) trap).
+                        let ledger = self.ledger.read().await;
+                        let domains = ledger.tracked_outcome_domains().await;
+                        let mut sum = 0.0;
+                        let mut tracked = 0;
+                        for domain in &domains {
+                            if let Some(rate) = ledger.outcome_success_rate(domain).await {
+                                sum += rate;
+                                tracked += 1;
+                            }
+                        }
+                        if tracked == 0 {
+                            tracing::warn!(
+                                target: "reg.cybernetics",
+                                "verify_impact: ledger has no tracked tool-outcome domains — cannot re-sense reliability, skipping"
+                            );
+                            continue;
+                        }
+                        sum / tracked as f64
+                    }
                     SignalMetric::ContextServerHealth => {
                         // Re-sense fleet health from the source stored on the loop.
                         // If the source is not wired, warn and skip — a silent
@@ -865,10 +899,13 @@ impl super::CyberneticsLoop {
             // For EnergyRemaining: higher is better (positive delta = improved).
             // For VarietyDeficit: lower is better (negative delta = improved).
             // For ContextServerHealth: higher is better (positive delta = improved).
+            // For ToolReliability: higher is better (positive delta = improved).
             let improved = match metric {
                 SignalMetric::EnergyRemaining => delta > 0.0,
                 SignalMetric::VarietyDeficit => delta < 0.0,
                 SignalMetric::ContextServerHealth => delta > 0.0,
+                // Higher success rate = improved.
+                SignalMetric::ToolReliability => delta > 0.0,
                 _ => delta.abs() > f64::EPSILON,
             };
 
@@ -1342,8 +1379,8 @@ impl super::CyberneticsLoop {
 mod tests {
     use crate::CyberneticsLoop;
     use crate::loops::{
-        ActionType, Deviation, DeviationDirection, LoopId, RegulationData, RegulatoryAction,
-        RegulatoryActionParams, Signal, SignalMetric,
+        ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
+        RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
     };
     use crate::regulation_policy::RegulationPolicy;
     use crate::runtime::RegulationLedger;
@@ -1628,6 +1665,67 @@ mod tests {
                 source.recorded().is_empty(),
                 "no verdict written back on a store error"
             );
+        });
+    }
+
+    /// Pins the ToolReliabilityDegraded arm of the verify_impact struct-walk.
+    /// Before the fix the typed variant fell into the NoData catch-all and
+    /// every tool_reliability_degraded escalation skipped verification — the
+    /// live-observed "verify_impact: action carries NoData ... skipping" warn
+    /// on every tick. The arm re-senses the after-value from the ledger's
+    /// tracked outcomes using the same equal-weighted aggregation as
+    /// ToolReliabilitySensor::sense.
+    #[test]
+    fn verify_impact_reliability_action_verifies_against_ledger() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+
+            let reliability_action = || {
+                RegulatoryAction::new(
+                    LoopId::Curation,
+                    ActionType::Escalate,
+                    RegulatoryActionParams::with_data(
+                        "tool_reliability_degraded",
+                        RegulationData::ToolReliabilityDegraded {
+                            reliability: 0.6667,
+                            threshold: 0.8,
+                        },
+                    ),
+                )
+            };
+
+            // Empty ledger: no tracked domains is no data — skip without a
+            // report (not a 0.0 after-value, which would read as "fully
+            // degraded", the .rules unwrap_or(0) trap).
+            let reports = regulation_loop.verify_impact(&[reliability_action()]).await;
+            assert!(reports.is_empty(), "no tracked domains → no report");
+
+            // Seed one domain to 100% success (4/4). The re-sensed
+            // after-value (1.0) improves over the before-value (0.6667).
+            {
+                let ledger_guard = ledger.read().await;
+                for _ in 0..4 {
+                    ledger_guard
+                        .record_outcome("reliability_verify_test", true, None)
+                        .await;
+                }
+            }
+            let reports = regulation_loop.verify_impact(&[reliability_action()]).await;
+            assert_eq!(reports.len(), 1, "seeded ledger → one report");
+            let report = &reports[0];
+            assert_eq!(report.metric, SignalMetric::ToolReliability);
+            assert!(
+                (report.before - 0.6667).abs() < 1e-9,
+                "before is the escalation-time reliability"
+            );
+            assert!(
+                (report.after - 1.0).abs() < 1e-9,
+                "after is re-sensed from the ledger"
+            );
+            assert!(report.improved, "1.0 > 0.6667 is an improvement");
+            assert_eq!(report.decision, ActionDecision::Accept);
         });
     }
 

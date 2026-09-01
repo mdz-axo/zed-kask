@@ -103,6 +103,50 @@ const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
 const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 
+/// Process-global handle to the tokio runtime that owns MCP server child
+/// processes, wired by the embedder at startup (`main.rs` passes
+/// `gpui_tokio::Tokio::handle`).
+///
+/// `start_server_with_env` drives tokio primitives that require a reactor
+/// context (a thread-local): the child-process spawn registers the stdio
+/// pipes with the IO driver, the retry backoff is `tokio::time::sleep`, and
+/// the keeper/supervisor/stderr tasks are `tokio::spawn`ed. Deliberate
+/// callers run on the tokio runtime (the health supervisor's `block_on`,
+/// the `Tokio::spawn` launch and settings-restart paths), but the on-demand
+/// reconnect (`call_tool_inner → try_reconnect`) is polled by whoever awaits
+/// `ToolPort::invoke` — and a caller on a reactor-less executor (the GPUI
+/// foreground or background thread pool) panics with "there is no reactor
+/// running", crashing the whole editor. Observed live 2026-08-31: a
+/// scenarios-server transport loss took zed-kask down on thread 'main'.
+/// Two dispatch call sites were already individually wrapped for this
+/// (`KaskServerTool::run`, `PanelToolInvoker::invoke_tool`); the reconnect
+/// must not depend on the caller's executor at all, so `try_reconnect`
+/// hops onto this runtime when it finds no reactor.
+///
+/// Mutex (not OnceLock): re-settable, matching the other process-global
+/// hooks (`set_memory_port`, `set_tool_invoker`).
+static SPAWN_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Handle>> =
+    std::sync::Mutex::new(None);
+
+/// Wire the tokio runtime that off-runtime reconnects spawn onto.
+/// See [`SPAWN_RUNTIME`]. `Mutex`-based and re-settable; a second call
+/// replaces the first.
+pub fn set_spawn_runtime(handle: tokio::runtime::Handle) {
+    *SPAWN_RUNTIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+}
+
+/// The configured spawn runtime, if wired. `None` in embedders that never
+/// called [`set_spawn_runtime`] (tests construct the runtime inside
+/// `#[tokio::test]`, so the ambient context suffices there).
+fn configured_spawn_runtime() -> Option<tokio::runtime::Handle> {
+    SPAWN_RUNTIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
 /// Interval between health checks once the supervisor has exceeded
 /// `max_consecutive_health_failures`. Slower than the normal interval so a
 /// crash-looping binary does not burn CPU, but still attempts restarts so a
@@ -1165,10 +1209,38 @@ impl McpRuntime {
             server_id = %server_id,
             "Reconnecting to MCP server after transport loss"
         );
-        match self
-            .start_server_with_env(server_id, &spec.command, spec.env)
-            .await
-        {
+        // `start_server_with_env` needs a tokio reactor context (see
+        // [`SPAWN_RUNTIME`]). Callers already on the tokio runtime carry it;
+        // a caller on a reactor-less executor hops onto the configured
+        // runtime via `Handle::block_on`, which parks the calling thread and
+        // drives the future with the context entered, so the spawn, backoff
+        // sleeps, and task spawns all find a reactor. This cannot deadlock:
+        // `start_server_with_env` touches only tokio and the filesystem,
+        // never the caller's own executor — the `.rules` block-on trap is
+        // about futures that need the blocked executor to make progress.
+        let start_result = match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                self.start_server_with_env(server_id, &spec.command, spec.env)
+                    .await
+            }
+            Err(_) => {
+                let Some(handle) = configured_spawn_runtime() else {
+                    // Per `.rules` (failure signals): an unwired hook must be
+                    // distinguishable from a failed reconnect, not silently
+                    // reported as "could not reconnect".
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        "Reconnect reached a non-tokio executor with no spawn runtime wired — \
+                         cannot reconnect (the embedder must call hkask_mcp::set_spawn_runtime \
+                         at startup)"
+                    );
+                    return false;
+                };
+                handle.block_on(self.start_server_with_env(server_id, &spec.command, spec.env))
+            }
+        };
+        match start_result {
             Ok(()) => {
                 info!(
                     target: "hkask.mcp",

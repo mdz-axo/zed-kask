@@ -13,6 +13,6 @@
 
 pub mod runtime;
 
-pub use runtime::{McpRuntime, McpServer, McpTool};
+pub use runtime::{McpRuntime, McpServer, McpTool, set_spawn_runtime};
 
 // ── Canonical MCP server registry ─────────────────────────────────────────

@@ -1420,4 +1420,75 @@ mod viewer_layout_tests {
             tall_widget_bounds.bottom()
         );
     }
+
+    /// The production panel embedding for the probe: the director column
+    /// (`min_w_96`, `flex_1`) and the viewer pane (`flex_1`) side by side in
+    /// a flex row, exactly as `media_panel.rs` renders them.
+    struct NarrowPaneHost {
+        viewer: Entity<MediaViewer>,
+    }
+
+    impl gpui::Render for NarrowPaneHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            h_flex()
+                .size_full()
+                .child(
+                    div()
+                        .h_full()
+                        .flex_1()
+                        .min_w_96()
+                        .border_r_1()
+                        .flex()
+                        .flex_col(),
+                )
+                .child(div().h_full().flex_1().child(self.viewer.clone()))
+        }
+    }
+
+    /// PROBE (temporary): ground truth for the horizontal-fit bug. A 700px
+    /// dock leaves the pane ~315px after the director's 384px min-width.
+    #[gpui::test]
+    fn probe_narrow_pane_fit(cx: &mut TestAppContext) {
+        if !std::path::Path::new(FIXTURE).exists() {
+            return;
+        }
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+
+        let viewer = cx.new(|_| MediaViewer::new());
+        let output = serde_json::json!({
+            "content": {
+                "status": "fetched",
+                "display_hint": format!(
+                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
+                )
+            }
+        })
+        .to_string();
+        viewer.update(cx, |viewer, _| {
+            viewer.merge_tool_result(&output, "video_fetch")
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(700.), px(600.)));
+        cx.run_until_parked();
+
+        let widget_bounds = cx
+            .debug_bounds("media-widget")
+            .expect("widget laid out with debug bounds");
+        let video_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out with debug bounds");
+        eprintln!(
+            "PROBE dock=700x600 pane_available≈315: widget={widget_bounds:?} video_area={video_bounds:?}"
+        );
+    }
 }

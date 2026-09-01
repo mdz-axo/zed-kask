@@ -8769,6 +8769,7 @@ dependencies = [
 name = "hkask-mcp"
 version = "0.39.0"
 dependencies = [
+ "futures 0.3.32",
  "hkask-regulation",
  "hkask-tool-port",
  "hkask-types",

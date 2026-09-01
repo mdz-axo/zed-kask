@@ -884,6 +884,14 @@ fn main() {
             hkask_mcp::McpRuntime::new()
                 .with_governance(cybernetics_loop, event_sink),
         );
+        // The runtime's on-demand reconnect (`call_tool_inner → try_reconnect`)
+        // spawns a child process, which requires a tokio reactor. Callers on
+        // the tokio runtime carry one; a caller on a GPUI executor does not
+        // and used to panic with "there is no reactor running", crashing the
+        // editor (observed live 2026-08-31 on a scenarios transport loss).
+        // Wiring the GPUI-global tokio handle lets the reconnect hop onto it
+        // from any executor.
+        hkask_mcp::set_spawn_runtime(gpui_tokio::Tokio::handle(&*cx));
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
         // zed-kask: T-V1 — agent-path MCP tool outcome recording. The

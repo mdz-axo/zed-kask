@@ -25,6 +25,7 @@ workspace = true
 [dev-dependencies]
 hkask-types.workspace = true
 hkask-tool-port.workspace = true
+futures.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 
