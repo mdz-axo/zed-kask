@@ -310,7 +310,13 @@ impl gpui::Render for MediaPanel {
             // operations through the scoped media MCP tools.
             .child(director)
             // The viewing pane: what the tools produced, structurally.
-            .child(div().h_full().flex_1().child(self.viewer.clone()))
+            // min_w_0 is the horizontal counterpart of the viewer's min_h_0:
+            // without it the pane (a flex-row item) cannot shrink below its
+            // content's min-content width, so a long untruncated header src
+            // or a wide toolbar inflated the pane past the dock and the
+            // video rendered clipped (the recurring horizontal-overflow
+            // bug — see viewer_layout_tests::viewer_content_fits_narrow_pane).
+            .child(div().h_full().flex_1().min_w_0().child(self.viewer.clone()))
     }
 }
 

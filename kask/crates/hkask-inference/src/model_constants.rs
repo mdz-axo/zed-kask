@@ -60,8 +60,14 @@ pub const DEFAULT_AGENT_MODEL: &str = "qwen/qwen3-235b-a22b-thinking-2507";
 /// Default TTS model — Kokoro via DeepInfra.
 pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
 
-/// Default STT model — Whisper Large v3 via DeepInfra.
-pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
+/// Default STT model — Whisper Large v3 via DeepInfra. The id includes the
+/// `openai/` namespace: `strip_prefix("DeepInfra/")` in the provider must
+/// yield DeepInfra's actual model id `openai/whisper-large-v3` — the former
+/// `DeepInfra/whisper-large-v3` default stripped to a bare `whisper-large-v3`
+/// that DeepInfra answered with 404 "Model is not available" on every
+/// transcription (observed live 2026-08-31; the OpenRouter fallback then
+/// absorbed the call at extra latency).
+pub const DEFAULT_STT_MODEL: &str = "DeepInfra/openai/whisper-large-v3";
 
 /// Default audio-input chat model — LLM reasoning over audio via
 /// `input_audio` content parts (the OpenAI audio-chat format) on

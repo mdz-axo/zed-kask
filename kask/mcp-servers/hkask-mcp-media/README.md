@@ -50,7 +50,7 @@ This server routes media generation through the inference IPC bridge to the zed 
 | Variable | Default | Description |
 |---|---|---|
 | `HKASK_MEDIA_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | Text-to-speech (Kokoro via DeepInfra) |
-| `HKASK_MEDIA_STT_MODEL` | `DeepInfra/whisper-large-v3` | Speech-to-text (Whisper Large v3 via DeepInfra) |
+| `HKASK_MEDIA_STT_MODEL` | `DeepInfra/openai/whisper-large-v3` | Speech-to-text (Whisper Large v3 via DeepInfra) |
 | `HKASK_MEDIA_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision model (Qwen3-VL via OpenRouter) |
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | Image generation model override |
 

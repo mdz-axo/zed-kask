@@ -784,7 +784,25 @@ impl gpui::Render for MediaWidget {
 
                 MediaRef::Asset { src, kind } => match kind {
                     MediaKind::Image | MediaKind::Svg => {
-                        let source: ImageSource = src.as_str().into();
+                        // The media server emits filesystem paths for
+                        // generated/persisted assets. `ImageSource::from(&str)`
+                        // maps any non-URL string to `Resource::Embedded` — an
+                        // embedded-asset lookup that fails with "Embedded
+                        // resource not found" for absolute paths (observed live:
+                        // every generated image errored in the asset cache and
+                        // rendered as a broken image). Route non-URI sources
+                        // through the `Path` resource so the image cache reads
+                        // the file from disk; URI sources keep the string form.
+                        let source: ImageSource = if src.starts_with("data:")
+                            || src.starts_with("http://")
+                            || src.starts_with("https://")
+                        {
+                            src.as_str().into()
+                        } else if let Some(path) = src.strip_prefix("file://") {
+                            ImageSource::from(std::path::PathBuf::from(path))
+                        } else {
+                            ImageSource::from(std::path::PathBuf::from(src.as_str()))
+                        };
                         // flex_1 (not size_full): the parent is a flex column with
                         // definite height, so flex_1 gives this box — and the
                         // Contain-fit img inside it — a definite height to scale
@@ -851,7 +869,11 @@ impl gpui::Render for MediaWidget {
                             video_area = video_area.child(
                                 img(ImageSource::Render(frame))
                                     .size_full()
-                                    .object_fit(ObjectFit::Contain),
+                                    .object_fit(ObjectFit::Contain)
+                                    // Test-support hook: exposes the frame
+                                    // element's laid-out bounds to layout
+                                    // ground-truth tests (noop in release).
+                                    .debug_selector(|| "media-video-frame".into()),
                             );
                         } else {
                             video_area = video_area
@@ -1455,16 +1477,7 @@ mod layout_tests {
         if !std::path::Path::new(FIXTURE).exists() {
             return;
         }
-        // The widget's render reads the theme global — initialize it the
-        // way markdown's render tests do.
-        cx.update(|cx| {
-            if !cx.has_global::<settings::SettingsStore>() {
-                settings::init(cx);
-            }
-            if !cx.has_global::<theme::GlobalTheme>() {
-                theme_settings::init(theme::LoadThemes::JustBase, cx);
-            }
-        });
+        init_layout_test_globals(cx);
         let body = format!(r#"{{"kind":"video","src":"{FIXTURE}"}}"#);
 
         let (_, cx) = cx.add_window_view(|window, cx| {
@@ -1509,5 +1522,72 @@ mod layout_tests {
             "video area must fill most of a 600px window, got {:?}",
             short_bounds.size.height
         );
+    }
+
+    /// A decoded ultra-wide (21:9) frame must not re-inflate the layout:
+    /// gpui's `img` injects the frame's intrinsic aspect ratio into the
+    /// img style (`img.rs` request_layout), so this probe pins that the
+    /// frame element's laid-out bounds still derive from the video area's
+    /// bounds — never from the frame's natural 2560px width. Hermetic: the
+    /// frame is injected directly (no decoder, no fixture file).
+    #[gpui::test]
+    fn wide_frame_fits_narrow_host(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let body = r#"{"kind":"video","src":"/hermetic/probe.mp4"}"#;
+        let block = MediaBlockBody::parse(body).expect("valid media block");
+        let media_ref = block.to_media_ref().expect("video media ref");
+
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            // with_storage initializes the video player + transport WITHOUT
+            // loading from disk — no error state — and the synthetic frame
+            // below stands in for the decoder's output.
+            let widget = cx.new(|cx| {
+                let mut widget =
+                    MediaWidget::with_storage(media_ref.clone(), Arc::new(PathMediaStorage), cx);
+                let buffer =
+                    image::ImageBuffer::from_pixel(2560, 1080, image::Rgba([16, 16, 16, 255]));
+                let frame = image::Frame::new(buffer);
+                widget.current_frame =
+                    Some(Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1))));
+                widget
+            });
+            WidgetHost { widget }
+        });
+        // A narrow host: 320px wide — far narrower than the frame's natural
+        // 2560px width.
+        cx.simulate_resize(size(px(320.), px(240.)));
+        cx.run_until_parked();
+
+        let video_bounds = cx
+            .debug_bounds("media-video-area")
+            .expect("video area laid out with debug bounds");
+        let frame_bounds = cx
+            .debug_bounds("media-video-frame")
+            .expect("video frame laid out with debug bounds");
+        assert!(
+            video_bounds.right() <= px(320.) + px(1.),
+            "video area must fit the 320px host: right {:?}",
+            video_bounds.right()
+        );
+        assert!(
+            frame_bounds.size.width <= video_bounds.size.width + px(1.)
+                && frame_bounds.right() <= video_bounds.right() + px(1.),
+            "the 21:9 frame element must derive its width from the video area \
+             (contain-fit), not its natural 2560px width: frame {frame_bounds:?} vs \
+             video area {video_bounds:?}"
+        );
+    }
+
+    /// The theme/settings globals the widget's render reads — shared by
+    /// this module's layout tests.
+    fn init_layout_test_globals(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
     }
 }

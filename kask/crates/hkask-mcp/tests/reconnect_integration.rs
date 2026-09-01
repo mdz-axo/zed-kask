@@ -592,3 +592,113 @@ async fn health_breaker_trips_after_consecutive_restart_failures() {
     }
     runtime.shutdown_all().await;
 }
+
+// ── Off-runtime reconnect (the 2026-08-31 thread 'main' crash) ───────────────
+
+/// A reconnect that reaches `try_reconnect` from a reactor-less executor
+/// must hop onto the configured spawn runtime instead of panicking with
+/// "there is no reactor running".
+///
+/// Observed live 2026-08-31: the scenarios server's transport died, the next
+/// tool call was polled on the GPUI foreground thread (`main`), and the
+/// on-demand reconnect's child-process spawn panicked inside
+/// `tokio::process::Command::spawn` (`PollEvented::new` needs a tokio reactor
+/// context — a thread-local), crashing the whole editor. The two known
+/// dispatch call sites were already tokio-wrapped; this pins that the
+/// reconnect itself is executor-agnostic via `hkask_mcp::set_spawn_runtime`.
+///
+/// The falsifier: without the hop, the `futures::executor::block_on` poll on
+/// the plain std thread (no tokio context) panics and the thread dies without
+/// a successful ping.
+#[tokio::test(flavor = "multi_thread")]
+async fn reconnect_from_a_non_tokio_executor_does_not_panic() {
+    let fixture = Fixture::new("reconnect_from_a_non_tokio_executor_does_not_panic");
+    let (runtime, original_pid) = launch(&fixture).await;
+
+    // Sanity: the fixture answers before the kill.
+    let first = ping(&runtime, "fixture").await;
+    assert_eq!(
+        first.get("marker").and_then(|m| m.as_str()),
+        Some(fixture.marker.as_str()),
+        "the live fixture must echo our marker before the kill"
+    );
+
+    // Wire the hop runtime — the embedder's job in production (`main.rs`
+    // passes the gpui_tokio handle). A dedicated runtime stands in for it so
+    // the test does not depend on the ambient one (the whole point is that
+    // the reconnect thread has NO ambient context).
+    let hop_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("hop runtime must build");
+    hkask_mcp::set_spawn_runtime(hop_runtime.handle().clone());
+
+    Fixture::kill(original_pid);
+
+    // Drive the invoke from a plain std thread: no tokio reactor context, so
+    // `try_reconnect` must take the `Handle::block_on` hop. `ping` is
+    // idempotent, so retrying on `Unavailable`/`Interrupted` here is safe
+    // (same discipline as the on-demand test above).
+    let marker = fixture.marker.clone();
+    let pid_file = fixture.pid_file.clone();
+    let invoke_thread = std::thread::Builder::new()
+        .name("off-runtime-invoke".into())
+        .spawn(move || {
+            let agent = WebID::for_agent_name("reconnect-integration-test");
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let result = loop {
+                let attempt = futures::executor::block_on(runtime.invoke(
+                    "fixture",
+                    "ping",
+                    serde_json::json!({}),
+                    agent,
+                ));
+                match attempt {
+                    Ok(value) => break Ok(value),
+                    Err(ToolPortError::Unavailable(detail))
+                    | Err(ToolPortError::Interrupted(detail)) => {
+                        if std::time::Instant::now() > deadline {
+                            break Err(format!(
+                                "off-runtime ping never succeeded within 15s — last error: {detail}"
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
+                    Err(e) => {
+                        break Err(format!("off-runtime ping returned unexpected error: {e}"));
+                    }
+                }
+            };
+            // Hand the runtime back so the test can shut it down on the
+            // tokio test runtime (the keeper/supervisor cleanup path).
+            (runtime, result)
+        })
+        .expect("off-runtime invoke thread must spawn");
+    let (runtime, outcome) = invoke_thread.join().expect(
+        "the off-runtime invoke thread must not panic — the reconnect hop must \
+         keep the child-process spawn off the reactor-less executor",
+    );
+    let second = outcome.expect("the off-runtime reconnect must converge to a successful ping");
+
+    assert_eq!(
+        second.get("marker").and_then(|m| m.as_str()),
+        Some(marker.as_str()),
+        "the reconnected fixture must still echo our marker (same env, same marker)"
+    );
+    let new_pid: u32 = std::fs::read_to_string(&pid_file)
+        .expect("fixture pid file must exist after the off-runtime reconnect")
+        .trim()
+        .parse()
+        .expect("fixture pid file must contain a numeric pid");
+    assert_ne!(
+        new_pid, original_pid,
+        "the off-runtime reconnect must be served by a new pid, not the killed one"
+    );
+
+    // The reconnect's keeper/supervisor tasks live on the hop runtime; shut
+    // the governed runtime down first (cancels keepers, kills children), then
+    // drop the hop runtime so the test leaves no stray tasks.
+    runtime.shutdown_all().await;
+    hop_runtime.shutdown_background();
+}

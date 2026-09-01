@@ -7,7 +7,7 @@ live server 2026-08-31. Companion to `tasks/reduct-dual-mode-video-analysis.md`
 
 ## Live verification findings (2026-08-31)
 
-Ran against the restarted server before writing this playbook:
+### Cycle 1 — server bring-up (before this playbook was written)
 
 - **All 15 Educt tools registered and callable** (`educt_store_transcript`
   … `educt_locate`).
@@ -17,19 +17,67 @@ Ran against the restarted server before writing this playbook:
 - **TTS is down**: `generate_speech` fails — DeepInfra returns
   `401 Unauthorized` (the key is rejected; OpenRouter serves no TTS).
   Affects TTS only; surfaced cleanly per the failure-signal design.
+  Still down as of cycle 2 — the key is the operator's to rotate.
 - **Transport-stringification bug found and fixed**: the MCP transport
   serialized object-valued `AnyJsonValue` params (transcript/layer JSON)
   into their string form, so `educt_store_transcript` and
   `educt_store_layer` rejected every agent caller. Both tools now accept
   the object OR the JSON-string form (`parse_json_value`); pinned by a
-  test. **Live after the next rebuild/restart.**
+  test. **Live-verified in cycle 2** — object-form store and layer calls
+  are both accepted by the running server.
 - **`educt_locate` added**: the deterministic quote→word-range→time-range
   mapping — the mechanical step that turns a verified citation (the
   listening skill's evidence quotes) into a media range with no model in
-  the loop. Tool surface 82 → 83. **Live after the next rebuild/restart.**
+  the loop. Tool surface 82 → 83. **Live-verified in cycle 2** — exact
+  quote → word range → time range; `no_match` surfaced for a fabricated
+  dropped-"not" inversion and for non-word-aligned forms.
 - Two rebuild-session clippy blockers fixed to keep the repo gate green
   (curator `sort_by` → `sort_by_key`; the media test env-lock moved to an
   async-aware tokio mutex — a std guard across an await is an error).
+
+### Cycle 2 — Scenarios 1 & 2 verified live (binary from `df4897d5d3`)
+
+The complete loop ran on real media, on both the audio and video paths:
+
+- **Scenario 1 verified**: `transcribe_bundle` → `educt_store_transcript`
+  (object JSON — the transport fix, live) → paragraph/speaker/correction
+  passes → `educt_apply_corrections` corrected view → SRT export.
+- **Scenario 2 verified end-to-end, reel rendered**: speaker spans →
+  `{speaker, text}` chunks → `render_template`
+  (`listening/apply-template`) → verbatim citations → mechanical substring
+  verification → `educt_locate` → highlight layer →
+  `educt_edl_from_highlights` (union-merged) → `educt_render_edl` →
+  **rendered reel**, on the wav-keyed and mp4-keyed transcripts both.
+- **Two fixes shipped in `df4897d5d3`**, both live-verified and pinned by
+  tests:
+  1. **Every video-path ffmpeg call was SIGPIPE-dead** — tokio's
+     `status()` drops piped read-ends, so the child died on its banner
+     write ("exit code: None", empty output). Fixed with `output()`
+     (which also puts ffmpeg's stderr into the error). The suite had
+     zero real-ffmpeg coverage — that is how it shipped.
+  2. **Whisper's separator-prefixed tokens** (`" not"` vs `"not"`)
+     broke the rendered-form contract; trimmed at ingestion now.
+- **Precision finding (open operator decision)**: stream-copy render is
+  keyframe-bound. The JFK mp4 has keyframes only at 0s/10s, so the
+  lossless reel physically starts ~0.01s, not at the cited 2.279s — the
+  semantic `clip_plan` is exact, the physical clip is not (four ffmpeg
+  flag variants tested; none precise on this source). Options: (a) keep
+  lossless-with-GOP-slack and document it, (b) add a re-encode mode (an
+  8.080s frame-accurate demo exists), or (c) a per-render precision flag.
+  Whichever is chosen also updates the "Stream-copy clip + concat" row
+  in `tasks/reduct-dual-mode-video-analysis.md`.
+- **Store state** (persists across restarts, SQLite at
+  `~/.local/share/zed-kask/mcp/media/gallery.db`): T1 `375f01bf-…`
+  (wav-keyed), T2 `50a64355-…` (mp4-keyed; carries the Scenario-2
+  highlight + EDL layers), T3 `00e30125-…` (pre-token-fix verbatim
+  store — live evidence of the token gap; delete when it has served).
+- **Durable artifacts** in `~/Documents/zk-data/media-mcp/generated/`:
+  the SRT, the highlights-CSV manifest, `educt-50a64355-reel.mp4` (the
+  stream-copy render), `educt-50a64355-reel-frame-accurate.mp4` (the
+  re-encode demo).
+- **Minor backlog**: the SRT cue splitter broke mid-phrase
+  ("…you, Ask | what…") rather than at punctuation — worth a look when
+  next touching the export.
 
 ## The video-ingest pattern (read first)
 

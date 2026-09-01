@@ -567,6 +567,11 @@ impl MediaViewer {
             .id(SharedString::from(format!("media-viewer-tab-{:?}", tab)))
             .px_2()
             .h_6()
+            // min_w_0 + a truncating label: without them the tab's
+            // min-content (its full label, e.g. "Library (12)") fed the
+            // pane's min-content and the tab bar overflowed narrow docks.
+            .min_w_0()
+            .overflow_hidden()
             .rounded_sm()
             .map(|el| {
                 if active {
@@ -578,11 +583,16 @@ impl MediaViewer {
             .cursor_pointer()
             .flex()
             .items_center()
-            .child(Label::new(label).size(LabelSize::Small).color(if active {
-                ui::Color::Default
-            } else {
-                ui::Color::Muted
-            }))
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .truncate()
+                    .color(if active {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.active_tab = tab;
                 this.confirm_delete = None;
@@ -644,24 +654,40 @@ impl MediaViewer {
                 .into_any_element();
         };
 
+        // The header row is width-contained: the pane is a flex item whose
+        // min-content is the widest row's content width, so an untruncated
+        // src label here used to inflate the whole pane past the dock
+        // (min_w_0 + truncate breaks that propagation; overflow_hidden is
+        // the clip of last resort at extreme narrowness).
         let header = h_flex()
             .gap_2()
             .px_3()
             .py_2()
+            .min_w_0()
+            .overflow_hidden()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
                 Label::new(asset.src.clone())
                     .size(LabelSize::Small)
-                    .color(ui::Color::Muted),
+                    .color(ui::Color::Muted)
+                    .flex_1()
+                    .truncate(),
             )
             .child(
                 Label::new(asset.tool.clone())
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Hint),
+                    .color(ui::Color::Hint)
+                    .truncate(),
             );
 
         // ── Edit toolbar: trim marks + concatenation queue ───────────────
+        // Width discipline: the pane is a flex item whose min-content is
+        // this row's content width, and seven buttons + two readout labels
+        // ≈ 800px — wider than any dock pane. The row wraps (the same
+        // overflow policy as the Detail tab's kv rows) so every action
+        // stays reachable at ~320px panes; min_w_0 keeps the row's
+        // min-content from inflating the pane; the readout labels truncate.
         let (position_label, marks_label, trim_ready) = widget.read(cx).edit_state_labels();
         let concat_count = self.concat_queue.len();
         let queued_current = self.concat_queue.contains(&asset.src);
@@ -669,17 +695,21 @@ impl MediaViewer {
             .gap_2()
             .px_3()
             .py_1()
+            .flex_wrap()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
                 Label::new(position_label)
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
+                    .color(ui::Color::Muted)
+                    .truncate(),
             )
             .child(
                 Label::new(marks_label)
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
+                    .color(ui::Color::Muted)
+                    .truncate(),
             )
             .child(
                 ui::Button::new("mark-in", "Mark In")
@@ -1110,6 +1140,12 @@ impl Render for MediaViewer {
                     .h_8()
                     .gap_1()
                     .px_2()
+                    // Width-contained: tab labels truncate and the row
+                    // clips rather than inflating the pane's min-content
+                    // past the dock (the tab bar is the viewer's widest
+                    // fixed chrome at narrow pane widths).
+                    .min_w_0()
+                    .overflow_hidden()
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Media, "Media".into(), cx))
@@ -1118,9 +1154,10 @@ impl Render for MediaViewer {
                     .child(self.tab_button(ViewerTab::Detail, "Detail".into(), cx))
                     // Force-refresh: rebuild cached widgets + reload the
                     // active tab. Right-aligned so it stays put as tab labels
-                    // change width.
+                    // change width. flex_shrink_0 keeps the icon whole when
+                    // the row is tight.
                     .child(
-                        div().ml_auto().child(
+                        div().ml_auto().flex_shrink_0().child(
                             ui::IconButton::new("media-viewer-refresh", ui::IconName::RotateCw)
                                 .icon_size(ui::IconSize::Small)
                                 .tooltip(ui::Tooltip::text(
@@ -1327,14 +1364,7 @@ mod viewer_layout_tests {
         if !std::path::Path::new(FIXTURE).exists() {
             return;
         }
-        cx.update(|cx| {
-            if !cx.has_global::<settings::SettingsStore>() {
-                settings::init(cx);
-            }
-            if !cx.has_global::<theme::GlobalTheme>() {
-                theme_settings::init(theme::LoadThemes::JustBase, cx);
-            }
-        });
+        init_layout_test_globals(cx);
 
         let viewer = cx.new(|_| MediaViewer::new());
         let output = serde_json::json!({
@@ -1421,9 +1451,10 @@ mod viewer_layout_tests {
         );
     }
 
-    /// The production panel embedding for the probe: the director column
-    /// (`min_w_96`, `flex_1`) and the viewer pane (`flex_1`) side by side in
-    /// a flex row, exactly as `media_panel.rs` renders them.
+    /// The production panel embedding for the narrow-pane probes: the
+    /// director column (`min_w_96`, `flex_1`) and the viewer pane
+    /// (`flex_1`, `min_w_0`) side by side in a flex row, exactly as
+    /// `media_panel.rs` renders them.
     struct NarrowPaneHost {
         viewer: Entity<MediaViewer>,
     }
@@ -1441,17 +1472,13 @@ mod viewer_layout_tests {
                         .flex()
                         .flex_col(),
                 )
-                .child(div().h_full().flex_1().child(self.viewer.clone()))
+                .child(div().h_full().flex_1().min_w_0().child(self.viewer.clone()))
         }
     }
 
-    /// PROBE (temporary): ground truth for the horizontal-fit bug. A 700px
-    /// dock leaves the pane ~315px after the director's 384px min-width.
-    #[gpui::test]
-    fn probe_narrow_pane_fit(cx: &mut TestAppContext) {
-        if !std::path::Path::new(FIXTURE).exists() {
-            return;
-        }
+    /// The theme/settings globals the viewer's render reads — shared by
+    /// this module's layout tests.
+    fn init_layout_test_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
             if !cx.has_global::<settings::SettingsStore>() {
                 settings::init(cx);
@@ -1460,6 +1487,25 @@ mod viewer_layout_tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    /// THE horizontal-fit invariant — the one the scaling test above does
+    /// not encode. At a 700px dock the pane's available width is ~316px
+    /// (after the director's 384px min-width); the pre-fix layout inflated
+    /// the pane to the viewer's min-content width (untruncated header src +
+    /// seven inline toolbar buttons ≈ 685px) because the pane div lacked
+    /// `min_w_0`, so the video area rendered 685px wide inside a 316px
+    /// pane — clipped at the dock edge, unviewable. This test failed on
+    /// that code and pins the fix: no part of the viewer may exceed the
+    /// pane's available horizontal bounds, at any pane width, with the
+    /// video's natural width (640px) larger than the pane. The final
+    /// iteration resizes back — the no-thrash probe.
+    #[gpui::test]
+    fn viewer_content_fits_narrow_pane(cx: &mut TestAppContext) {
+        if !std::path::Path::new(FIXTURE).exists() {
+            return;
+        }
+        init_layout_test_globals(cx);
 
         let viewer = cx.new(|_| MediaViewer::new());
         let output = serde_json::json!({
@@ -1478,17 +1524,51 @@ mod viewer_layout_tests {
         let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
             viewer: viewer.clone(),
         });
-        cx.simulate_resize(size(px(700.), px(600.)));
-        cx.run_until_parked();
 
+        // (dock width, pane available) — the pane gets the dock minus the
+        // director's 384px min-width. 480px is the adversarial dock: a
+        // ~96px pane, far narrower than the fixture's natural 640px video.
+        for (dock_width, pane_available) in [
+            (px(700.), px(316.)),
+            (px(480.), px(96.)),
+            (px(700.), px(316.)),
+        ] {
+            cx.simulate_resize(size(dock_width, px(600.)));
+            cx.run_until_parked();
+            assert_viewer_fits_narrow_pane(cx, dock_width, pane_available);
+        }
+    }
+
+    /// The shared fit assertions: the video area and the whole player
+    /// widget must stay within the dock's right edge, and the video area's
+    /// width must stay within the pane's available width (+1px sub-pixel
+    /// tolerance).
+    fn assert_viewer_fits_narrow_pane(
+        cx: &mut gpui::VisualTestContext,
+        dock_width: gpui::Pixels,
+        pane_available: gpui::Pixels,
+    ) {
         let widget_bounds = cx
             .debug_bounds("media-widget")
             .expect("widget laid out with debug bounds");
         let video_bounds = cx
             .debug_bounds("media-video-area")
             .expect("video area laid out with debug bounds");
-        eprintln!(
-            "PROBE dock=700x600 pane_available≈315: widget={widget_bounds:?} video_area={video_bounds:?}"
+        assert!(
+            widget_bounds.right() <= dock_width + px(1.),
+            "the player must fit inside the {dock_width:?} dock: widget right {:?}",
+            widget_bounds.right()
+        );
+        assert!(
+            video_bounds.right() <= dock_width + px(1.),
+            "the video area must fit inside the {dock_width:?} dock: right {:?}",
+            video_bounds.right()
+        );
+        assert!(
+            video_bounds.size.width <= pane_available + px(1.),
+            "the video area must stay within the pane's ~{pane_available:?} available \
+             width, got {:?} — the pane inflated to its content's min-width",
+            video_bounds.size.width
         );
     }
 }
