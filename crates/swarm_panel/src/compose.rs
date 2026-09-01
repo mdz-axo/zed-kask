@@ -371,4 +371,294 @@ impl SwarmPanel {
                     }),
             )
     }
+
+    /// Create a new swarm from the compose form. Mode-aware: in Local mode the
+    /// swarm is created on the local substrate via `swarm_create_local_swarm`
+    /// (no cost, no consent — members are agent ids); in ABW mode the existing
+    /// consent-gated `swarm_create_swarm` path is used, hiring any listed agents.
+    fn create_swarm(&mut self, cx: &mut Context<Self>) {
+        // If editing an existing swarm, dispatch to the update path
+        // instead of creating a new one. This handles the case where
+        // the operator loaded a swarm into the compose form via the
+        // Edit button and is now saving changes.
+        if self.compose.editing_swarm_id.is_some() {
+            self.save_swarm_metadata(cx);
+            return;
+        }
+
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.compose.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let name = self.compose.name.read(cx).text(cx);
+        if name.trim().is_empty() {
+            self.compose.status = Some("Swarm name is required.".into());
+            cx.notify();
+            return;
+        }
+        // Warn on excessively long names — the server may truncate or reject,
+        // and a name over 128 chars is almost certainly a paste error.
+        if name.trim().chars().count() > 128 {
+            self.compose.status = Some("Swarm name is too long (max 128 characters).".into());
+            cx.notify();
+            return;
+        }
+        let mission = self.compose.mission.read(cx).text(cx);
+        let agents_raw = self.compose.agents.read(cx).text(cx);
+        let agents: Vec<String> = agents_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let is_local = self.compose.create_target == CreateTarget::Local;
+
+        // Launch gate: a swarm is not ready for the swarm-intelligence PDCA
+        // loop unless it has a mission (the task context SENSE derives
+        // required_transforms from) and at least MIN_AGENTS_TO_LAUNCH agents
+        // (below that, variety_coverage and diversity are trivially 0/1 and
+        // the loop converges without doing composition work). The operator
+        // must complete the compose form before creating.
+        if mission.trim().is_empty() {
+            self.compose.status = Some(
+                "Mission is required to launch a swarm. Describe what the swarm should do.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        if agents.len() < MIN_AGENTS_TO_LAUNCH {
+            self.compose.status = Some(format!(
+                "At least {} agents are required to launch a swarm. Add agents to the roster ({} provided).",
+                MIN_AGENTS_TO_LAUNCH,
+                agents.len()
+            ).into());
+            cx.notify();
+            return;
+        }
+
+        self.compose.busy = true;
+        self.compose.status = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            // Local mode: create the swarm on the local substrate directly — no
+            // cost, no consent tokens. Members are agent ids (the local swarm
+            // roster is ids; resolution happens at delegation time).
+            if is_local {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_local_swarm",
+                        json!({
+                            "name": name.trim(),
+                            "mission": mission.trim(),
+                            "agents": agents,
+                        }),
+                    )
+                    .await;
+                this.update_in(cx, |this, window, cx| {
+                    this.compose.busy = false;
+                    match result {
+                        Ok(output) => {
+                            // Extract the swarm_id from the response so we can
+                            // select it and navigate to Steer.
+                            let swarm_id = parse_tool_response(&output)
+                                .and_then(|c| c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string));
+                            this.compose.status =
+                                Some(format!("Local swarm '{}' created.", name.trim()).into());
+                            this.fetch_all(cx);
+                            // Navigate to Steer with the new swarm selected.
+                            if let Some(id) = swarm_id {
+                                this.selected_workspace = Some(id.clone());
+                                // Drop any existing Steer conversation so the
+                                // next construction bakes in the new swarm.
+                                this.steer.invalidate();
+                                this.set_mode(PanelMode::Steer, window, cx);
+                                // Queue the composition prompt for injection
+                                // after `render` constructs the Steer
+                                // conversation. The prompt carries the mode,
+                                // swarm_id, mission, and seeded agents so
+                                // swarm-intelligence SENSE can derive
+                                // required_transforms and assess the initial
+                                // roster.
+                                this.pending_composition_prompt =
+                                    Some(PendingCompositionPrompt {
+                                        swarm_id: id,
+                                        mission: mission.trim().to_string(),
+                                        agents: agents.clone(),
+                                        is_local: true,
+                                    });
+                            }
+                        }
+                        Err(err) => {
+                            this.compose.status = Some(format!("Create failed: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+            // Mint a consent token per agent to hire (each hire is gated).
+            // Fetch the real hire cost per agent first (BH-02): a hardcoded
+            // `credits_authorized: 5` would under-authorize an agent that
+            // costs 20, and the server's re-verify would reject the hire —
+            // but only after the workspace was already created. Fetching the
+            // cost up front lets us abort before any ABW mutation and pass
+            // the real ceiling to the consent token.
+            // A spend path must not silently degrade: if any consent mint
+            // fails, abort the create rather than hiring a partial team.
+            let mut consent_tokens = Vec::new();
+            let mut consent_failures = Vec::new();
+            for agent in &agents {
+                // Step 1: fetch the real hire cost.
+                let cost_result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_hire_cost",
+                        json!({ "agent_name": agent }),
+                    )
+                    .await;
+                let credits = match cost_result {
+                    Ok(output) => {
+                        parse_tool_response(&output).and_then(|c| {
+                            c.get("total_hire_cost").and_then(|v| v.as_u64())
+                        }).map(|c| c as u32)
+                    }
+                    Err(err) => {
+                        log::warn!("swarm-panel: hire cost fetch for '{agent}' failed: {err}");
+                        consent_failures.push(agent.clone());
+                        continue;
+                    }
+                };
+                let Some(credits) = credits else {
+                    log::warn!("swarm-panel: hire cost fetch for '{agent}' returned no total_hire_cost");
+                    consent_failures.push(agent.clone());
+                    continue;
+                };
+                // Step 2: mint the consent token with the real cost.
+                match invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_request_consent",
+                        json!({ "action": "hire", "target": agent, "credits_authorized": credits }),
+                    )
+                    .await
+                {
+                    Ok(output) => {
+                        let token = parse_tool_response(&output).and_then(|c| {
+                            c.get("consent_token")
+                                .and_then(|t| t.as_str())
+                                .map(str::to_string)
+                        });
+                        match token {
+                            Some(t) => consent_tokens.push(t),
+                            None => {
+                                log::warn!("swarm-panel: consent mint for '{agent}' returned no token");
+                                consent_failures.push(agent.clone());
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!("swarm-panel: consent mint for '{agent}' failed: {err}");
+                        consent_failures.push(agent.clone());
+                    }
+                }
+            }
+
+            // Abort on any consent failure — do not create a swarm with a
+            // silently under-consented team.
+            if !consent_failures.is_empty() {
+                this.update(cx, |this, cx| {
+                    this.compose.busy = false;
+                    this.compose.status = Some(
+                        format!(
+                            "Consent failed for {} — swarm not created.",
+                            consent_failures.join(", ")
+                        )
+                        .into(),
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_create_swarm",
+                    json!({
+                        "name": name.trim(),
+                        "mission": if mission.trim().is_empty() { None } else { Some(mission.trim()) },
+                        "agents": agents,
+                        "consent_tokens": consent_tokens,
+                    }),
+                )
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.compose.busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.spend.wallet_balance = Some(b);
+                        }
+                        // Surface any per-hire errors the server reported
+                        // (BH-07): the workspace is created but some hires may
+                        // have failed (cost re-verify, network drop). The
+                        // operator must not see "Swarm created." while all
+                        // hires silently failed.
+                        let hire_errors = parse_tool_response(&output)
+                            .and_then(|c| {
+                                c.get("hire_errors").and_then(|e| e.as_array()).cloned()
+                            })
+                            .unwrap_or_default();
+                        if hire_errors.is_empty() {
+                            this.compose.status =
+                                Some(format!("Swarm '{}' created.", name.trim()).into());
+                        } else {
+                            let failed: Vec<String> = hire_errors
+                                .iter()
+                                .filter_map(|e| {
+                                    e.get("agent").and_then(|a| a.as_str()).map(str::to_string)
+                                })
+                                .collect();
+                            this.compose.status = Some(format!(
+                                "Swarm '{}' created, but {} hire(s) failed: {}",
+                                name.trim(),
+                                failed.len(),
+                                failed.join(", ")
+                            ).into());
+                        }
+                        // Extract the workspace_id so we can select it and
+                        // navigate to Steer.
+                        let workspace_id = parse_tool_response(&output)
+                            .and_then(|c| c.get("workspace_id").and_then(|v| v.as_str()).map(str::to_string));
+                        this.fetch_all(cx);
+                        // Navigate to Steer with the new swarm selected.
+                        if let Some(id) = workspace_id {
+                            this.selected_workspace = Some(id.clone());
+                            this.steer.invalidate();
+                            this.set_mode(PanelMode::Steer, window, cx);
+                            // Queue the composition prompt for injection
+                            // (same as the local path).
+                            this.pending_composition_prompt =
+                                Some(PendingCompositionPrompt {
+                                    swarm_id: id,
+                                    mission: mission.trim().to_string(),
+                                    agents: agents.clone(),
+                                    is_local: false,
+                                });
+                        }
+                    }
+                    Err(err) => {
+                        this.compose.status = Some(format!("Create failed: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
 }

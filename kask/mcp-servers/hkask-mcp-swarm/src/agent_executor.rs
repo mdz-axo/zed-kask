@@ -160,7 +160,17 @@ impl AgentExecutor {
     /// Wire the capture sink. Called by the runtime when the event store
     /// opens; the drainer task is started there.
     pub(crate) fn set_capture(&self, sender: CaptureSender) {
-        *self.capture.lock().expect("capture lock poisoned") = Some(sender);
+        // Whole-value swap: a poisoned guard still guards the previous sender,
+        // which this call replaces — recover rather than cascade the original
+        // panic into the runtime's event-store wiring.
+        let mut capture = self.capture.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "capture lock poisoned — recovering to install the new capture sink"
+            );
+            poisoned.into_inner()
+        });
+        *capture = Some(sender);
     }
 
     /// Captures dropped on the send side (channel full). Shared with the

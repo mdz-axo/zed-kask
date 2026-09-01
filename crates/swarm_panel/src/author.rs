@@ -714,4 +714,202 @@ impl SwarmPanel {
                     }),
             )
     }
+
+    /// Create a new agent from the authoring form. Mode-aware: in Local mode
+    /// the agent is created on the local substrate via `swarm_create_local_agent`
+    /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
+    /// ABW catalogue via `swarm_create_agent` (field `agent_name`).
+    pub(crate) fn create_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.author.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let name = self.author.name.read(cx).text(cx);
+        let description = self.author.description.read(cx).text(cx);
+        let system_prompt = self.author.system_prompt.read(cx).text(cx);
+        if name.trim().is_empty() || system_prompt.trim().is_empty() {
+            self.author.status = Some("Name and system prompt are required.".into());
+            cx.notify();
+            return;
+        }
+        let is_local = self.author.create_target == CreateTarget::Local;
+        // Target-aware slug pre-validation. ABW requires `^[a-z0-9_]{3,64}$` —
+        // a server-side rejection after the operator has filled every field
+        // is a poor round-trip; validate up front so the error is
+        // field-specific and immediate. Local mode allows alphanumeric plus
+        // `-_.` (the local substrate sanitizes the id), but warn if the name
+        // contains chars that would be stripped.
+        let trimmed_name = name.trim();
+        if is_local {
+            if trimmed_name.is_empty() {
+                self.author.status = Some("Name is required.".into());
+                cx.notify();
+                return;
+            }
+            let has_strippable = trimmed_name
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'));
+            if has_strippable {
+                self.author.status = Some(
+                    "Name contains characters that will be stripped on the local \
+                     substrate (allowed: letters, digits, -, _, .)."
+                        .into(),
+                );
+                cx.notify();
+                return;
+            }
+        } else {
+            let len = trimmed_name.chars().count();
+            let valid = (3..=64).contains(&len)
+                && trimmed_name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+            if !valid {
+                self.author.status = Some(
+                    "Name must be 3-64 chars: lowercase letters, digits, underscores only \
+                     (ABW slug rule)."
+                        .into(),
+                );
+                cx.notify();
+                return;
+            }
+        }
+        let agent_type = self.author.agent_type.clone();
+        // The selector enforces the agent_type, but double-check — a stale
+        // form state (e.g. a future refactor) must not silently send an
+        // invalid type to the server.
+        if !matches!(agent_type.as_str(), "research" | "creative" | "meta") {
+            self.author.status =
+                Some("Agent type must be one of: research, creative, meta.".into());
+            cx.notify();
+            return;
+        }
+        let tags_raw = self.author.tags.read(cx).text(cx);
+        let tags: Vec<String> = tags_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // fermi contract fields: sample queries (one per line — they contain
+        // commas) and the accepts/produces composition ports (CSV).
+        let sample_queries: Vec<String> = self
+            .author
+            .sample_queries
+            .read(cx)
+            .text(cx)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let accepts: Vec<String> = self
+            .author
+            .accepts
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let produces: Vec<String> = self
+            .author
+            .produces
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let visibility = self.author.visibility.clone();
+        // Parse valence fields. Arousal and valence are optional floats.
+        let arousal_raw = self.author.valence_arousal.read(cx).text(cx);
+        let valence_raw = self.author.valence_valence.read(cx).text(cx);
+        let primary_affect = self.author.valence_primary_affect.read(cx).text(cx);
+        let traits_raw = self.author.valence_personality_traits.read(cx).text(cx);
+        let personality_traits: Vec<String> = traits_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // Build the valence object only if at least one field is non-empty.
+        let valence = if arousal_raw.trim().is_empty()
+            && valence_raw.trim().is_empty()
+            && primary_affect.trim().is_empty()
+            && personality_traits.is_empty()
+        {
+            None
+        } else {
+            Some(json!({
+                "arousal": arousal_raw.trim().parse::<f64>().ok(),
+                "valence": valence_raw.trim().parse::<f64>().ok(),
+                "primary_affect": if primary_affect.trim().is_empty() { None } else { Some(primary_affect.trim()) },
+                "personality_traits": personality_traits,
+            }))
+        };
+        self.author.busy = true;
+        self.author.status = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = if is_local {
+                invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_local_agent",
+                        json!({
+                            "agent_id": name.trim(),
+                            "agent_type": agent_type,
+                            "system_prompt": system_prompt.trim(),
+                            "description": description.trim(),
+                            "tags": tags,
+                            "visibility": visibility,
+                            "valence": valence,
+                            "sample_queries": sample_queries,
+                            "accepts": accepts,
+                            "produces": produces,
+                        }),
+                    )
+                    .await
+            } else {
+                invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_agent",
+                        json!({
+                            "agent_name": name.trim(),
+                            "agent_type": agent_type,
+                            "system_prompt": system_prompt.trim(),
+                            "description": description.trim(),
+                            "tags": tags,
+                            "visibility": visibility,
+                            "valence": valence,
+                            "sample_queries": sample_queries,
+                            "accepts": accepts,
+                            "produces": produces,
+                        }),
+                    )
+                    .await
+            };
+            this.update(cx, |this, cx| {
+                this.author.busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.spend.wallet_balance = Some(b);
+                        }
+                        this.author.status =
+                            Some(format!("Agent '{}' created.", name.trim()).into());
+                        // Refresh so the new agent appears in browse.
+                        this.fetch_all(cx);
+                    }
+                    Err(err) => {
+                        this.author.status = Some(format!("Create failed: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
