@@ -542,24 +542,26 @@ impl super::CyberneticsLoop {
         // efferent actions, synthesize a deficit of 1 and threshold of 1 — the
         // alert's purpose is advisory, not quantitative.
         let (deficit, threshold, message) = if is_native_escalate {
+            // Message composition lives in regulation_policy::alert_message —
+            // the single source of truth for this format. verify_impact's
+            // auto-resolve reconstruction calls the same helper; a local
+            // format! here would let the two sites drift and silently break
+            // the dedup-match.
+            let message = regulation_policy::alert_message(
+                &action.parameters.data,
+                &action.parameters.reason,
+            );
             match extract_deficit_threshold(&action.parameters.data) {
-                Some((d, t)) => {
-                    let msg = format!(
-                        "{} — value {} exceeds threshold {}",
-                        action.parameters.reason, d, t
-                    );
-                    (d, t, msg)
-                }
+                Some((d, t)) => (d, t, message),
                 None => {
                     // No quantitative data (NoData or non-threshold variant) —
-                    // use the reason string as the message. The (1, 1) sentinel
-                    // matches the advisory pattern used by efferent and plateau
-                    // alerts: "one issue, threshold one issue." The previous
-                    // (0, 0) fallback produced misleading error_context JSON
-                    // that triage read as "no deficit, no threshold" — indistinguishable
-                    // from a broken sense input returning zero.
-                    let msg = format!("{} — regulatory escalation", action.parameters.reason);
-                    (1, 1, msg)
+                    // the (1, 1) sentinel matches the advisory pattern used by
+                    // efferent and plateau alerts: "one issue, threshold one
+                    // issue." The previous (0, 0) fallback produced misleading
+                    // error_context JSON that triage read as "no deficit, no
+                    // threshold" — indistinguishable from a broken sense input
+                    // returning zero.
+                    (1, 1, message)
                 }
             }
         } else {
@@ -1031,18 +1033,14 @@ impl super::CyberneticsLoop {
             // escalation sits in the queue until manual review.
             if decision == ActionDecision::Accept && improved {
                 if let Some(ref sink) = self.alert_escalation_sink {
-                    // Build the alert message to match what was persisted by
-                    // route_action_as_alert. For native Escalate with typed
-                    // data, the message format is "reason — value D exceeds
-                    // threshold T". For the NoData fallback, it's "reason —
-                    // regulatory escalation". We check both patterns.
-                    let exact_msg = match extract_deficit_threshold(&action.parameters.data) {
-                        Some((d, t)) => format!(
-                            "{} — value {} exceeds threshold {}",
-                            action.parameters.reason, d, t
-                        ),
-                        None => format!("{} — regulatory escalation", action.parameters.reason),
-                    };
+                    // Reconstruct via the same helper route_action_as_alert
+                    // used to persist the message — auto_resolve_cleared
+                    // dedup-matches the exact string, so the two sites must
+                    // stay byte-identical.
+                    let exact_msg = regulation_policy::alert_message(
+                        &action.parameters.data,
+                        &action.parameters.reason,
+                    );
                     sink.auto_resolve_cleared(
                         &exact_msg,
                         &format!(
@@ -1444,6 +1442,97 @@ mod tests {
     fn loop_with_source<S: RolloutEventSource + 'static>(source: Arc<S>) -> CyberneticsLoop {
         let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
         CyberneticsLoop::new(ledger).with_rollout_event_source(source)
+    }
+
+    /// A recording `AlertEscalationSink` — captures the exact strings the
+    /// loop persisted and auto-resolved so the two message-format sites
+    /// can be asserted byte-identical.
+    struct RecordingEscalationSink {
+        persisted: Mutex<Vec<String>>,
+        auto_resolved: Mutex<Vec<String>>,
+    }
+
+    impl RecordingEscalationSink {
+        fn new() -> Self {
+            Self {
+                persisted: Mutex::new(Vec::new()),
+                auto_resolved: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl crate::AlertEscalationSink for RecordingEscalationSink {
+        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+            self.persisted
+                .lock()
+                .expect("persisted lock")
+                .push(output.to_string());
+        }
+        fn auto_resolve_cleared(&self, output: &str, _resolution_note: &str) {
+            self.auto_resolved
+                .lock()
+                .expect("auto_resolved lock")
+                .push(output.to_string());
+        }
+    }
+
+    /// Pins the byte-identity invariant between the two alert-message
+    /// sites: `route_action_as_alert` (persist) and `verify_impact`'s
+    /// `auto_resolve_cleared` (reconstruction). The reconstruction
+    /// dedup-matches the persisted string — any drift silently breaks
+    /// stuck-loop auto-resolution. Also pins the direction-aware verb for
+    /// a floor metric: energy remaining below its set-point must read
+    /// "fell below", never "exceeds".
+    #[test]
+    fn auto_resolve_reconstruction_matches_persisted_alert_message() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let sink = Arc::new(RecordingEscalationSink::new());
+            let mut regulation_loop =
+                CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+            regulation_loop.set_alert_escalation_sink(Some(sink.clone()));
+
+            let action = RegulatoryAction::new(
+                LoopId::Curation,
+                ActionType::Escalate,
+                RegulatoryActionParams::with_data(
+                    "energy_budget_low",
+                    RegulationData::EnergyBudgetLow {
+                        remaining_ratio: 0.15,
+                        set_point: 0.20,
+                    },
+                ),
+            );
+
+            // Site 1: route the alert — persists the message to the queue.
+            regulation_loop.route_action_as_alert(&action).await;
+
+            // Site 2: verify the same action. The re-sensed energy (1.0 —
+            // no agents registered) improved over the before-value (0.15),
+            // so the Accept decision fires auto-resolve.
+            regulation_loop.verify_impact(&[action]).await;
+
+            let persisted = sink.persisted.lock().expect("persisted lock").clone();
+            let auto_resolved = sink
+                .auto_resolved
+                .lock()
+                .expect("auto_resolved lock")
+                .clone();
+            assert_eq!(persisted.len(), 1, "site 1 must persist exactly one alert");
+            assert_eq!(
+                auto_resolved.len(),
+                1,
+                "site 2 must auto-resolve exactly once (Accept + improved)"
+            );
+            assert_eq!(
+                persisted[0], auto_resolved[0],
+                "auto-resolve reconstruction must match the persisted message byte-for-byte"
+            );
+            assert_eq!(
+                persisted[0],
+                "energy_budget_low — value 15 fell below threshold 20"
+            );
+        });
     }
 
     fn rollout_impact_check(rollout_id: &str, metric: &str) -> RegulatoryAction {

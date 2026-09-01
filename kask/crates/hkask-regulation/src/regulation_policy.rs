@@ -445,6 +445,36 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
     }
 }
 
+/// Compose the alert message for a native-Escalate action from its typed
+/// data and reason — the single source of truth for this format.
+///
+/// `route_action_as_alert` persists this exact string to the escalation
+/// queue, and `verify_impact`'s `auto_resolve_cleared` reconstruction must
+/// match it byte-for-byte to find the pending escalation — drift there
+/// silently breaks stuck-loop auto-resolution. Both sites call this
+/// helper so the identity is structural, not comment-enforced.
+///
+/// The verb follows the variant's bad direction (see
+/// `RegulationData::below_threshold_is_bad`): floor metrics read
+/// "fell below", ceiling metrics read "exceeds". Variants without a
+/// threshold pair fall back to the advisory form.
+pub(crate) fn alert_message(data: &RegulationData, reason: &str) -> String {
+    match extract_deficit_threshold(data) {
+        Some((deficit, threshold)) => {
+            let verb = if data.below_threshold_is_bad() {
+                "fell below"
+            } else {
+                "exceeds"
+            };
+            format!(
+                "{} — value {} {} threshold {}",
+                reason, deficit, verb, threshold
+            )
+        }
+        None => format!("{} — regulatory escalation", reason),
+    }
+}
+
 /// Scale a rate or ratio in [0.0, 1.0] to whole percent, rounding to
 /// nearest.
 ///
@@ -553,6 +583,59 @@ mod tests {
                 new_budget: 1000,
             }),
             None
+        );
+    }
+
+    /// Pins the direction-aware verb in `alert_message`: floor metrics
+    /// (the deviation is the value falling below the threshold) must read
+    /// "fell below" — the previous shared "exceeds" verb lied for them,
+    /// reading a reliability of 0 against a 0.80 floor as
+    /// "value 0 exceeds threshold 80".
+    #[test]
+    fn alert_message_verb_follows_metric_direction() {
+        // Floor metrics: below-threshold is the bad direction.
+        let data = RegulationData::ToolReliabilityDegraded {
+            reliability: 0.0,
+            threshold: 0.80,
+        };
+        assert_eq!(
+            alert_message(&data, "tool_reliability_degraded"),
+            "tool_reliability_degraded — value 0 fell below threshold 80"
+        );
+
+        let data = RegulationData::EnergyBudgetLow {
+            remaining_ratio: 0.15,
+            set_point: 0.20,
+        };
+        assert_eq!(
+            alert_message(&data, "energy_budget_low"),
+            "energy_budget_low — value 15 fell below threshold 20"
+        );
+
+        // Ceiling metrics: above-threshold is the bad direction — the
+        // verb stays "exceeds".
+        let data = RegulationData::ErrorRateExceeded {
+            error_rate: 0.45,
+            threshold: 0.30,
+        };
+        assert_eq!(
+            alert_message(&data, "error_rate_exceeded"),
+            "error_rate_exceeded — value 45 exceeds threshold 30"
+        );
+
+        let data = RegulationData::VarietyDeficitExceeded {
+            deficit: 100.0,
+            threshold: 19.0,
+        };
+        assert_eq!(
+            alert_message(&data, "variety_deficit_exceeded"),
+            "variety_deficit_exceeded — value 100 exceeds threshold 19"
+        );
+
+        // No threshold pair — the advisory fallback carries no verb.
+        assert_eq!(
+            alert_message(&RegulationData::NoData, "some_reason"),
+            "some_reason — regulatory escalation"
         );
     }
 }

@@ -139,6 +139,27 @@ impl RegulationData {
             _ => None,
         }
     }
+
+    /// Whether this variant's deviation is the value falling *below* its
+    /// threshold (a floor metric), as opposed to rising above it (a ceiling
+    /// metric).
+    ///
+    /// Alert wording must follow the direction or the message lies about
+    /// the deviation: tool reliability and energy remaining are floors, and
+    /// the previous shared "exceeds" verb read a reliability of 0 against
+    /// a 0.80 floor as "value 0 exceeds threshold 80". Only meaningful for
+    /// variants that carry a threshold pair (those where
+    /// `regulation_policy::extract_deficit_threshold` returns `Some`) —
+    /// the rest never reach verb selection.
+    pub fn below_threshold_is_bad(&self) -> bool {
+        matches!(
+            self,
+            RegulationData::ToolReliabilityDegraded { .. }
+                | RegulationData::EnergyBudgetLow { .. }
+                | RegulationData::BudgetGuardEscalation { .. }
+                | RegulationData::EnergyDepletionAutoAdjust { .. }
+        )
+    }
 }
 
 /// Typed parameters for a loop action.
