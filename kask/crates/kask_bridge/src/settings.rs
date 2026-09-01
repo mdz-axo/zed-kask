@@ -233,6 +233,16 @@ pub struct KaskMemorySettings {
     /// its decay clock. Default: 180 (≈6 months). Overridden by the
     /// `HKASK_MEMORY_LIFE_DAYS` env var.
     pub memory_life_days: f64,
+
+    /// ALWAYS-mode distillation cadence in seconds (0 = disabled). The
+    /// curator server's background pass distills finished threads into
+    /// candidate lesson h_mems on this cadence — additive-only, at the
+    /// 0.5 confidence floor, never editing existing memories.
+    pub distillation_cadence_secs: u64,
+
+    /// A thread counts as finished when its newest turn is at least this
+    /// many seconds old — the distillation pass skips younger threads.
+    pub distillation_idle_secs: u64,
 }
 
 impl Default for KaskMemorySettings {
@@ -244,6 +254,8 @@ impl Default for KaskMemorySettings {
             recall_min_confidence: 0.3,
             auto_inject: true,
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
+            distillation_cadence_secs: 600,
+            distillation_idle_secs: 300,
         }
     }
 }
@@ -685,6 +697,7 @@ impl KaskSettings {
         crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_email_env(&self.curator.email, &mut env);
+        crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
         crate::mcp_env::emit_operator_override_env(&mut env);
         env
     }
@@ -765,6 +778,12 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
                 .unwrap_or(default.recall_min_confidence),
             auto_inject: c.auto_inject.unwrap_or(default.auto_inject),
             memory_life_days: c.memory_life_days.unwrap_or(default.memory_life_days),
+            distillation_cadence_secs: c
+                .distillation_cadence_secs
+                .unwrap_or(default.distillation_cadence_secs),
+            distillation_idle_secs: c
+                .distillation_idle_secs
+                .unwrap_or(default.distillation_idle_secs),
         }
     }
 }
@@ -1096,6 +1115,8 @@ mod tests {
         assert_eq!(settings.curator.algedonic_threshold, 0.8);
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
+        assert_eq!(settings.memory.distillation_cadence_secs, 600);
+        assert_eq!(settings.memory.distillation_idle_secs, 300);
         assert!(!settings.condenser.auto_compress_tool_results);
         assert_eq!(settings.condenser.profile, "normal");
         assert_eq!(settings.corpus.embedding_dim, 1024);
@@ -1146,6 +1167,8 @@ mod tests {
                 recall_min_confidence: None,
                 auto_inject: None,
                 memory_life_days: None,
+                distillation_cadence_secs: None,
+                distillation_idle_secs: None,
             }),
             ..Default::default()
         };

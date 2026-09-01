@@ -209,6 +209,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // IPC bridge establishment timeout (published alongside the
             // socket path by `build_mcp_server_env`).
             "HKASK_INFERENCE_TIMEOUT_SECS",
+            // ALWAYS-mode distillation pass cadence/idle — emitted by
+            // `mcp_env()` from `kask.memory` settings when they differ
+            // from the defaults. The curator server's background pass
+            // reads them; without the allowlist entry the per-server
+            // filter would silently drop an operator override.
+            "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
+            "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
         ]),
     },
     BuiltinMcpServer {

@@ -13,8 +13,8 @@
 
 use crate::settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskGeneralSettings, KaskMediaSettings, KaskModelsSettings, KaskPredictionMarketsSettings,
-    KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
+    KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings, KaskModelsSettings,
+    KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -51,6 +51,30 @@ pub(crate) fn emit_curator_webid_env(env: &mut std::collections::HashMap<String,
     // from this mapping and fall through to their own identity resolution.
     if let Ok(curator_webid) = std::env::var("HKASK_CURATOR_WEBID") {
         env.insert("HKASK_WEBID".to_string(), curator_webid);
+    }
+}
+
+/// Emit the ALWAYS-mode distillation cadence/idle settings for the curator
+/// server. Emitted only when they differ from the defaults (the condenser
+/// env pattern) — the curator server's own defaults apply otherwise. The
+/// per-server allowlist in `mcp_servers.rs` filters these from every other
+/// server.
+pub(crate) fn emit_curator_distillation_env(
+    memory: &KaskMemorySettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    let default = KaskMemorySettings::default();
+    if memory.distillation_cadence_secs != default.distillation_cadence_secs {
+        env.insert(
+            "HKASK_MEMORY_DISTILLATION_CADENCE_SECS".to_string(),
+            memory.distillation_cadence_secs.to_string(),
+        );
+    }
+    if memory.distillation_idle_secs != default.distillation_idle_secs {
+        env.insert(
+            "HKASK_MEMORY_DISTILLATION_IDLE_SECS".to_string(),
+            memory.distillation_idle_secs.to_string(),
+        );
     }
 }
 

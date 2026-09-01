@@ -404,6 +404,19 @@ impl MemoryStore {
             .map_err(Into::into)
     }
 
+    /// Query h_mems by entity prefix observed at or after `since`, without
+    /// decay or dedup. The curator's distillation pass uses this to find
+    /// threads with un-distilled turns without loading the whole store.
+    pub fn h_mems_by_prefix_since(
+        &self,
+        prefix: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store
+            .query_by_entity_prefix_since(prefix, &since.to_rfc3339(), 100_000)
+            .map_err(Into::into)
+    }
+
     /// Query by attribute, with confidence decay applied.
     pub fn query_by_attribute(&self, attribute: &str) -> Result<Vec<HMem>, MemoryStoreError> {
         let h_mems = self.h_mem_store.query_by_attribute(attribute)?;

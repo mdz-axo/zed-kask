@@ -1726,6 +1726,13 @@ pub struct KaskMemorySettingsContent {
     /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
     /// its decay clock. Overridden by the `HKASK_MEMORY_LIFE_DAYS` env var.
     pub memory_life_days: Option<f64>,
+    /// ALWAYS-mode distillation cadence in seconds (0 = disabled). The
+    /// curator server's background pass distills finished threads into
+    /// candidate lesson h_mems on this cadence.
+    pub distillation_cadence_secs: Option<u64>,
+    /// A thread counts as finished when its newest turn is at least this
+    /// many seconds old — the distillation pass skips younger threads.
+    pub distillation_idle_secs: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

@@ -337,6 +337,35 @@ impl HMemStore {
             ],
         )
     }
+
+    /// Query h_mems by entity prefix observed at or after `since`.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// pre:  prefix is non-empty; `since` is RFC 3339 in the same format
+    ///       `store` writes for `valid_from` (`DateTime::to_rfc3339`), so
+    ///       lexicographic order equals chronological order
+    /// post: returns Vec of matching h_mems, oldest first — the ascending
+    ///       order the distillation pass relies on when advancing its
+    ///       per-thread watermark to the newest pending turn
+    pub fn query_by_entity_prefix_since(
+        &self,
+        prefix: &str,
+        since: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE entity LIKE ?1 AND valid_to IS NULL AND valid_from >= ?2 \
+                 ORDER BY valid_from ASC LIMIT ?3"
+            ),
+            &[
+                DbValue::Text(format!("{}%", prefix)),
+                DbValue::Text(since.to_string()),
+                DbValue::Integer(limit as i64),
+            ],
+        )
+    }
     /// Query h_mems by entity and attribute.
     ///
     /// expect: "The system provides durable storage for h_mem data"

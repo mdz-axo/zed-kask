@@ -11,6 +11,7 @@
 //! semantic memory search, memory recall, spec drift detection,
 //! and algedonic event history.
 
+pub(crate) mod distillation;
 pub(crate) mod governance;
 pub mod types;
 
@@ -1490,6 +1491,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         env!("CARGO_PKG_VERSION"),
         move |ctx: hkask_mcp_server::server::ServerContext| {
             let db = Arc::new(CuratorDb::from_context(&ctx));
+            // ALWAYS-mode distillation: the background pass shares the
+            // server's DB handle, inference port, and webid, so lessons
+            // enter through the same evidence + 0.5-floor invariants the
+            // memory_insert tool enforces.
+            distillation::spawn_distillation_timer(
+                Arc::clone(&db),
+                inference_port.clone(),
+                ctx.webid,
+            );
             Ok(CuratorServer::new(ctx.webid, db, inference_port.clone()))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
