@@ -99,6 +99,32 @@ impl FfmpegRunner {
         self.temp_dir.join(format!("{}.{}", name, extension))
     }
 
+    /// Run a configured ffmpeg command to completion, surfacing ffmpeg's
+    /// own stderr in the failure. Never `status()` with piped stdio:
+    /// tokio's `status()` drops the piped read ends ("ensure we close
+    /// any stdio handles"), so the child's first stderr write — ffmpeg's
+    /// startup banner — hits a closed pipe and the process dies of
+    /// SIGPIPE before doing any work. Observed live as "exit code: None"
+    /// with an empty output directory on every video render. `output()`
+    /// drains the pipes instead, and its captured stderr becomes the
+    /// failure reason.
+    async fn run_to_completion(
+        mut command: Command,
+        what: &'static str,
+    ) -> Result<(), crate::MediaError> {
+        let output = command.output().await.map_err(|e| {
+            crate::MediaError::FfmpegFailed(format!("ffmpeg {what} spawn failed: {e}"))
+        })?;
+        if !output.status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "ffmpeg {what} failed with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        Ok(())
+    }
+
     /// Probe a video file for metadata (duration, width, height, codec, fps).
     /// Uses `ffprobe` (bundled with ffmpeg) with JSON output.
     pub async fn probe(&self, input: &str) -> Result<VideoProbeInfo, crate::MediaError> {
@@ -197,7 +223,8 @@ impl FfmpegRunner {
         let output = self.output_path("mp4");
         let duration = end_sec - start_sec;
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
             .arg("-to")
@@ -208,21 +235,8 @@ impl FfmpegRunner {
             .arg("copy")
             .arg("-avoid_negative_ts")
             .arg("make_zero")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!("ffmpeg clip spawn failed: {}", e))
-            })?;
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg clip failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(&output);
+        Self::run_to_completion(command, "clip").await?;
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, output = %output.display(), "Video clipped");
         Ok(output)
@@ -252,7 +266,8 @@ impl FfmpegRunner {
             fps, width
         );
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
             .arg("-t")
@@ -261,24 +276,11 @@ impl FfmpegRunner {
             .arg(input)
             .arg("-filter_complex")
             .arg(&filter)
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!("ffmpeg GIF spawn failed: {}", e))
-            })?;
+            .arg(&output);
+        Self::run_to_completion(command, "GIF conversion").await?;
 
         // Clean up palette temp file
         let _ = std::fs::remove_file(&palette);
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg GIF conversion failed with exit code: {:?}",
-                status.code()
-            )));
-        }
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration_sec, width = %width, fps = %fps, output = %output.display(), "GIF created");
         Ok(output)
@@ -320,28 +322,16 @@ impl FfmpegRunner {
             escaped_text, font_size, y_pos
         );
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-i")
             .arg(input)
             .arg("-vf")
             .arg(&drawtext)
             .arg("-c:a")
             .arg("copy")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!("ffmpeg caption spawn failed: {}", e))
-            })?;
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg caption failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(&output);
+        Self::run_to_completion(command, "caption").await?;
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, text = %text, output = %output.display(), "Caption added");
         Ok(output)
@@ -378,7 +368,8 @@ impl FfmpegRunner {
             ));
         };
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-f")
             .arg(input_format)
             .arg("-i")
@@ -389,21 +380,8 @@ impl FfmpegRunner {
             .arg("1") // mono
             .arg("-ar")
             .arg("16000") // 16kHz sample rate (good for Whisper)
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!("ffmpeg audio capture spawn failed: {}", e))
-            })?;
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg audio capture failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(&output);
+        Self::run_to_completion(command, "audio capture").await?;
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", duration = %duration_secs, output = %output.display(), "Audio captured");
         Ok(output)
@@ -444,7 +422,8 @@ impl FfmpegRunner {
         std::fs::write(&list_path, list_content)
             .map_err(|e| crate::MediaError::Io(format!("Failed to write image list: {}", e)))?;
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-f")
             .arg("concat")
             .arg("-safe")
@@ -461,26 +440,10 @@ impl FfmpegRunner {
             })
             .arg("-pix_fmt")
             .arg("yuv420p")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!(
-                    "ffmpeg images_to_video spawn failed: {}",
-                    e
-                ))
-            })?;
+            .arg(&output);
+        Self::run_to_completion(command, "images_to_video").await?;
 
         let _ = std::fs::remove_file(&list_path);
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg images_to_video failed with exit code: {:?}",
-                status.code()
-            )));
-        }
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", image_count = image_paths.len(), fps = %fps, output = %output.display(), "Video created from images");
         Ok(output)
@@ -511,7 +474,8 @@ impl FfmpegRunner {
         std::fs::write(&list_path, list_content)
             .map_err(|e| crate::MediaError::Io(format!("Failed to write concat list: {}", e)))?;
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-f")
             .arg("concat")
             .arg("-safe")
@@ -520,23 +484,10 @@ impl FfmpegRunner {
             .arg(&list_path)
             .arg("-c")
             .arg("copy")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!("ffmpeg concat spawn failed: {}", e))
-            })?;
+            .arg(&output);
+        Self::run_to_completion(command, "concat").await?;
 
         let _ = std::fs::remove_file(&list_path);
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg concat failed with exit code: {:?}",
-                status.code()
-            )));
-        }
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = video_paths.len(), output = %output.display(), "Videos concatenated");
         Ok(output)
@@ -558,31 +509,16 @@ impl FfmpegRunner {
         let prefix = uuid::Uuid::new_v4().to_string();
         let pattern = self.temp_dir.join(format!("{}_%03d.jpg", prefix));
 
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-i")
             .arg(input)
             .arg("-vf")
             .arg(format!("fps=1/{},scale=640:-1", interval_sec))
             .arg("-vframes")
             .arg(max_frames.to_string())
-            .arg(&pattern)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .await
-            .map_err(|e| {
-                crate::MediaError::FfmpegFailed(format!(
-                    "ffmpeg keyframe extraction spawn failed: {}",
-                    e
-                ))
-            })?;
-
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg keyframe extraction failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(&pattern);
+        Self::run_to_completion(command, "keyframe extraction").await?;
 
         // Collect generated frame files
         let mut frames = Vec::new();
@@ -689,5 +625,90 @@ impl FfmpegRunner {
         }
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = audio_paths.len(), output = %output.display(), "Audio concatenated");
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The render path's ffmpeg primitives must run real ffmpeg to
+    /// completion. Pins the SIGPIPE regression: tokio's `status()`
+    /// dropped the piped stderr read end, so the child died on its
+    /// banner write before producing any output ("exit code: None",
+    /// empty temp dir) — every live video render failed while the
+    /// suite stayed green because no test ran real ffmpeg.
+    #[tokio::test]
+    async fn clip_runs_real_ffmpeg_to_completion() {
+        let runner = FfmpegRunner::detect();
+        if !runner.available {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        runner.ensure_temp_dir().expect("temp dir");
+        let source = runner.output_path("mp4");
+        let mut generate = Command::new(&runner.ffmpeg_path);
+        generate
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("testsrc=duration=1:size=128x96:rate=10")
+            .arg("-c:v")
+            .arg("mpeg4")
+            .arg("-y")
+            .arg(&source);
+        let generated = generate.output().await.expect("generate test source");
+        assert!(
+            generated.status.success(),
+            "test source generation failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let clipped = runner
+            .clip(source.to_str().expect("utf-8 temp path"), 0.2, 0.8)
+            .await
+            .expect("clip must run ffmpeg to completion");
+        let size = clipped.metadata().map(|m| m.len()).unwrap_or(0);
+        assert!(size > 0, "clipped output is empty");
+    }
+
+    /// The reel render concatenates stream-copied clips — the second
+    /// primitive of the render path, same regression class as clip.
+    #[tokio::test]
+    async fn concat_runs_real_ffmpeg_to_completion() {
+        let runner = FfmpegRunner::detect();
+        if !runner.available {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        runner.ensure_temp_dir().expect("temp dir");
+        let sources: Vec<PathBuf> = (0..2).map(|_| runner.output_path("mp4")).collect();
+        for target in &sources {
+            let mut generate = Command::new(&runner.ffmpeg_path);
+            generate
+                .arg("-f")
+                .arg("lavfi")
+                .arg("-i")
+                .arg("testsrc=duration=1:size=128x96:rate=10")
+                .arg("-c:v")
+                .arg("mpeg4")
+                .arg("-y")
+                .arg(target);
+            let generated = generate.output().await.expect("generate test source");
+            assert!(
+                generated.status.success(),
+                "test source generation failed: {}",
+                String::from_utf8_lossy(&generated.stderr)
+            );
+        }
+        let paths: Vec<String> = sources
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let concatenated = runner
+            .concat(&paths)
+            .await
+            .expect("concat must run ffmpeg to completion");
+        let size = concatenated.metadata().map(|m| m.len()).unwrap_or(0);
+        assert!(size > 0, "concatenated output is empty");
     }
 }

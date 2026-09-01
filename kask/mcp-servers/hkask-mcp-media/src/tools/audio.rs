@@ -1,6 +1,34 @@
 //! Audio tools — voice design, speech generation, transcription, audio capture.
 use crate::*;
 
+/// Parse provider word-timing entries into `TimedWord`s. Whisper-style
+/// providers prefix tokens with the separator (" And"); the
+/// rendered-form contract (words joined by single spaces, word-boundary
+/// aligned) requires clean tokens, so trim each token and drop
+/// whitespace-only entries. Storing space-prefixed tokens verbatim made
+/// every quote no_match (observed live: `educt_locate` could not find
+/// real passages in a verbatim-stored whisper bundle).
+fn timed_words_from_provider(entries: &[serde_json::Value]) -> Vec<TimedWord> {
+    entries
+        .iter()
+        .filter_map(|w| {
+            let word = w.get("word")?.as_str()?.trim().to_string();
+            if word.is_empty() {
+                return None;
+            }
+            Some(TimedWord {
+                word,
+                start_ms: (w.get("start")?.as_f64()? * 1000.0) as u64,
+                end_ms: (w.get("end")?.as_f64()? * 1000.0) as u64,
+                confidence: w
+                    .get("confidence")
+                    .and_then(|c| c.as_f64())
+                    .map(hkask_types::Confidence::new),
+            })
+        })
+        .collect()
+}
+
 #[tool_router(router = audio_router, vis = "pub")]
 impl MediaServer {
     // ── Voice tools ──────────────────────────────────────────────────────────
@@ -164,21 +192,7 @@ impl MediaServer {
             let words: Vec<TimedWord> = raw
                 .get("words")
                 .and_then(|w| w.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|w| {
-                            Some(TimedWord {
-                                word: w.get("word")?.as_str()?.to_string(),
-                                start_ms: (w.get("start")?.as_f64()? * 1000.0) as u64,
-                                end_ms: (w.get("end")?.as_f64()? * 1000.0) as u64,
-                                confidence: w
-                                    .get("confidence")
-                                    .and_then(|c| c.as_f64())
-                                    .map(hkask_types::Confidence::new),
-                            })
-                        })
-                        .collect()
-                })
+                .map(|arr| timed_words_from_provider(arr))
                 .unwrap_or_default();
             let segments: Vec<TranscriptSegment> = raw
                 .get("segments")
@@ -475,5 +489,30 @@ impl MediaServer {
             }))
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whisper-style providers prefix tokens with the separator
+    /// (" And"); ingestion must emit clean tokens (the rendered-form
+    /// contract) and drop whitespace-only entries.
+    #[test]
+    fn timed_words_from_provider_trims_separator_prefixes() {
+        let entries = serde_json::json!([
+            {"word": " And", "start": 0.0, "end": 0.379},
+            {"word": " ", "start": 0.379, "end": 0.4},
+            {"word": "so", "start": 0.379, "end": 0.68}
+        ]);
+        let words = timed_words_from_provider(entries.as_array().expect("array"));
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].word, "And");
+        assert_eq!(words[0].start_ms, 0);
+        assert_eq!(words[0].end_ms, 379);
+        assert_eq!(words[1].word, "so");
+        assert_eq!(words[1].start_ms, 379);
+        assert_eq!(words[1].end_ms, 680);
     }
 }
