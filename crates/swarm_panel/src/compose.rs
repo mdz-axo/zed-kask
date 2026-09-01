@@ -6,12 +6,20 @@
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
+use hkask_types::tool_response::parse_tool_response;
+use serde_json::json;
 use ui::{
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
     prelude::*,
 };
 
+use crate::CreateTarget;
+use crate::MIN_AGENTS_TO_LAUNCH;
+use crate::PanelMode;
+use crate::PendingCompositionPrompt;
+use crate::SWARM_SERVER;
 use crate::SwarmPanel;
+use crate::parse::extract_wallet_balance;
 use crate::status_is_warning;
 
 /// State for the swarm-composition surface.

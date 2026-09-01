@@ -16,12 +16,17 @@
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
+use hkask_types::tool_response::parse_tool_response;
+use serde_json::json;
 use ui::{
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
     prelude::*,
 };
 
+use crate::PendingActionsView;
+use crate::SWARM_SERVER;
 use crate::SwarmPanel;
+use crate::parse::AgentSource;
 use crate::status_is_warning;
 
 /// State for the App authoring/detail surface.

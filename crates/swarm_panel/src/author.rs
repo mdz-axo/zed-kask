@@ -5,12 +5,16 @@
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
+use serde_json::json;
 use ui::{
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
     prelude::*,
 };
 
+use crate::CreateTarget;
+use crate::SWARM_SERVER;
 use crate::SwarmPanel;
+use crate::parse::extract_wallet_balance;
 use crate::status_is_warning;
 
 /// State for the agent-authoring surface.
