@@ -173,6 +173,15 @@ impl VarietyTracker {
     }
 
     pub(crate) fn deficit(&self, expected_variety: u64) -> u64 {
+        // An empty window means the domain is idle — no states observed
+        // since the last reset. Idle is not deficit: counting a resting
+        // domain at full deficit made quiet periods read as maximal
+        // variety loss (the OutcomeTracker::CONFIG_GAP_KINDS precedent
+        // excludes environment gaps from success-rate math for the same
+        // reason — a missing observation is not a negative one).
+        if self.counts.is_empty() {
+            return 0;
+        }
         expected_variety.saturating_sub(self.variety())
     }
 
@@ -544,7 +553,14 @@ impl RegulationLedger {
             .sum();
         {
             let mgr = state.algedonic.read();
-            reg_health_check(&mgr, ema_sum)
+            // Current deficit from the live trackers — a level. The previous
+            // implementation summed the alert log, which accumulates an
+            // entry per check cycle and can only grow: any threshold
+            // compared against it tripped forever, and outcome-quality
+            // alerts (deficit = failure-rate %) leaked into the variety
+            // metric through the shared log.
+            let overall_deficit = mgr.current_total_deficit(state.tracker.counters());
+            reg_health_check(&mgr, ema_sum, overall_deficit)
         }
     }
 

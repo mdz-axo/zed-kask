@@ -475,6 +475,23 @@ pub(crate) fn alert_message(data: &RegulationData, reason: &str) -> String {
     }
 }
 
+/// Extract the stable condition key from an alert message composed by
+/// [`alert_message`].
+///
+/// `alert_message` embeds the per-cycle value ("{reason} — value {v} …" or
+/// "{reason} — regulatory escalation"), so two messages for the same
+/// persistently re-sensed condition differ every cycle and never
+/// exact-match. Dedup, supersede, and auto-resolve must key on the
+/// condition — the reason prefix before the " — " separator. Messages
+/// without the separator are their own condition (exact match, the
+/// previous behavior).
+pub fn alert_condition(message: &str) -> &str {
+    match message.find(" — ") {
+        Some(idx) => &message[..idx],
+        None => message,
+    }
+}
+
 /// Scale a rate or ratio in [0.0, 1.0] to whole percent, rounding to
 /// nearest.
 ///
@@ -591,6 +608,32 @@ mod tests {
     /// "fell below" — the previous shared "exceeds" verb lied for them,
     /// reading a reliability of 0 against a 0.80 floor as
     /// "value 0 exceeds threshold 80".
+    /// `alert_condition` extracts the stable reason prefix that dedup,
+    /// supersede, and auto-resolve key on — the per-cycle value after the
+    /// separator must not participate in matching. Two messages for the
+    /// same condition sensed in different cycles must yield the same key.
+    #[test]
+    fn alert_condition_strips_per_cycle_value() {
+        assert_eq!(
+            alert_condition("variety_deficit_exceeded — value 2149 exceeds threshold 20"),
+            "variety_deficit_exceeded"
+        );
+        assert_eq!(
+            alert_condition("variety_deficit_exceeded — value 53 exceeds threshold 20"),
+            "variety_deficit_exceeded"
+        );
+        // Advisory form: the reason is still the condition.
+        assert_eq!(
+            alert_condition("algedonic_events_exceeded — regulatory escalation"),
+            "algedonic_events_exceeded"
+        );
+        // No separator: exact-match behavior is preserved.
+        assert_eq!(
+            alert_condition("Variety deficit 150 exceeds threshold 100"),
+            "Variety deficit 150 exceeds threshold 100"
+        );
+    }
+
     #[test]
     fn alert_message_verb_follows_metric_direction() {
         // Floor metrics: below-threshold is the bad direction.

@@ -93,19 +93,23 @@ pub trait AlertEscalationSink: Send + Sync {
     /// persistence is best-effort, never a correctness path.
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str);
 
-    /// Check whether a pending alert with the given `output` already exists
-    /// in the escalation queue.
+    /// Check whether a pending alert with the same condition as `output`
+    /// already exists in the escalation queue.
     ///
     /// Used for deduplication at the source: the regulation loop senses the
     /// same deficit every cycle (e.g. an unwired efferent action) and would
-    /// otherwise re-escalate every tick. The caller checks this before
-    /// routing an alert — if a pending alert with the same output exists, the
-    /// entire routing (log, live channel, persist, archive) is skipped. When
-    /// the operator resolves or dismisses the original, the next cycle
+    /// otherwise re-escalate every tick. Matching is on the condition key
+    /// (`alert_condition` — the reason prefix before the " — " separator),
+    /// not the full output: the per-cycle value embedded after the separator
+    /// changes every tick, so exact-match dedup never hits for a
+    /// persistently re-sensed condition. The caller checks this before
+    /// routing an alert — if a pending alert with the same condition exists,
+    /// the entire routing (log, live channel, persist, archive) is skipped.
+    /// When the operator resolves or dismisses the original, the next cycle
     /// escalates again.
     ///
     /// Default returns `false` (no dedup). Implementations backed by a
-    /// durable queue should query for pending alerts with this output.
+    /// durable queue should query for pending alerts with this condition.
     /// Errors are logged by the caller and never propagated.
     fn has_pending_alert(&self, _output: &str) -> bool {
         false
@@ -116,8 +120,12 @@ pub trait AlertEscalationSink: Send + Sync {
     ///
     /// Called by `verify_impact` when an `Accept` ImpactReport is produced for
     /// a previously-escalated condition — the metric improved, so the
-    /// escalation is stale. The implementation should resolve the pending
-    /// escalation matching `output` with the provided resolution note.
+    /// escalation is stale. The implementation should resolve pending
+    /// escalations matching the condition key of `output` (`alert_condition`)
+    /// with the provided resolution note. Condition matching (not exact
+    /// output matching) is required because the persisted escalation's
+    /// embedded value differs from the reconstruction's — the two were
+    /// sensed in different cycles.
     ///
     /// This closes the stuck-loop pattern: without auto-resolve, the loop
     /// senses a deviation, escalates it, the condition self-resolves, but the
@@ -283,12 +291,22 @@ impl AlgedonicManager {
     ///
     /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
     /// pre: counter is a valid VarietyTracker; domain is non-empty
-    /// post: returns Some(&RuntimeAlert) if deficit exceeds expected, None if healthy
+    /// post: returns Some(&RuntimeAlert) if the active domain's deficit
+    ///       exceeds expected, None if healthy or idle (no observations
+    ///       in the current window)
     pub(crate) fn check(
         &mut self,
         counter: &VarietyTracker,
         domain: &str,
     ) -> Option<&RuntimeAlert> {
+        // Idle gate: a domain with no observations in the current window
+        // is at rest, not deficient. Without this gate every check on an
+        // idle domain pushes a max-deficit alert into the diagnostic log,
+        // growing it by the full expected variety per idle domain per
+        // cycle.
+        if counter.variety() == 0 {
+            return None;
+        }
         let expected = self
             .expected_variety
             .get(domain)
@@ -356,11 +374,32 @@ impl AlgedonicManager {
         self.alerts.iter().filter(|a| a.is_critical()).collect()
     }
 
-    /// Get total deficit across all alerts.
+    /// Current total variety deficit across live trackers — a level, not an
+    /// accumulation.
+    ///
+    /// Each tracked domain contributes `expected − observed` distinct states
+    /// for the current window; idle domains (empty window) contribute zero
+    /// via `VarietyTracker::deficit`. This is what `LedgerHealth::
+    /// overall_deficit` reports. The previous implementation summed the
+    /// alert log, whose entries accumulate one per check cycle — a
+    /// monotonically growing integral that no threshold could ever clear,
+    /// and a channel through which outcome-quality alerts (deficit =
+    /// failure-rate %) leaked into the variety metric. The log remains
+    /// diagnostics-only.
     ///
     /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
-    pub(crate) fn total_deficit(&self) -> u64 {
-        self.alerts.iter().map(|a| a.deficit).sum()
+    pub(crate) fn current_total_deficit(&self, counters: &HashMap<String, VarietyTracker>) -> u64 {
+        counters
+            .iter()
+            .map(|(domain, tracker)| {
+                let expected = self
+                    .expected_variety
+                    .get(domain)
+                    .copied()
+                    .unwrap_or(self.default_expected_variety);
+                tracker.deficit(expected)
+            })
+            .sum()
     }
 
     // ── Outcome Quality Checking ──
@@ -495,9 +534,17 @@ impl AlgedonicManager {
 }
 
 /// Construct LedgerHealth from the algedonic manager's current state.
-pub(crate) fn reg_health_check(manager: &AlgedonicManager, variety_ema: f64) -> LedgerHealth {
+///
+/// `overall_deficit` is the caller-computed current level from the live
+/// variety trackers (`AlgedonicManager::current_total_deficit`) — not the
+/// manager's alert history, which accumulates and can only grow.
+pub(crate) fn reg_health_check(
+    manager: &AlgedonicManager,
+    variety_ema: f64,
+    overall_deficit: u64,
+) -> LedgerHealth {
     LedgerHealth {
-        overall_deficit: manager.total_deficit(),
+        overall_deficit,
         critical_count: manager.critical_alerts().len(),
         warning_count: manager.alerts().iter().filter(|a| a.is_warning()).count(),
         healthy: manager.critical_alerts().is_empty(),
@@ -509,3 +556,85 @@ pub(crate) fn reg_health_check(manager: &AlgedonicManager, variety_ema: f64) -> 
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::VarietyTracker;
+    use std::collections::HashMap;
+
+    fn manager() -> AlgedonicManager {
+        AlgedonicManager::with_max_alerts(20, DEFAULT_EXPECTED_VARIETY, 200)
+    }
+
+    /// Idle domains produce no alert and no log growth — a domain at rest
+    /// is not variety-deficient. Pins the idle gate in `check`.
+    #[test]
+    fn check_returns_none_for_idle_domain() {
+        let mut mgr = manager();
+        let idle = VarietyTracker::new();
+        assert!(mgr.check(&idle, "media").is_none());
+        assert_eq!(mgr.alert_count(), 0, "idle check must not push an alert");
+    }
+
+    /// `VarietyTracker::deficit` reads zero for an idle window even against
+    /// a non-zero expected variety.
+    #[test]
+    fn deficit_is_zero_for_idle_window() {
+        let tracker = VarietyTracker::new();
+        assert_eq!(tracker.deficit(DEFAULT_EXPECTED_VARIETY), 0);
+    }
+
+    /// An active domain with fewer distinct states than expected reports
+    /// the gap — the genuine Ashby signal the sensor exists to carry.
+    #[test]
+    fn deficit_reports_gap_for_active_domain() {
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state_a");
+        tracker.increment("state_b");
+        assert_eq!(tracker.deficit(10), 8);
+    }
+
+    /// `current_total_deficit` is a level: it reports the live per-domain
+    /// gaps and does not grow as alerts accumulate in the log. This pins
+    /// the fix for the monotonic log-sum that made every threshold trip
+    /// forever.
+    #[test]
+    fn current_total_deficit_is_a_level_not_a_log_sum() {
+        let mut mgr = manager();
+        let mut active = VarietyTracker::new();
+        active.increment("state_a");
+        active.increment("state_b");
+        let counters = HashMap::from([
+            ("active".to_string(), active.clone()),
+            ("idle".to_string(), VarietyTracker::new()),
+        ]);
+
+        // Re-check the active domain many times — each check pushes an
+        // alert into the diagnostic log, but the current deficit must not
+        // move.
+        for _ in 0..10 {
+            mgr.check(&active, "active");
+        }
+        assert!(mgr.alert_count() > 0, "sanity: the log grew");
+        assert_eq!(
+            mgr.current_total_deficit(&counters),
+            8,
+            "deficit is the live gap (10 expected − 2 observed), not the log sum"
+        );
+    }
+
+    /// `reg_health_check` reports the caller-computed level, not the
+    /// manager's alert history.
+    #[test]
+    fn reg_health_check_reports_passed_deficit() {
+        let mut mgr = manager();
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state_a");
+        let counters = HashMap::from([("domain".to_string(), tracker.clone())]);
+        mgr.check(&tracker, "domain");
+
+        let health = reg_health_check(&mgr, 0.0, mgr.current_total_deficit(&counters));
+        assert_eq!(health.overall_deficit, 9);
+    }
+}

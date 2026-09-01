@@ -75,27 +75,36 @@ impl BridgeAlertEscalationSink {
 
 impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
-        // Dedup at the source: if there is already a pending escalation with
-        // the same output string, skip the insert. The regulation loop senses
-        // the same deficit every cycle (e.g. an unwired efferent action), and
-        // without this check it floods the queue with identical alerts every
-        // tick. The operator reviews the first one; duplicates add no signal.
-        match self.queue.has_pending_with_output(output) {
+        // Supersede at the source: a pending escalation for the same
+        // condition is updated in place (latest output/context,
+        // retry_count+1) instead of appending a duplicate row per re-sensed
+        // cycle. The condition key strips the per-cycle value
+        // (`alert_condition`), so a persistent deficit — whose embedded
+        // value changes every tick — updates ONE reviewable row rather than
+        // flooding the queue. The operator reviews that row; when they
+        // resolve or dismiss it, the next cycle inserts a fresh one.
+        let condition = hkask_regulation::alert_condition(output);
+        match self.queue.supersede_pending_by_condition(
+            condition,
+            output,
+            confidence,
+            error_context,
+        ) {
             Ok(true) => {
                 tracing::debug!(
                     target: "reg.alert",
-                    "Skipping duplicate escalation — pending alert with same output already in queue"
+                    "Superseded pending escalation — condition re-fired while pending"
                 );
                 return;
             }
-            Ok(false) => {} // no duplicate — proceed to insert
+            Ok(false) => {} // no existing pending — insert below
             Err(e) => {
-                // Dedup check failed — don't block the insert. Best-effort:
+                // Supersede failed — don't block the insert. Best-effort:
                 // a failing dedup query is preferable to losing the alert.
                 tracing::warn!(
                     target: "reg.alert",
                     error = %e,
-                    "Dedup check failed — proceeding to insert without dedup"
+                    "Supersede check failed — proceeding to insert without dedup"
                 );
             }
         }
@@ -132,7 +141,11 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     }
 
     fn has_pending_alert(&self, output: &str) -> bool {
-        match self.queue.has_pending_with_output(output) {
+        // Condition match, not exact output: the pending escalation's
+        // embedded value differs from this cycle's, so exact matching
+        // never suppresses a re-sensed condition.
+        let condition = hkask_regulation::alert_condition(output);
+        match self.queue.has_pending_with_condition(condition) {
             Ok(true) => true,
             Ok(false) => false,
             Err(e) => {
@@ -147,9 +160,14 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     }
 
     fn auto_resolve_cleared(&self, output: &str, resolution_note: &str) {
+        // Condition match, not exact output: the persisted escalation and
+        // the clearing cycle's reconstruction embed different values (they
+        // were sensed in different cycles), so exact matching would leave
+        // the stale escalation pending forever.
+        let condition = hkask_regulation::alert_condition(output);
         match self
             .queue
-            .resolve_pending_by_output(output, "cybernetics_loop:auto_resolve")
+            .resolve_pending_by_condition(condition, "cybernetics_loop:auto_resolve")
         {
             Ok(count) => {
                 if count > 0 {
@@ -160,12 +178,13 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                         "Auto-resolved pending escalation — triggering condition cleared"
                     );
                 } else {
-                    // No pending escalation with this output — either it was
-                    // already resolved/dismissed by the operator, or the output
-                    // string doesn't match. Not an error; the condition is clear.
+                    // No pending escalation with this condition — either it
+                    // was already resolved/dismissed by the operator, or the
+                    // condition never escalated. Not an error; the condition
+                    // is clear.
                     tracing::debug!(
                         target: "reg.alert",
-                        "Auto-resolve found no pending escalation with this output — already cleared or not found"
+                        "Auto-resolve found no pending escalation with this condition — already cleared or not found"
                     );
                 }
             }

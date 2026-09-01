@@ -589,12 +589,15 @@ impl super::CyberneticsLoop {
         };
 
         // Source-level dedup: if there is already a pending escalation with
-        // this output, skip the entire routing (persist, live channel, archive).
-        // The regulation loop senses the same deficit every cycle; without
-        // this check it re-escalates every tick, flooding the queue, the live
-        // channel, and the archive with identical alerts. The operator reviews
-        // the first one; when they resolve/dismiss it, the next cycle
-        // escalates again.
+        // this condition (the reason prefix — see `alert_condition`), skip
+        // the entire routing (persist, live channel, archive). The regulation
+        // loop senses the same deficit every cycle; without this check it
+        // re-escalates every tick, flooding the queue, the live channel, and
+        // the archive with alerts for one condition. Matching is on the
+        // condition, not the full message — the embedded value changes every
+        // cycle, so exact-match dedup never hits. The operator reviews the
+        // first one; when they resolve/dismiss it, the next cycle escalates
+        // again.
         if let Some(ref sink) = self.alert_escalation_sink {
             if sink.has_pending_alert(&alert.message) {
                 tracing::debug!(
@@ -1049,8 +1052,10 @@ impl super::CyberneticsLoop {
                 if let Some(ref sink) = self.alert_escalation_sink {
                     // Reconstruct via the same helper route_action_as_alert
                     // used to persist the message — auto_resolve_cleared
-                    // dedup-matches the exact string, so the two sites must
-                    // stay byte-identical.
+                    // matches on the condition key (`alert_condition` strips
+                    // the per-cycle value), so the two sites must compose
+                    // from the same reason; both call `alert_message` so the
+                    // condition prefix is identical.
                     let exact_msg = regulation_policy::alert_message(
                         &action.parameters.data,
                         &action.parameters.reason,

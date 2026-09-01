@@ -2604,6 +2604,100 @@ pub(crate) mod tests {
         assert_eq!(pending[0].status, hkask_storage::EscalationStatus::Pending);
     }
 
+    /// A persistently re-sensed condition must supersede its pending
+    /// escalation (latest output, retry_count+1) instead of appending a row
+    /// per cycle. The per-cycle value changes every tick — exact-match
+    /// dedup never hit, which is how 22 near-identical
+    /// `variety_deficit_exceeded` escalations accumulated in one session.
+    #[test]
+    fn bridge_sink_supersedes_pending_escalation_for_same_condition() {
+        use hkask_regulation::AlertEscalationSink;
+        use hkask_storage::EscalationQueue;
+        use hkask_storage::database::sqlite::SqliteDriver;
+
+        let driver = SqliteDriver::in_memory_driver();
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+
+        sink.persist_alert(
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+            1.0,
+            r#"{"deficit":53}"#,
+        );
+        sink.persist_alert(
+            "variety_deficit_exceeded — value 2149 exceeds threshold 20",
+            1.0,
+            r#"{"deficit":2149}"#,
+        );
+
+        let pending = queue.list_pending().expect("list_pending must succeed");
+        assert_eq!(
+            pending.len(),
+            1,
+            "re-sensed condition must not append a row"
+        );
+        assert_eq!(
+            pending[0].output, "variety_deficit_exceeded — value 2149 exceeds threshold 20",
+            "the pending row carries the latest value"
+        );
+        assert_eq!(pending[0].retry_count, 1, "retry_count counts re-fires");
+    }
+
+    /// `has_pending_alert` must match on the condition, not the exact
+    /// output — the pending escalation's embedded value differs from the
+    /// current cycle's, so exact matching never suppresses the re-route.
+    #[test]
+    fn bridge_sink_has_pending_alert_matches_condition() {
+        use hkask_regulation::AlertEscalationSink;
+        use hkask_storage::EscalationQueue;
+        use hkask_storage::database::sqlite::SqliteDriver;
+
+        let driver = SqliteDriver::in_memory_driver();
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
+        let sink = BridgeAlertEscalationSink::new(queue);
+
+        sink.persist_alert(
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+            1.0,
+            "{}",
+        );
+        assert!(
+            sink.has_pending_alert("variety_deficit_exceeded — value 999 exceeds threshold 20"),
+            "a different value for the same condition must count as pending"
+        );
+        assert!(
+            !sink.has_pending_alert("tool_reliability_degraded — value 40 fell below threshold 80"),
+            "a different condition must not match"
+        );
+    }
+
+    /// Auto-resolve must clear a pending escalation whose embedded value
+    /// differs from the clearing cycle's reconstruction — exact-output
+    /// matching left stale escalations pending forever.
+    #[test]
+    fn bridge_sink_auto_resolve_matches_condition() {
+        use hkask_regulation::AlertEscalationSink;
+        use hkask_storage::EscalationQueue;
+        use hkask_storage::database::sqlite::SqliteDriver;
+
+        let driver = SqliteDriver::in_memory_driver();
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+
+        sink.persist_alert(
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+            1.0,
+            "{}",
+        );
+        sink.auto_resolve_cleared(
+            "variety_deficit_exceeded — value 0 exceeds threshold 20",
+            "Auto-resolved by verify_impact: metric improved.",
+        );
+
+        let pending = queue.list_pending().expect("list_pending must succeed");
+        assert_eq!(pending.len(), 0, "the stale escalation must be resolved");
+    }
+
     /// When the queue write fails, `persist_alert` must not panic — it logs
     /// and swallows. This pins the best-effort contract: a failing queue
     /// never breaks the regulation loop.

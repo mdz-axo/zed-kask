@@ -31,6 +31,7 @@ pub use loops::{
     DistinctionState, LivenessTrust, LoopFailureDistinctions, LoopModel, LoopView, OutcomeTrust,
     Reading, SenseReading, StageActions, TriggerOrigin,
 };
+pub use regulation_policy::alert_condition;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use sensor_provider::ContextServerHealthSource;

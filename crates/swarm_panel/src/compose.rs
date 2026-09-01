@@ -22,7 +22,7 @@ use crate::PanelMode;
 use crate::PendingCompositionPrompt;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::parse::{AgentSource, extract_wallet_balance};
+use crate::parse::{AgentSource, extract_agent_mentions, extract_wallet_balance};
 use crate::status_is_warning;
 
 /// State for the swarm-composition surface.
@@ -860,5 +860,135 @@ impl SwarmPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// Consult Xaman Ek (composition_design session) from the Compose surface.
+    /// Continues the active session across messages so the operator can refine
+    /// the team iteratively, then surfaces any recommended agents for pre-fill.
+    fn ask_xaman(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.compose.xaman_response = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let message = self.compose.xaman_query.read(cx).text(cx);
+        if message.trim().is_empty() {
+            return;
+        }
+        self.compose.xaman_busy = true;
+        self.compose.xaman_response = None;
+        // Clear stale suggestions — the "Use team" button must not pre-fill
+        // the previous recommendation while a new query is in flight (L5).
+        self.compose.xaman_suggested_agents.clear();
+        cx.notify();
+        let session_id = self.compose.xaman_session.clone();
+
+        cx.spawn(async move |this, cx| {
+            // Mint a curate consent token before calling the curator. With the
+            // default `curator_consent_default: false`, the server requires a
+            // token (action "curate", target "xaman") — without it, every
+            // "Ask Xaman Ek" click is rejected with ConsentDenied (BH-03).
+            // Curator calls read task content but spend no credits, so the
+            // ceiling is 0.
+            let consent = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_request_consent",
+                    json!({ "action": "curate", "target": "xaman", "credits_authorized": 0 }),
+                )
+                .await;
+            let consent_token: Option<String> = match consent {
+                Ok(output) => parse_tool_response(&output).and_then(|c| {
+                    c.get("consent_token")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
+                }),
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.compose.xaman_busy = false;
+                        this.compose.xaman_response = Some(
+                            format!(
+                                "Consent for Xaman Ek failed: {err}. \
+                             Set kask.swarm.curator_consent_default true to opt in globally."
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let Some(consent_token) = consent_token else {
+                this.update(cx, |this, cx| {
+                    this.compose.xaman_busy = false;
+                    this.compose.xaman_response = Some(
+                        "Consent for Xaman Ek returned no token. \
+                         Set kask.swarm.curator_consent_default true to opt in globally."
+                            .into(),
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_xaman",
+                    json!({
+                        "message": message.trim(),
+                        "session_type": "composition_design",
+                        "session_id": session_id,
+                        "consent_token": consent_token,
+                    }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.compose.xaman_busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.spend.wallet_balance = Some(b);
+                        }
+                        let parsed = parse_tool_response(&output);
+                        if let Some(content) = parsed {
+                            // Continue the session.
+                            if let Some(sid) = content.get("session_id").and_then(|s| s.as_str()) {
+                                this.compose.xaman_session = Some(sid.to_string());
+                            }
+                            if let Some(resp) = content.get("response").and_then(|r| r.as_str()) {
+                                this.compose.xaman_response = Some(resp.to_string().into());
+                            }
+                            // Extract recommended agent names from the response
+                            // text (Xaman Ek lists members by name) so the
+                            // operator can pre-fill the agents field.
+                            this.compose.xaman_suggested_agents = extract_agent_mentions(&content);
+                        }
+                    }
+                    Err(err) => {
+                        this.compose.xaman_response =
+                            Some(format!("Xaman Ek unavailable: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Pre-fill the agents field with Xaman Ek's recommended team.
+    fn apply_xaman_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.compose.xaman_suggested_agents.is_empty() {
+            return;
+        }
+        let joined = self.compose.xaman_suggested_agents.join(", ");
+        let agents_editor = self.compose.agents.clone();
+        agents_editor.update(cx, |editor, cx| {
+            editor.set_text(joined, window, cx);
+        });
+        cx.notify();
     }
 }

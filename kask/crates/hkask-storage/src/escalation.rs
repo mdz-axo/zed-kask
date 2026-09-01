@@ -387,6 +387,115 @@ impl EscalationQueue {
         Ok(affected)
     }
 
+    /// Pending outputs whose condition key matches `condition` — exact
+    /// match or `condition + " — "` prefix (the separator `alert_message`
+    /// places between the stable reason and the per-cycle value), ordered
+    /// oldest first. Matching on the condition (not the full output) keeps
+    /// dedup effective for persistently re-sensed conditions whose embedded
+    /// value changes every cycle.
+    fn pending_outputs_matching_condition(
+        &self,
+        condition: &str,
+    ) -> Result<Vec<String>, EscalationError> {
+        let prefix = format!("{condition} — ");
+        let rows = self
+            .driver
+            .query(
+                "SELECT output FROM escalations WHERE status = 'pending' ORDER BY created_at ASC",
+                &[],
+            )
+            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row.get(0).ok().and_then(|v| v.as_text().ok()))
+            .map(|output| output.to_string())
+            .filter(|output| output == condition || output.starts_with(&prefix))
+            .collect())
+    }
+
+    /// Check whether any pending escalation matches the given condition
+    /// key (exact output, or output beginning with `condition + " — "`).
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// post: returns true if at least one pending escalation matches
+    #[must_use = "result must be used"]
+    pub fn has_pending_with_condition(&self, condition: &str) -> Result<bool, EscalationError> {
+        Ok(!self
+            .pending_outputs_matching_condition(condition)?
+            .is_empty())
+    }
+
+    /// Supersede the oldest pending escalation matching `condition` with
+    /// the latest alert data — update output/confidence/error_context in
+    /// place and increment `retry_count` (which becomes the number of times
+    /// the condition re-fired while pending). Returns `true` when a pending
+    /// escalation was superseded; `false` when none exists (the caller
+    /// inserts a new row).
+    ///
+    /// This is the append-to-update fix for escalation floods: a condition
+    /// re-sensed every cycle updates ONE reviewable row instead of adding a
+    /// row per cycle. The original `created_at` is preserved so triage sees
+    /// when the condition first escalated; `retry_count` shows persistence.
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// pre:  condition is non-empty
+    /// post: the oldest matching pending escalation carries the latest
+    ///       output/context and an incremented retry_count
+    #[must_use = "result must be used"]
+    pub fn supersede_pending_by_condition(
+        &self,
+        condition: &str,
+        output: &str,
+        confidence: f64,
+        error_context: &str,
+    ) -> Result<bool, EscalationError> {
+        let Some(existing_output) = self
+            .pending_outputs_matching_condition(condition)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+        let affected = self
+            .driver
+            .execute(
+                r#"UPDATE escalations SET output = ?1, confidence = ?2, error_context = ?3, retry_count = retry_count + 1
+             WHERE status = 'pending' AND output = ?4"#,
+                &[
+                    DbValue::Text(output.to_string()),
+                    DbValue::Real(confidence),
+                    DbValue::Text(error_context.to_string()),
+                    DbValue::Text(existing_output),
+                ],
+            )
+            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
+        Ok(affected > 0)
+    }
+
+    /// Resolve all pending escalations matching the given condition key.
+    ///
+    /// Condition-based counterpart of `resolve_pending_by_output`: when a
+    /// triggering condition clears, the persisted escalation's embedded
+    /// value differs from the clearing cycle's reconstruction (they were
+    /// sensed in different cycles), so exact-output matching would miss it.
+    /// Returns the number of escalations resolved.
+    ///
+    /// expect: "The system provides durable storage for escalation data"
+    /// pre:  condition is non-empty, resolved_by is non-empty
+    /// post: all pending escalations matching the condition are Resolved
+    #[must_use = "result must be used"]
+    pub fn resolve_pending_by_condition(
+        &self,
+        condition: &str,
+        resolved_by: &str,
+    ) -> Result<usize, EscalationError> {
+        let mut resolved = 0;
+        for output in self.pending_outputs_matching_condition(condition)? {
+            resolved += self.resolve_pending_by_output(&output, resolved_by)?;
+        }
+        Ok(resolved)
+    }
+
     /// Dismiss an escalation.
     ///
     /// expect: "The system provides durable storage for escalation data"
@@ -413,5 +522,124 @@ impl EscalationQueue {
             }));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::sqlite::SqliteDriver;
+
+    fn queue() -> EscalationQueue {
+        let driver = SqliteDriver::in_memory_driver();
+        EscalationQueue::from_driver(driver).expect("escalation queue init")
+    }
+
+    fn add_pending(queue: &EscalationQueue, output: &str) {
+        queue
+            .add(
+                TemplateID::new(),
+                BotID::new(),
+                output.to_string(),
+                1.0,
+                0,
+                "{}".to_string(),
+            )
+            .expect("add pending escalation");
+    }
+
+    /// Condition matching must span the per-cycle value: a pending
+    /// "… — value 53 …" must match the condition of a "… — value 2149 …"
+    /// re-sense. Exact-match dedup never hits for persistently re-sensed
+    /// conditions — this is the flood mechanism this test pins shut.
+    #[test]
+    fn has_pending_with_condition_matches_prefix_not_value() {
+        let queue = queue();
+        add_pending(
+            &queue,
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+        );
+
+        assert!(
+            queue
+                .has_pending_with_condition("variety_deficit_exceeded")
+                .expect("has_pending_with_condition")
+        );
+        // A different condition must not match.
+        assert!(
+            !queue
+                .has_pending_with_condition("tool_reliability_degraded")
+                .expect("has_pending_with_condition")
+        );
+        // The " — " suffix prevents prefix collisions between conditions.
+        assert!(
+            !queue
+                .has_pending_with_condition("variety_deficit")
+                .expect("has_pending_with_condition")
+        );
+    }
+
+    /// Supersede updates the oldest matching pending row in place (latest
+    /// output, incremented retry_count) instead of appending a duplicate.
+    #[test]
+    fn supersede_updates_oldest_pending_and_increments_retry_count() {
+        let queue = queue();
+        add_pending(
+            &queue,
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+        );
+
+        let superseded = queue
+            .supersede_pending_by_condition(
+                "variety_deficit_exceeded",
+                "variety_deficit_exceeded — value 2149 exceeds threshold 20",
+                1.0,
+                "{\"deficit\":2149}",
+            )
+            .expect("supersede_pending_by_condition");
+        assert!(superseded, "an existing pending row must be superseded");
+
+        let pending = queue.list_pending().expect("list_pending");
+        assert_eq!(pending.len(), 1, "supersede must not append a row");
+        assert_eq!(
+            pending[0].output,
+            "variety_deficit_exceeded — value 2149 exceeds threshold 20"
+        );
+        assert_eq!(pending[0].retry_count, 1, "retry_count counts re-fires");
+    }
+
+    /// Supersede returns false (no row touched) when no pending escalation
+    /// matches the condition — the caller then inserts.
+    #[test]
+    fn supersede_returns_false_without_pending_match() {
+        let queue = queue();
+        let superseded = queue
+            .supersede_pending_by_condition("variety_deficit_exceeded", "any", 1.0, "{}")
+            .expect("supersede_pending_by_condition");
+        assert!(!superseded);
+        assert_eq!(queue.list_pending().expect("list_pending").len(), 0);
+    }
+
+    /// Auto-resolve must clear every value-variant of the condition: the
+    /// persisted escalation and the clearing cycle's reconstruction embed
+    /// different values, so exact-output matching would leave the stale
+    /// escalation pending forever.
+    #[test]
+    fn resolve_pending_by_condition_resolves_all_value_variants() {
+        let queue = queue();
+        add_pending(
+            &queue,
+            "variety_deficit_exceeded — value 53 exceeds threshold 20",
+        );
+        add_pending(
+            &queue,
+            "variety_deficit_exceeded — value 153 exceeds threshold 20",
+        );
+
+        let resolved = queue
+            .resolve_pending_by_condition("variety_deficit_exceeded", "test:auto_resolve")
+            .expect("resolve_pending_by_condition");
+        assert_eq!(resolved, 2, "both value variants must resolve");
+        assert_eq!(queue.list_pending().expect("list_pending").len(), 0);
     }
 }
