@@ -1,7 +1,7 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-31
+last_updated: 2026-09-01
 version: "3.0.0"
 status: "Active"
 domain: "Lifecycle"
@@ -522,10 +522,65 @@ decoupled from ingestion — it runs on the timer, never in the
    `memory_store.rs:112`) is the attenuator for unbounded memory
    growth[^ashby]. Decoupling pruning from ingestion means the pruning
    decision is made on a schedule, not under write pressure.
-4. **Learning is deliberate.** Reflection (generating new abstractions
-   from accumulated memory) is the therapy skill's job — user-initiated,
-   user-approved. An automatic promotion pipeline would edit memory
-   without consent, which the sovereignty design (§10) forbids.
+4. **Editing is deliberate.** Reflection that *modifies* memory —
+   promotion, re-tagging, contradiction resolution — is the therapy
+   skill's job: user-initiated, user-approved. Automatic *additive*
+   distillation (below) inserts candidate lessons without touching
+   existing h_mems; the sovereignty line is drawn at modification, not
+   addition.
+
+### Distillation pass (ALWAYS-mode)
+
+**Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
+(spawn `:123`, core `distill_store` `:208`), started from the server
+factory (`hkask_mcp_curator.rs:1498`).
+
+The `curator_memory_extract` tool is on-demand ALWAYS-mode learning: an
+agent lists a thread's turns and inserts the lessons worth keeping. The
+distillation pass is the closed-loop version (operator decision
+2026-09-01, "Option A"): a background timer in the curator MCP server
+distills **finished threads** into candidate lesson h_mems automatically,
+so lessons survive the session without anyone choosing to save them.
+
+- **Finished means idle.** A thread is distilled when its newest turn is
+  at least `distillation_idle_secs` old (default 300s) — an active
+  conversation is never distilled mid-flight.
+- **Additive-only.** The pass's only store mutation is `store(h_mem)`. It
+  inserts lesson h_mems (Shared visibility, the 0.5 confidence floor,
+  every cited evidence h_mem verified to exist — the same invariants
+  `memory_insert` enforces) plus one Private watermark h_mem per
+  distilled thread. It never edits, expires, or deletes anything. Pinned
+  by `distillation_pass_is_additive_only`.
+- **Idempotent by watermark.** Each thread carries
+  `curator:distilled:{thread_id}` / `distilled_through` watermark h_mems;
+  a pass distills only turns newer than the newest watermark, so
+  restarts and re-runs insert no duplicates. The watermark advances
+  BEFORE lessons insert — a failure after insertion would duplicate
+  lessons on retry, the exact redundancy this pass exists to end; a
+  failure before insertion loses them once, loudly, with the raw turns
+  still in memory. Pinned by `distillation_pass_respects_watermark`.
+- **Lessons are semantically recallable.** Each lesson's text is
+  embedded under the lesson's entity (the entity_ref invariant, §3), so
+  future sessions find them by meaning, not just by entity name.
+- **Observable.** Every pass emits a module-target `tracing::info!`
+  summary and a `RegulationSpan::Curation` "memory_distilled" span, and
+  its outputs are queryable via `curator_memory_recall` /
+  `curator_semantic_search`. The consolidation timer's lesson applies:
+  a loop whose events go nowhere readable is indistinguishable from a
+  broken one.
+- **Turn discovery** uses `h_mems_by_prefix_since` (`memory_store.rs:410`
+  → `hmem.rs:350`), a time-bounded prefix query — the pass never loads
+  the whole store. The first pass after startup looks back 6 hours;
+  turns older than that which were never distilled are missed (raw
+  transcript remains; therapy can still distill them).
+- **Configuration.** `kask.memory.distillation_cadence_secs` (default
+  600, 0 = disabled) and `kask.memory.distillation_idle_secs` (default
+  300) — `settings.rs:241`, defaults in `Default` (`:257`), emitted to
+  the curator server only via `emit_curator_distillation_env`
+  (`mcp_env.rs:62`), allowlisted at `mcp_servers.rs:217-218`, read from
+  `HKASK_MEMORY_DISTILLATION_CADENCE_SECS` /
+  `HKASK_MEMORY_DISTILLATION_IDLE_SECS` with malformed values warned and
+  defaulted.
 
 ## 7. Decay
 
@@ -766,7 +821,10 @@ sovereignty:
   by operator decision, pinned by
   `test_curator_memory_edit_tools_available_to_non_curator_threads`); the
   write invariants — evidence citation, 0.5 confidence floor — are
-  enforced by the curator server regardless of caller.
+  enforced by the curator server regardless of caller. The distillation
+  pass (§6) is additive-only by the same ruling: it inserts candidates
+  without a consent gate but never modifies — the sovereignty line is
+  drawn at modification, not addition.
 
 - **The user can run without recall.** The zed agent (the default coding
   agent) has no recall — the `MemoryPort` trait impls are no-ops
@@ -792,7 +850,8 @@ sovereignty:
   deletes memories the user might want
   (`kask/crates/hkask-memory/src/consolidation_service.rs:29-33`). Therapy
   (user-initiated) is the deliberate forgetting process — the user chooses
-  what to forget and why.
+  what to forget and why. The distillation pass (§6) only adds —
+  automatic forgetting remains out of bounds.
 
 ```mermaid
 graph TD
@@ -835,7 +894,8 @@ knowledge or consent.
 | 4 | Brier loop → memory confidence | Not started |
 | 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1037-1179`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
-| 7 | Q3 reflection pass | Not started (reflection is therapy-only; no background pass) |
+| 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |
+| 8 | ALWAYS-mode distillation pass | ✅ Done (2026-09-01) — `distillation.rs`, additive-only + watermark-idempotent, 6 pins |
 
 ## 12. Passphrases and provisioning
 
