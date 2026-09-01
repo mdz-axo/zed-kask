@@ -1,9 +1,9 @@
 //! Agent edit (drill-down from browse card → author form pre-loaded with the
 //! agent's existing details). Extracted from `swarm_panel.rs` — the methods
 //! stay on `SwarmPanel` (they dispatch via `cx.listener` / `cx.spawn`); this
-//! module owns the load + save orchestration.
+//! module owns the load + save + delete orchestration.
 //!
-//! Two entry points:
+//! Three entry points:
 //! - `load_agent_into_author`: fetches the full agent card and stores it in
 //!   `pending_author_load`. The `render` method (which has `&mut Window`,
 //!   required by `Editor::set_text`) applies it to the form on the next frame.
@@ -15,6 +15,9 @@
 //!   `mcp_tools`/`skills`, preserves `cloud_swarm_id` and the rest of the card).
 //!   Cloud agents have no update tool — the form renders read-only with a
 //!   note pointing the operator to "Copy to Local" to edit.
+//! - `delete_edited_agent`: deletes the agent loaded into the form —
+//!   `swarm_remove_local` for local/synced (severs the local card only),
+//!   `swarm_delete_agent` for cloud (irreversible ABW delete).
 
 use gpui::{Context, Window};
 use serde_json::json;
@@ -401,6 +404,75 @@ impl SwarmPanel {
         self.author
             .produces
             .update(cx, |e, cx| e.set_text(produces, window, cx));
+    }
+
+    /// Permanently delete the agent currently loaded in the author form.
+    /// Branches on the editing source:
+    /// - `Local` / `Synced`: calls `swarm_remove_local` — deletes the local
+    ///   card directory. A synced card's ABW agent is NOT touched (the cloud
+    ///   copy can be deleted separately from the cloud card's "..." menu).
+    /// - `Cloud`: calls `swarm_delete_agent` — irreversible ABW delete. The
+    ///   agent is removed from the operator's library and every workspace
+    ///   roster. A synced local card is NOT touched.
+    /// On success, resets the author form to create mode and re-fetches the
+    /// browse list so the deleted agent disappears.
+    pub(crate) fn delete_edited_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(agent_name) = self.author.editing_id.clone() else {
+            self.author.status = Some("No agent is loaded for deletion.".into());
+            cx.notify();
+            return;
+        };
+        let source = self
+            .author
+            .editing_source
+            .clone()
+            .unwrap_or(AgentSource::Local);
+        let is_local = matches!(source, AgentSource::Local | AgentSource::Synced);
+        let tool_name = if is_local {
+            "swarm_remove_local"
+        } else {
+            "swarm_delete_agent"
+        };
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.author.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.author.busy = true;
+        self.author.status = Some("Deleting agent…".into());
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        crate::SWARM_SERVER,
+                        tool_name,
+                        json!({ "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.author.busy = false;
+                    match result {
+                        Ok(_) => {
+                            // Defer the form reset and mode switch to the next
+                            // `render` frame — `Editor::clear` and `set_mode`
+                            // need `&mut Window`, which the spawn closure cannot
+                            // hold. `render` consumes `pending_author_reset`.
+                            this.pending_author_reset = true;
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.author.status =
+                                Some(format!("Failed to delete agent: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// Save edits to an existing agent. Branches on `editing_id`:

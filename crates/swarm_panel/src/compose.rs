@@ -1,8 +1,11 @@
-//! The swarm-composition surface: form state, editor construction, and the
-//! `render_compose` renderer (including the Xaman Ek composition consultant).
-//! Extracted from `swarm_panel.rs` — the renderer stays a method on
-//! `SwarmPanel` (it dispatches via `cx.listener` into panel methods); this
-//! module owns the form struct and the view construction.
+//! The swarm-composition surface: form state, editor construction, the
+//! `render_compose` renderer (including the Xaman Ek composition
+//! consultant), the compose-form entry points (`load_swarm_into_compose`,
+//! `clone_swarm_to_compose`, `reset_compose_form_for_create`), and the
+//! `create_swarm` submit flow. Extracted from `swarm_panel.rs` — the
+//! renderer and the flows stay methods on `SwarmPanel` (they mutate panel
+//! state via `cx.spawn` + `this.update`); this module owns the form struct,
+//! the view construction, and the flows.
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
@@ -19,7 +22,7 @@ use crate::PanelMode;
 use crate::PendingCompositionPrompt;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::parse::extract_wallet_balance;
+use crate::parse::{AgentSource, extract_wallet_balance};
 use crate::status_is_warning;
 
 /// State for the swarm-composition surface.
@@ -378,6 +381,195 @@ impl SwarmPanel {
                         )
                     }),
             )
+    }
+
+    /// Open the compose panel with `swarm`'s existing details loaded, so the
+    /// operator can view and edit the composition. Mirrors
+    /// `load_agent_into_author` for swarms: fetches the swarm's roster, pre-fills
+    /// the compose form (name, mission, agents), and switches to Compose mode.
+    ///
+    /// Sets `editing_swarm_id` on the form so the submit path knows it's an
+    /// edit, not a create. The name field is kept editable for local swarms
+    /// (the save calls `swarm_update_local_swarm`); for cloud swarms the name
+    /// is read-only (ABW has no metadata-edit endpoint) but the roster can
+    /// still be reviewed.
+    pub(crate) fn load_swarm_into_compose(
+        &mut self,
+        swarm_id: String,
+        name: String,
+        source: AgentSource,
+        mission: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Set editing state on the compose form.
+        self.compose.editing_swarm_id = Some(swarm_id.clone());
+        self.compose.editing_swarm_source = Some(source.clone());
+        self.compose.create_target = match source {
+            AgentSource::Cloud => crate::CreateTarget::Cloud,
+            AgentSource::Local | AgentSource::Synced => crate::CreateTarget::Local,
+        };
+        self.compose.status = Some(
+            ["Loading swarm details…", "Loading swarm details…"][0]
+                .to_string()
+                .into(),
+        );
+        self.compose.busy = false;
+
+        // Pre-fill the form with the known values. The roster (agents)
+        // will be enriched after the fetch — for now set what we have
+        // from the card.
+        self.compose
+            .name
+            .update(cx, |e, cx| e.set_text(name, window, cx));
+        self.compose
+            .mission
+            .update(cx, |e, cx| e.set_text(mission, window, cx));
+        self.compose
+            .agents
+            .update(cx, |e, cx| e.set_text(String::new(), window, cx));
+
+        // Close any open detail view and switch to Compose mode.
+        self.close_swarm_detail(cx);
+        self.set_mode(crate::PanelMode::Compose, window, cx);
+
+        // Fetch the swarm's roster to populate the agents field.
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.compose.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let is_local = source == AgentSource::Local;
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = if is_local {
+                    invoker
+                        .invoke_tool(
+                            crate::SWARM_SERVER,
+                            "swarm_get_local_swarm",
+                            json!({ "swarm_id": swarm_id }),
+                        )
+                        .await
+                } else {
+                    invoker
+                        .invoke_tool(
+                            crate::SWARM_SERVER,
+                            "swarm_get_swarm",
+                            json!({ "workspace_id": swarm_id }),
+                        )
+                        .await
+                };
+                this.update_in(cx, |this, window, cx| {
+                    match result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output);
+                            // Extract member agent ids from the response.
+                            let members: Vec<String> = if is_local {
+                                parsed
+                                    .and_then(|c| {
+                                        c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                            members
+                                                .iter()
+                                                .filter_map(|m| m.as_str().map(str::to_string))
+                                                .collect::<Vec<_>>()
+                                        })
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                // ABW roster: extract agent ids from the
+                                // workspace payload.
+                                parsed
+                                    .and_then(|c| {
+                                        let candidates = [
+                                            c.get("agents"),
+                                            c.get("workspace").and_then(|w| w.get("agents")),
+                                            c.get("team").and_then(|t| t.get("agents")),
+                                        ];
+                                        candidates.into_iter().find_map(|c| c?.as_array()).map(
+                                            |agents| {
+                                                agents
+                                                    .iter()
+                                                    .filter_map(|a| {
+                                                        a.get("agent_id")
+                                                            .or_else(|| a.get("agent_name"))
+                                                            .and_then(|v| v.as_str())
+                                                            .map(str::to_string)
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            };
+                            let agents_str = members.join(", ");
+                            this.compose
+                                .agents
+                                .update(cx, |e, cx| e.set_text(agents_str, window, cx));
+                            this.compose.status = None;
+                        }
+                        Err(err) => {
+                            this.compose.status =
+                                Some(format!("Failed to load swarm roster: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Copy an ABW swarm by pre-filling the Compose form with the source
+    /// swarm's name, mission, and roster, then navigating to Compose mode.
+    /// The operator reviews and completes the create (which handles consent
+    /// and credit cost). This avoids inventing an ABW clone endpoint — clone
+    /// = read + create, using existing tools. Missing agents surface as hire
+    /// failures during the create flow.
+    pub(crate) fn clone_swarm_to_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(detail) = self.detail.swarm_detail.as_ref() else {
+            return;
+        };
+        let name = format!("{} (copy)", detail.name);
+        let mission = detail.mission.clone();
+        let agents = detail
+            .agents
+            .iter()
+            .map(|a| a.agent_id.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.compose
+            .name
+            .update(cx, |e, cx| e.set_text(name, window, cx));
+        self.compose
+            .mission
+            .update(cx, |e, cx| e.set_text(mission, window, cx));
+        self.compose
+            .agents
+            .update(cx, |e, cx| e.set_text(agents, window, cx));
+        self.compose.create_target = crate::CreateTarget::Cloud;
+        self.compose.status = Some("Review and create to copy this ABW swarm.".into());
+        self.close_swarm_detail(cx);
+        self.set_mode(crate::PanelMode::Compose, window, cx);
+        cx.notify();
+    }
+
+    /// Reset the compose form to a fresh create state (clear
+    /// `editing_swarm_id`, make the name field editable again). Called
+    /// when the operator clicks the Compose mode toggle in the header.
+    pub(crate) fn reset_compose_form_for_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compose.editing_swarm_id = None;
+        self.compose.editing_swarm_source = None;
+        self.compose.create_target = self.active_backend;
+        self.compose.status = None;
+        self.compose.name.update(cx, |e, cx| e.clear(window, cx));
+        self.compose.mission.update(cx, |e, cx| e.clear(window, cx));
+        self.compose.agents.update(cx, |e, cx| e.clear(window, cx));
     }
 
     /// Create a new swarm from the compose form. Mode-aware: in Local mode the

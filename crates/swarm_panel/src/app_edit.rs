@@ -1,8 +1,10 @@
-//! The App authoring + detail surface: form state, editor construction, and
-//! the `render_app_author` renderer. Extracted from `swarm_panel.rs` — the
-//! renderer stays a method on `SwarmPanel` (it dispatches via `cx.listener`
-//! into panel methods); this module owns the form struct and the view
-//! construction. See `author.rs` / `compose.rs` for the same extraction
+//! The App authoring + detail surface: form state, editor construction, the
+//! `render_app_author` renderer, and the App operations (load-into-form,
+//! create/update, spawn workspace, publish, archive, and the pending-action
+//! review queue). Extracted from `swarm_panel.rs` — the renderer and the
+//! operations stay methods on `SwarmPanel` (they mutate panel state via
+//! `cx.spawn` + `this.update`); this module owns the form struct, the view
+//! construction, and the App tool invocations. See `author.rs` / `compose.rs` for the same extraction
 //! pattern.
 //!
 //! The App form serves two roles:
@@ -367,6 +369,38 @@ impl SwarmPanel {
     }
 
     // ── App primitive — authoring (load + create/update) ────────────────────
+
+    /// Reset the App form to a blank create state. Called when the operator
+    /// clicks the "App" mode toggle — distinct from `load_app_into_form`,
+    /// which sets `editing_slug` and read-only before calling `set_mode`.
+    pub(crate) fn reset_app_form_for_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.app_form.editing_slug = None;
+        self.app_form.status = None;
+        self.app_form.busy = false;
+        self.app_form.visibility = "private".to_string();
+        self.app_form.slug.update(cx, |e, _| e.set_read_only(false));
+        self.app_form.slug.update(cx, |e, cx| e.clear(window, cx));
+        self.app_form.name.update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .tagline
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .description
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .homepage_url
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .icon_url
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.app_form
+            .workspace_template
+            .update(cx, |e, cx| e.clear(window, cx));
+    }
 
     /// Load an existing App's manifest into the App form for editing.
     /// Fetches the App via `swarm_get_app`, stores the result in

@@ -1,7 +1,9 @@
-//! The agent-authoring surface: form state, editor construction, and the
-//! `render_author` renderer. Extracted from `swarm_panel.rs` — the renderer
-//! stays a method on `SwarmPanel` (it dispatches via `cx.listener` into panel
-//! methods); this module owns the form struct and the view construction.
+//! The agent-authoring surface: form state, editor construction, the
+//! `render_author` renderer, and the `create_agent` submit flow. Extracted
+//! from `swarm_panel.rs` — the renderer and the create flow stay methods on
+//! `SwarmPanel` (they mutate panel state via `cx.spawn` + `this.update`);
+//! this module owns the form struct, the view construction, and the create
+//! flow.
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
@@ -717,6 +719,49 @@ impl SwarmPanel {
                         )
                     }),
             )
+    }
+
+    /// Reset the author form to a fresh create state (clear `editing_id`,
+    /// make the name field editable again, clear the status). Called when the
+    /// operator clicks the Author mode toggle in the header — distinct from
+    /// `load_agent_into_author`, which sets `editing_id` and read-only before
+    /// calling `set_mode`.
+    pub(crate) fn reset_author_form_for_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.author.editing_id = None;
+        self.author.editing_source = None;
+        // Keep the panel's backend context rather than resetting to Cloud —
+        // the operator's last cloud/local choice carries into the next
+        // authoring session (the "doesn't carry over" finding).
+        self.author.create_target = self.active_backend;
+        self.author.status = None;
+        self.author.name.update(cx, |e, _| e.set_read_only(false));
+        // Clear the text fields so the operator starts fresh.
+        self.author.name.update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .description
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .system_prompt
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author.tags.update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_arousal
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_valence
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_primary_affect
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_personality_traits
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author.agent_type = "research".to_string();
+        self.author.visibility = "private".to_string();
     }
 
     /// Create a new agent from the authoring form. Mode-aware: in Local mode
