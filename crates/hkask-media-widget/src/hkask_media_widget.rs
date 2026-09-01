@@ -33,7 +33,9 @@ pub mod streaming;
 pub mod transport;
 pub mod video_decoder;
 
-pub use media_ref::{MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia};
+pub use media_ref::{
+    MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, is_truncated_json,
+};
 pub use media_widget::MediaWidget;
 
 use gpui::{App, AppContext, Entity, Window};
@@ -68,8 +70,27 @@ pub fn create_media_widget(
             }))
         }
         Err(error) => {
-            log::warn!("hkask-media-widget: failed to parse media block: {error}. Body: {body}");
+            // A truncated body is mid-stream (re-parsed on every delta) — the
+            // completed body parses on a later render. Only a complete body
+            // with a real syntax error is a defect worth surfacing.
+            if !is_truncated_json(&error) {
+                log::warn!(
+                    "hkask-media-widget: failed to parse media block: {error}. Body: {}",
+                    preview_body(body)
+                );
+            }
             None
         }
     }
+}
+
+/// Log-friendly preview of a block body — full bodies flood the log (the
+/// streaming parse path used to log the whole body per delta).
+fn preview_body(body: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let mut preview: String = body.chars().take(MAX_CHARS).collect();
+    if preview.chars().count() == MAX_CHARS {
+        preview.push('…');
+    }
+    preview
 }

@@ -168,6 +168,44 @@ fn default_kind() -> String {
     "image".to_string()
 }
 
+/// Whether a parse failure is merely truncated JSON — the block body is still
+/// streaming in. Streaming re-renders re-parse the partial body on every
+/// delta, so an EOF must not be logged as a malformed block; only a complete
+/// body with a real syntax error is warn-worthy.
+pub fn is_truncated_json(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<serde_json::Error>())
+        .any(|json_error| json_error.classify() == serde_json::error::Category::Eof)
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::*;
+
+    // Pins the streaming gate: a body still streaming in (truncated JSON)
+    // must classify as truncated so the render path stays silent, while a
+    // complete body with a real syntax error must not — that one warns.
+    #[test]
+    fn truncated_body_classifies_as_streaming() {
+        let error = MediaBlockBody::parse(r#"{"kind":"image","src":"/tmp/a.jpg"#).unwrap_err();
+        assert!(is_truncated_json(&error));
+    }
+
+    #[test]
+    fn syntax_error_does_not_classify_as_streaming() {
+        let error = MediaBlockBody::parse(r#"{"kind": }"#).unwrap_err();
+        assert!(!is_truncated_json(&error));
+    }
+
+    #[test]
+    fn complete_body_parses() {
+        let block = MediaBlockBody::parse(r#"{"kind":"image","src":"/tmp/a.jpg"}"#)
+            .expect("complete body parses");
+        assert_eq!(block.src, "/tmp/a.jpg");
+    }
+}
+
 impl MediaBlockBody {
     /// Parse a ```` ```media ```` block body. Tolerant: missing `kind` defaults
     /// to `"image"`; missing `ontology`/`provenance` default to `None`/empty so

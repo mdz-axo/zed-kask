@@ -217,7 +217,12 @@ fn try_create<T: VizWidget>(body: &str, cx: &mut App) -> Option<CachedWidget> {
         }
         Ok(_) => None,
         Err(error) => {
-            log::warn!("{}: malformed block: {error}", T::LOG_PREFIX);
+            // A truncated body is mid-stream (re-parsed on every delta) — the
+            // completed body parses on a later render. Only a complete body
+            // with a real syntax error is a defect worth surfacing.
+            if !hkask_media_widget::is_truncated_json(&error) {
+                log::warn!("{}: malformed block: {error}", T::LOG_PREFIX);
+            }
             None
         }
     }
@@ -431,6 +436,19 @@ mod tests {
             "the D18 gate in crates/markdown/src/markdown.rs must admit exactly \
              these fence languages — update both together"
         );
+    }
+
+    // Pins the streaming gate for the viz factories: a body still streaming
+    // in (truncated JSON) must classify as truncated so `try_create` stays
+    // silent, while a complete body with a real syntax error must not — that
+    // one warns.
+    #[test]
+    fn truncated_viz_body_classifies_as_streaming() {
+        let truncated = parse_graph_body(r#"{"viz":"event_tree","nodes":[{"id":"n1""#).unwrap_err();
+        assert!(hkask_media_widget::is_truncated_json(&truncated));
+
+        let malformed = parse_graph_body(r#"{"viz": }"#).unwrap_err();
+        assert!(!hkask_media_widget::is_truncated_json(&malformed));
     }
 
     // S4 sensor consistency: every viz widget's block body must parse the

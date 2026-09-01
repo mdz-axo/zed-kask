@@ -1316,36 +1316,48 @@ fn main() {
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
 
-        // zed-kask: D3 — F13: sync_kask_mcp_servers (ContextServerStore registration).
-        // Register the built-in kask MCP servers as zed context servers.
-        // This makes kask MCP tools appear in the agent tool picker and
-        // available to zed's agent thread. The servers are launched as stdio
-        // child processes by zed's ContextServerStore, using the binary names
-        // from kask_bridge::BUILT_IN_MCP_SERVERS. Configuration (which servers
-        // to load) is managed from kask settings (kask.mcp.load_default + overrides).
-        //
-        // The registration is reactive: a SettingsStore observer re-syncs the
-        // ContextServerDescriptorRegistry whenever kask settings change.
+        // zed-kask: D3 — the kask namespace guard. Kask built-in servers are
+        // NOT registered with zed's per-project ContextServerStore (single
+        // spawn authority, 2026-08-29): the governed McpRuntime owns every
+        // kask server process and the agent's tool surface routes through
+        // `agent::set_kask_tool_source`. This call defensively unregisters
+        // stale descriptors (e.g. registered by an older build) and removes
+        // raw `context_servers` settings entries for kask IDs — a raw entry
+        // would spawn a keyless instance through the generic store path.
+        // Reactive: a SettingsStore observer re-runs it on every settings
+        // change.
         sync_kask_mcp_servers(cx);
         cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
 
-        // The governed McpRuntime instances (kask panel + skill execution) are
-        // started once at login and keep their startup env. A settings change
-        // that alters a server's env (e.g. `kask.swarm.mode` →
-        // `HKASK_SWARM_MODE`) must restart them; the per-project
-        // ContextServerStore path above handles its own instances via
-        // descriptor re-sync. The restart baseline is recorded by the
-        // deferred launch task once servers actually start — an empty
-        // baseline means "not launched yet", and the observer no-ops.
+        // The governed McpRuntime instances (kask panel + skill execution)
+        // are started once at login and keep their startup env. A settings
+        // change that alters a server's env (e.g. `kask.swarm.mode` →
+        // `HKASK_SWARM_MODE`) restarts it; a `kask.mcp` load/unload toggle
+        // stops/starts it through the runtime's own primitives (D45). The
+        // restart baseline is recorded by the deferred launch task once
+        // servers actually start — an empty baseline means "not launched
+        // yet", and the observer's start path is additionally gated on the
+        // launch-pass-complete latch below so it never races the deferred
+        // launch with an env computed before the inference socket exists.
         let kask_mcp_restart_env: std::sync::Arc<
             std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
         > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        // zed-kask: D45 — set at the end of the deferred launch loop. Before
+        // it, "no baseline" means the launch pass has not decided yet and
+        // the observer must not start anything; after it, a loaded server
+        // with no baseline is a genuine load transition (or a failed start
+        // being retried).
+        let kask_mcp_launch_pass_complete: std::sync::Arc<
+            std::sync::atomic::AtomicBool,
+        > = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mcp_runtime_for_restart = tool_port.clone();
         let restart_env_for_observer = kask_mcp_restart_env.clone();
+        let launch_pass_for_observer = kask_mcp_launch_pass_complete.clone();
         cx.observe_global::<SettingsStore>(move |cx| {
             sync_kask_mcp_runtime_servers(
                 mcp_runtime_for_restart.clone(),
                 restart_env_for_observer.clone(),
+                launch_pass_for_observer.clone(),
                 cx,
             );
         })
@@ -1438,6 +1450,7 @@ fn main() {
             let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
             let servers_to_start_clone = servers_to_start;
             let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
+            let kask_mcp_launch_pass_for_deferred = kask_mcp_launch_pass_complete.clone();
             // Captures for the model-dependent wiring block (moved here from
             // the synchronous startup so it runs in the deferred task and
             // the LanguageModelRegistry is populated). See the
@@ -2109,6 +2122,7 @@ fn main() {
                         embedding_port_for_ipc.clone(),
                         mcp_runtime_for_deferred.clone(),
                         kask_mcp_restart_env_for_deferred.clone(),
+                        kask_mcp_launch_pass_for_deferred.clone(),
                         cx,
                     );
                     if !inference_wired {
@@ -2181,6 +2195,7 @@ fn main() {
                                 sync_kask_mcp_runtime_servers(
                                     mcp_runtime_for_deferred.clone(),
                                     kask_mcp_restart_env_for_deferred.clone(),
+                                    kask_mcp_launch_pass_for_deferred.clone(),
                                     cx,
                                 );
                             }
@@ -2223,6 +2238,7 @@ fn main() {
                     let embedding_port_for_rewire = embedding_port_for_ipc.clone();
                     let mcp_runtime_for_rewire = mcp_runtime_for_deferred.clone();
                     let restart_env_for_rewire = kask_mcp_restart_env_for_deferred.clone();
+                    let launch_pass_for_rewire = kask_mcp_launch_pass_for_deferred.clone();
                     cx.subscribe(
                         &registry,
                         move |_, event: &language_model::Event, cx| {
@@ -2249,6 +2265,7 @@ fn main() {
                                 embedding_port_for_rewire.clone(),
                                 mcp_runtime_for_rewire.clone(),
                                 restart_env_for_rewire.clone(),
+                                launch_pass_for_rewire.clone(),
                                 cx,
                             );
                             if wired {
@@ -2339,6 +2356,19 @@ fn main() {
                         .detach();
                     }
                 }
+                // zed-kask: D45 — the launch-pass-complete latch. The
+                // settings-change observer's load path (start a loaded server
+                // with no baseline) is gated on this: before the latch, "no
+                // baseline" means the launch pass has not decided yet, and an
+                // observer-side start could race the launch loop with an env
+                // computed before the inference socket exists (the
+                // socketless-server defect class). After the latch, a loaded
+                // no-baseline server is a genuine load transition or a failed
+                // start being retried. Set unconditionally — an empty
+                // `servers_to_start` (everything toggled off) is still a
+                // completed pass, and later toggle-ons must work.
+                kask_mcp_launch_pass_for_deferred
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             }).detach();
         }
 
@@ -2962,6 +2992,7 @@ fn wire_kask_inference_stack(
     restart_env: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
     >,
+    launch_pass_complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cx: &mut gpui::App,
 ) -> bool {
     let model_registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -3081,7 +3112,7 @@ fn wire_kask_inference_stack(
             // socket) and all inference calls fail with "IPC bridge not
             // configured" even though the socket is live.
             sync_kask_mcp_servers(cx);
-            sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, cx);
+            sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
         }
         Err(e) => {
             log::warn!(
@@ -3289,14 +3320,48 @@ fn changed_env_keys(
 /// changed; servers not yet tracked by the deferred launch (empty baseline)
 /// are left alone. The baseline is recorded by the launch loop, so this
 /// observer is a no-op until the governed servers are actually running.
+///
+/// zed-kask: D45 — load/unload support. The env diff alone cannot see a
+/// `kask.mcp` load toggle: `kask_server_env` does not include the override,
+/// so a server toggled OFF keeps its old env (the diff sees no change and the
+/// server keeps running), and a server toggled ON that was never launched has
+/// no baseline to diff against (nothing starts it). This observer therefore
+/// also computes the load set — the same expression the deferred launch loop
+/// uses — and stops/starts explicitly through the runtime's own primitives,
+/// so the existing self-healing semantics apply: `stop_server` drops the
+/// launch spec (a deliberately unloaded server is not resurrected by the
+/// health supervisor or the on-demand reconnect), and `start_server_with_env`
+/// carries the startup retry/backoff, launch-spec recording, and health
+/// supervisor wiring. The start path is gated on the launch-pass-complete
+/// latch (set at the end of the deferred launch loop): before it, "no
+/// baseline" means the launch pass has not decided yet, and an observer-side
+/// start could race the launch loop with an env computed before the
+/// inference socket exists (the socketless-server defect class). The latch
+/// also makes the launch loop's "on start failure the baseline is dropped so
+/// a later settings change retries" contract real: a failed start leaves no
+/// baseline, and the next observer pass retries it.
 fn sync_kask_mcp_runtime_servers(
     mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
     last_env: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
     >,
+    launch_pass_complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cx: &mut gpui::App,
 ) {
     let server_ids: Vec<&'static str> = kask_bridge::builtin_mcp_server_ids();
+    // The load set, resolved from the same settings source the deferred
+    // launch loop reads (`KaskSettings::get_global`), with the same
+    // expression: `load_default && overrides.get(id).unwrap_or(true)`.
+    let kask_mcp = kask_bridge::KaskSettings::get_global(cx).mcp.clone();
+    let load_states: Vec<(&'static str, bool)> = server_ids
+        .iter()
+        .map(|server_id| {
+            (
+                *server_id,
+                kask_mcp.load_default && *kask_mcp.overrides.get(*server_id).unwrap_or(&true),
+            )
+        })
+        .collect();
     cx.spawn(async move |cx| {
         // Build the changed-server list on the foreground — `kask_server_env`
         // needs `AsyncApp` (not `Send`). Do NOT hold a tokio `enter()` guard
@@ -3308,35 +3373,57 @@ fn sync_kask_mcp_runtime_servers(
         // `Tokio::spawn` below, which enters the reactor on the worker thread
         // — no foreground guard held across awaits (the `.rules` "background_
         // spawn of tokio-dependent futures" pattern).
-        let mut changed: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
-        for server_id in server_ids {
+        let mut to_stop: Vec<&'static str> = Vec::new();
+        let mut to_start: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
+        let mut to_restart: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
+        for (server_id, loaded) in load_states {
             let env = kask_server_env(server_id, cx).await;
             let previous = last_env
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get(server_id)
                 .cloned();
-            let Some(previous) = previous else {
-                // Not yet launched — the deferred task hasn't recorded a
-                // baseline, so there is nothing to restart.
-                continue;
-            };
-            if previous == env {
-                continue;
+            match previous {
+                Some(previous) => {
+                    if !loaded {
+                        // Unload: the server was launched (baseline exists) and
+                        // the settings no longer load it. `stop_server` is
+                        // idempotent and drops the launch spec, so neither the
+                        // health supervisor nor the on-demand reconnect
+                        // resurrects it.
+                        to_stop.push(server_id);
+                    } else if previous != env {
+                        // Name the keys that changed. A restart tears down live
+                        // connections and fails every in-flight panel call, so
+                        // "env changed" alone is not enough to tell a deliberate
+                        // settings toggle from an ordering artifact (e.g. a
+                        // credential that only resolved after launch). Values are
+                        // never logged — several are credentials.
+                        log::info!(
+                            "Kask MCP server '{server_id}' env changed — restarting (McpRuntime); \
+                             changed keys: {}",
+                            changed_env_keys(&previous, &env).join(", ")
+                        );
+                        to_restart.push((server_id, format!("hkask-mcp-{server_id}"), env));
+                    }
+                }
+                None => {
+                    // No baseline: either the deferred launch pass has not run
+                    // for this server yet (do NOT start it here — the launch
+                    // pass owns startup ordering, and an env computed before
+                    // the inference socket exists would ship a socketless
+                    // server), or the server was unloaded / failed to start
+                    // and its baseline was removed. The launch-pass-complete
+                    // latch distinguishes them: once the pass has run, a loaded
+                    // server with no baseline is a genuine load transition or
+                    // a retry of a failed start.
+                    if loaded && launch_pass_complete.load(std::sync::atomic::Ordering::SeqCst) {
+                        to_start.push((server_id, format!("hkask-mcp-{server_id}"), env));
+                    }
+                }
             }
-            // Name the keys that changed. A restart tears down live connections
-            // and fails every in-flight panel call, so "env changed" alone is not
-            // enough to tell a deliberate settings toggle from an ordering artifact
-            // (e.g. a credential that only resolved after launch). Values are
-            // never logged — several are credentials.
-            log::info!(
-                "Kask MCP server '{server_id}' env changed — restarting (McpRuntime); \
-                 changed keys: {}",
-                changed_env_keys(&previous, &env).join(", ")
-            );
-            changed.push((server_id, format!("hkask-mcp-{server_id}"), env));
         }
-        if changed.is_empty() {
+        if to_stop.is_empty() && to_start.is_empty() && to_restart.is_empty() {
             return;
         }
         // `stop_server` / `start_server_with_env` drive tokio primitives
@@ -3346,7 +3433,58 @@ fn sync_kask_mcp_runtime_servers(
         let runtime = mcp_runtime.clone();
         let last_env = last_env.clone();
         gpui_tokio::Tokio::spawn(cx, async move {
-            for (server_id, binary, env) in changed {
+            for server_id in to_stop {
+                runtime.stop_server(server_id).await;
+                last_env
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(server_id);
+                log::info!(
+                    "Kask MCP server '{server_id}' unloaded by settings — stopped (McpRuntime)"
+                );
+            }
+            for (server_id, binary, env) in to_start {
+                // Mirror the deferred launch loop: register metadata, then
+                // start. `register_server` is an idempotent insert;
+                // `start_server_with_env` is idempotent per live connection,
+                // so a concurrent duplicate start (two observer passes racing)
+                // collapses to one live connection.
+                runtime
+                    .register_server(hkask_mcp::McpServer {
+                        id: server_id.to_string(),
+                        name: server_id.to_string(),
+                        tools: vec![],
+                    })
+                    .await;
+                match runtime
+                    .start_server_with_env(server_id, &binary, env.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.to_string(), env);
+                        log::info!(
+                            "Kask MCP server '{server_id}' loaded by settings — started \
+                             (McpRuntime)"
+                        );
+                    }
+                    Err(e) => {
+                        // No baseline recorded — the next observer pass retries
+                        // (the same retry-on-next-pass semantics as the restart
+                        // path's failure arm). The failed start still recorded
+                        // a launch spec, so a tool call also reconnects on
+                        // demand.
+                        log::warn!(
+                            "Kask MCP server '{server_id}' failed to start: {e} — set \
+                             HKASK_MCP_{}_BIN to the binary path",
+                            server_id.to_uppercase()
+                        );
+                    }
+                }
+            }
+            for (server_id, binary, env) in to_restart {
                 runtime.stop_server(server_id).await;
                 match runtime
                     .start_server_with_env(server_id, &binary, env.clone())
@@ -4805,20 +4943,23 @@ mod tests {
         // F25: sync_kask_mcp_runtime_servers — must be accessible as a fn
         // item (not just a function pointer type). Referencing the fn value
         // pins both its existence and its name; renaming or deleting it
-        // breaks compilation here.
+        // breaks compilation here. The `Arc<AtomicBool>` parameter is the
+        // D45 launch-pass-complete latch (load/unload gating).
         let _ = sync_kask_mcp_runtime_servers
             as fn(
                 std::sync::Arc<hkask_mcp::McpRuntime>,
                 std::sync::Arc<
                     std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
                 >,
+                std::sync::Arc<std::sync::atomic::AtomicBool>,
                 &mut gpui::App,
             );
 
         // D8: wire_kask_inference_stack — the inference-stack wiring helper
         // called by both the deferred task and the model-resolved re-wire
         // subscription. Pinning the fn pointer pins its existence, name, and
-        // signature; renaming or deleting it breaks compilation here.
+        // signature; renaming or deleting it breaks compilation here. The
+        // `Arc<AtomicBool>` parameter is the D45 launch-pass-complete latch.
         let _ = wire_kask_inference_stack
             as fn(
                 &kask_bridge::KaskSettings,
@@ -4828,6 +4969,7 @@ mod tests {
                 std::sync::Arc<
                     std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
                 >,
+                std::sync::Arc<std::sync::atomic::AtomicBool>,
                 &mut gpui::App,
             ) -> bool;
 
