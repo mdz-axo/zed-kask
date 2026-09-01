@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-28
+last_updated: 2026-08-31
 version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -24,7 +24,7 @@ Every artifact cites concrete file:line references in the current tree.
 | Reference   | Look up a fact    | Domain           | ERD or class diagram      |
 | Explanation | Understand why    | Trust + Curation | State or sequence diagram |
 
-## Major crates (10 cross-cutting sets, 36 artifacts)
+## Major crates (11 cross-cutting sets, 37 artifacts)
 
 | Crate                                             | Tutorial                                   | How-to                                      | Reference                                    | Explanation                                      |
 | ------------------------------------------------- | ------------------------------------------ | ------------------------------------------- | -------------------------------------------- | ------------------------------------------------ |
@@ -39,6 +39,7 @@ Every artifact cites concrete file:line references in the current tree.
 | [hkask-mcp-server](./hkask-mcp-server/)           | [Tutorial](./hkask-mcp-server/tutorial.md) | [How-to](./hkask-mcp-server/how-to.md)      | [Reference](./hkask-mcp-server/reference.md) | [Explanation](./hkask-mcp-server/explanation.md) |
 | [kask_bridge](./kask_bridge/)                     | [Tutorial](./kask_bridge/tutorial.md)      | [How-to](./kask_bridge/how-to.md)           | [Reference](./kask_bridge/reference.md)      | [Explanation](./kask_bridge/explanation.md)      |
 | [hkask-bridge-ontology](./hkask-bridge-ontology/) | —                                          | [How-to](./hkask-bridge-ontology/how-to.md) | [Reference](../reference/ontology-bridge.md) | —                                                |
+| [media_panel](./media_panel/)                     | —                                          | —                                           | [Reference](./media_panel/reference.md)      | —                                                |
 
 ## Out-of-scope crates (N/A)
 

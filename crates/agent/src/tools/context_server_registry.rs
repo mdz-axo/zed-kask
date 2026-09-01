@@ -5,7 +5,6 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
-use gpui_tokio::Tokio;
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -530,20 +529,6 @@ impl AnyAgentTool for KaskServerTool {
         let server_id = self.descriptor.server_id.clone();
         let tool_name = self.descriptor.name.clone();
         let source = self.source.clone();
-        // The dispatch future MUST run on the Tokio runtime, not on the GPUI
-        // foreground executor. `source.invoke` → `McpRuntime::invoke` →
-        // `call_tool_inner` → `try_reconnect` → `start_server_with_env` spawns a
-        // child process via `TokioChildProcess`, which requires a Tokio reactor
-        // context. The GPUI foreground executor (`cx.spawn`) has no reactor, so
-        // awaiting `source.invoke` directly here panics with "there is no
-        // reactor running" on a transport-loss-triggered reconnect — the
-        // `.rules` "background_spawn of tokio-dependent futures" / "tokio
-        // primitives panic inside cx.spawn" trap. The swarm-panel
-        // `PanelToolInvoker` (main.rs) fixes the same trap the same way. The
-        // `JoinHandle` is a oneshot-backed future, so awaiting it on the
-        // foreground executor is sound (it does not register a timer with the
-        // Tokio reactor, unlike `tokio::time::Sleep`).
-        let tokio_handle = Tokio::handle(cx);
         cx.spawn(async move |_| {
             let input = input
                 .recv()
@@ -554,13 +539,7 @@ impl AnyAgentTool for KaskServerTool {
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            let result = tokio_handle
-                .spawn(source.invoke(&server_id, &tool_name, input))
-                .await
-                .map_err(|join_error| {
-                    anyhow::anyhow!(format!("kask tool dispatch task failed: {join_error}"))
-                })?;
-            match result {
+            match source.invoke(&server_id, &tool_name, input).await {
                 Ok(value) => {
                     let text = match &value {
                         serde_json::Value::String(string) => string.clone(),

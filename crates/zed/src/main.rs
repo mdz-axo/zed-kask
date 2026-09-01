@@ -943,11 +943,9 @@ fn main() {
         // keyless-server defect). Tools surface via this source and dispatch
         // through the runtime, metered by `with_governance` above.
         {
-            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
             let source = std::sync::Arc::new(ZedKaskToolSource {
                 runtime: mcp_runtime.clone(),
                 cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
-                tokio_handle: tokio_handle.clone(),
             });
             // Background refresh: the runtime registers tools
             // asynchronously (deferred launch, restarts, reconnects) with no
@@ -955,6 +953,7 @@ fn main() {
             // the cache stays current without per-site wiring.
             let cache = source.cache.clone();
             let runtime = source.runtime.clone();
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
             tokio_handle.spawn(async move {
                 loop {
                     let descriptors = runtime
@@ -3208,7 +3207,6 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 struct ZedKaskToolSource {
     runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
     cache: std::sync::Arc<std::sync::RwLock<Vec<agent::KaskToolDescriptor>>>,
-    tokio_handle: tokio::runtime::Handle,
 }
 
 impl agent::KaskToolSource for ZedKaskToolSource {
@@ -3228,28 +3226,15 @@ impl agent::KaskToolSource for ZedKaskToolSource {
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
     > {
         let runtime = self.runtime.clone();
-        let handle = self.tokio_handle.clone();
         let server_id = server_id.to_string();
         let tool = tool.to_string();
         Box::pin(async move {
             // A stable agent identity so the reliability domain aggregates
             // agent-path calls (the runtime meters every invoke).
             let agent_id = hkask_types::WebID::for_agent_name("zed-agent");
-            // Spawn on the Tokio runtime so `call_tool_inner → try_reconnect →
-            // start_server_with_env → TokioChildProcess::spawn` has a reactor.
-            // The GPUI foreground executor (`cx.spawn` in `KaskServerTool::run`)
-            // has no Tokio reactor — awaiting `invoke` directly there panics with
-            // "there is no reactor running" on a transport-loss-triggered
-            // reconnect. The `JoinHandle` is polled by the GPUI executor (it's
-            // just a future), and the Tokio task runs on the multi-thread runtime.
-            handle
-                .spawn(async move {
-                    hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
-                        .await
-                })
+            hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
                 .await
-                .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()))
+                .map_err(|error| error.to_string())
         })
     }
 }
