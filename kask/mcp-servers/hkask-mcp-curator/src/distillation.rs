@@ -34,7 +34,6 @@ use hkask_storage::HMem;
 use hkask_types::WebID;
 use hkask_types::regulation::RegulationSpan;
 use hkask_types::template::LLMParameters;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Default pass cadence. 0 disables the pass (read from
@@ -53,7 +52,6 @@ pub(crate) const DEFAULT_DISTILLATION_IDLE_SECS: u64 = 300;
 /// transcript remains; therapy can still distill them).
 const FIRST_PASS_LOOKBACK_SECS: i64 = 6 * 3600;
 
-const THREAD_TURN_PREFIX: &str = "curator:thread:";
 const WATERMARK_PREFIX: &str = "curator:distilled:";
 const MAX_TURNS_PER_PROMPT: usize = 12;
 const MAX_TURN_CHARS: usize = 3_000;
@@ -214,8 +212,11 @@ pub(crate) async fn distill_store(
     since: chrono::DateTime<chrono::Utc>,
 ) -> DistillationOutcome {
     let mut outcome = DistillationOutcome::default();
-    let turns = match memory.h_mems_by_prefix_since(THREAD_TURN_PREFIX, since) {
-        Ok(turns) => turns,
+    // Turn discovery is the shared contract (`thread_turns`): the scan runs
+    // over the shared-copy prefix, which ingest writes for EVERY turn —
+    // curator and non-curator alike — so no turn is invisible to the pass.
+    let by_thread = match crate::thread_turns::shared_turns_by_thread_since(memory, since) {
+        Ok(by_thread) => by_thread,
         Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.curator.distillation",
@@ -225,16 +226,6 @@ pub(crate) async fn distill_store(
             return outcome;
         }
     };
-    let mut by_thread: HashMap<String, Vec<HMem>> = HashMap::new();
-    for turn in turns {
-        let Some(thread_id) = turn.entity.strip_prefix(THREAD_TURN_PREFIX) else {
-            continue;
-        };
-        by_thread
-            .entry(thread_id.to_string())
-            .or_default()
-            .push(turn);
-    }
     outcome.threads_examined = by_thread.len();
     let idle_cutoff = now - chrono::Duration::seconds(idle_secs as i64);
     for (thread_id, mut turns) in by_thread {
@@ -527,6 +518,7 @@ fn build_distillation_prompt(thread_id: &str, turns: &[&HMem]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thread_turns::SHARED_TURN_PREFIX;
     use hkask_storage::database::sqlite::SqliteDriver;
     use hkask_types::InferenceError;
     use hkask_types::InferenceResult;
@@ -554,7 +546,7 @@ mod tests {
         webid: WebID,
     ) -> hkask_storage::HMemId {
         let h_mem = HMem::new(
-            &format!("{THREAD_TURN_PREFIX}{thread_id}"),
+            &format!("{SHARED_TURN_PREFIX}{thread_id}"),
             "turn",
             serde_json::json!({
                 "user_input": user_input,
@@ -567,7 +559,7 @@ mod tests {
         store.store(h_mem).expect("store turn");
         // Re-read to get the id the store assigned.
         store
-            .h_mems_by_entity_prefix(&format!("{THREAD_TURN_PREFIX}{thread_id}"))
+            .h_mems_by_entity_prefix(&format!("{SHARED_TURN_PREFIX}{thread_id}"))
             .expect("query turns")
             .into_iter()
             .find(|h| h.observed_at == observed_at)

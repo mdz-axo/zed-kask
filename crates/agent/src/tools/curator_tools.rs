@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Task};
+use hkask_types::process_global::ProcessGlobal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
@@ -31,23 +32,17 @@ pub trait MetacognitionProvider: Send + Sync {
 }
 
 /// Global hook for the metacognition provider.
-static METACOGNITION_PROVIDER: std::sync::Mutex<Option<Arc<dyn MetacognitionProvider>>> =
-    std::sync::Mutex::new(None);
+static METACOGNITION_PROVIDER: ProcessGlobal<Arc<dyn MetacognitionProvider>> = ProcessGlobal::new();
 
 /// Set the global metacognition provider (composition root).
 ///
-/// Re-settable — later calls replace the earlier provider.
+/// Re-settable — later calls replace the previous provider.
 pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider>>) {
-    *METACOGNITION_PROVIDER
-        .lock()
-        .expect("METACOGNITION_PROVIDER poisoned") = provider;
+    METACOGNITION_PROVIDER.set(provider);
 }
 
 pub(crate) fn metacognition_provider() -> Option<Arc<dyn MetacognitionProvider>> {
-    METACOGNITION_PROVIDER
-        .lock()
-        .expect("METACOGNITION_PROVIDER poisoned")
-        .clone()
+    METACOGNITION_PROVIDER.get()
 }
 
 // ── Curator Status Tool ─────────────────────────────────────────────────────
@@ -372,23 +367,17 @@ pub trait CuratorDirectiveSink: Send + Sync {
 }
 
 /// Global hook for the curator directive sink.
-static CURATOR_DIRECTIVE_SINK: std::sync::Mutex<Option<Arc<dyn CuratorDirectiveSink>>> =
-    std::sync::Mutex::new(None);
+static CURATOR_DIRECTIVE_SINK: ProcessGlobal<Arc<dyn CuratorDirectiveSink>> = ProcessGlobal::new();
 
 /// Set the global curator directive sink (composition root).
 ///
-/// Re-settable — later calls replace the earlier sink.
+/// Re-settable — later calls replace the previous sink.
 pub fn set_curator_directive_sink(sink: Option<Arc<dyn CuratorDirectiveSink>>) {
-    *CURATOR_DIRECTIVE_SINK
-        .lock()
-        .expect("CURATOR_DIRECTIVE_SINK poisoned") = sink;
+    CURATOR_DIRECTIVE_SINK.set(sink);
 }
 
 fn curator_directive_sink() -> Option<Arc<dyn CuratorDirectiveSink>> {
-    CURATOR_DIRECTIVE_SINK
-        .lock()
-        .expect("CURATOR_DIRECTIVE_SINK poisoned")
-        .clone()
+    CURATOR_DIRECTIVE_SINK.get()
 }
 
 // ── AlgedonicLogSink trait ────────────────────────────────────────────────────
@@ -437,23 +426,17 @@ pub trait AlgedonicLogSink: Send + Sync {
 }
 
 /// Global hook for the algedonic log sink.
-static ALGEDONIC_LOG_SINK: std::sync::Mutex<Option<Arc<dyn AlgedonicLogSink>>> =
-    std::sync::Mutex::new(None);
+static ALGEDONIC_LOG_SINK: ProcessGlobal<Arc<dyn AlgedonicLogSink>> = ProcessGlobal::new();
 
 /// Set the global algedonic log sink (composition root).
 ///
-/// Re-settable — later calls replace the earlier sink.
+/// Re-settable — later calls replace the previous sink.
 pub fn set_algedonic_log_sink(sink: Option<Arc<dyn AlgedonicLogSink>>) {
-    *ALGEDONIC_LOG_SINK
-        .lock()
-        .expect("ALGEDONIC_LOG_SINK poisoned") = sink;
+    ALGEDONIC_LOG_SINK.set(sink);
 }
 
 fn algedonic_log_sink() -> Option<Arc<dyn AlgedonicLogSink>> {
-    ALGEDONIC_LOG_SINK
-        .lock()
-        .expect("ALGEDONIC_LOG_SINK poisoned")
-        .clone()
+    ALGEDONIC_LOG_SINK.get()
 }
 
 // ── Curator Clear Algedonic Log Tool ────────────────────────────────────────

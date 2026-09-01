@@ -13,6 +13,7 @@
 
 pub(crate) mod distillation;
 pub(crate) mod governance;
+pub(crate) mod thread_turns;
 pub mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
@@ -1406,8 +1407,11 @@ impl CuratorServer {
     }
 
     /// Extract candidate semantic memories from a thread's turn history.
-    /// Queries the curator's memory for all h_mems with entity
-    /// `chat:thread:<thread_id>`, returns their IDs and content as
+    /// Queries the thread's turn h_mems across both storage prefixes —
+    /// `chat:thread:<thread_id>` (curator-perspective originals) and
+    /// `curator:thread:<thread_id>` (shared copies of every turn) — via
+    /// `thread_turns::thread_turns`, the one turn-discovery contract shared
+    /// with the distillation pass. Returns their IDs and content as
     /// extraction candidates. The curator reviews and inserts the ones
     /// worth keeping via `memory_insert` (which requires evidence citation).
     /// This is the on-demand version of ALWAYS-mode learning — no
@@ -1423,20 +1427,12 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            // Query both entity prefixes: curator-perspective turns are stored
-            // under `chat:thread:<id>` (curator turns only), and shared copies
-            // of all turns (including non-curator) are under `curator:thread:<id>`.
-            // Without both, non-curator turns are invisible to extraction.
-            let chat_prefix = format!("chat:thread:{}", req.thread_id);
-            let curator_prefix = format!("curator:thread:{}", req.thread_id);
-            let mut h_mems = memory
-                .h_mems_by_entity_prefix(&chat_prefix)
-                .map_err(|e| map_memory_store_error(e, "Failed to query curator-perspective thread turns"))?;
-            h_mems.extend(
-                memory
-                    .h_mems_by_entity_prefix(&curator_prefix)
-                    .map_err(|e| map_memory_store_error(e, "Failed to query shared thread turns"))?,
-            );
+            // Both storage prefixes hold the thread's turns — the
+            // curator-perspective originals and the shared copies ingest
+            // writes for every turn. The contract lives in `thread_turns`,
+            // shared with the distillation pass.
+            let h_mems = thread_turns::thread_turns(memory, &req.thread_id)
+                .map_err(|e| map_memory_store_error(e, "Failed to query thread turns"))?;
 
             let candidates: Vec<serde_json::Value> = h_mems
                 .iter()

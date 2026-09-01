@@ -27,6 +27,7 @@ pub mod template;
 pub use server_env::ServerEnv;
 
 pub mod ports;
+pub mod process_global;
 pub mod time;
 pub mod tool_response;
 pub mod tool_schema;

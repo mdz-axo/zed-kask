@@ -34,6 +34,7 @@ use hkask_types::inference_ipc::{
     BatchResultEntry, InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest,
     InferenceResponse, ModelListEntry, WorktreeThreadInfo,
 };
+use hkask_types::process_global::ProcessGlobal;
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -91,48 +92,20 @@ pub trait WorktreeSpawner: Send + Sync {
 /// `shared_tool_invoker` pattern in `hkask-tool-invoker` (Mutex-based,
 /// re-settable). When `None`, worktree spawn requests return an error and the
 /// MCP server falls back to the in-memory `LazyLocalSwarmRuntime` path.
-static WORKTREE_SPAWNER: std::sync::Mutex<Option<Arc<dyn WorktreeSpawner>>> =
-    std::sync::Mutex::new(None);
+static WORKTREE_SPAWNER: ProcessGlobal<Arc<dyn WorktreeSpawner>> = ProcessGlobal::new();
 
 /// Inject the global worktree spawner (composition root — `main.rs`). Called
 /// when a workspace with an `AgentPanel` opens. Replaces any prior spawner
 /// (e.g. when the user switches workspaces).
 pub fn set_worktree_spawner(spawner: Option<Arc<dyn WorktreeSpawner>>) {
-    let mut guard = match WORKTREE_SPAWNER.lock() {
-        Ok(g) => g,
-        // Poisoned by a prior panic — still write the new value so the
-        // dispatch path recovers instead of cascading the panic into every
-        // IPC request.
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.inference",
-                error = %e,
-                "WORKTREE_SPAWNER lock poisoned — recovering with new value"
-            );
-            e.into_inner()
-        }
-    };
-    *guard = spawner;
+    WORKTREE_SPAWNER.set(spawner);
 }
 
 /// Read the global worktree spawner. Returns `None` when no workspace with an
 /// `AgentPanel` is open. Called only by the GPUI-side IPC task in this crate
 /// (`InferenceIpcServer::start`'s worktree spawn task); not re-exported.
 pub(crate) fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
-    let guard = match WORKTREE_SPAWNER.lock() {
-        Ok(g) => g,
-        // Poisoned by a prior panic — return the (possibly stale) value
-        // rather than panicking the IPC dispatch path.
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.inference",
-                error = %e,
-                "WORKTREE_SPAWNER lock poisoned — returning stale value"
-            );
-            e.into_inner()
-        }
-    };
-    guard.clone()
+    WORKTREE_SPAWNER.get()
 }
 
 /// The zed-side inference IPC server.

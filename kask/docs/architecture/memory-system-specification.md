@@ -568,11 +568,15 @@ so lessons survive the session without anyone choosing to save them.
   `curator_semantic_search`. The consolidation timer's lesson applies:
   a loop whose events go nowhere readable is indistinguishable from a
   broken one.
-- **Turn discovery** uses `h_mems_by_prefix_since` (`memory_store.rs:410`
-  → `hmem.rs:350`), a time-bounded prefix query — the pass never loads
-  the whole store. The first pass after startup looks back 6 hours;
-  turns older than that which were never distilled are missed (raw
-  transcript remains; therapy can still distill them).
+- **Turn discovery** scans the shared-copy prefix (`curator:thread:{id}`)
+  via `thread_turns::shared_turns_by_thread_since` (`thread_turns.rs`) —
+  the one turn-discovery contract, shared with `curator_memory_extract`.
+  The scan is complete because ingest writes a shared copy for **every**
+  turn, curator and non-curator alike; the time-bounded prefix query
+  means the pass never loads the whole store. The first pass after
+  startup looks back 6 hours; turns older than that which were never
+  distilled are missed (raw transcript remains; therapy can still
+  distill them).
 - **Configuration.** `kask.memory.distillation_cadence_secs` (default
   600, 0 = disabled) and `kask.memory.distillation_idle_secs` (default
   300) — `settings.rs:241`, defaults in `Default` (`:257`), emitted to

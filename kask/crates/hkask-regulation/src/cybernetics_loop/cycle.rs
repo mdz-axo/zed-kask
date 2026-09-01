@@ -783,46 +783,26 @@ impl super::CyberneticsLoop {
             if !store_answered {
                 // Fallback: determine metric and pre-action value from the
                 // typed RegulationData, then re-sense the after value.
-                let (fallback_before, fallback_metric) = match &action.parameters.data {
-                    RegulationData::EnergyBudgetLow {
-                        remaining_ratio, ..
-                    }
-                    | RegulationData::BudgetGuardEscalation {
-                        remaining_ratio, ..
-                    }
-                    | RegulationData::EnergyDepletionAutoAdjust {
-                        remaining_ratio, ..
-                    } => (*remaining_ratio, SignalMetric::EnergyRemaining),
-                    RegulationData::VarietyDeficitExceeded { deficit, .. } => {
-                        (*deficit, SignalMetric::VarietyDeficit)
-                    }
-                    RegulationData::ContextServerFleetHealth {
-                        healthy_count,
-                        total_count,
-                    } => {
-                        // Before-value is the healthy/total ratio at
-                        // escalation time. After-value is re-sensed from
-                        // the source. Higher ratio = improved.
-                        let before_ratio = *healthy_count as f64 / (*total_count).max(1) as f64;
-                        (before_ratio, SignalMetric::ContextServerHealth)
-                    }
-                    RegulationData::ToolReliabilityDegraded { reliability, .. } => {
-                        // Before-value is the aggregate success rate sensed at
-                        // escalation time; after-value is re-sensed from the
-                        // ledger below. Higher is better.
-                        (*reliability, SignalMetric::ToolReliability)
-                    }
-                    _ => {
+                // The per-variant (metric, before-value) table lives on
+                // `RegulationData::impact_before_value`, colocated with the
+                // variants it describes.
+                let (fallback_before, fallback_metric) = match action
+                    .parameters
+                    .data
+                    .impact_before_value()
+                {
+                    Some((data_metric, data_before)) => (data_before, data_metric),
+                    None => {
                         // Actions whose RegulationData variant carries no
                         // before-value (NoData and the meta-regulatory /
                         // observational arms) can't be verified via the
-                        // struct-walk. Warn so the skip is visible — a silent
-                        // continue would make "no verification ran"
-                        // indistinguishable from "verification ran and passed"
-                        // (the .rules broken-feedback-loop trap). Full impact
-                        // verification for these actions requires carrying the
-                        // before-value in a typed RegulationData variant
-                        // (follow-up).
+                        // struct-walk. Warn so the skip is visible — a
+                        // silent continue would make "no verification ran"
+                        // indistinguishable from "verification ran and
+                        // passed" (the .rules broken-feedback-loop trap).
+                        // Full impact verification for these actions
+                        // requires carrying the before-value in a typed
+                        // RegulationData variant (follow-up).
                         tracing::warn!(
                             target: "reg.cybernetics",
                             metric = action.metric_name.as_deref().unwrap_or("unknown"),
@@ -896,17 +876,14 @@ impl super::CyberneticsLoop {
             }
 
             let delta = after_val - before_val;
-            // For EnergyRemaining: higher is better (positive delta = improved).
-            // For VarietyDeficit: lower is better (negative delta = improved).
-            // For ContextServerHealth: higher is better (positive delta = improved).
-            // For ToolReliability: higher is better (positive delta = improved).
-            let improved = match metric {
-                SignalMetric::EnergyRemaining => delta > 0.0,
-                SignalMetric::VarietyDeficit => delta < 0.0,
-                SignalMetric::ContextServerHealth => delta > 0.0,
-                // Higher success rate = improved.
-                SignalMetric::ToolReliability => delta > 0.0,
-                _ => delta.abs() > f64::EPSILON,
+            // The per-metric direction table lives on
+            // `SignalMetric::impact_direction`, colocated with the metric
+            // it describes. No direction = no verified impact path: any
+            // nonzero delta counts as a change.
+            let improved = match metric.impact_direction() {
+                Some(true) => delta > 0.0,
+                Some(false) => delta < 0.0,
+                None => delta.abs() > f64::EPSILON,
             };
 
             // Classify the decision using per-metric worsening thresholds.

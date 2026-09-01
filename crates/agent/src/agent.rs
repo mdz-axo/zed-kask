@@ -18,6 +18,7 @@ mod tools;
 use context_server::ContextServerId;
 pub use curator_agent_server::{CURATOR_STATIC_CONTEXT, CuratorAgentServer};
 pub use db::*;
+use hkask_types::process_global::ProcessGlobal;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 use parking_lot::Mutex;
@@ -2941,11 +2942,10 @@ pub trait ThreadMemoryPort: Send + Sync {
 /// completion triggers memory ingestion. When `None` (upstream zed, or before
 /// the composition root runs), turn completion is a no-op for memory.
 ///
-/// Uses a `Mutex` (not `OnceLock`) so the port can be replaced after startup —
-/// the composition root installs a logging port immediately, then upgrades to
-/// a real port once the Zed user resolves and the agent identity is known.
-static MEMORY_PORT: std::sync::Mutex<Option<Arc<dyn ThreadMemoryPort>>> =
-    std::sync::Mutex::new(None);
+/// Re-settable (`ProcessGlobal`) so the port can be replaced after startup —
+/// the composition root installs a logging port immediately, then upgrades
+/// to a real port once the agent identity is known.
+static MEMORY_PORT: ProcessGlobal<Arc<dyn ThreadMemoryPort>> = ProcessGlobal::new();
 
 /// Set the global thread memory port (D6 composition root).
 ///
@@ -2954,7 +2954,7 @@ static MEMORY_PORT: std::sync::Mutex<Option<Arc<dyn ThreadMemoryPort>>> =
 /// replace the earlier port (e.g., upgrading from a logging port to a real
 /// memory port once the agent identity is known).
 pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
-    *MEMORY_PORT.lock().expect("MEMORY_PORT poisoned") = port;
+    MEMORY_PORT.set(port);
 }
 
 /// Get the global thread memory port, if set.
@@ -2962,7 +2962,7 @@ pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
 /// Returns an owned `Arc` clone so the caller doesn't hold the lock across
 /// an await point (the ingestion is fire-and-forget on a background task).
 pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
-    MEMORY_PORT.lock().expect("MEMORY_PORT poisoned").clone()
+    MEMORY_PORT.get()
 }
 
 /// Global override for the archived threads DB path (D28 — Standardized
@@ -2974,12 +2974,11 @@ pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
 /// by `hkask_types::agent_paths::resolve_under_data_dir`. Wired by the
 /// zed-kask composition root at startup.
 ///
-/// Uses a `Mutex` (not `OnceLock`) so the path can be replaced after startup
+/// Re-settable (`ProcessGlobal`) so the path can be replaced after startup
 /// — e.g. if the operator changes the kask data directory via settings and
-/// the composition root re-wires. Per `.rules`, `Mutex` hooks are re-settable
-/// and do not need the `Err`-branch warn.
-static THREADS_DB_PATH_OVERRIDE: std::sync::Mutex<Option<std::path::PathBuf>> =
-    std::sync::Mutex::new(None);
+/// the composition root re-wires. Per `.rules`, re-settable hooks do not
+/// need the `Err`-branch warn.
+static THREADS_DB_PATH_OVERRIDE: ProcessGlobal<std::path::PathBuf> = ProcessGlobal::new();
 
 /// Set the global archived-threads DB path override (D28 composition root).
 ///
@@ -2988,17 +2987,12 @@ static THREADS_DB_PATH_OVERRIDE: std::sync::Mutex<Option<std::path::PathBuf>> =
 /// back to the legacy upstream path so the editor remains functional
 /// pre-wiring.
 pub fn set_threads_db_path_override(path: Option<std::path::PathBuf>) {
-    *THREADS_DB_PATH_OVERRIDE
-        .lock()
-        .expect("THREADS_DB_PATH_OVERRIDE poisoned") = path;
+    THREADS_DB_PATH_OVERRIDE.set(path);
 }
 
 /// Get the global archived-threads DB path override, if set.
 pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
-    THREADS_DB_PATH_OVERRIDE
-        .lock()
-        .expect("THREADS_DB_PATH_OVERRIDE poisoned")
-        .clone()
+    THREADS_DB_PATH_OVERRIDE.get()
 }
 
 /// Context injector — enriches prompts with retrieved context (D11).
@@ -3128,18 +3122,17 @@ pub trait ThreadCondenser: Send + Sync {
 
 /// Global hook for the thread condenser (D8).
 ///
-/// Uses a `Mutex` (not `OnceLock`) so the condenser can be replaced after
+/// Re-settable (`ProcessGlobal`) so the condenser can be replaced after
 /// startup — the composition root installs an early condenser before the
 /// model resolves, then the deferred post-login task may upgrade it.
-static THREAD_CONDENSER: std::sync::Mutex<Option<Arc<dyn ThreadCondenser>>> =
-    std::sync::Mutex::new(None);
+static THREAD_CONDENSER: ProcessGlobal<Arc<dyn ThreadCondenser>> = ProcessGlobal::new();
 
 /// Set the global thread condenser (D8 composition root).
 ///
 /// Re-settable — later calls replace the earlier condenser (e.g., upgrading
 /// from an early condenser to one constructed after the model resolves).
 pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
-    *THREAD_CONDENSER.lock().expect("THREAD_CONDENSER poisoned") = condenser;
+    THREAD_CONDENSER.set(condenser);
 }
 
 /// Get a cloned handle to the global thread condenser, if set.
@@ -3147,10 +3140,7 @@ pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
 /// Returns an owned `Arc` clone so the caller doesn't hold the lock across
 /// an await point.
 pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
-    THREAD_CONDENSER
-        .lock()
-        .expect("THREAD_CONDENSER poisoned")
-        .clone()
+    THREAD_CONDENSER.get()
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
@@ -4377,17 +4367,13 @@ pub type McpToolOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + S
 /// (skills/panel/IPC) records its own outcomes via `with_governance`, but
 /// the agent path had no `record_outcome` call, so the `ToolReliabilitySensor`
 /// and the curator never saw agent-initiated MCP failures.
-static MCP_TOOL_OUTCOME_RECORDER: std::sync::Mutex<Option<McpToolOutcomeRecorder>> =
-    std::sync::Mutex::new(None);
+static MCP_TOOL_OUTCOME_RECORDER: ProcessGlobal<McpToolOutcomeRecorder> = ProcessGlobal::new();
 
 /// Set the global MCP tool outcome recorder. Re-settable (replaces any
 /// previous recorder) — production wires once at startup; tests replace
 /// freely.
 pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
-    let mut slot = MCP_TOOL_OUTCOME_RECORDER
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *slot = Some(recorder);
+    MCP_TOOL_OUTCOME_RECORDER.set(Some(recorder));
 }
 
 /// Record an agent-path MCP tool outcome. Best-effort by design: when no
@@ -4399,13 +4385,10 @@ pub fn record_mcp_tool_outcome(
     success: bool,
     error_kind: Option<&str>,
 ) {
-    // Clone the recorder out of the lock so the callback runs unlocked —
-    // the wired closure spawns a tokio task and must not run under the
-    // hook's own mutex.
-    let recorder = MCP_TOOL_OUTCOME_RECORDER
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
+    // `ProcessGlobal::get` clones out of the lock so the callback runs
+    // unlocked — the wired closure spawns a tokio task and must not run
+    // under the hook's own mutex.
+    let recorder = MCP_TOOL_OUTCOME_RECORDER.get();
     match recorder {
         Some(record) => record(server_name, tool_name, success, error_kind),
         None => log::debug!(

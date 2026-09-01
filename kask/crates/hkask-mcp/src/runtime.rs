@@ -38,6 +38,7 @@
 //! the only route back to a working connection was an operator settings change.
 
 use hkask_tool_port::ToolInfo;
+use hkask_types::process_global::ProcessGlobal;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{Peer, RoleClient, ServiceExt};
 use rmcp::transport::TokioChildProcess;
@@ -123,28 +124,21 @@ const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 /// must not depend on the caller's executor at all, so `try_reconnect`
 /// hops onto this runtime when it finds no reactor.
 ///
-/// Mutex (not OnceLock): re-settable, matching the other process-global
-/// hooks (`set_memory_port`, `set_tool_invoker`).
-static SPAWN_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Handle>> =
-    std::sync::Mutex::new(None);
+/// Re-settable (`ProcessGlobal`), matching the other process-global hooks
+/// (`set_memory_port`, `set_tool_invoker`).
+static SPAWN_RUNTIME: ProcessGlobal<tokio::runtime::Handle> = ProcessGlobal::new();
 
 /// Wire the tokio runtime that off-runtime reconnects spawn onto.
-/// See [`SPAWN_RUNTIME`]. `Mutex`-based and re-settable; a second call
-/// replaces the first.
+/// See [`SPAWN_RUNTIME`]. Re-settable; a second call replaces the first.
 pub fn set_spawn_runtime(handle: tokio::runtime::Handle) {
-    *SPAWN_RUNTIME
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+    SPAWN_RUNTIME.set(Some(handle));
 }
 
 /// The configured spawn runtime, if wired. `None` in embedders that never
 /// called [`set_spawn_runtime`] (tests construct the runtime inside
 /// `#[tokio::test]`, so the ambient context suffices there).
 fn configured_spawn_runtime() -> Option<tokio::runtime::Handle> {
-    SPAWN_RUNTIME
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+    SPAWN_RUNTIME.get()
 }
 
 /// Interval between health checks once the supervisor has exceeded

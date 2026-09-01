@@ -158,11 +158,45 @@ impl SignalMetric {
         .into_iter()
         .find(|metric| metric.as_str() == name)
     }
+
+    /// Whether an increase in this metric is an improvement — the impact
+    /// direction `verify_impact` compares its before/after delta against.
+    /// `None` for metrics with no verified impact path; `verify_impact`
+    /// falls back to treating any nonzero delta as a change.
+    ///
+    /// This is the per-metric direction table, colocated with the metric
+    /// it describes.
+    pub fn impact_direction(&self) -> Option<bool> {
+        match self {
+            SignalMetric::EnergyRemaining
+            | SignalMetric::ContextServerHealth
+            | SignalMetric::ToolReliability => Some(true),
+            SignalMetric::VarietyDeficit => Some(false),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the per-metric impact direction: energy remaining, fleet
+    /// health, and tool reliability improve upward; variety deficit
+    /// improves downward; everything else has no verified impact path
+    /// (`verify_impact` falls back to any-nonzero-delta).
+    #[test]
+    fn impact_direction_covers_the_verifiable_metrics() {
+        assert_eq!(SignalMetric::EnergyRemaining.impact_direction(), Some(true));
+        assert_eq!(
+            SignalMetric::ContextServerHealth.impact_direction(),
+            Some(true)
+        );
+        assert_eq!(SignalMetric::ToolReliability.impact_direction(), Some(true));
+        assert_eq!(SignalMetric::VarietyDeficit.impact_direction(), Some(false));
+        assert_eq!(SignalMetric::ErrorRate.impact_direction(), None);
+        assert_eq!(SignalMetric::TestCoverage.impact_direction(), None);
+    }
 
     /// Pins the strict boundary semantics: a value exactly AT the
     /// set-point is not a deviation. This is the boundary check behind
