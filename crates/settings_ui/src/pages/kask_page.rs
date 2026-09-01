@@ -2,7 +2,7 @@
 //!
 //! Top-level "Kask" page with sub-page links to:
 //! - Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles)
-//! - MCP Servers (10 built-in servers + load toggles + `load_default` master toggle)
+//! - MCP Servers (built-in servers + load toggles + `load_default` master toggle)
 //! - Curator (`always_on` toggle + `algedonic_threshold`)
 //! - Curator Email (MXroute SMTP config + keychain-backed password)
 //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)

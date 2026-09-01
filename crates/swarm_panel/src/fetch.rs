@@ -50,6 +50,7 @@ fn fetch_retry_delay(attempts_so_far: u32) -> Option<Duration> {
 /// private to this module — the fetchers and the retry orchestration below
 /// mutate them directly (same-module privacy); the rest of the crate reads
 /// through the accessors.
+#[derive(Default)]
 pub(crate) struct FetchState {
     /// Number of fetch operations currently in flight (agents + swarms spawn
     /// independently). `is_fetching()` is true while any are in the air —
@@ -79,19 +80,6 @@ pub(crate) struct FetchState {
     /// Consecutive retryable-failure count, for backoff. Reset on any success or
     /// manual refresh.
     retry_attempt: u32,
-}
-
-impl Default for FetchState {
-    fn default() -> Self {
-        Self {
-            in_flight: 0,
-            agents_error: None,
-            swarms_error: None,
-            cloud_authenticated: None,
-            retry_task: None,
-            retry_attempt: 0,
-        }
-    }
 }
 
 impl FetchState {

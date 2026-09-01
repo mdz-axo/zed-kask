@@ -1450,7 +1450,7 @@ fn main() {
             let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
             let servers_to_start_clone = servers_to_start;
             let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
-            let kask_mcp_launch_pass_for_deferred = kask_mcp_launch_pass_complete.clone();
+            let kask_mcp_launch_pass_for_deferred = kask_mcp_launch_pass_complete;
             // Captures for the model-dependent wiring block (moved here from
             // the synchronous startup so it runs in the deferred task and
             // the LanguageModelRegistry is populated). See the
