@@ -30,8 +30,9 @@ numeric match — can be `tool_verified`.
 | 0 | `pending_check` | Check exists but has not run yet |
 | 0 | `rejected` | Checked and found wrong |
 
-The provenance vocabulary is a closed set. The `lisp_eval` scoring call
-rejects unrecognized values.
+The provenance vocabulary is a closed set. The Step 2 validation call
+counts assignments whose value is outside the set; a count > 0
+re-enters Step 2.
 
 Absence is ambiguous until the record settles it: `tool_no_match` (asked,
 empty), `unavailable` with a source that was never consulted (not asked —
@@ -84,6 +85,10 @@ cited.
 1. Call `render_template` to render the claim extraction template:
    - template_ref: `grounding-verify/extract-claims`
    - context: `{ "target_text": "{{ target_text }}", "source_outputs": {{ source_outputs }} }`
+   - `source_outputs` is an array of `{ tool_name, description, output_key }`
+     objects — one per MCP tool output; this is the shape `extract-claims.j2`
+     renders (it reads `source.tool_name`, `source.description`,
+     `source.output_key`). A bare string list renders an empty source list.
 
 2. Following the template's output schema, extract all declarative factual
    claims from `target_text`. Each claim is a `(subject, predicate, object)`
@@ -132,8 +137,9 @@ cited.
    - `pending_check`: a check exists but has not run yet.
 
 3. For each `tool_verified` claim, the template must also emit a
-   `cross_check` specification — the `lisp_eval` form or substring match
-   that will verify the cited value against the source output. A
+   `cross_check` specification — the `lisp_eval` form that will verify
+   the cited value against the source output (`string-contains` for
+   quotes, numeric/derivation forms for numbers). A
    `tool_verified` claim with no `cross_check` is a claim nobody can
    falsify. If no cross-check is possible, the claim must be classified
    as `model_inference` with a `why` explaining why it cannot be
@@ -141,6 +147,21 @@ cited.
 
 4. Each claim entry carries a `why` field (minimum 40 characters)
    explaining its provenance status. Short justifications are rejected.
+
+5. Validate the assignments before any claim is provisionally trusted —
+   two `lisp_eval` calls over the Step 2 output. A count > 0 on either
+   call re-enters Step 2: fix the flagged assignments before Step 3.
+   These two calls are the enforcement line for the closed-vocabulary and
+   why-min-40 constraints.
+   - Closed vocabulary — count assignments whose `provenance` value is
+     outside the closed set (a missing `provenance` counts as bad —
+     fail-closed):
+     `(let ((vocab (list "tool_verified" "platform_derived" "model_inference" "unavailable" "tool_no_match" "pending_check" "rejected")) (bad (lambda (lst) (cond ((is_null lst) 0) ((member (assoc "provenance" (car lst)) vocab) (bad (cdr lst))) (t (+ 1 (bad (cdr lst)))))))) (bad assignments))`
+     env: `{ "assignments": <step_2_result.provenance_assignments> }`
+   - why-min-40 — count assignments whose `why` is under 40 characters
+     (a missing `why` counts as short — `length` of nil is 0):
+     `(let ((short (lambda (lst) (cond ((is_null lst) 0) ((>= (length (assoc "why" (car lst))) 40) (short (cdr lst))) (t (+ 1 (short (cdr lst)))))))) (short assignments))`
+     same env.
 
 ### Step 3 — Mechanically verify citations
 
@@ -153,7 +174,9 @@ cited.
      found the quote and pointed to it; the process verifies the pointer.
      An empty `quote` errors the call — an empty needle would verify
      anything, and a check that fires on correct output is worse than no
-     check.
+     check. For stored transcripts, `educt_locate` is the deterministic
+     word-aligned locator — prefer it when the source is an
+     educt-stored transcript.
    - **Cited numbers**: call `lisp_eval` to verify that the numeric value
      appears in the referenced source output. For derived numbers (e.g.,
      "revenue growth of 12%"), the `cross_check` form states the
@@ -293,7 +316,7 @@ this skill is the verifier, not the generator.
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` claim, emits a `cross_check` specification (lisp_eval form or substring match). Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with tier, source_reference, cross_check, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, numeric/derivation forms for numbers). Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
 
 To render a template, call `render_template` with the template ref (e.g.,
@@ -342,8 +365,8 @@ registry.
   in the registry are structured reference versions of the same content.
 - The provenance vocabulary is a closed set: `tool_verified`,
   `platform_derived`, `model_inference`, `unavailable`, `tool_no_match`,
-  `pending_check`, `rejected`. The `lisp_eval` scoring call rejects
-  unrecognized values.
+  `pending_check`, `rejected`. The Step 2 validation call counts
+  assignments outside this set; a count > 0 re-enters Step 2.
 - The extraction ceiling: LLM-synthesized claims are `model_inference`
   (strength 1), never `tool_verified` (strength 2). Only direct citations
   verified via mechanical match can be `tool_verified`.
@@ -354,8 +377,8 @@ registry.
   A `tool_verified` claim with no cross-check is a claim nobody can
   falsify — reclassify as `model_inference` with a `why`.
 - Each claim entry carries a `why` field (minimum 40 characters). Short
-  justifications are rejected — an unexplained disposition is how a
-  contract rots.
+  justifications are rejected by the Step 2 validation call (count > 0
+  re-enters Step 2) — an unexplained disposition is how a contract rots.
 - No `unwrap_or(0)` on fact_score sub-metrics. If any sub-metric is nil,
   fact_score is nil. A nil fact_score surfaces as
   `data_gap: "fact_score_measurement_failed"` with confidence penalty
@@ -371,5 +394,10 @@ registry.
   fact score covers factuality, not completeness or reasoning quality.
 - When composed as a `spawn_agent` call, the verifier has no shared
   conversation history with the generator (self-improvement §9.1).
+- If any tool call fails (`render_template`, `lisp_eval`), call
+  `curator_report_skill_use_issue` with `skill_name: "grounding-verify"`,
+  the failed tool, and the error — then continue with the best available
+  verification. A failed check degrades the report's claims (mark
+  unverified), never silently passes them through.
 - Corroborated is not confirmed. Never output "proven" or "verified true."
   Use "survived," "withstood," "grounded."

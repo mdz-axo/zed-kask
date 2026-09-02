@@ -1689,6 +1689,7 @@ impl ResolveSymbolInput {
 }
 
 /// One EODHD search entry, filtered to a common stock listing.
+#[derive(Clone)]
 struct SearchCandidate {
     code: String,
     exchange: String,
@@ -1697,13 +1698,14 @@ struct SearchCandidate {
     is_primary: bool,
 }
 
-// Additive ranking weights. An exact ticker match dominates every other
-// signal (the prompt's ticker is the authoritative identifier); name
-// signals follow; explicit exchange/country disambiguators outrank
-// listing-quality signals so a stated exchange or country overrides the
-// default primary-listing preference. The US nudge stays small enough
-// that it never overrides an explicit signal — it only breaks ties toward
-// the listing whose data FMP covers as primary provider.
+// Additive ranking weights, applied after an explicit exchange/country
+// has narrowed the candidate set. An exact ticker match dominates every
+// other signal (the prompt's ticker is the authoritative identifier);
+// name signals follow; listing quality (primary listing, US exchange)
+// breaks what's left. The exchange/country weights also act as soft
+// bonuses on the full set when the narrowing matches nothing (spelling
+// mismatch, missing Country field) — the US nudge stays small enough
+// that it never overrides an explicit signal.
 const SCORE_TICKER_EXACT: i64 = 1000;
 const SCORE_TICKER_PREFIX: i64 = 100;
 const SCORE_NAME_EXACT: i64 = 500;
@@ -1717,13 +1719,14 @@ const SCORE_US_EXCHANGE: i64 = 10;
 ///
 /// Multi-signal resolution against EODHD search: candidates are gathered
 /// from the ticker (when given) and the company name (when given), kept
-/// only when `Type == "Common Stock"`, then ranked by an additive score —
-/// exact ticker match, company-name token overlap, explicit
-/// exchange/country match, then listing quality (primary listing, US
-/// exchange). EODHD's search matches substrings inside company names, so a
-/// bare ticker like "COF" surfaces dozens of name matches ("Swiss Water
-/// Decaffeinated Coffee Inc" contains "cof") — the ranking is what picks
-/// Capital One's COF.US out of that noise.
+/// only when `Type == "Common Stock"`, narrowed by an explicitly given
+/// exchange/country, then ranked by an additive score — exact ticker
+/// match, company-name token overlap, exchange/country match, then listing
+/// quality (primary listing, US exchange). EODHD's search matches
+/// substrings inside company names, so a bare ticker like "COF" surfaces
+/// dozens of name matches ("Swiss Water Decaffeinated Coffee Inc"
+/// contains "cof") — the narrowing and ranking are what pick Capital
+/// One's COF.US out of that noise.
 ///
 /// A ticker that already carries an EODHD exchange suffix ("VOD.LSE") is
 /// its own answer and is returned as-is without a search.
@@ -1844,16 +1847,26 @@ fn parse_search_candidate(entry: &Value) -> Option<SearchCandidate> {
     })
 }
 
-/// Pick the best common-stock candidate by additive score. Ties keep the
-/// first candidate in EODHD's own ordering — the search engine's
+/// Pick the best common-stock candidate. An explicitly given
+/// exchange/country first narrows the set (the prompt named a market, so
+/// listings outside it lose); when that leaves nothing — a spelling the
+/// alias tables don't cover, a missing Country field — the full set is
+/// used and the signals act as score bonuses instead. Ties keep the
+/// first candidate in EODHD's own ordering: the search engine's
 /// popularity ranking is the deterministic tiebreak.
 fn select_best_candidate(entries: &[Value], input: &ResolveSymbolInput) -> Option<SearchCandidate> {
-    let mut best: Option<(i64, SearchCandidate)> = None;
-    for entry in entries {
-        let Some(candidate) = parse_search_candidate(entry) else {
-            continue;
-        };
-        let score = candidate_score(&candidate, input);
+    let candidates: Vec<SearchCandidate> =
+        entries.iter().filter_map(parse_search_candidate).collect();
+    let mut pool: Vec<&SearchCandidate> = candidates
+        .iter()
+        .filter(|candidate| matches_given_market(candidate, input))
+        .collect();
+    if pool.is_empty() {
+        pool = candidates.iter().collect();
+    }
+    let mut best: Option<(i64, &SearchCandidate)> = None;
+    for candidate in pool {
+        let score = candidate_score(candidate, input);
         if best
             .as_ref()
             .map_or(true, |(best_score, _)| score > *best_score)
@@ -1861,7 +1874,26 @@ fn select_best_candidate(entries: &[Value], input: &ResolveSymbolInput) -> Optio
             best = Some((score, candidate));
         }
     }
-    best.map(|(_, candidate)| candidate)
+    best.map(|(_, candidate)| candidate.clone())
+}
+
+/// Whether a candidate is consistent with an explicitly given
+/// exchange/country. A candidate with no Country value passes — a missing
+/// EODHD field must not exclude the right listing.
+fn matches_given_market(candidate: &SearchCandidate, input: &ResolveSymbolInput) -> bool {
+    if let Some(exchange) = input.exchange.as_deref() {
+        if canonical_exchange(exchange) != canonical_exchange(&candidate.exchange) {
+            return false;
+        }
+    }
+    if let (Some(country), Some(candidate_country)) =
+        (input.country.as_deref(), candidate.country.as_deref())
+    {
+        if canonical_country(country) != canonical_country(candidate_country) {
+            return false;
+        }
+    }
+    true
 }
 
 fn candidate_score(candidate: &SearchCandidate, input: &ResolveSymbolInput) -> i64 {
@@ -2254,6 +2286,29 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_country_falls_back_to_full_set() {
+        // A country spelling the alias tables don't cover must not empty
+        // the candidate set — the full set is used and the country only
+        // acts as a score bonus.
+        let entries = vec![
+            entry("AAPL", "US", "Apple Inc", Some("USA"), true),
+            entry(
+                "AAPL",
+                "TO",
+                "Apple CDR (CAD Hedged)",
+                Some("Canada"),
+                false,
+            ),
+        ];
+        let best = select_best_candidate(
+            &entries,
+            &input(None, Some("Apple"), None, Some("Atlantis")),
+        )
+        .expect("unmatched country must fall back to the full set");
+        assert_eq!(best.exchange, "US");
+    }
+
+    #[test]
     fn exchange_name_maps_to_eodhd_code() {
         let entries = vec![
             entry("AAPL", "US", "Apple Inc", Some("USA"), true),
@@ -2377,5 +2432,80 @@ mod tests {
         assert_eq!(canonical_exchange("NYSE"), canonical_exchange("US"));
         assert_eq!(canonical_exchange("Toronto"), canonical_exchange("TO"));
         assert_eq!(canonical_exchange("PA"), canonical_exchange("Paris"));
+    }
+
+    // Live-API pins of the ranking against the real EODHD search — the
+    // synthetic tests above cover the logic; these catch EODHD-side
+    // changes (field renames, new CDR listings) that would silently break
+    // resolution. Skipped without HKASK_EODHD_API_KEY.
+
+    fn eodhd_api_key() -> Option<String> {
+        std::env::var("HKASK_EODHD_API_KEY")
+            .ok()
+            .filter(|key| !key.is_empty())
+    }
+
+    #[tokio::test]
+    async fn live_bare_ticker_picks_exact_code() {
+        // Reproduction of the reported mismatch: EODHD's substring search
+        // for "COF" returns name matches like SWP.TO ("Swiss Water
+        // Decaffeinated Coffee Inc" contains "cof"); the ranking must
+        // pick Capital One's COF.US instead.
+        let Some(key) = eodhd_api_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = reqwest::Client::new();
+        let resolved = resolve_symbol(&client, &input(Some("COF"), None, None, None), &key)
+            .await
+            .expect("COF must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "COF.US",
+            "bare ticker COF must resolve to Capital One, not a name-substring match"
+        );
+        assert!(resolved.is_us);
+    }
+
+    #[tokio::test]
+    async fn live_company_name_only_resolves_primary() {
+        let Some(key) = eodhd_api_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = reqwest::Client::new();
+        let resolved = resolve_symbol(
+            &client,
+            &input(None, Some("Capital One Financial Corp"), None, None),
+            &key,
+        )
+        .await
+        .expect("company name must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "COF.US",
+            "'Capital One Financial Corp' must resolve to Capital One's US listing"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_country_picks_local_listing() {
+        // AAPL also trades as a Canadian CDR on TO (EODHD's own docs
+        // sample shape); an explicit country must pick it over the US
+        // primary.
+        let Some(key) = eodhd_api_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = reqwest::Client::new();
+        let resolved = resolve_symbol(
+            &client,
+            &input(Some("AAPL"), None, None, Some("Canada")),
+            &key,
+        )
+        .await
+        .expect("AAPL must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "AAPL.TO",
+            "country=Canada must pick the Canadian CDR over the US primary"
+        );
     }
 }

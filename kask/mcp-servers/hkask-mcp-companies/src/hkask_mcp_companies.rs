@@ -52,9 +52,7 @@ pub(crate) mod economic_profit;
 pub(crate) mod fibo;
 pub(crate) mod fibo_cache;
 mod financial_model;
-// `pub` so the integration tests (tests/fmp_endpoint_schema.rs) can pin
-// the resolution ranking against the live EODHD API.
-pub mod providers;
+mod providers;
 pub(crate) mod research_store;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;

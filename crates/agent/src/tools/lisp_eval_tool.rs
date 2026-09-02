@@ -347,6 +347,67 @@ mod tests {
         )
         .expect("single-claim floor must evaluate");
         assert_eq!(single, json!(2));
+
+        // A claim record missing `strength` must fail loudly — an
+        // unfinished classification surfaces, it does not silently floor.
+        let err = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"claims": [{"claim_id": "c1"}, {"claim_id": "c2", "strength": 1}]}),
+            100_000,
+            64,
+        )
+        .expect_err("missing strength must error, not floor");
+        assert!(
+            matches!(err, hkask_lisp::LispError::TypeError { .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_canonical_vocabulary_check_form() {
+        // grounding-verify SKILL.md Step 2 item 5 — closed-vocabulary count.
+        let form = r#"(let ((vocab (list "tool_verified" "platform_derived" "model_inference" "unavailable" "tool_no_match" "pending_check" "rejected")) (bad (lambda (lst) (cond ((is_null lst) 0) ((member (assoc "provenance" (car lst)) vocab) (bad (cdr lst))) (t (+ 1 (bad (cdr lst)))))))) (bad assignments))"#;
+        let typo = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"assignments": [{"claim_id": "c1", "provenance": "tool_verrified"}, {"claim_id": "c2", "provenance": "model_inference"}]}),
+            100_000,
+            64,
+        )
+        .expect("vocabulary form must evaluate");
+        assert_eq!(typo, json!(1), "a planted typo must count as bad");
+
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"assignments": [{"claim_id": "c1", "provenance": "tool_verified"}, {"claim_id": "c2", "provenance": "model_inference"}]}),
+            100_000,
+            64,
+        )
+        .expect("clean vocabulary form must evaluate");
+        assert_eq!(clean, json!(0));
+    }
+
+    #[test]
+    fn test_canonical_why_length_check_form() {
+        // grounding-verify SKILL.md Step 2 item 5 — why-min-40 count. A
+        // missing `why` counts as short (length of nil is 0) — fail-closed.
+        let form = r#"(let ((short (lambda (lst) (cond ((is_null lst) 0) ((>= (length (assoc "why" (car lst))) 40) (short (cdr lst))) (t (+ 1 (short (cdr lst)))))))) (short assignments))"#;
+        let short = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"assignments": [{"claim_id": "c1", "why": "short one"}, {"claim_id": "c2", "why": "this explanation is definitely longer than forty characters total"}, {"claim_id": "c3"}]}),
+            100_000,
+            64,
+        )
+        .expect("why-length form must evaluate");
+        assert_eq!(short, json!(2), "short and missing why both count");
+
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"assignments": [{"claim_id": "c1", "why": "this explanation is definitely longer than forty characters total"}]}),
+            100_000,
+            64,
+        )
+        .expect("clean why-length form must evaluate");
+        assert_eq!(clean, json!(0));
     }
 
     #[test]
@@ -391,6 +452,14 @@ mod tests {
         assert!(
             !skill_md.contains("(min (mapcar"),
             "mapcar is not a builtin — the old floor form was broken"
+        );
+        assert!(
+            skill_md.contains(r#"(assoc "provenance" (car lst))"#),
+            "vocabulary-check form must stay pinned in grounding-verify SKILL.md"
+        );
+        assert!(
+            skill_md.contains(r#"(assoc "why" (car lst))"#),
+            "why-length-check form must stay pinned in grounding-verify SKILL.md"
         );
     }
 }

@@ -60,6 +60,13 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      `id`/`tools` dispatch structure (manifest-executor remnant)
    - **S11**: If `core: true` is declared, the name must be in
      `CORE_SKILL_NAMES` (enforced by `agent_skills` at load time)
+   - **S12**: Every `lisp_eval` form pinned in a SKILL.md's instructions
+     evaluates against the interpreter's builtin surface. Method:
+     extract each pinned form; run it via `lisp_eval` with a stub env
+     (empty list for list-shaped variables, 0 for numeric ones); an
+     `unbound symbol: X` error where X is not one of your stub variables
+     is a broken form (missing builtin or special form). Type or runtime
+     errors over stub values are fine — the form's symbols resolved.
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)

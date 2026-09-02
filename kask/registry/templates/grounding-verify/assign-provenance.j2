@@ -14,7 +14,7 @@
 {#     strength: 0 | 1 | 2, #}
 {#     source_reference: string | null, #}
 {#     response_field: string | null,  # which field in the source output #}
-{#     cross_check: string | null,  # lisp_eval form or "substring:chunk_id:quote" for mechanical verification #}
+{#     cross_check: string | null,  # lisp_eval form for mechanical verification (string-contains for quotes; numeric/derivation forms for numbers) #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
@@ -55,7 +55,7 @@ A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `
 
 1. For each claim, determine which provenance tier applies:
    - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
-     - For quotes: `"substring:{chunk_id}:{exact_quote_text}"`
+     - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
      - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
      - For derived numbers: a `lisp_eval` form like `"(let ((growth (/ (- 15450000000.0 13800000000.0) 13800000000.0))) (>= (abs (- growth 0.1196)) 0.001))"`
    - If the claim was computed by platform code (e.g., GORILLA scoring via `lisp_eval`), classify as `platform_derived`.

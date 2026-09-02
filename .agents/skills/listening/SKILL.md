@@ -24,7 +24,9 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    - form: `"(string-contains cited_substring chunk_text)"`
    - env: `{ "cited_substring": <the cited text>, "chunk_text": <the referenced chunk's text> }`
    Fabricated quotes are rejected — the check is mechanical, not
-   model-mediated.
+   model-mediated. For stored transcripts, `educt_locate` is the
+   deterministic word-aligned locator — prefer it when the transcript is
+   educt-stored.
 
 The model never "writes" a quote — it "finds" one and points to where it found
 it. The verification is mechanical (substring match), not model-mediated.
