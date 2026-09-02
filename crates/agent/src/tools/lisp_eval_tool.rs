@@ -411,6 +411,34 @@ mod tests {
     }
 
     #[test]
+    fn test_canonical_therapy_count_forms() {
+        // therapy SKILL.md Phase 4/Phase 5 — approval and failure counts as
+        // recursive helpers (the interpreter has no `filter` builtin; the
+        // original forms died on `unbound symbol: filter`).
+        let approved_form = r#"(define count-approved (lambda (lst) (if (is_null lst) 0 (if (eq (assoc "approved" (car lst)) t) (+ 1 (count-approved (cdr lst))) (count-approved (cdr lst)))))) (count-approved proposals)"#;
+        let approved = hkask_lisp::eval_sandboxed_with_budget(
+            approved_form,
+            &json!({"proposals": [{"approved": true}, {"approved": false}, {"approved": true}]}),
+            100_000,
+            64,
+        )
+        .expect("count-approved form must evaluate");
+        assert_eq!(approved, json!(2));
+
+        let failed_form = r#"(define count-failed (lambda (lst) (if (is_null lst) 0 (if (eq (assoc "success" (car lst)) nil) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"#;
+        let failed = hkask_lisp::eval_sandboxed_with_budget(
+            failed_form,
+            &json!({"results": [{"success": true}, {}, {"success": false}]}),
+            100_000,
+            64,
+        )
+        .expect("count-failed form must evaluate");
+        // A missing `success` counts (assoc → nil); an explicit false does
+        // not — same semantics as the original form.
+        assert_eq!(failed, json!(1));
+    }
+
+    #[test]
     fn test_canonical_step1_structural_form() {
         // grounding-verify SKILL.md Step 1 — zero-claim guard.
         let form = r#"(if (= (length claims) 0) 'no_factual_claims 'ok)"#;
@@ -460,6 +488,30 @@ mod tests {
         assert!(
             skill_md.contains(r#"(assoc "why" (car lst))"#),
             "why-length-check form must stay pinned in grounding-verify SKILL.md"
+        );
+    }
+
+    #[test]
+    fn test_therapy_skill_md_pins_count_forms() {
+        // therapy SKILL.md pins two count forms; if they drift (or regress to
+        // the broken `filter` forms), this fails until skill and tests are
+        // reconciled.
+        let therapy_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/therapy/SKILL.md"
+        ))
+        .expect("therapy SKILL.md must exist in the workspace");
+        assert!(
+            therapy_md.contains("(count-approved proposals)"),
+            "Phase 4 count form must stay pinned in therapy SKILL.md"
+        );
+        assert!(
+            therapy_md.contains("(count-failed results)"),
+            "Phase 5 count form must stay pinned in therapy SKILL.md"
+        );
+        assert!(
+            !therapy_md.contains("(filter"),
+            "filter is not a builtin — the old therapy forms were broken"
         );
     }
 }
