@@ -46,19 +46,17 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
-            if income_arr.is_none_or(|a| a.is_empty())
-                || balance_arr.is_none_or(|a| a.is_empty())
-                || profile_obj.is_none()
-            {
+            let (Some(income_data), Some(balance_data), Some(profile_data)) = (
+                income_arr.filter(|a| !a.is_empty()),
+                balance_arr.filter(|a| !a.is_empty()),
+                profile_obj,
+            )
+            else {
                 return Ok(serde_json::json!({
                     "symbol": req.symbol,
                     "error": "insufficient data — need income statement, balance sheet, and profile"
                 }));
-            }
-
-            let income_data = income_arr.unwrap();
-            let balance_data = balance_arr.unwrap();
-            let profile_data = profile_obj.unwrap();
+            };
 
             // Sector-aware routing: financial-sector companies (banks, insurance,
             // investment firms) require equity-based valuation because debt is

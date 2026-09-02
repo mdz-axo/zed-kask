@@ -588,12 +588,14 @@ impl ResearchClaimClassifier {
     }
 
     fn extract_numerics(text: &str) -> Vec<ExtractedNumber> {
-        let mut results = Vec::new();
-        // Pattern: number followed by %, $, B, M, or a unit word
-        let re =
+        // Pattern: number followed by %, $, B, M, or a unit word. Compiled
+        // once — this runs per research response.
+        static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
             regex::Regex::new(r"(\d+\.?\d*)\s*(%|\$|billion|million|B|M|bps|points|percent|pct)")
-                .unwrap();
-        for cap in re.captures_iter(text) {
+                .expect("static numeric-extraction pattern compiles")
+        });
+        let mut results = Vec::new();
+        for cap in RE.captures_iter(text) {
             if let (Some(num_str), Some(unit)) = (cap.get(1), cap.get(2))
                 && let Ok(value) = num_str.as_str().parse::<f64>()
             {
@@ -605,8 +607,9 @@ impl ResearchClaimClassifier {
                     "million" | "M" => value * 1_000_000.0,
                     _ => value,
                 };
-                // Get context (up to 20 chars before the number)
-                let start = cap.get(0).unwrap().start();
+                // Get context (up to 20 chars before the number). Group 0 is
+                // the whole match, always present for a yielded capture.
+                let start = cap.get(0).map(|m| m.start()).unwrap_or(0);
                 let context_start = start.saturating_sub(20);
                 let context = text[context_start..start].trim().to_string();
                 results.push(ExtractedNumber {
@@ -620,8 +623,12 @@ impl ResearchClaimClassifier {
     }
 
     fn extract_tickers(text: &str) -> Vec<String> {
-        // Match uppercase 1-5 letter tickers, possibly with exchange suffix (.L, .DE, etc.)
-        let re = regex::Regex::new(r"\b([A-Z]{1,5}(?:\.[A-Z]{2})?)\b").unwrap();
+        // Match uppercase 1-5 letter tickers, possibly with exchange suffix
+        // (.L, .DE, etc.). Compiled once — this runs per research response.
+        static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"\b([A-Z]{1,5}(?:\.[A-Z]{2})?)\b")
+                .expect("static ticker-extraction pattern compiles")
+        });
         let known_not_tickers: std::collections::HashSet<&str> = [
             "CEO", "CFO", "COO", "CTO", "IPO", "ETF", "SEC", "ESG", "KYC", "AML", "FY", "Q1", "Q2",
             "Q3", "Q4", "YOY", "YTD", "MTD", "USD", "EUR", "GBP", "EBIT", "NYSE",
@@ -630,7 +637,7 @@ impl ResearchClaimClassifier {
         .copied()
         .collect();
 
-        re.captures_iter(text)
+        RE.captures_iter(text)
             .filter_map(|cap| cap.get(1))
             .map(|m| m.as_str().to_string())
             .filter(|t| !known_not_tickers.contains(t.as_str()))
@@ -638,8 +645,12 @@ impl ResearchClaimClassifier {
     }
 
     fn extract_date(text: &str) -> Option<String> {
-        let re = regex::Regex::new(r"\b(\d{4}-\d{2}-\d{2})\b").unwrap();
-        re.captures(text)
+        // Compiled once — this runs per research response.
+        static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"\b(\d{4}-\d{2}-\d{2})\b")
+                .expect("static date-extraction pattern compiles")
+        });
+        RE.captures(text)
             .and_then(|cap| cap.get(1))
             .map(|m| m.as_str().to_string())
     }

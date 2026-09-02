@@ -54,24 +54,6 @@ pub(crate) fn is_financial_sector(profile: &CompanyProfile) -> bool {
         || industry.contains("Diversified Financial")
 }
 
-/// Detect whether a company is a REIT (Real Estate Investment Trust).
-/// REITs have balance sheets dominated by property, with rental revenue
-/// that doesn't map to traditional working capital concepts. DPO/DSO/DIO
-/// and the cash conversion cycle are not meaningful for REITs.
-/// REITs are valued using FFO/AFFO, cap rates, and NAV.
-///
-/// Source: NAREIT (National Association of Real Estate Investment Trusts),
-/// "REIT Industry Operations & Financial Metrics" — REITs report FFO
-/// (Funds From Operations) rather than net income as the primary earnings
-/// metric, and cap rates (NOI / property value) rather than ROIC.
-#[allow(dead_code)]
-fn is_reit(profile: &CompanyProfile) -> bool {
-    let sector = profile.sector().unwrap_or("");
-    let industry = profile.industry().unwrap_or("");
-    sector.eq_ignore_ascii_case("Real Estate")
-        && (industry.contains("REIT") || industry.contains("Real Estate"))
-}
-
 /// Guard for tools that use FCF-based DCF or economic profit on invested
 /// capital. Returns a structured JSON error if the company is in the
 /// financial sector, or `None` if the tool should proceed.
@@ -113,67 +95,6 @@ pub(crate) fn financial_sector_guard(
         "industry": industry,
         "suggested_alternatives": alternatives,
         "source": "Damodaran, A. (2014). Applied Corporate Finance, Ch. 19: Valuing Financial Service Firms. Sector classification: GICS via FMP company_profile API."
-    }))
-}
-
-/// Guard for tools that compute working capital metrics (DPO, DSO, DIO,
-/// cash conversion cycle, gross margin stability). Returns a structured
-/// JSON error if the company is in the financial sector or is a REIT —
-/// both have balance sheet structures that make these industrial-company
-/// concepts meaningless.
-///
-/// `tool_name` is used to generate a tool-specific error message.
-#[allow(dead_code)]
-pub(crate) fn working_capital_guard(
-    profile: &CompanyProfile,
-    symbol: &str,
-    tool_name: &str,
-) -> Option<serde_json::Value> {
-    let sector = profile.sector().unwrap_or("");
-    let industry = profile.industry().unwrap_or("");
-    let (blocked_reason, alternatives) = if is_financial_sector(profile) {
-        (
-            "Financial-sector companies (banks, insurance) have balance sheets where current liabilities include customer deposits. DPO, DSO, DIO, and the cash conversion cycle are not meaningful — these are industrial-company metrics that measure supplier and customer payment timing, not deposit flows.",
-            vec![
-                "efficiency ratio (bank-specific)",
-                "net interest margin",
-                "ROE",
-            ],
-        )
-    } else if is_reit(profile) {
-        (
-            "REITs have balance sheets dominated by property assets. DPO, DSO, DIO, and the cash conversion cycle are not meaningful — REITs collect rent (not receivables) and pay property expenses (not supplier payables). Gross margin is not a meaningful concept for REITs.",
-            vec!["FFO/AFFO", "cap rate (NOI/property value)", "NAV"],
-        )
-    } else {
-        return None;
-    };
-    let (method, source) = match tool_name {
-        "moat_check" => (
-            "Moat analysis (gross margin stability, working capital days)",
-            "Sector classification: GICS via FMP. Moat framework: Mauboussin & Callahan (2014), 'Calculating Return on Invested Capital'. REIT metrics: NAREIT FFO/AFFO guidance.",
-        ),
-        "working_capital_cycle" => (
-            "Working capital cycle (DPO, DSO, DIO, cash conversion cycle)",
-            "Sector classification: GICS via FMP. Working capital cycle: Richards & Laughlin (1980), 'A Cash Conversion Cycle Approach to Liquidity Analysis'. Bank metrics: FDIC Uniform Bank Performance Report.",
-        ),
-        "management_scorecard" => (
-            "Management scorecard (ROIC trend, invested capital allocation)",
-            "Sector classification: GICS via FMP. ROIC framework: Mauboussin & Callahan (2014). Bank metrics: ROE, not ROIC — see Damodaran (2014) Ch. 19.",
-        ),
-        _ => (
-            "Working capital analysis",
-            "Sector classification: GICS via FMP.",
-        ),
-    };
-    Some(serde_json::json!({
-        "symbol": symbol,
-        "error": format!("{method} is not applicable to {sector} companies"),
-        "reason": blocked_reason,
-        "sector": sector,
-        "industry": industry,
-        "suggested_alternatives": alternatives,
-        "source": source
     }))
 }
 

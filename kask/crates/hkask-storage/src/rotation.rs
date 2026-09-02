@@ -181,7 +181,7 @@ pub fn rotate_passphrase(
             error: std::io::Error::other(format!("Failed to create new DB: {e}")),
         })?;
     let new_pool = new_db.sqlite_pool().map_err(|e| {
-        let _ = std::fs::remove_file(&new_path);
+        remove_artifact(&new_path);
         RotationError::Filesystem {
             path: new_path.clone(),
             error: std::io::Error::other(format!("Failed to open new DB pool: {e}")),
@@ -199,10 +199,10 @@ pub fn rotate_passphrase(
     let result = copy_all_tables(&source_pool, &new_pool, db_path, &new_path);
     if let Err(e) = result {
         // Clean up the new DB artifacts — the source is untouched.
-        let _ = std::fs::remove_file(&new_path);
+        remove_artifact(&new_path);
         // Also clean up WAL/SHM files that SQLite may have created.
-        let _ = std::fs::remove_file(format!("{new_path}-wal"));
-        let _ = std::fs::remove_file(format!("{new_path}-shm"));
+        remove_artifact(&format!("{new_path}-wal"));
+        remove_artifact(&format!("{new_path}-shm"));
         return Err(e);
     }
 
@@ -256,7 +256,7 @@ pub fn rotate_passphrase(
                  manually rename {old_backup} back to {db_path} before restarting"
             );
         }
-        let _ = std::fs::remove_file(&new_path);
+        remove_artifact(&new_path);
         return Err(RotationError::Filesystem {
             path: db_path.to_string(),
             error: e,
@@ -277,8 +277,8 @@ pub fn rotate_passphrase(
     }
 
     // Clean up WAL/SHM files from the old DB (they're stale now).
-    let _ = std::fs::remove_file(format!("{db_path}-wal"));
-    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    remove_artifact(&format!("{db_path}-wal"));
+    remove_artifact(&format!("{db_path}-shm"));
 
     tracing::info!(
         target: "reg.storage",
@@ -592,23 +592,49 @@ fn copy_all_tables(
             error: e,
         })?;
 
-    // Checkpoint the new DB to flush WAL before we close the pool.
-    let _ = new_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    // Checkpoint the new DB to flush WAL before we close the pool. A failed
+    // checkpoint means committed pages may still live in the WAL — surface it
+    // so the rotation aborts and rolls back instead of proceeding to the
+    // rename steps that assume the file is complete.
+    new_conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|e| RotationError::Sql {
+            path: new_path.to_string(),
+            error: e,
+        })?;
 
     Ok(())
+}
+
+/// Remove a rotation artifact, ignoring "not found" (the common case —
+/// leftovers that were already cleaned) and warning on anything else. A
+/// failed cleanup must not abort the rotation, but it must not be silent
+/// either: a leftover `.new`/`.old` file or stale WAL is operator-visible
+/// state.
+fn remove_artifact(path: &str) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                target: "reg.storage",
+                path = %path,
+                error = %e,
+                "failed to remove rotation artifact — manual cleanup may be needed"
+            );
+        }
+    }
 }
 
 /// Delete leftover `.new` / `.old` artifacts from a prior failed rotation.
 fn cleanup_artifact(db_path: &str, salt_path: &str) {
     if Path::new(db_path).exists() {
-        let _ = std::fs::remove_file(db_path);
+        remove_artifact(db_path);
     }
     if Path::new(salt_path).exists() {
-        let _ = std::fs::remove_file(salt_path);
+        remove_artifact(salt_path);
     }
     // Also clean up WAL/SHM files.
-    let _ = std::fs::remove_file(format!("{db_path}-wal"));
-    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    remove_artifact(&format!("{db_path}-wal"));
+    remove_artifact(&format!("{db_path}-shm"));
 }
 
 #[cfg(test)]

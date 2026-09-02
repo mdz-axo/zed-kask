@@ -713,7 +713,9 @@ pub(crate) struct ScreenerRequest {
     pub prompt: String,
     /// Maximum results (default 20). The EODHD screener paginates
     /// automatically to exhaust the full universe, so this is an upper
-    /// bound on the returned row count, not a page size.
+    /// Bound on the returned row count, not a page size. Accepted on the
+    /// wire but not yet enforced — the screener currently returns all
+    /// matches; the `#[allow(dead_code)]` stays until a read site exists.
     #[serde(default = "default_screener_limit")]
     #[allow(dead_code)]
     pub limit: u32,

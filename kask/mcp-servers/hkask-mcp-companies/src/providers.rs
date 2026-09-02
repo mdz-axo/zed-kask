@@ -488,34 +488,6 @@ pub async fn fetch_key_metrics(
     Ok(KeyMetrics::from_raw(enriched))
 }
 
-/// Fetch historical prices as a typed `HistoricalPriceView`.
-///
-/// FMP stable returns a flat array of daily bars; EODHD (normalized) returns
-/// the EODHD `{symbol, historical: [...]}` envelope. `HistoricalPriceView`
-/// handles both shapes.
-#[allow(dead_code)]
-pub async fn fetch_historical_price(
-    client: &reqwest::Client,
-    symbol: &str,
-    from: &str,
-    to: &str,
-    fmp_api_key: &str,
-    eodhd_api_key: &str,
-    learning: Option<&super::LearningState>,
-) -> Result<HistoricalPriceView, McpToolError> {
-    let raw = companies_get(
-        client,
-        "historical_price",
-        symbol,
-        fmp_api_key,
-        eodhd_api_key,
-        &[("from", from), ("to", to)],
-        learning,
-    )
-    .await?;
-    Ok(HistoricalPriceView::from_raw(raw.value))
-}
-
 /// Merge ratios and financial-growth fields into key-metrics entries by date.
 ///
 /// FMP's stable API split the old key-metrics response across three endpoints.

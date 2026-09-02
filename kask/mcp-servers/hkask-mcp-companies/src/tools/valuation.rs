@@ -1284,12 +1284,16 @@ impl CompaniesServer {
             } else {
                 None
             };
-            // Validate symbol match before using the forecast.
-            if let Some(ref pf) = persisted_forecast {
+            // Validate symbol match before using the forecast. The tuple
+            // pattern skips the check when the forecast id is absent —
+            // unreachable by construction (the lookup above only runs for a
+            // present id), and strictly safer than the unwrap it replaces.
+            if let (Some(ref pf), Some(forecast_id)) = (&persisted_forecast, req.forecast_id.as_ref())
+            {
                 if pf.symbol != req.symbol {
                     return Err(McpToolError::invalid_argument(format!(
                         "forecast '{}' belongs to symbol '{}', not '{}'",
-                        req.forecast_id.as_ref().unwrap(), pf.symbol, req.symbol
+                        forecast_id, pf.symbol, req.symbol
                     )));
                 }
             }
