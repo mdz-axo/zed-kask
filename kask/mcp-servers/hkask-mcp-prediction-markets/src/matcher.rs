@@ -159,3 +159,134 @@ pub fn rank_matches(query: &str, candidates: &[MarketRecord]) -> Vec<MatchCandid
     });
     scored
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal valid `MarketRecord` via serde — the matcher only reads
+    /// `question` and `deadline`, but the record has no `Default` and the
+    /// provider constructors require upstream JSON.
+    fn test_market(question: &str, deadline: &str) -> MarketRecord {
+        serde_json::from_value(serde_json::json!({
+            "source": "kalshi",
+            "event_id": "ev-test",
+            "market_id": "mkt-test",
+            "question": question,
+            "description": "",
+            "category": "politics",
+            "series": "KXTEST",
+            "deadline": deadline,
+            "time_to_maturity": null,
+            "probability": 0.5,
+            "probability_method": "midpoint",
+            "spread": null,
+            "volume": 1000.0,
+            "volume_grain": "market",
+            "liquidity": null,
+            "open_interest": null,
+            "last_update": "2026-01-01T00:00:00Z",
+            "volatility": {
+                "realized_variance": null,
+                "structural_flag": "None",
+                "interpretation": ""
+            },
+            "status": "open",
+            "resolved_outcome": null,
+            "resolution_source": "test",
+            "calibration": {
+                "brier": null,
+                "domain_bias": null,
+                "bias_source": "test",
+                "sample_size": 0,
+                "stale": true
+            },
+            "reliability_tier": "high",
+            "ontology": {
+                "process": { "type": "test", "stage": "test", "probability_role": "test" },
+                "state": {
+                    "identifier": "test",
+                    "title": "test",
+                    "description": "test",
+                    "temporal": "test",
+                    "provenance": "test"
+                },
+                "mapping_version": 1
+            }
+        }))
+        .expect("test market record deserializes")
+    }
+
+    #[test]
+    fn token_overlap_identical_questions_score_one() {
+        assert!((token_overlap("Will the Fed cut rates", "Will the Fed cut rates") - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn token_overlap_ignores_stopwords() {
+        // "will" and "in" are stopwords — adding them must not change the overlap.
+        assert!(
+            (token_overlap("Fed cut rates in December", "Fed cut rates December") - 1.0).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn token_overlap_disjoint_questions_score_zero() {
+        assert!(token_overlap("Fed cut rates", "Champions league winner") < 1e-9);
+    }
+
+    #[test]
+    fn extract_deadline_prefers_iso_date() {
+        let date = extract_deadline("Will X happen by 2027-04-28 or later?").expect("iso date");
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2027, 4, 28).expect("valid date"));
+    }
+
+    #[test]
+    fn extract_deadline_bare_year_uses_midyear_pivot() {
+        // Mid-year, not end-of-year: "the January 2028 meeting" must not be
+        // ~340 days from a Dec-31 pivot of the same year.
+        let date = extract_deadline("Who wins the 2028 election?").expect("year");
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2028, 7, 1).expect("valid date"));
+    }
+
+    #[test]
+    fn extract_deadline_absent_is_none() {
+        assert!(extract_deadline("Will the sun rise tomorrow?").is_none());
+    }
+
+    #[test]
+    fn market_scores_perfectly_against_its_own_question() {
+        let market = test_market("Will the Fed cut rates in December", "2026-12-15T00:00:00Z");
+        let candidate = score_match("Will the Fed cut rates in December", None, &market);
+        assert!((candidate.score - 1.0).abs() < 1e-9);
+        assert_eq!(candidate.match_confidence, MatchConfidence::High);
+    }
+
+    #[test]
+    fn deadline_mismatch_decays_score_when_query_names_a_date() {
+        // The query names 2027-04-28 (day precision); the market resolves
+        // 2027-12-31 — 247 days apart, past the 45-day tolerance, so the
+        // deadline factor must reduce the score below the raw token overlap.
+        let market = test_market("Will X happen", "2027-12-31T00:00:00Z");
+        let query = "Will X happen by 2027-04-28";
+        let query_deadline = extract_deadline(query).expect("query names a date");
+        let candidate = score_match(query, Some(query_deadline), &market);
+        assert!(
+            candidate.score < candidate.match_basis.token_overlap,
+            "deadline mismatch must reduce the score below raw overlap"
+        );
+        assert!(candidate.match_basis.deadline_delta_days.is_some());
+    }
+
+    #[test]
+    fn rank_matches_orders_highest_first() {
+        let exact = test_market("Will the Fed cut rates in December", "2026-12-15T00:00:00Z");
+        let unrelated = test_market("Champions league winner", "2026-12-15T00:00:00Z");
+        let ranked = rank_matches("Will the Fed cut rates in December", &[unrelated, exact]);
+        assert_eq!(
+            ranked[0].market.question, "Will the Fed cut rates in December",
+            "the matching market must rank first"
+        );
+        assert!(ranked[0].score > ranked[1].score);
+    }
+}

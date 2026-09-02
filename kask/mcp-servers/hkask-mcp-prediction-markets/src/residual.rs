@@ -86,3 +86,55 @@ pub fn residual_analysis(observations: &[(f64, f64)]) -> Option<ResidualAnalysis
         latest_residual,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Prices whose log-odds follow the given levels exactly.
+    fn prices_from_log_odds(levels: &[f64]) -> Vec<f64> {
+        levels.iter().map(|l| from_log_odds(*l)).collect()
+    }
+
+    #[test]
+    fn insufficient_overlap_is_none() {
+        let observations: Vec<(f64, f64)> = (0..9)
+            .map(|i| (0.4 + f64::from(i) * 0.01, 0.5))
+            .collect();
+        assert!(
+            residual_analysis(&observations).is_none(),
+            "fewer than MIN_OBSERVATIONS must refuse, never fabricate a residual"
+        );
+    }
+
+    #[test]
+    fn perfectly_proportional_series_recovers_beta_and_fit() {
+        // Niche log-odds = 2 × base log-odds at every step ⇒ β = 2, R² = 1,
+        // and the latest residual is zero (niche sits exactly on its base).
+        let base_levels: Vec<f64> = (0..12).map(|i| f64::from(i) * 0.1 - 0.5).collect();
+        let niche_levels: Vec<f64> = base_levels.iter().map(|l| 2.0 * l).collect();
+        let base = prices_from_log_odds(&base_levels);
+        let niche = prices_from_log_odds(&niche_levels);
+        let observations: Vec<(f64, f64)> = niche
+            .iter()
+            .zip(&base)
+            .map(|(n, b)| (*n, *b))
+            .collect();
+        let analysis = residual_analysis(&observations).expect("sufficient overlap");
+        assert!((analysis.beta - 2.0).abs() < 1e-9, "beta is the niche-per-base log-odds slope");
+        assert!((analysis.r_squared - 1.0).abs() < 1e-9, "exact proportionality is fully explained");
+        assert_eq!(analysis.observations, 11, "windows of 2 over 12 observations");
+        assert!(analysis.latest_residual.abs() < 1e-9, "proportional series has no idiosyncratic deviation");
+    }
+
+    #[test]
+    fn base_that_never_moved_is_none() {
+        let observations: Vec<(f64, f64)> = (0..12)
+            .map(|i| (0.4 + f64::from(i) * 0.01, 0.5))
+            .collect();
+        assert!(
+            residual_analysis(&observations).is_none(),
+            "zero base variance ⇒ no exposure estimable"
+        );
+    }
+}

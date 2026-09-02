@@ -216,3 +216,156 @@ pub fn curve_slope(index: &CmpIndex, short_tenor: u32, long_tenor: u32) -> Optio
     }
     Some((hkask_forecast::log_odds(long_p) - hkask_forecast::log_odds(short_p)) / years)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_base_events_parses_trims_and_drops_malformed() {
+        let events = parse_base_events(
+            "economics:KXFEDDECISION, politics: KXPREZ-28 ,no-colon, :empty-domain, series:",
+        );
+        assert_eq!(events.len(), 2, "malformed entries are dropped, not fatal");
+        assert_eq!(
+            events[0],
+            ("economics".to_string(), "KXFEDDECISION".to_string())
+        );
+        assert_eq!(events[1], ("politics".to_string(), "KXPREZ-28".to_string()));
+    }
+
+    #[test]
+    fn constant_maturity_empty_input_is_none() {
+        assert!(constant_maturity(&[], 30).is_none(), "no CMP without data");
+    }
+
+    #[test]
+    fn constant_maturity_single_cohort_is_bucketed_sparse() {
+        let points = [TenorPoint {
+            days_to_resolution: 30.0,
+            price: 0.6,
+        }];
+        let exact = constant_maturity(&points, 30).expect("exact tenor");
+        assert_eq!(exact.method, CmpMethod::BucketedSparse);
+        assert!((exact.probability - 0.6).abs() < 1e-9);
+        assert_eq!(exact.bracket_days, 0.0);
+        let offset = constant_maturity(&points, 60).expect("offset tenor");
+        assert!(
+            (offset.bracket_days - 30.0).abs() < 1e-9,
+            "sparse bucket reports distance to cohort"
+        );
+    }
+
+    #[test]
+    fn constant_maturity_interpolates_in_log_odds_not_probability_space() {
+        // The load-bearing invariant: interpolation is linear in log-odds,
+        // so the midpoint of 0.5 and 0.75 is NOT the probability midpoint 0.625.
+        let points = [
+            TenorPoint {
+                days_to_resolution: 10.0,
+                price: 0.5,
+            },
+            TenorPoint {
+                days_to_resolution: 30.0,
+                price: 0.75,
+            },
+        ];
+        let mid = constant_maturity(&points, 20).expect("bracketed tenor");
+        let expected = from_log_odds((log_odds(0.5) + log_odds(0.75)) / 2.0);
+        assert!(
+            (mid.probability - expected).abs() < 1e-12,
+            "log-odds midpoint"
+        );
+        assert!(
+            (mid.probability - 0.625).abs() > 1e-6,
+            "must NOT be the probability-space midpoint"
+        );
+        assert_eq!(mid.method, CmpMethod::Interpolated);
+        assert_eq!(mid.cohorts, 2);
+        assert!((mid.bracket_days - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn constant_maturity_extrapolates_flat_beyond_observed_range() {
+        let points = [
+            TenorPoint {
+                days_to_resolution: 30.0,
+                price: 0.4,
+            },
+            TenorPoint {
+                days_to_resolution: 90.0,
+                price: 0.8,
+            },
+        ];
+        let before = constant_maturity(&points, 7).expect("below range");
+        assert!(
+            (before.probability - 0.4).abs() < 1e-9,
+            "flat to nearest endpoint below"
+        );
+        let after = constant_maturity(&points, 365).expect("above range");
+        assert!(
+            (after.probability - 0.8).abs() < 1e-9,
+            "flat to nearest endpoint above — never invents a slope"
+        );
+    }
+
+    #[test]
+    fn same_deadline_markets_share_a_cohort_mean_log_odds() {
+        let points = [
+            TenorPoint {
+                days_to_resolution: 30.0,
+                price: 0.6,
+            },
+            TenorPoint {
+                days_to_resolution: 30.5,
+                price: 0.8,
+            }, // within 1.0 day → same cohort
+        ];
+        let value = constant_maturity(&points, 30).expect("cohort value");
+        assert_eq!(
+            value.cohorts, 1,
+            "same-deadline markets collapse to one cohort"
+        );
+        let expected = from_log_odds((log_odds(0.6) + log_odds(0.8)) / 2.0);
+        assert!(
+            (value.probability - expected).abs() < 1e-9,
+            "cohort value is the mean log-odds"
+        );
+    }
+
+    #[test]
+    fn compute_index_empty_points_yields_all_none() {
+        let index = compute_index("KXTEST", &[], "2026-01-01T00:00:00Z");
+        assert_eq!(index.points.len(), INDEX_TENORS_DAYS.len());
+        assert!(index.points.iter().all(|p| p.probability.is_none()));
+    }
+
+    #[test]
+    fn curve_slope_sign_and_unsupported_cases() {
+        let points = [
+            TenorPoint {
+                days_to_resolution: 7.0,
+                price: 0.3,
+            },
+            TenorPoint {
+                days_to_resolution: 90.0,
+                price: 0.7,
+            },
+        ];
+        let index = compute_index("KXTEST", &points, "2026-01-01T00:00:00Z");
+        let slope = curve_slope(&index, 7, 90).expect("both tenors supported");
+        assert!(
+            slope > 0.0,
+            "rising curve must have positive log-odds slope"
+        );
+        assert!(
+            curve_slope(&index, 90, 7).is_none(),
+            "reversed tenors have no positive year span"
+        );
+        let empty_index = compute_index("KXTEST", &[], "2026-01-01T00:00:00Z");
+        assert!(
+            curve_slope(&empty_index, 7, 90).is_none(),
+            "unsupported tenors yield None"
+        );
+    }
+}

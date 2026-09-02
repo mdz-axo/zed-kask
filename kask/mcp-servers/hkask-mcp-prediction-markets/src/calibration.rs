@@ -168,3 +168,89 @@ pub fn read_calibration(store: &CalibrationStore, bucket: &str) -> CalibrationRe
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_bucket_reads_stale_never_zero() {
+        // The module's cybernetic invariant: no data ⇒ stale, not brier: 0 —
+        // a synthetic 0 reads as "perfectly calibrated" and creates a
+        // reinforcing loop.
+        let store = CalibrationStore::new();
+        let reading = read_calibration(&store, "politics");
+        assert!(reading.stale);
+        assert!(reading.brier.is_none());
+        assert_eq!(reading.sample_size, 0);
+    }
+
+    #[test]
+    fn perfect_predictions_score_zero_brier() {
+        let mut store = CalibrationStore::new();
+        for _ in 0..4 {
+            store.record(
+                "test",
+                ResolvedObservation { probability: 1.0, outcome: true },
+            );
+        }
+        let brier = store.brier("test").expect("measured");
+        assert!(brier.abs() < 1e-9);
+    }
+
+    #[test]
+    fn coin_flip_predictions_score_quarter_brier() {
+        let mut store = CalibrationStore::new();
+        for outcome in [true, false] {
+            store.record(
+                "test",
+                ResolvedObservation { probability: 0.5, outcome },
+            );
+        }
+        let brier = store.brier("test").expect("measured");
+        assert!((brier - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn contains_guards_idempotent_ingest() {
+        let mut store = CalibrationStore::new();
+        let observation = ResolvedObservation { probability: 0.7, outcome: true };
+        assert!(!store.contains("test", &observation));
+        store.record("test", observation);
+        assert!(store.contains("test", &observation));
+        assert!(!store.contains(
+            "test",
+            &ResolvedObservation { probability: 0.7, outcome: false }
+        ));
+        assert_eq!(store.sample_size("test"), 1);
+    }
+
+    #[test]
+    fn save_load_round_trip_preserves_observations() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("calibration.jsonl");
+        let mut store = CalibrationStore::new();
+        store.record(
+            "politics",
+            ResolvedObservation { probability: 0.8, outcome: true },
+        );
+        store.record(
+            "economics",
+            ResolvedObservation { probability: 0.4, outcome: false },
+        );
+        store.save(&path).expect("save");
+        let loaded = CalibrationStore::load(&path).expect("load");
+        assert_eq!(loaded.sample_size("politics"), 1);
+        assert_eq!(loaded.sample_size("economics"), 1);
+        assert!((loaded.brier("politics").expect("brier") - 0.04).abs() < 1e-9);
+    }
+
+    #[test]
+    fn load_missing_file_is_fresh_store() {
+        let store = CalibrationStore::load(std::path::Path::new(
+            "/nonexistent/dir/calibration-journal.jsonl",
+        ))
+        .expect("a missing journal is a fresh store, not an error");
+        assert_eq!(store.sample_size("anything"), 0);
+    }
+}
