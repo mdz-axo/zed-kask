@@ -295,8 +295,9 @@ impl AlgedonicManager {
     ///
     /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
     /// pre: counter is a valid VarietyTracker; domain is non-empty
-    /// post: returns Some(&RuntimeAlert) if the active domain's deficit
-    ///       exceeds expected, None if healthy or idle (no observations
+    /// post: returns Some(&RuntimeAlert) when the active domain's observed
+    ///       variety falls below expected (deficit > 0), None when the
+    ///       domain meets its expected variety or is idle (no observations
     ///       in the current window)
     pub(crate) fn check(
         &mut self,
@@ -317,6 +318,15 @@ impl AlgedonicManager {
             .copied()
             .unwrap_or(self.default_expected_variety);
         let deficit = counter.deficit(expected);
+
+        // Healthy gate: an active domain meeting its expected variety has
+        // nothing to report. Pushing a deficit-0 Info alert on every check
+        // populated the diagnostic log during normal tool use, which the
+        // AlgedonicEvents sensor (any-population deviation) read as a
+        // standing review demand.
+        if deficit == 0 {
+            return None;
+        }
 
         let alert = RuntimeAlert::new(domain, deficit, self.threshold)
             .unwrap_or_else(|| {
@@ -498,6 +508,18 @@ impl AlgedonicManager {
         self.alerts.iter().filter(|alert| alert.escalated).count()
     }
 
+    /// Number of actionable alerts currently in the log — Warning or
+    /// Critical severity. Info entries are healthy-range diagnostics and
+    /// do not demand review; the cybernetics loop senses this count as
+    /// `AlgedonicEvents` so normal-operation diagnostics don't read as a
+    /// standing review demand.
+    pub(crate) fn actionable_alert_count(&self) -> usize {
+        self.alerts
+            .iter()
+            .filter(|alert| alert.is_warning() || alert.is_critical())
+            .count()
+    }
+
     /// The configured alert-log cap.
     pub(crate) fn max_alerts(&self) -> usize {
         self.max_alerts
@@ -569,6 +591,26 @@ mod tests {
 
     fn manager() -> AlgedonicManager {
         AlgedonicManager::with_max_alerts(20, DEFAULT_EXPECTED_VARIETY, 200)
+    }
+
+    /// An active domain meeting its expected variety produces no alert and
+    /// no log entry — a healthy check is silent. Pushing deficit-0 Info
+    /// alerts on every check populated the log during normal tool use,
+    /// which the AlgedonicEvents sensor read as a standing review demand.
+    #[test]
+    fn check_returns_none_at_zero_deficit() {
+        let mut mgr = manager();
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("tool_a");
+        tracker.increment("tool_b");
+        tracker.increment("tool_c");
+        // expected 3 (DEFAULT_EXPECTED_VARIETY), observed 3 → deficit 0
+        assert!(mgr.check(&tracker, "domain").is_none());
+        assert_eq!(
+            mgr.alert_count(),
+            0,
+            "a healthy check must not push an alert"
+        );
     }
 
     /// Idle domains produce no alert and no log growth — a domain at rest

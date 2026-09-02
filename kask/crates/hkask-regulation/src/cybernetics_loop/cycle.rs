@@ -278,25 +278,25 @@ impl super::CyberneticsLoop {
             ));
         }
 
-        // Sense the algedonic log's population state: total events,
-        // escalated-but-unresolved events, and critical alerts. Set-points
-        // are 0.0 — any positive count is a deviation (the "alert on ANY"
-        // convention, matching the variety-threshold default). The dampener
-        // prevents repeat-escalation spam while an alert awaits review;
-        // `clear_reviewed_alerts` closes the loop.
-        let (alert_count, escalated_count, critical_count) = {
+        // Sense the algedonic log's population state: actionable events
+        // (Warning or Critical — Info entries are healthy-range diagnostics
+        // that don't demand review), escalated-but-unresolved events, and
+        // critical alerts. Set-points are 0.0 — any positive count is a
+        // deviation. The dampener prevents repeat-escalation spam while an
+        // alert awaits review; `clear_reviewed_alerts` closes the loop.
+        let (actionable_count, escalated_count, critical_count) = {
             let ledger = self.ledger.read().await;
             (
-                ledger.alert_log_count().await,
+                ledger.actionable_alert_count().await,
                 ledger.escalated_alert_count().await,
                 ledger.critical_alerts().await.len(),
             )
         };
-        if alert_count > 0 {
+        if actionable_count > 0 {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::AlgedonicEvents,
-                alert_count as f64,
+                actionable_count as f64,
                 0.0,
             ));
         }
@@ -1860,6 +1860,31 @@ mod tests {
                     .iter()
                     .any(|s| s.metric == SignalMetric::MetacognitionCriticalAlerts),
                 "clean log must not emit MetacognitionCriticalAlerts"
+            );
+
+            // An Info-only log must NOT emit AlgedonicEvents: Info entries
+            // are healthy-range diagnostics (a variety check slightly below
+            // expected), not review demands. Before the actionable-count
+            // fix, any log population — including normal-use Info noise —
+            // fired the sensor as a standing escalation.
+            {
+                let ledger_guard = ledger.read().await;
+                ledger_guard
+                    .increment_variety("variety_info_test", "only_tool")
+                    .await;
+                let log_count = ledger_guard.alert_log_count().await;
+                drop(ledger_guard);
+                assert!(
+                    log_count > 0,
+                    "sanity: the variety check pushed an Info alert"
+                );
+            }
+            let signals = regulation_loop.sense().await;
+            assert!(
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::AlgedonicEvents),
+                "an Info-only log must not emit AlgedonicEvents"
             );
 
             // A critical outcome alert: 0% success over 5 operations

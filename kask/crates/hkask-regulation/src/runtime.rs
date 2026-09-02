@@ -689,6 +689,18 @@ impl RegulationLedger {
         state.algedonic.read().alert_count()
     }
 
+    /// Number of actionable (Warning or Critical) alerts currently in the
+    /// in-memory algedonic log. Sensed by the cybernetics loop as
+    /// `AlgedonicEvents` — Info diagnostics don't count toward the review
+    /// demand.
+    ///
+    /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
+    /// post: returns the current actionable alert count
+    pub async fn actionable_alert_count(&self) -> usize {
+        let state = self.state.read().await;
+        state.algedonic.read().actionable_alert_count()
+    }
+
     /// Number of escalated alerts currently in the in-memory algedonic log —
     /// routed toward the durable `EscalationQueue` but not yet resolved.
     /// Sensed by the cybernetics loop as `PendingEscalations`.

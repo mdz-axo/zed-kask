@@ -46,7 +46,8 @@ pub enum SignalMetric {
     /// Without this metric the loop reports `signal_count=0` while every
     /// MCP server is hung on `initialize` — the blind-feedback-loop trap.
     ContextServerHealth,
-    /// Algedonic event count (Cybernetics Loop 6)
+    /// Actionable algedonic alert count — Warning or Critical entries in
+    /// the in-memory log (Cybernetics Loop 6). Info diagnostics don't count.
     AlgedonicEvents,
     /// Algedonic log approaching cap (Cybernetics Loop 6).
     /// 1.0 when the in-memory alert log is ≥ 80% of its cap, 0.0 otherwise.
