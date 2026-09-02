@@ -820,6 +820,20 @@ impl RealMemoryPort {
 
         // ── 3. Sort by combined relevance × confidence × connectedness and truncate ─
         //
+        // Precompute connectedness once per unique candidate entity. The
+        // previous implementation called `connectedness` — a live SQLCipher
+        // query — inside the sort comparator, running O(N log N) queries per
+        // recall on every prompt. One query per unique entity is the floor:
+        // the value is a per-entity property, not per-comparison.
+        let mut connectedness_by_entity: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::with_capacity(candidates.len());
+        for candidate in &candidates {
+            if !connectedness_by_entity.contains_key(&candidate.snippet.entity) {
+                let score = self.connectedness(&candidate.snippet.entity);
+                connectedness_by_entity.insert(candidate.snippet.entity.clone(), score);
+            }
+        }
+        //
         // Confidence is the outcome-calibrated signal (Dunning's double
         // curse: the model can't self-evaluate, but confidence that's been
         // calibrated by outcomes IS meaningful). Using it as a ranking
@@ -837,8 +851,14 @@ impl RealMemoryPort {
         // Corpus evidence: Dunning `138299529:5` (double curse), Tetlock
         // `Superforecasting_tetlock:71` (Brier = forecast accuracy).
         candidates.sort_by(|a, b| {
-            let a_conn = self.connectedness(&a.snippet.entity) as f64;
-            let b_conn = self.connectedness(&b.snippet.entity) as f64;
+            let a_conn = connectedness_by_entity
+                .get(&a.snippet.entity)
+                .copied()
+                .unwrap_or(0) as f64;
+            let b_conn = connectedness_by_entity
+                .get(&b.snippet.entity)
+                .copied()
+                .unwrap_or(0) as f64;
             let a_score =
                 a.snippet.relevance_score * a.snippet.confidence * (1.0 + (a_conn * 0.1).min(0.5));
             let b_score =
@@ -2005,6 +2025,136 @@ pub(crate) mod tests {
     /// meaningful. Tetlock (`Superforecasting_tetlock:71`) — confidence
     /// is a forecast. Using it as a ranking multiplier means a
     /// well-calibrated memory outranks an untested one.
+    /// A `DatabaseDriver` wrapper that counts queries against a substring —
+    /// the regression seam for the connectedness-in-the-sort-comparator
+    /// defect (`recall_context_ranks_by_confidence_weighted_relevance`
+    /// exercises ranking, but nothing bounded the query count).
+    struct QueryCountingDriver {
+        inner: Arc<dyn hkask_storage::DatabaseDriver>,
+        needle: &'static str,
+        count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl QueryCountingDriver {
+        fn count_queries_matching(&self, sql: &str) {
+            if sql.contains(self.needle) {
+                self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    impl hkask_storage::DatabaseDriver for QueryCountingDriver {
+        fn execute(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<usize, hkask_types::DbError> {
+            self.count_queries_matching(sql);
+            self.inner.execute(sql, params)
+        }
+        fn execute_batch(&self, sql: &str) -> Result<(), hkask_types::DbError> {
+            self.count_queries_matching(sql);
+            self.inner.execute_batch(sql)
+        }
+        fn query(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<Vec<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
+            self.count_queries_matching(sql);
+            self.inner.query(sql, params)
+        }
+        fn query_optional(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<Option<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
+            self.count_queries_matching(sql);
+            self.inner.query_optional(sql, params)
+        }
+        fn commit_tx(&self) -> Result<(), hkask_types::DbError> {
+            self.inner.commit_tx()
+        }
+        fn rollback_tx(&self) -> Result<(), hkask_types::DbError> {
+            self.inner.rollback_tx()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self.inner.as_any()
+        }
+        fn sqlite_pool(&self) -> Option<&r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>> {
+            self.inner.sqlite_pool()
+        }
+    }
+
+    /// Connectedness must be fetched once per unique candidate entity, not
+    /// once per sort comparison. The previous implementation called
+    /// `connectedness` (a live SQLCipher query) inside `sort_by`'s comparator
+    /// — O(N log N) encrypted-DB queries on EVERY recall, and recall runs on
+    /// every prompt. With 20 candidates the comparator issued ~170
+    /// `memory_links` queries; the bound is 20 (one per unique entity).
+    #[tokio::test]
+    async fn recall_connectedness_queries_are_bounded_by_unique_entities() {
+        let inner = SqliteDriver::in_memory_driver();
+        let counting = Arc::new(QueryCountingDriver {
+            inner,
+            needle: "FROM memory_links",
+            count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let h_mem_store =
+            HMemStore::from_driver(Arc::clone(&counting) as Arc<dyn hkask_storage::DatabaseDriver>)
+                .expect("curator hmem store init");
+        let embedding_store = EmbeddingStore::from_driver(
+            Arc::clone(&counting) as Arc<dyn hkask_storage::DatabaseDriver>,
+            1024,
+        )
+        .expect("embedding store init");
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+
+        let port = RealMemoryPort {
+            curator_store: Arc::new(CuratorStore::for_tests(Some(Arc::clone(&store)))),
+            embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
+            embedding_model: "test-model".to_string(),
+            curator_webid: WebID::from_persona(b"curator"),
+            curator_consolidation: Arc::new(RwLock::new(None)),
+            consolidation_cadence_secs: 0,
+            confidence_floor: 0.3,
+            last_consolidation: Mutex::new(None),
+            tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
+        };
+
+        // 20 h_mems under distinct chat:thread:* entities (the keyword leg's
+        // prefix), all matching the query word, all owned by the curator
+        // perspective so the perspective-scoped prefix query returns them.
+        let curator_webid = port.curator_webid;
+        for index in 0..20 {
+            store
+                .store(
+                    hkask_storage::HMem::new(
+                        &format!("chat:thread:t{index}"),
+                        "chatted",
+                        serde_json::json!(format!("turn {index} about xvantium")),
+                        curator_webid,
+                    )
+                    .with_perspective(curator_webid),
+                )
+                .expect("seed turn");
+        }
+
+        let snippets = port
+            .recall_context_curator("xvantium", 20)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(snippets.len(), 20, "all 20 turns should be recalled");
+
+        let connectedness_queries = counting.count.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            connectedness_queries, 20,
+            "connectedness must run once per unique entity (20), not per sort \
+             comparison (~170 with the comparator-query defect)"
+        );
+    }
+
     #[tokio::test]
     async fn recall_context_ranks_by_confidence_weighted_relevance() {
         // Constant embedding: both h_mems map to the same unit vector, so
