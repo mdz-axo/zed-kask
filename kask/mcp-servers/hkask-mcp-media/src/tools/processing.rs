@@ -967,7 +967,7 @@ impl MediaServer {
             let ffmpeg = self.require_ffmpeg()?;
             let info = ffmpeg.probe(&video_url).await.map_err(map_media_error)?;
             serde_json::to_value(&info)
-                .map_err(|e| McpToolError::internal(format!("encode video info: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode video info: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -1002,14 +1002,14 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if !output_path.exists() {
-                return Err(McpToolError::internal(format!(
+                return Err(McpToolError::internal(format!( // rr0044-ok: ytdlp-succeeded-no-output
                     "yt-dlp completed but output file not found: {}",
                     output_path.display()
                 )));
             }
 
             let bytes = std::fs::read(&output_path)
-                .map_err(|e| McpToolError::internal(format!("read downloaded file: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("read downloaded file: {e}")))?; // rr0044-ok: own pipeline output read
             let hash = {
                 use sha2::Digest;
                 let mut hasher = sha2::Sha256::new();

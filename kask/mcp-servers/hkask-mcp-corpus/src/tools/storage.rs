@@ -183,7 +183,7 @@ impl CorpusServer {
                     // a DB outage would masquerade as an empty corpus and
                     // return success with no results.
                     let total = store.embedding_count().map_err(|e| {
-                        McpToolError::internal(format!("embedding count read failed: {e}"))
+                        McpToolError::internal(format!("embedding count read failed: {e}")) // rr0044-ok: infra-db-failure
                     })?;
                     if total == 0 {
                         return Ok(json!({
@@ -197,7 +197,7 @@ impl CorpusServer {
                     // DB. This loads all embeddings + text in one pass.
                     let all_embeddings = store
                         .all_embeddings_with_text()
-                        .map_err(|e| McpToolError::internal(format!("DB hydration failed: {e}")))?;
+                        .map_err(|e| McpToolError::internal(format!("DB hydration failed: {e}")))?; // rr0044-ok: infra-db-failure
                     let mut hydrated: Vec<IndexedPassage> = Vec::with_capacity(all_embeddings.len());
                     for (entity_ref, vector, passage_text) in all_embeddings {
                         let text = passage_text.unwrap_or_default();

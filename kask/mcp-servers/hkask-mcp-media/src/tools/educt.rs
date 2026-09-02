@@ -35,9 +35,9 @@ fn map_store_error(error: TranscriptStoreError) -> McpToolError {
         TranscriptStoreError::Validation(validation) => {
             McpToolError::invalid_argument(format!("layer rejected: {validation}"))
         }
-        TranscriptStoreError::Serialization(message) => McpToolError::internal(message),
+        TranscriptStoreError::Serialization(message) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         TranscriptStoreError::Db(error) => {
-            McpToolError::internal(format!("transcript store: {error}"))
+            McpToolError::internal(format!("transcript store: {error}")) // rr0044-ok: infra-db-failure
         }
     }
 }
@@ -59,7 +59,7 @@ fn map_pass_error(error: PassError) -> McpToolError {
             McpToolError::invalid_argument(format!("layer rejected: {validation}"))
         }
         PassError::Prompt(message) => {
-            McpToolError::internal(format!("prompt construction: {message}"))
+            McpToolError::internal(format!("prompt construction: {message}")) // rr0044-ok: own prompt construction
         }
         PassError::Inference(error) => classify_inference_error("transcript pass failed", error),
     }
@@ -117,7 +117,7 @@ impl MediaServer {
                 transcript_store::store_transcript(driver, &bundle, gallery_asset_id.as_deref())
                     .map_err(map_store_error)?;
             let mut result = serde_json::to_value(&summary)
-                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?; // rr0044-ok: serde serialization of own data
             if !summary.has_word_timings {
                 result["degradation"] = serde_json::json!(
                     "no word-level timings — stored for text/segments only; layers \
@@ -500,7 +500,7 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Correction(correction) = &record.layer else {
-                return Err(McpToolError::internal(
+                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after correction filter",
                 ));
             };
@@ -620,7 +620,7 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Highlight(highlight) = &record.layer else {
-                return Err(McpToolError::internal(
+                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after highlight filter",
                 ));
             };
@@ -723,7 +723,7 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Edl(edl) = &record.layer else {
-                return Err(McpToolError::internal(
+                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after EDL filter",
                 ));
             };
@@ -836,7 +836,7 @@ impl MediaServer {
                     let cues = srt.matches("\n\n").count();
                     let path = dir.join(format!("educt-{transcript_id}.srt"));
                     std::fs::write(&path, &srt).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
                     })?;
                     Ok(serde_json::json!({
                         "status": "exported",
@@ -871,7 +871,7 @@ impl MediaServer {
                             })?;
                     let path = dir.join(format!("educt-{transcript_id}-highlights.csv"));
                     std::fs::write(&path, &csv).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
                     })?;
                     Ok(serde_json::json!({
                         "status": "exported",
@@ -897,7 +897,7 @@ impl MediaServer {
                     };
                     let path = dir.join(format!("educt-transcript-{transcript_id}.txt"));
                     std::fs::write(&path, &text).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display()))
+                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
                     })?;
                     let mut result = serde_json::json!({
                         "status": "exported",
@@ -964,7 +964,7 @@ impl MediaServer {
             for range in ranges {
                 let (start_ms, end_ms) =
                     word_range_to_time_range(&bundle.words, range).map_err(|error| {
-                        McpToolError::internal(format!(
+                        McpToolError::internal(format!( // rr0044-ok: documented-impossible-invariant
                             "impossible: text_to_word_ranges produced an out-of-bounds \
                              range: {error}"
                         ))

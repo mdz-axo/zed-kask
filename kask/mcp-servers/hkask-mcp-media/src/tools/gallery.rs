@@ -1129,7 +1129,7 @@ impl MediaServer {
                 match lineage.params.as_deref() {
                     None => Default::default(),
                     Some(p) => serde_json::from_str(p).map_err(|e| {
-                        McpToolError::internal(format!(
+                        McpToolError::internal(format!( // rr0044-ok: parse-stored-lineage-params
                             "Corrupt lineage params for image {image_index}: {e}"
                         ))
                     })?,
@@ -1267,7 +1267,7 @@ impl MediaServer {
                 )
                 .map_err(|e| map_media_error(e.into()))?;
             let mut value = serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?; // rr0044-ok: serde serialization of own data
             // Render the imported video inline in the media widget —
             // without a display_hint the caller has no way to view it.
             if let Some(object) = value.as_object_mut() {
@@ -1339,7 +1339,7 @@ impl MediaServer {
                 )
                 .map_err(|e| map_media_error(e.into()))?;
             let mut value = serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?; // rr0044-ok: serde serialization of own data
             // Render the imported audio inline in the media widget.
             if let Some(object) = value.as_object_mut() {
                 object.insert(
@@ -1385,7 +1385,7 @@ impl MediaServer {
                 .create_album(&ga.gallery_id, &name, parent_id.as_deref())
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode album record: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -1400,7 +1400,7 @@ impl MediaServer {
                 .list_albums(&ga.gallery_id)
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&albums)
-                .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode album list: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }

@@ -29,7 +29,7 @@ impl MediaServer {
                 .record_workflow(&graph_json)
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -43,7 +43,7 @@ impl MediaServer {
                 .list_workflows()
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&workflows)
-                .map_err(|e| McpToolError::internal(format!("encode workflow list: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode workflow list: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -62,7 +62,7 @@ impl MediaServer {
                 .get_workflow(&workflow_id)
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode workflow record: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }

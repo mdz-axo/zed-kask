@@ -100,7 +100,7 @@ impl MediaServer {
                 let mut store = self
                     .job_store
                     .lock()
-                    .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+                    .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
                 store.insert(
                     job_id.clone(),
                     JobRecord {
@@ -225,7 +225,7 @@ impl MediaServer {
             let store = self
                 .job_store
                 .lock()
-                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
 
             let max = limit.unwrap_or(20);
             let mut jobs: Vec<JobRecord> = store
@@ -239,7 +239,7 @@ impl MediaServer {
             jobs.truncate(max);
 
             serde_json::to_value(&jobs)
-                .map_err(|e| McpToolError::internal(format!("encode job list: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode job list: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -254,7 +254,7 @@ impl MediaServer {
             let store = self
                 .job_store
                 .lock()
-                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
             let job = store.get(&job_id).ok_or_else(|| {
                 McpToolError::not_found(format!(
                     "Job not found: {job_id}. The job store is in-memory — if the \
@@ -264,7 +264,7 @@ impl MediaServer {
                 ))
             })?;
             serde_json::to_value(job)
-                .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode job status: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }
@@ -279,7 +279,7 @@ impl MediaServer {
             let mut store = self
                 .job_store
                 .lock()
-                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
             let job = store.get_mut(&job_id).ok_or_else(|| {
                 McpToolError::not_found(format!(
                     "Job not found: {job_id}. Call job_list to see known jobs."
