@@ -1288,7 +1288,7 @@ impl CompaniesServer {
             // pattern skips the check when the forecast id is absent —
             // unreachable by construction (the lookup above only runs for a
             // present id), and strictly safer than the unwrap it replaces.
-            if let (Some(ref pf), Some(forecast_id)) = (&persisted_forecast, req.forecast_id.as_ref())
+            if let (Some(pf), Some(forecast_id)) = (&persisted_forecast, req.forecast_id.as_ref())
             {
                 if pf.symbol != req.symbol {
                     return Err(McpToolError::invalid_argument(format!(

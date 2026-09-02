@@ -1185,15 +1185,30 @@ impl GalleryStore {
         // Cascade: delete tags and generation lineage for this image.
         // These are best-effort — if they fail, the image is already deleted
         // and the orphaned tags/lineage are harmless (they reference a
-        // non-existent image_id).
-        let _ = self.driver.execute(
+        // non-existent image_id) — but the failure is logged so a lingering
+        // orphan is diagnosable instead of silent.
+        if let Err(e) = self.driver.execute(
             "DELETE FROM gallery_tags WHERE image_id = ?1",
             &[DbValue::Text(image_id.to_string())],
-        );
-        let _ = self.driver.execute(
+        ) {
+            tracing::warn!(
+                target: "reg.storage",
+                error = %e,
+                image_id,
+                "failed to cascade-delete gallery tags — orphaned rows are harmless but visible"
+            );
+        }
+        if let Err(e) = self.driver.execute(
             "DELETE FROM gallery_generation WHERE image_id = ?1",
             &[DbValue::Text(image_id.to_string())],
-        );
+        ) {
+            tracing::warn!(
+                target: "reg.storage",
+                error = %e,
+                image_id,
+                "failed to cascade-delete gallery generation lineage — orphaned rows are harmless but visible"
+            );
+        }
         Ok(())
     }
 

@@ -318,6 +318,7 @@ impl FiboDataCache {
     #[allow(dead_code)]
     pub fn gross_margin(&self, symbol: &str) -> Option<f64> {
         self.get_concept(symbol, fibo::METRIC_GROSS_PROFIT_MARGIN)
+            .map(|(v, _)| v)
     }
 }
 
