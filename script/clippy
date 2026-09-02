@@ -12,7 +12,14 @@ set -x
 # (gpui_web/multithreaded for wasm, gpui_macos/runtime_shaders, vim/neovim)
 # do not fire on Linux. If a macOS/Windows clippy job is added, revisit this
 # flag — some features may pull platform-specific deps that fail to build.
-"${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
+#
+# zed-kask: cap concurrent rustc/clippy-driver invocations. Uncapped, cargo
+# spawns one per core and each release-profile crate pins its core for minutes
+# (codegen-units=1 + thin LTO), starving local machines. The cap is
+# min(nproc, 8), so CI runners (typically ≤8 cores) are unaffected. Override
+# with HKASK_BUILD_JOBS.
+JOBS="${HKASK_BUILD_JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}"
+"${CARGO:-cargo}" clippy "$@" --jobs "$JOBS" --release --all-targets --all-features -- --deny warnings
 
 # If local, run other checks if we have the tools installed.
 if [[ -z "${GITHUB_ACTIONS+x}" ]]; then

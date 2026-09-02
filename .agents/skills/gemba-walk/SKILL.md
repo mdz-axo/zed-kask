@@ -63,6 +63,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 1. Render the `gemba-walk/recommend-actions` template to propose refinement actions for operator approval.
 2. For each skill with a "watch" or "intervene" classification, propose one of: `curator_directive`, `skill-maintenance`, `direct_edit`, or `no_action`.
 3. The proposals are recommendations, not autonomous actions — the operator reviews and decides which to execute in the regular conversation.
+4. Every proposal that names a fault carries evidence: the alert, log line, or memory pattern that demonstrates it. A proposal asserting a fault the signals do not show is worse than no proposal — it sends the operator to fix something that works. Conversely, a proposal to take no action on a real signal must say what the signal is and why acting now is wrong. A remedy the operator cannot verify in the briefing is a remedy they cannot own.
 
 ### CONVERGE — Deterministic check (step 5) and loop (step 6)
 

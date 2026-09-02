@@ -187,23 +187,63 @@ build_hkask() {
     log "Building zed-kask in $workspace_root..."
     cd "$workspace_root"
 
-    local build_args=()
+    # Cap concurrent rustc invocations. The release profile compiles the
+    # zed binary with codegen-units=1 + thin LTO, so each rustc pins one core
+    # for minutes; uncapped, cargo spawns one per core (24 on the dev box)
+    # and starves the machine. Override with HKASK_BUILD_JOBS.
+    local default_jobs
+    default_jobs=$(( $(nproc) < 8 ? $(nproc) : 8 ))
+    local jobs="${HKASK_BUILD_JOBS:-$default_jobs}"
+
+    # CPU/RSS trace — the build observes itself (D46). Every install leaves
+    # a quantified record of what it did to the machine; a burn shows up as
+    # a peak_cpu_pct number, not a user report. Override the trace location
+    # with HKASK_BUILD_TRACE.
+    local trace_file="${HKASK_BUILD_TRACE:-$workspace_root/target/build-cpu-trace.log}"
+    mkdir -p "$(dirname "$trace_file")"
+    bash "$(dirname "${BASH_SOURCE[0]}")/build-monitor.sh" "$trace_file" &
+    local monitor_pid=$!
+
+    local build_ok=0
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
-        build_args+=(--release)
-        log "Building in release mode..."
+        # Two profiles, two invocations (D46): only the zed binary keeps the
+        # full release profile (thin LTO + codegen-units=1 — worth it for
+        # the editor). The MCP servers are I/O daemons and build on
+        # release-mcp (lto=false, codegen-units=16): parallel-friendly, no
+        # one-core-per-crate pin. Building all 11 servers on `release` was
+        # the install CPU-burn defect.
+        log "Building zed binary in release mode (full LTO)..."
+        log "Building with at most $jobs concurrent compile jobs..."
+        if cargo build --jobs "$jobs" --release --package zed; then
+            log "Building MCP servers on the release-mcp profile..."
+            local server_args=()
+            for server in "${MCP_SERVERS[@]}"; do
+                server_args+=(--package "$server")
+            done
+            cargo build --jobs "$jobs" --profile release-mcp "${server_args[@]}" && build_ok=1
+        fi
     else
         log "Building in debug mode..."
+        log "Building with at most $jobs concurrent compile jobs..."
+        local package_args=(--package zed)
+        for server in "${MCP_SERVERS[@]}"; do
+            package_args+=(--package "$server")
+        done
+        cargo build --jobs "$jobs" "${package_args[@]}" && build_ok=1
     fi
 
-    # Build the zed-kask CLI + every MCP server listed in mcp-servers.txt.
-    local package_args=(--package zed)
-    for server in "${MCP_SERVERS[@]}"; do
-        package_args+=(--package "$server")
-    done
+    # Stop the sampler before reporting, so the trace covers exactly the
+    # build. `kill` is best-effort: a sampler that already exited (parent
+    # death) must not fail the install.
+    kill "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
 
-    log "Building CLI and MCP server binaries..."
-    cargo build "${build_args[@]}" "${package_args[@]}"
+    if [ "$build_ok" -ne 1 ]; then
+        log_error "Build failed — CPU/RSS trace left at $trace_file"
+        return 1
+    fi
 
+    log "CPU/RSS trace written to $trace_file"
     log_success "Build complete"
 }
 
@@ -215,15 +255,20 @@ install_binary() {
     assert_not_zed_owned_path "$BIN_DIR" "binary installation" || return 1
     mkdir -p "$BIN_DIR"
 
-    local profile_dir
+    # Two profile dirs in release mode (D46): the zed binary from
+    # target/release, the MCP servers from target/release-mcp. Debug mode
+    # builds everything into target/debug.
+    local zed_profile_dir profile_dir
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
-        profile_dir="$workspace_root/target/release"
+        zed_profile_dir="$workspace_root/target/release"
+        profile_dir="$workspace_root/target/release-mcp"
     else
+        zed_profile_dir="$workspace_root/target/debug"
         profile_dir="$workspace_root/target/debug"
     fi
 
-    if [ ! -x "$profile_dir/zed-kask" ]; then
-        log_error "Built CLI binary not found: $profile_dir/zed-kask"
+    if [ ! -x "$zed_profile_dir/zed-kask" ]; then
+        log_error "Built CLI binary not found: $zed_profile_dir/zed-kask"
         return 1
     fi
     for server in "${MCP_SERVERS[@]}"; do
@@ -235,7 +280,7 @@ install_binary() {
 
     # Install CLI binary
     assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
-    cp "$profile_dir/zed-kask" "$BIN_DIR/zed-kask"
+    cp "$zed_profile_dir/zed-kask" "$BIN_DIR/zed-kask"
     chmod +x "$BIN_DIR/zed-kask"
 
     # Strip debug symbols (reduces binary size ~60%, non-fatal if missing)

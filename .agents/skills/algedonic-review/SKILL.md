@@ -64,6 +64,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 2. The operator reviews the briefing and specifies which alerts to resolve or dismiss.
 3. For each decision, the skill calls `curator_escalation_resolve` or `curator_escalation_dismiss` with the escalation ID and a resolution note.
 4. The skill does NOT autonomously resolve or dismiss — the operator must confirm each decision.
+5. Every resolve/dismiss verdict carries evidence: the resolution note must cite the observation that settles the alert (a reading taken, a log line, a metric re-checked). A verdict with nothing attached is a laundering UI pointed at the regulation loop — it costs the loop a correction, so it must cost the reviewer an observation. If the operator cannot name the evidence, the recommended action is `investigate`, not `resolve`.
 
 ### VERIFY — Confirm backlog cleared (step 5)
 

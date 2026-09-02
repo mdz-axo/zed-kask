@@ -31,3 +31,5 @@ jobs:
         run: bash kask/scripts/build/check-zed-isolation.sh
       - name: Desktop file — no upstream collision
         run: bash kask/scripts/build/check-desktop-no-collision.sh
+      - name: Build profile seam — MCP servers build cheap, installs are capped and traced
+        run: bash kask/scripts/build/check-build-profile.sh

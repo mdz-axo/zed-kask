@@ -25,13 +25,30 @@ numeric match — can be `tool_verified`.
 | 2 | `tool_verified` | Value found in source output via mechanical match |
 | 2 | `platform_derived` | Value computed by `lisp_eval` from sourced values |
 | 1 | `model_inference` | LLM synthesized from source outputs (extraction ceiling) |
-| 0 | `unavailable` | No source the pipeline called can supply this claim |
+| 0 | `unavailable` | No source the pipeline called can supply this claim — the `why` must name which: no source exists, or a source exists but was never consulted |
 | 0 | `tool_no_match` | Source was consulted and had nothing for this subject |
 | 0 | `pending_check` | Check exists but has not run yet |
 | 0 | `rejected` | Checked and found wrong |
 
 The provenance vocabulary is a closed set. The `lisp_eval` scoring call
 rejects unrecognized values.
+
+Absence is ambiguous until the record settles it: `tool_no_match` (asked,
+empty), `unavailable` with a source that was never consulted (not asked —
+the remedy is to run it and find out), and `unavailable` with no source that
+can supply it (no tool exists) are three different states with three
+different remedies. An `unavailable` claim whose `why` does not say which is
+an unfinished classification, not a verdict. A compliant absence (the source
+cannot supply the field, so the null is correct) must not be reported as a
+failure.
+
+A checker can lower a claim with authority and cannot raise one. An LLM
+reviewer's agreement adds nothing — an uncited opinion sits at
+`model_inference` strength regardless of who holds it, and the checker and
+the claimant are likely the same model. Only a mechanical match (Step 3)
+elevates to `tool_verified`; a checker's falsification is a reproducible
+comparison over retained bytes and belongs in `rejected` with the evidence
+cited.
 
 ## When to Use
 
@@ -107,6 +124,9 @@ rejects unrecognized values.
    - `model_inference`: the LLM synthesized the claim from source outputs.
      This is the extraction ceiling — legitimate, but not a retrieval.
    - `unavailable`: no source the pipeline called can supply this claim.
+     The `why` must name which sub-case: no source exists, or a source
+     exists but was never consulted (the remedy is to run it, not to
+     report a gap).
    - `tool_no_match`: the source was called but returned nothing for this
      subject.
    - `pending_check`: a check exists but has not run yet.

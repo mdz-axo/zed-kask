@@ -389,6 +389,38 @@ pub fn brier_interpretation(score: f64) -> &'static str {
     }
 }
 
+// ── Hit-rate intervals ──────────────────────────────────────────────────────
+
+/// Minimum resolved sample size before a bare hit-rate percentage may be
+/// quoted as a headline. Below this the point estimate is unquotable without
+/// its Wilson interval — "49% accurate" from three forecasts is noise
+/// wearing a number (the Hodgson trap: a best result of 49% with a 95% CI of
+/// [0, 100]).
+pub const MIN_N_FOR_HEADLINE: usize = 30;
+
+/// Wilson score interval (95%) for a binomial hit rate: `hits` successes in
+/// `trials` attempts. Returns `None` when `trials == 0` — an absent sample is
+/// not a zero rate. Served alongside every hit-rate percentage so the
+/// estimate is never quoted without its uncertainty.
+#[must_use = "an interval without its rate is as unquotable as a rate without its interval"]
+pub fn wilson_bounds(hits: usize, trials: usize) -> Option<(f64, f64)> {
+    if trials == 0 {
+        return None;
+    }
+    // z = 1.95996 for a 95% two-sided interval.
+    let z = 1.95996;
+    let z_squared = z * z;
+    let n = trials as f64;
+    let p_hat = hits as f64 / n;
+    let denominator = 1.0 + z_squared / n;
+    let centre = p_hat + z_squared / (2.0 * n);
+    let spread = z * (p_hat * (1.0 - p_hat) / n + z_squared / (4.0 * n * n)).sqrt();
+    Some((
+        ((centre - spread) / denominator).max(0.0),
+        ((centre + spread) / denominator).min(1.0),
+    ))
+}
+
 // ── Calibration feedback ─────────────────────────────────────────────────────
 
 /// Adjust a prior probability using a calibration bias signal from a
@@ -945,6 +977,47 @@ mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
+    }
+
+    // ── Hit-rate intervals ─────────────────────────────────────────
+
+    #[test]
+    fn an_absent_sample_is_not_a_zero_rate() {
+        assert_eq!(wilson_bounds(0, 0), None);
+    }
+
+    #[test]
+    fn a_single_hit_is_not_a_hundred_percent_headline() {
+        // 1 of 1: the Wilson interval is [0.21, 1.00] — quoting "100%"
+        // from one trial is the Hodgson trap this function exists to end.
+        let (low, high) = wilson_bounds(1, 1).expect("n=1 has bounds");
+        assert!(close(low, 0.206549981));
+        assert!(close(high, 1.0));
+    }
+
+    #[test]
+    fn wilson_bounds_bracket_a_small_sample() {
+        // 5 of 10: [0.237, 0.763] — the interval is what makes a small
+        // bin quotable, not the 50% point estimate.
+        let (low, high) = wilson_bounds(5, 10).expect("n=10 has bounds");
+        assert!(close(low, 0.236593477));
+        assert!(close(high, 0.763406523));
+    }
+
+    #[test]
+    fn wilson_bounds_narrow_as_the_sample_grows() {
+        let (small_low, small_high) = wilson_bounds(15, 30).expect("n=30 has bounds");
+        let (large_low, large_high) = wilson_bounds(150, 300).expect("n=300 has bounds");
+        assert!(large_high - large_low < small_high - small_low);
+        assert!(large_low > small_low);
+        assert!(large_high < small_high);
+    }
+
+    #[test]
+    fn the_headline_gate_refuses_small_samples() {
+        // The gate is the const itself: a headline percentage below this
+        // count is unquotable without its interval.
+        assert_eq!(MIN_N_FOR_HEADLINE, 30);
     }
 
     // ── Brier scoring ───────────────────────────────────────────────

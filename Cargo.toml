@@ -1202,6 +1202,17 @@ codegen-units = 1
 [profile.release.package]
 zed = { codegen-units = 16 }
 
+# zed-kask: D46 — MCP server binaries build here, not on `release`. The
+# servers are I/O daemons: thin LTO and codegen-units=1 buy them nothing and
+# pin one core per crate for minutes (the install CPU-burn defect — 11
+# servers × single-unit codegen pegged every core on the dev box). Only the
+# `zed` binary keeps the full release profile. Pinned by
+# kask/scripts/build/check-build-profile.sh (kask-invariants.yml).
+[profile.release-mcp]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [profile.release-fast]
 inherits = "release"
 debug = "full"

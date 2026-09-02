@@ -1806,11 +1806,35 @@ impl ScenariosServer {
                 "overconfidence_score": curve.overconfidence_score,
                 "interpretation": curve.interpretation,
                 "bins": curve.bins.iter().map(|b| {
+                    // The hit-rate percentage is withheld below
+                    // MIN_N_FOR_HEADLINE and the Wilson interval is served
+                    // whenever there is a sample: a bare "67%" from three
+                    // forecasts is noise wearing a number, and the interval is
+                    // what makes a small bin quotable at all.
+                    let hits = if b.hit_rate.is_finite() && b.forecast_count > 0 {
+                        Some((b.hit_rate * b.forecast_count as f64).round() as usize)
+                    } else {
+                        None
+                    };
+                    let hit_rate_ci = hits
+                        .and_then(|h| hkask_forecast::wilson_bounds(h, b.forecast_count as usize))
+                        .map(|(lo, hi)| serde_json::json!({
+                            "low": lo,
+                            "high": hi,
+                            "low_pct": format!("{:.0}%", lo * 100.0),
+                            "high_pct": format!("{:.0}%", hi * 100.0),
+                        }));
                     serde_json::json!({
                         "range": b.probability_range,
                         "count": b.forecast_count,
                         "hit_rate": if b.hit_rate.is_finite() { Some(b.hit_rate) } else { None },
-                        "hit_rate_pct": if b.hit_rate.is_finite() { Some(format!("{:.0}%", b.hit_rate * 100.0)) } else { None },
+                        "hit_rate_pct": if b.hit_rate.is_finite()
+                            && b.forecast_count >= hkask_forecast::MIN_N_FOR_HEADLINE as u64 {
+                            Some(format!("{:.0}%", b.hit_rate * 100.0))
+                        } else {
+                            None
+                        },
+                        "hit_rate_ci": hit_rate_ci,
                         "expected_rate": b.expected_rate,
                         "bias": b.bias,
                         "bias_interpretation": if b.forecast_count == 0 {
@@ -1826,8 +1850,10 @@ impl ScenariosServer {
                 }).collect::<Vec<_>>(),
                 "guidance": if curve.resolved_forecasts < 10 {
                     "Insufficient data for reliable calibration — at least 10 resolved forecasts recommended. Bins with fewer than 5 forecasts are excluded from overconfidence scoring."
+                } else if curve.resolved_forecasts < hkask_forecast::MIN_N_FOR_HEADLINE as u64 {
+                    "Calibration curve shows your forecasting accuracy across probability ranges, but per-bin hit-rate percentages are withheld below 30 forecasts per bin — quote the hit_rate_ci interval, not a point estimate. Use this to identify systematic biases: if your 80% forecasts only come true 60% of the time, you're overconfident in that range."
                 } else {
-                    "Calibration curve shows your forecasting accuracy across probability ranges. Use this to identify systematic biases: if your 80% forecasts only come true 60% of the time, you're overconfident in that range."
+                    "Calibration curve shows your forecasting accuracy across probability ranges. Use this to identify systematic biases: if your 80% forecasts only come true 60% of the time, you're overconfident in that range. Bins with fewer than 30 forecasts have their hit_rate_pct withheld — quote the hit_rate_ci interval instead."
                 },
                 "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"
             });
