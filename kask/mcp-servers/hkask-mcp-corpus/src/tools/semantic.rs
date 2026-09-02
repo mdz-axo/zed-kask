@@ -51,7 +51,8 @@ impl CorpusServer {
         }): Parameters<GenerateQaRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_generate_qa", async {
-            let is_cross_ref = _texts.as_ref().is_some_and(|t| !t.is_empty());
+            let cross_ref_passages = _texts.as_ref().filter(|texts| !texts.is_empty());
+            let is_cross_ref = cross_ref_passages.is_some();
             let single_text = _text.unwrap_or_default();
 
             if !is_cross_ref && single_text.is_empty() {
@@ -64,8 +65,7 @@ impl CorpusServer {
             let levels = bloom_levels.unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
             let levels_str = levels.join(", ");
 
-            let (prompt, template_source) = if is_cross_ref {
-                let passages = _texts.as_ref().unwrap();
+            let (prompt, template_source) = if let Some(passages) = cross_ref_passages {
                 let formatted = crate::services::qa_pipeline::format_cross_reference_prompt(
                     &levels_str,
                     &chunk_id,
@@ -95,7 +95,7 @@ impl CorpusServer {
                     let qa_response = parse_qa_response(
                         &extract_json_from_response(content),
                         &levels,
-                        is_cross_ref.then(|| _texts.as_ref().map_or(0, Vec::len)),
+                        is_cross_ref.then(|| cross_ref_passages.map_or(0, Vec::len)),
                     )
                     .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: parse-llm-output
                     let result = json!({

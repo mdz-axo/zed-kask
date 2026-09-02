@@ -57,7 +57,7 @@ pub(crate) async fn generate_qa_via_batch_api(
     let batch_results = inference_router
         .generate_batch(model, &batch_prompts, 2000, 0.3)
         .await
-        .map_err(|e| McpToolError::internal(format!("Batch API IPC failed: {e}")))?;
+        .map_err(|e| McpToolError::unavailable(format!("Batch API IPC failed: {e}")))?; // The IPC bridge to zed's inference is a dependency — an outage is unavailable, not internal (classify_inference_error convention)
 
     // Write results to the output file in the same format as the
     // synchronous path.

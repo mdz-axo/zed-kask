@@ -498,11 +498,9 @@ async fn execute_with_fallback(
         }
     }
 
-    if primary_result.is_none() {
+    let Some(primary) = primary_result.take() else {
         return (None, None, None, None);
-    }
-
-    let primary = primary_result.take().unwrap();
+    };
     let secondary = secondary_result.take();
     let backend_used = Some(primary.backend.clone());
 

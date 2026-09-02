@@ -479,8 +479,7 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
     // The result can be either a JSON object (when `list` of pairs is
     // evaluated — the interpreter converts 2-element lists to key-value pairs)
     // or a JSON array of pairs. Handle both.
-    let alist: Vec<serde_json::Value> = if result.is_object() {
-        let obj = result.as_object().unwrap();
+    let alist: Vec<serde_json::Value> = if let Some(obj) = result.as_object() {
         obj.iter().map(|(k, v)| json!([k, v])).collect()
     } else if let Some(arr) = result.as_array() {
         arr.to_vec()
