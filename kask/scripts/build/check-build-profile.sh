@@ -59,8 +59,17 @@ grep -q 'build-monitor.sh' "$INSTALL_SH" \
     || fail "install.sh no longer starts build-monitor.sh — installs would burn CPU unobserved"
 
 # 5. The workspace-wide cargo jobs cap — bounds rust-analyzer flycheck,
-# editor tasks, and agent builds that pass no explicit --jobs.
-grep -q '^jobs = 8' "$ROOT/.cargo/config.toml" \
+# editor tasks, and agent builds that pass no explicit --jobs. The cap is 16
+# (tuned for the 24-core dev box; smaller machines override CARGO_BUILD_JOBS).
+grep -q '^jobs = 16' "$ROOT/.cargo/config.toml" \
     || fail ".cargo/config.toml lost its [build] jobs cap — uncapped cargo invocations (rust-analyzer flycheck, agent tasks) peg every core"
+
+# 6. sccache wiring — install.sh and script/clippy must both detect the
+# wrapper; a silent drop means installs and lint runs rebuild ~800 deps
+# from scratch every time.
+grep -q 'RUSTC_WRAPPER' "$INSTALL_SH" \
+    || fail "install.sh lost its sccache RUSTC_WRAPPER wiring (D46)"
+grep -q 'RUSTC_WRAPPER' "$ROOT/script/clippy" \
+    || fail "script/clippy lost its sccache RUSTC_WRAPPER wiring (D46)"
 
 echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"

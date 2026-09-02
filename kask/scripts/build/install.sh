@@ -190,10 +190,23 @@ build_hkask() {
     # Cap concurrent rustc invocations. The release profile compiles the
     # zed binary with codegen-units=1 + thin LTO, so each rustc pins one core
     # for minutes; uncapped, cargo spawns one per core (24 on the dev box)
-    # and starves the machine. Override with HKASK_BUILD_JOBS.
+    # and starves the machine. The cap is min(nproc, 16) — 2/3 of the dev
+    # box's cores, full parallelism without starving the foreground.
+    # Override with HKASK_BUILD_JOBS.
     local default_jobs
-    default_jobs=$(( $(nproc) < 8 ? $(nproc) : 8 ))
+    default_jobs=$(( $(nproc) < 16 ? $(nproc) : 16 ))
     local jobs="${HKASK_BUILD_JOBS:-$default_jobs}"
+
+    # sccache — reuse compiled deps across installs and profile switches.
+    # Wired only when the binary is present (script/setup-sccache installs
+    # it to target/sccache/); a missing wrapper must not break the install,
+    # but it must be visible to the operator.
+    if [ -x "$workspace_root/target/sccache/sccache" ]; then
+        export RUSTC_WRAPPER="$workspace_root/target/sccache/sccache"
+        log "sccache enabled: $RUSTC_WRAPPER"
+    else
+        log_warning "sccache not found at $workspace_root/target/sccache/sccache — building uncached (run script/setup-sccache to enable)"
+    fi
 
     # CPU/RSS trace — the build observes itself (D46). Every install leaves
     # a quantified record of what it did to the machine; a burn shows up as

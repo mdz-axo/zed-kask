@@ -16,9 +16,20 @@ set -x
 # zed-kask: cap concurrent rustc/clippy-driver invocations. Uncapped, cargo
 # spawns one per core and each release-profile crate pins its core for minutes
 # (codegen-units=1 + thin LTO), starving local machines. The cap is
-# min(nproc, 8), so CI runners (typically ≤8 cores) are unaffected. Override
+# min(nproc, 16), so smaller machines and CI runners are unaffected. Override
 # with HKASK_BUILD_JOBS.
-JOBS="${HKASK_BUILD_JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}"
+JOBS="${HKASK_BUILD_JOBS:-$(( $(nproc) < 16 ? $(nproc) : 16 ))}"
+
+# zed-kask: reuse compiled deps across clippy runs via sccache, when the
+# binary is present (script/setup-sccache installs it to target/sccache/).
+# A missing binary must not break the lint run, but it must be visible.
+if [[ -x "target/sccache/sccache" ]]; then
+    export RUSTC_WRAPPER="${PWD}/target/sccache/sccache"
+    echo "sccache enabled: $RUSTC_WRAPPER"
+else
+    echo "warning: sccache not found at target/sccache/sccache — running uncached (bash script/setup-sccache to enable)" >&2
+fi
+
 "${CARGO:-cargo}" clippy "$@" --jobs "$JOBS" --release --all-targets --all-features -- --deny warnings
 
 # If local, run other checks if we have the tools installed.

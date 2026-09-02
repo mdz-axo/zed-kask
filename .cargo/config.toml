@@ -3,10 +3,13 @@
 # workspace (rust-analyzer flycheck, editor tasks, agent builds — anything
 # that doesn't pass an explicit --jobs). Uncapped, cargo spawns one rustc
 # per core; on this workspace (400+ upstream crates + kask crates + 17 MCP
-# servers) that pegs every core and crashes dev machines. Explicit --jobs
-# flags (install.sh, script/clippy) override this and stay authoritative.
+# servers) that pegs every core and crashes dev machines. The cap is 16,
+# tuned for the 24-core dev box (2/3 of cores — full parallelism without
+# starving foreground/editor processes). Machines with fewer cores should
+# override with CARGO_BUILD_JOBS=<n>. Explicit --jobs flags (install.sh,
+# script/clippy) override this and stay authoritative.
 # Pinned by kask/scripts/build/check-build-profile.sh.
-jobs = 8
+jobs = 16
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 
