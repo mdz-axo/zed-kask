@@ -1890,6 +1890,35 @@ mod tests {
         });
     }
 
+    /// `record_variety` is the dispatch twin of `record_outcome`: one call
+    /// per governed tool invocation, tool name as the observed state. It
+    /// feeds the ledger's variety trackers — the VarietySensor's data
+    /// source. Repeats of the same tool count once (variety is distinct
+    /// tools, not call volume).
+    #[test]
+    fn record_variety_feeds_ledger_trackers() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+            regulation_loop
+                .record_variety("hkask-mcp-media", "gallery_search")
+                .await;
+            regulation_loop
+                .record_variety("hkask-mcp-media", "gallery_search")
+                .await;
+            regulation_loop
+                .record_variety("hkask-mcp-media", "gallery_add_audio")
+                .await;
+            let ledger_guard = ledger.read().await;
+            assert_eq!(
+                ledger_guard.variety_for_domain("hkask-mcp-media").await,
+                2,
+                "distinct tool names are the variety — repeats don't count"
+            );
+        });
+    }
+
     struct StubHealthSource;
 
     #[async_trait::async_trait]

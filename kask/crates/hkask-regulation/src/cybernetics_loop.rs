@@ -650,6 +650,28 @@ impl CyberneticsLoop {
             .await;
     }
 
+    /// Record a behavioral variety observation — the dispatch twin of
+    /// `record_outcome`. One call per governed tool invocation, with the tool
+    /// name as the observed state: distinct tools exercised per domain per
+    /// 60s window is the system's behavioral repertoire in use, and a
+    /// persistent gap against the expected variety is rut behavior (the
+    /// domain-level aggregate of the per-tool retry death spiral — Ashby's
+    /// requisite-variety signal).
+    ///
+    /// Delegates to `RegulationLedger::increment_variety`, which also runs
+    /// the algedonic check for the domain. Called by `McpRuntime::invoke`
+    /// beside `record_outcome` so reliability and variety share one domain
+    /// registry (the MCP server name).
+    ///
+    /// expect: "The system provides observability into Regulation regulation state"
+    pub async fn record_variety(&self, domain: &str, state_name: &str) {
+        self.ledger
+            .read()
+            .await
+            .increment_variety(domain, state_name)
+            .await;
+    }
+
     /// Register a per-agent call cap (the hard ceiling on governed tool calls per
     /// regulation tick). The composition root must seed a cap for every agent
     /// that makes governed tool calls — agents without one are denied (fail-closed).

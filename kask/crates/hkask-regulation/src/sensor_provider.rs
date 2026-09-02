@@ -821,10 +821,32 @@ mod tests {
         );
     }
 
+    /// The variety feed is the tool-dispatch twin of the outcome feed: one
+    /// increment per governed tool call, tool name as the observed state. An
+    /// active domain exercising fewer distinct tools than expected emits a
+    /// signal whose value is the live summed gap (a level — it can clear
+    /// when the agent broadens its tool use). This is the rut detector.
+    #[tokio::test]
+    async fn variety_sensor_emits_live_deficit_for_active_rut() {
+        let ledger = RegulationLedger::default();
+        // One distinct tool on each of two active domains: per-domain gap
+        // 3 − 1 = 2 (DEFAULT_EXPECTED_VARIETY is 3), summed to 4.
+        ledger
+            .increment_variety("hkask-mcp-media", "gallery_search")
+            .await;
+        ledger
+            .increment_variety("hkask-mcp-companies", "stock_quote")
+            .await;
+        let sensor = VarietySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 1.0);
+        let signal = sensor.sense().await.expect("active rut must emit a signal");
+        assert_eq!(signal.value, 4.0, "deficit is the summed live gap");
+        assert_eq!(signal.set_point, 1.0);
+    }
+
     /// Pins Fix 1: VarietySensor must return None when variety deficit is
     /// healthy (deficit <= set_point). Without the gate the sensor emits
     /// BelowSetPoint deviations for healthy variety levels, which no policy
-    /// rule matches, leaving the regulation loop open.
+    /// rule matches, leaving the loop open.
     #[tokio::test]
     async fn variety_sensor_returns_none_when_healthy() {
         let ledger = Arc::new(tokio::sync::RwLock::new(RegulationLedger::default()));

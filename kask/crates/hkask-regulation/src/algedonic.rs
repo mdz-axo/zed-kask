@@ -18,8 +18,12 @@ fn default_datetime() -> DateTime<Utc> {
     Utc::now()
 }
 
-/// Default expected variety per domain
-pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 10;
+/// Default expected variety per domain — distinct tools exercised per 60s
+/// window on an MCP-server domain. A healthy active minute uses 2–5 distinct
+/// tools per server; the previous default of 10 made every active domain
+/// read as deficient. Per-domain override:
+/// `RegulationLedger::calibrate_threshold`.
+pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 3;
 
 /// Fraction of `max_alerts` at which the approaching-cap signal fires.
 /// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
@@ -598,10 +602,11 @@ mod tests {
     /// `current_total_deficit` is a level: it reports the live per-domain
     /// gaps and does not grow as alerts accumulate in the log. This pins
     /// the fix for the monotonic log-sum that made every threshold trip
-    /// forever.
+    /// forever. Expected variety is explicit (10) — this test pins the
+    /// level semantics, not the default calibration.
     #[test]
     fn current_total_deficit_is_a_level_not_a_log_sum() {
-        let mut mgr = manager();
+        let mut mgr = AlgedonicManager::with_max_alerts(20, 10, 200);
         let mut active = VarietyTracker::new();
         active.increment("state_a");
         active.increment("state_b");
@@ -624,11 +629,25 @@ mod tests {
         );
     }
 
+    /// The default calibration: 3 distinct tools per domain per window. A
+    /// healthy active minute uses 2–5 distinct tools per MCP server; the
+    /// previous default of 10 made every active domain read as deficient.
+    /// One distinct tool → gap 2.
+    #[test]
+    fn default_expected_variety_is_calibrated_for_tool_ruts() {
+        let mgr = manager();
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("only_tool");
+        let counters = HashMap::from([("domain".to_string(), tracker)]);
+        assert_eq!(mgr.current_total_deficit(&counters), 2);
+    }
+
     /// `reg_health_check` reports the caller-computed level, not the
-    /// manager's alert history.
+    /// manager's alert history. Expected variety is explicit (10) — this
+    /// test pins the pass-through semantics, not the default calibration.
     #[test]
     fn reg_health_check_reports_passed_deficit() {
-        let mut mgr = manager();
+        let mut mgr = AlgedonicManager::with_max_alerts(20, 10, 200);
         let mut tracker = VarietyTracker::new();
         tracker.increment("state_a");
         let counters = HashMap::from([("domain".to_string(), tracker.clone())]);

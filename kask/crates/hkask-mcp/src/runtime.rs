@@ -1475,6 +1475,13 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 cyber_lock
                     .record_outcome(server, result.is_ok(), error_kind.as_deref())
                     .await;
+                // Variety feed: the tool name is the observed state — distinct
+                // tools exercised per server per window is the behavioral
+                // repertoire the VarietySensor regulates (Ashby). Beside
+                // record_outcome so reliability and variety share one domain
+                // registry. Fed on failure too: an agent hammering one failing
+                // tool is maximal rut, exactly what the sensor must see.
+                cyber_lock.record_variety(server, tool).await;
                 drop(cyber_lock);
 
                 result
@@ -2171,6 +2178,44 @@ mod metering_tests {
                  Unavailable. Got: {other:?}"
             ),
         }
+    }
+
+    /// Every governed tool invocation feeds the variety tracker with the
+    /// tool name as the observed state — the dispatch twin of the outcome
+    /// recording above. Distinct tools per server per window is the
+    /// behavioral repertoire the VarietySensor regulates. A failed call
+    /// still counts (the tool was exercised — an agent hammering one
+    /// failing tool is maximal rut, exactly what the sensor must see).
+    #[tokio::test]
+    async fn governed_invoke_feeds_variety_per_tool() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
+        let runtime = McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink));
+        runtime
+            .register_server(McpServer {
+                id: "fixture".to_string(),
+                name: "fixture".to_string(),
+                tools: vec![McpTool {
+                    name: "ping".to_string(),
+                    description: String::new(),
+                    input_schema: Value::Null,
+                    server_id: "fixture".to_string(),
+                }],
+            })
+            .await;
+        let agent = WebID::new();
+
+        // Dispatch fails (no live connection) but the feed fires after the
+        // call regardless of result — same contract as record_outcome.
+        let _ = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        let _ = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+
+        let ledger_guard = ledger.read().await;
+        assert_eq!(
+            ledger_guard.variety_for_domain("fixture").await,
+            1,
+            "repeats of one tool count once — variety is distinct tools, not call volume"
+        );
     }
 
     /// An agent that has exhausted its per-tick ceiling is refused with

@@ -22,7 +22,7 @@ use crate::algedonic::{
 };
 use crate::set_points::DEFAULT_VARIETY_MAX_DEFICIT;
 
-use hkask_types::event::{RegulationRecord, RegulationSink, SpanNamespace};
+use hkask_types::event::{RegulationRecord, RegulationSink};
 use hkask_types::regulation::{LedgerHealth, RegulationHealth};
 use parking_lot::RwLock as ParkingRwLock;
 use std::collections::HashMap;
@@ -376,16 +376,9 @@ impl VarietyMonitor {
         }
     }
 
-    /// List all tracked domains.
-    ///
-    /// expect: "I can enumerate all tracked domains for loop feedback"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — domain enumeration enables loop feedback
-    /// \[P8\] Constraining: Semantic Grounding — pure enumeration, no side effects
-    /// post: returns Vec of domain name strings
-    pub fn domains(&self) -> Vec<&str> {
-        self.counters.keys().map(|s| s.as_str()).collect()
-    }
-
+    /// All tracked domains with their live trackers — the feed's landing
+    /// surface. Read by `RegulationLedger::health` (current deficit level)
+    /// and `variety` (query surface).
     pub(crate) fn counters(&self) -> &HashMap<String, VarietyTracker> {
         &self.counters
     }
@@ -709,35 +702,26 @@ impl RegulationLedger {
 
     // ── Variety ──
 
-    /// Get variety counts across all domains.
+    /// Get variety counts across all tracked domains.
     ///
-    /// expect: "I can query variety measurements across all span namespaces"
+    /// Domains are MCP server names — the tool-dispatch feed taxonomy shared
+    /// with outcome tracking (`record_outcome` / `record_variety`). The
+    /// previous `SpanNamespace::parse` filter accepted only canonical span
+    /// namespaces, hiding every server-named domain from this query and
+    /// making it useless against the live feed.
+    ///
+    /// expect: "I can query variety measurements across all tracked domains"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — variety measurement drives loop closure
     /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
-    /// post: returns HashMap of namespace → variety count
-    pub async fn variety(&self) -> HashMap<SpanNamespace, u64> {
+    /// post: returns HashMap of domain → distinct-state count for the current window
+    pub async fn variety(&self) -> HashMap<String, u64> {
         let state = self.state.read().await;
-        let domains: Vec<String> = state
+        state
             .tracker
-            .domains()
+            .counters()
             .iter()
-            .map(|s| s.to_string())
-            .collect();
-        drop(state);
-
-        let mut results = HashMap::new();
-        for domain in &domains {
-            // Filter against CANONICAL_NAMESPACES — the single registry for all
-            // Regulation namespace strings (core + domain). Replaces the old RegulationSpan::from_str
-            // gate which previously only accepted core variants.
-            if let Some(ns) = SpanNamespace::parse(domain) {
-                let state = self.state.read().await;
-                let count = state.tracker.variety_for_domain(domain);
-                drop(state);
-                results.insert(ns, count);
-            }
-        }
-        results
+            .map(|(domain, tracker)| (domain.clone(), tracker.variety()))
+            .collect()
     }
 
     /// Get variety for a specific domain.
@@ -1006,6 +990,26 @@ impl RegulationSink for NoopEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `variety()` must include server-name domains — the tool-dispatch feed
+    /// taxonomy. The previous `SpanNamespace::parse` filter hid every
+    /// server-named domain, making the query useless against the live feed.
+    #[tokio::test]
+    async fn variety_query_includes_server_name_domains() {
+        let ledger = RegulationLedger::default();
+        ledger
+            .increment_variety("hkask-mcp-media", "gallery_search")
+            .await;
+        ledger
+            .increment_variety("hkask-mcp-media", "gallery_add_audio")
+            .await;
+        let variety = ledger.variety().await;
+        assert_eq!(
+            variety.get("hkask-mcp-media"),
+            Some(&2),
+            "server-name domains must appear with their distinct-tool count"
+        );
+    }
 
     /// Config-gap failures (missing binary / credential) must not degrade a
     /// domain's success rate — they are operator-actionable environment

@@ -253,17 +253,27 @@ equivalent surfaces on `RegulationLedger`
 - `health()` → `LedgerHealth` (`runtime.rs:536`) — aggregate deficit, alert
   counts, variety EMA, alert-log cap status (`kask/crates/hkask-types/src/regulation.rs:44-66`).
 - `alerts()` → `Vec<RuntimeAlert>` (`runtime.rs:594`).
-- `variety()` → `HashMap<SpanNamespace, u64>` (`runtime.rs:691`);
-  `variety_for_domain` (`runtime.rs:355,723`).
-- `increment_variety(domain, state_name)` (`runtime.rs:891`) — feeds the
-  algedonic check.
+- `variety()` → `HashMap<String, u64>` of domain → distinct-state count
+  (domains are MCP server names — the tool-dispatch feed taxonomy);
+  `variety_for_domain` (`runtime.rs`).
+- `increment_variety(domain, state_name)` (`runtime.rs`) — feeds the
+  algedonic check. Wired from both tool-dispatch paths:
+  `CyberneticsLoop::record_variety` (called by `McpRuntime::invoke`) and
+  the agent-path outcome hook (`main.rs`), with the tool name as the
+  observed state.
 
 ### 4.3 Variety window and algedonic alerting
 
 - Variety window: 60 seconds (`DEFAULT_VARIETY_WINDOW_SECS`,
   `runtime.rs:131`).
 - Default variety max deficit: 100.0 (`DEFAULT_VARIETY_MAX_DEFICIT`,
-  `kask/crates/hkask-regulation/src/set_points.rs:18`).
+  `kask/crates/hkask-regulation/src/set_points.rs:18`). The effective
+  signal set-point scales with the `kask.curator.algedonic_threshold`
+  setting (default 0.8 → effective 20.0; see the D8-F4 wiring in
+  `crates/zed/src/main.rs`).
+- Default expected variety per domain: 3 distinct tools per window
+  (`DEFAULT_EXPECTED_VARIETY`, `algedonic.rs`); per-domain override via
+  `RegulationLedger::calibrate_threshold`.
 - Per-domain expected variety: `AlgedonicManager::set_expected_variety()`
   (`kask/crates/hkask-regulation/src/algedonic.rs:278`).
 - The in-memory algedonic log is a capped ring buffer (default 200);

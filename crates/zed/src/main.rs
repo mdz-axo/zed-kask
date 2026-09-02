@@ -921,6 +921,7 @@ fn main() {
                         "agent-path MCP tool outcome"
                     );
                     let server_name = server_name.to_string();
+                    let tool_name = tool_name.to_string();
                     let error_kind = error_kind.map(str::to_string);
                     // Clone per call — the closure is `Fn` (invoked for every
                     // tool call), so it cannot move the captured ledger into
@@ -931,6 +932,11 @@ fn main() {
                         ledger
                             .record_outcome(&server_name, success, error_kind.as_deref())
                             .await;
+                        // Variety feed — the dispatch twin: the tool name is
+                        // the observed state, sharing the outcome path's
+                        // server-name domain registry so the VarietySensor
+                        // sees agent-initiated calls too.
+                        ledger.increment_variety(&server_name, &tool_name).await;
                     });
                 },
             ));

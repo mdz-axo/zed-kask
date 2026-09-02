@@ -62,7 +62,7 @@ not on any storage crate — durable sinks are injected as traits
 | `AlertEscalationSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:84` |
 | `AlertEmailSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:58` |
 | `AlgedonicManager` struct | `kask/crates/hkask-regulation/src/algedonic.rs:230` |
-| `DEFAULT_EXPECTED_VARIETY` (10) | `kask/crates/hkask-regulation/src/algedonic.rs:22` |
+| `DEFAULT_EXPECTED_VARIETY` (3) | `kask/crates/hkask-regulation/src/algedonic.rs:22` |
 | `MetacognitionLoop` struct | `kask/crates/hkask-regulation/src/metacognition.rs:172` |
 | `MetacognitionConfig` | `kask/crates/hkask-regulation/src/metacognition.rs:130` |
 | `HealthSnapshot` | `kask/crates/hkask-regulation/src/metacognition.rs:88` |
