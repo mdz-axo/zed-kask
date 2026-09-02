@@ -284,13 +284,14 @@ the hook absent with no signal. Operators reading logs cannot distinguish
 the failure branch naming the hook, the failure reason, and the remediation
 (`set HKASK_*` env var, open the panel, etc.). Cycle 5 found the
 `a2a_secret` resolution path silently producing an empty secret; the same
-pattern exists for `TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
+pattern exists for `CONTEXT_INJECTOR` and `THREAD_CONDENSER`. (There is no
+`TOOL_ROUTER` hook — it was removed with the LazyToolRouter, D44 2026-08-30.)
 
 `OnceLock`-based hooks (`set_context_injector`,
 `set_curator_context_injector`, `set_template_base_path`) must `log::warn!` on the `Err` branch of
 `OnceLock::set` — a second call (e.g. deferred task re-firing) is silently
 dropped without the warn. `Mutex`-based hooks (`set_memory_port`,
-`set_thread_condenser`, `set_tool_invoker`, `set_tool_router`,
+`set_thread_condenser`, `set_tool_invoker`,
 `set_metacognition_provider`) are re-settable and don't need the warn (the
 second call replaces the first).
 
