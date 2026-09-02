@@ -67,6 +67,24 @@ assert_no_match "$repo_root/crates/cli/src/main.rs" 'mod flatpak|flatpak-spawn|F
     "zed-kask CLI contains upstream Zed's flatpak sandbox-escape code"
 assert_no_match "$repo_root/crates/paths/src/paths.rs" 'FLATPAK_XDG_' \
     "zed-kask paths honor upstream Zed's flatpak XDG overrides"
+
+# zed-kask: D7 workstation isolation (2026-09-01 incident). An upstream
+# Flatpak Zed window opened on this workspace ran its rust-analyzer at
+# 5.7 GB RSS / 263% CPU for 5 hours (`cargo check --workspace` over ~450
+# crates) — the project-level `lsp` disable alone did not stop it, so the
+# disable must exist in BOTH forms: the lsp section AND the per-language
+# `language_servers` exclusion (older Zed builds honor only one). If either
+# is removed, any editor that opens this repo re-burns the machine. These
+# assertions pin both forms.
+ZED_PROJECT_SETTINGS="$repo_root/.zed/settings.json"
+if ! grep -q '"rust-analyzer"' "$ZED_PROJECT_SETTINGS" \
+    || ! grep -q '"enabled": false' "$ZED_PROJECT_SETTINGS"; then
+    fail ".zed/settings.json lost the lsp rust-analyzer disable (D7 workstation isolation)"
+fi
+if ! grep -q '"language_servers".*!rust-analyzer' "$ZED_PROJECT_SETTINGS" \
+    && ! grep -A2 '"language_servers"' "$ZED_PROJECT_SETTINGS" | grep -q '!rust-analyzer'; then
+    fail ".zed/settings.json lost the Rust language_servers '!rust-analyzer' exclusion (D7 workstation isolation)"
+fi
 assert_no_match "$repo_root/crates/zed/src/zed.rs" 'auto_update::|install_release_linux' \
     "zed-kask safe action reaches the upstream updater"
 assert_no_match "$repo_root/crates/zed/src/zed/app_menus.rs" 'auto_update::Check|auto_update::UpdateZedKask' \

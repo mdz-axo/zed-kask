@@ -58,4 +58,9 @@ grep -q 'target/release-mcp' "$INSTALL_SH" \
 grep -q 'build-monitor.sh' "$INSTALL_SH" \
     || fail "install.sh no longer starts build-monitor.sh — installs would burn CPU unobserved"
 
+# 5. The workspace-wide cargo jobs cap — bounds rust-analyzer flycheck,
+# editor tasks, and agent builds that pass no explicit --jobs.
+grep -q '^jobs = 8' "$ROOT/.cargo/config.toml" \
+    || fail ".cargo/config.toml lost its [build] jobs cap — uncapped cargo invocations (rust-analyzer flycheck, agent tasks) peg every core"
+
 echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"

@@ -34,6 +34,15 @@
       "prettier": {
         "allowed": false,
       },
+      // zed-kask: D7 workstation isolation. This workspace is ~450 crates;
+      // any editor's rust-analyzer indexing it burns multi-GB RSS and every
+      // core for hours (2026-09-01 incident: an upstream Flatpak Zed window
+      // ran `cargo check --workspace` at 5.7 GB / 263% CPU for 5 h). RA is
+      // disabled here in BOTH forms — the lsp form below and this
+      // per-language exclusion — because older Zed builds ignore one or the
+      // other. Pinned by check-zed-isolation.sh. Develop zed-kask in
+      // zed-kask; do not open this repo in upstream Zed.
+      "language_servers": ["!rust-analyzer"],
       "formatter": {
         "external": {
           "command": "rustfmt",
