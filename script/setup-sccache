@@ -5,6 +5,11 @@ set -euo pipefail
 SCCACHE_VERSION="v0.16.0"
 # Use absolute path to avoid issues with working directory changes between steps
 SCCACHE_DIR="$(pwd)/target/sccache"
+# This workspace compiles ~800 dependencies across 5 build profiles (dev,
+# dbg, release, release-mcp, release-fast); the sccache default of 10 GiB
+# evicts before covering one full profile set. The server reads this only
+# at startup, so the script restarts it below to apply the value.
+export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-20G}"
 
 install_sccache() {
     mkdir -p "$SCCACHE_DIR"
@@ -71,6 +76,12 @@ install_sccache() {
         echo "${SCCACHE_DIR}" >> "$GITHUB_PATH"
     fi
     export PATH="${SCCACHE_DIR}:${PATH}"
+
+    # Restart the server so SCCACHE_CACHE_SIZE applies even when the binary
+    # was already cached (no upgrade happened). The disk cache survives the
+    # restart; a stop with no running server is expected, not an error.
+    "${SCCACHE_DIR}/sccache" --stop-server &>/dev/null || true
+    "${SCCACHE_DIR}/sccache" --start-server
 }
 
 configure_sccache() {
