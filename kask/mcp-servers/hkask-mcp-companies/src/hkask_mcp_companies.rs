@@ -52,7 +52,9 @@ pub(crate) mod economic_profit;
 pub(crate) mod fibo;
 pub(crate) mod fibo_cache;
 mod financial_model;
-mod providers;
+// `pub` so the integration tests (tests/fmp_endpoint_schema.rs) can pin
+// the resolution ranking against the live EODHD API.
+pub mod providers;
 pub(crate) mod research_store;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 mod forecast;
@@ -436,7 +438,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
-    use crate::types::SymbolRequest;
+    use crate::types::{ResolveSymbolRequest, SymbolRequest};
     use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
 
@@ -589,5 +591,27 @@ mod tool_behavior_tests {
                 );
             }
         }
+    }
+
+    /// `resolve_symbol` needs at least one of company name / ticker —
+    /// an exchange or country alone cannot identify a listing. Validated
+    /// before any request leaves.
+    #[tokio::test]
+    async fn resolve_symbol_requires_name_or_ticker() {
+        let server = make_server();
+        let error = server
+            .resolve_symbol(Parameters(ResolveSymbolRequest {
+                company_name: None,
+                ticker: None,
+                exchange: Some("NASDAQ".to_string()),
+                country: None,
+            }))
+            .await
+            .expect_err("no name/ticker must yield a typed error, not a panic");
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+            "missing name/ticker must be InvalidArgument, got: {:?}",
+            error.kind
+        );
     }
 }

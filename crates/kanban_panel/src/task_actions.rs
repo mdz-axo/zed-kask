@@ -1,4 +1,9 @@
-//! Task action forms — create, edit, spawn, and delete task UI.
+//! Task action forms and their handlers — create, edit, spawn, and delete
+//! task UI, plus the board lifecycle handlers (create/delete/export/import
+//! board). Extracted from `kanban_panel.rs` — the handlers stay methods on
+//! `KanbanPanel` (they mutate panel state and dispatch through the panel's
+//! mutation pipeline); this module owns the form structs, the form
+//! renderers, and the action handlers.
 //!
 //! Each form is a lightweight inline panel rendered below the board header.
 //! Forms use `Editor::single_line` for text input (matching the swarm panel's
@@ -6,11 +11,19 @@
 //! persists across re-renders.
 
 use editor::Editor;
-use gpui::{Context, Entity, Window};
+use gpui::{ClipboardItem, Context, Entity, Window};
+use gpui_util::ResultExt;
+use hkask_tool_invoker::shared_tool_invoker;
+use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use serde_json::json;
 use ui::prelude::*;
 
 use crate::KanbanPanel;
+use crate::{
+    BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL, BOARD_IMPORT_TOOL, KANBAN_SERVER,
+    RefreshTarget, TASK_ASSIGN_TOOL, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
+    TASK_UNASSIGN_TOOL, TASK_UPDATE_TOOL, TaskActionKind,
+};
 
 /// The form state for creating a new task.
 pub(crate) struct CreateTaskForm {
@@ -487,4 +500,290 @@ pub(crate) fn render_create_board_form(
                         ),
                 ),
         )
+}
+
+impl KanbanPanel {
+    // ── Task action handlers ───────────────────────────────────────────────
+
+    /// Start the create-task flow: show the inline form.
+    pub(crate) fn start_create_task(&mut self, cx: &mut Context<Self>) {
+        // The form is created lazily in `render` where a Window is available.
+        self.create_task_form = None;
+        self.active_action = Some(TaskActionKind::CreateTask);
+        cx.notify();
+    }
+
+    /// Submit the create-task form. Calls `kanban_task_create` and refreshes.
+    pub(crate) fn submit_create_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.create_task_form else {
+            return;
+        };
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        let args = form.collect_args(&board_id, cx);
+        self.active_action = None;
+        self.create_task_form = None;
+        self.dispatch_mutation(
+            TASK_CREATE_TOOL,
+            args,
+            "create task",
+            RefreshTarget::Tasks,
+            cx,
+        );
+    }
+
+    /// Start the edit-task flow for a specific task.
+    pub(crate) fn start_edit_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        // The form is created lazily in `render` where a Window is available.
+        self.edit_task_form = None;
+        self.active_action = Some(TaskActionKind::EditTask(task_id));
+        cx.notify();
+    }
+
+    /// Submit the edit-task form. Calls `kanban_task_update` and refreshes.
+    pub(crate) fn submit_edit_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.edit_task_form else {
+            return;
+        };
+        let args = form.collect_args(cx);
+        self.active_action = None;
+        self.edit_task_form = None;
+        self.dispatch_mutation(
+            TASK_UPDATE_TOOL,
+            args,
+            "update task",
+            RefreshTarget::Tasks,
+            cx,
+        );
+    }
+
+    /// Start the spawn-task flow for a specific task.
+    pub(crate) fn start_spawn_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.spawn_task_form = None;
+        self.active_action = Some(TaskActionKind::SpawnTask(task_id));
+        cx.notify();
+    }
+
+    /// Submit the spawn-task form. Calls `kanban_task_spawn`.
+    pub(crate) fn submit_spawn_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.spawn_task_form else {
+            return;
+        };
+        let args = form.collect_args(cx);
+        self.active_action = None;
+        self.spawn_task_form = None;
+        // A spawn starts a subagent, which burns gas. `dispatch_mutation` only
+        // retries requests that provably never left, so a spawn cannot be
+        // double-started by the retry path.
+        self.dispatch_mutation(
+            TASK_SPAWN_TOOL,
+            args,
+            "spawn subagent",
+            RefreshTarget::Tasks,
+            cx,
+        );
+    }
+
+    /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
+    pub(crate) fn toggle_task_assignment(
+        &mut self,
+        task_id: String,
+        is_assigned: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let tool = if is_assigned {
+            TASK_UNASSIGN_TOOL
+        } else {
+            TASK_ASSIGN_TOOL
+        };
+        let args = json!({ "task_id": task_id });
+        self.dispatch_mutation(tool, args, "toggle assignment", RefreshTarget::Tasks, cx);
+    }
+
+    /// Show the delete-task confirmation dialog.
+    pub(crate) fn confirm_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.active_action = Some(TaskActionKind::ConfirmDeleteTask(task_id));
+        cx.notify();
+    }
+
+    /// Execute the task deletion.
+    pub(crate) fn execute_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.active_action = None;
+        let args = json!({ "task_id": task_id });
+        self.dispatch_mutation(
+            TASK_DELETE_TOOL,
+            args,
+            "delete task",
+            RefreshTarget::Tasks,
+            cx,
+        );
+    }
+
+    // ── Board action handlers ──────────────────────────────────────────────
+
+    /// Start the create-board flow.
+    pub(crate) fn start_create_board(&mut self, cx: &mut Context<Self>) {
+        // The form is created lazily in `render` where a Window is available.
+        self.create_board_editor = None;
+        self.active_action = Some(TaskActionKind::CreateBoard);
+        cx.notify();
+    }
+
+    /// Submit the create-board form.
+    pub(crate) fn submit_create_board(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.create_board_editor else {
+            return;
+        };
+        let name = editor.read(cx).text(cx);
+        if name.trim().is_empty() {
+            return;
+        }
+        self.active_action = None;
+        self.create_board_editor = None;
+        let args = json!({ "name": name });
+        self.dispatch_mutation(
+            BOARD_CREATE_TOOL,
+            args,
+            "create board",
+            RefreshTarget::Boards,
+            cx,
+        );
+    }
+
+    /// Show the delete-board confirmation dialog.
+    pub(crate) fn confirm_delete_board(&mut self, cx: &mut Context<Self>) {
+        self.active_action = Some(TaskActionKind::ConfirmDeleteBoard);
+        cx.notify();
+    }
+
+    /// Execute the board deletion.
+    pub(crate) fn execute_delete_board(&mut self, cx: &mut Context<Self>) {
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        self.active_action = None;
+        let args = json!({ "board_id": board_id });
+        // A deleted board invalidates the selection, so clear it before the
+        // refresh. `clear_board_selection` runs on success and on an unknown
+        // outcome — in the latter case the board may be gone, and re-reading the
+        // board list against a cleared selection is the safe reconciliation.
+        self.dispatch_mutation_with(
+            BOARD_DELETE_TOOL,
+            args,
+            "delete board",
+            RefreshTarget::Boards,
+            Some(Self::clear_board_selection),
+            cx,
+        );
+    }
+
+    /// Drop the selected board and everything derived from it.
+    pub(crate) fn clear_board_selection(&mut self) {
+        self.selected_board_id = None;
+        self.board_name = None;
+        self.tasks.clear();
+        self.kanban_widget = None;
+    }
+
+    /// Export the selected board as mermaid kanban markdown and copy it to
+    /// the system clipboard. The markdown round-trips through `import_board`.
+    /// Only the board owner can export (the server enforces P12); a
+    /// permission error surfaces in the error strip.
+    pub(crate) fn export_board(&mut self, cx: &mut Context<Self>) {
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
+            cx.notify();
+            return;
+        };
+        self.fetching = true;
+        self.error = None;
+        cx.notify();
+        let args = json!({ "board_id": board_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_EXPORT_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(output) => {
+                if let Some(err) = parse_tool_error(&output) {
+                    this.update(cx, |this, cx| {
+                        this.fetching = false;
+                        this.error =
+                            Some(format!("Failed to export board: {}", err.message).into());
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+                let markdown = parse_tool_response(&output).and_then(|content| {
+                    serde_json::from_value::<serde_json::Value>(content)
+                        .ok()
+                        .and_then(|v| v.get("markdown")?.as_str().map(|s| s.to_string()))
+                });
+                this.update(cx, |this, cx| {
+                    this.fetching = false;
+                    match markdown {
+                        Some(md) => {
+                            cx.write_to_clipboard(ClipboardItem::new_string(md));
+                            this.error = None;
+                        }
+                        None => {
+                            this.error =
+                                Some(format!("Failed to parse export response: {output}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.fetching = false;
+                    this.error = Some(if error.is_retryable() {
+                        format!("Reconnecting to the kanban server… ({error})").into()
+                    } else {
+                        error.message().into()
+                    });
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Import a board from mermaid kanban markdown read from the system
+    /// clipboard. Creates a new board with columns and tasks matching the
+    /// parsed markdown, then refreshes the board list. Replay-safe via the
+    /// server's idempotency key (generated per gesture).
+    pub(crate) fn import_board(&mut self, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            self.error = Some("Clipboard is empty — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        };
+        let Some(markdown) = clipboard.text() else {
+            self.error = Some("Clipboard has no text — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        };
+        if markdown.trim().is_empty() {
+            self.error = Some("Clipboard is empty — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        }
+        let args = json!({
+            "markdown": markdown,
+            // The server falls back to the parsed board name or "Imported Board",
+            // so we do not set board_name here — preserve the exported name.
+        });
+        self.dispatch_mutation(
+            BOARD_IMPORT_TOOL,
+            args,
+            "import board",
+            RefreshTarget::Boards,
+            cx,
+        );
+    }
 }

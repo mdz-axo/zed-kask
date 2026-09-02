@@ -180,3 +180,6 @@ pub fn forecast(
         config,
     })
 }
+
+#[cfg(test)]
+mod tests;

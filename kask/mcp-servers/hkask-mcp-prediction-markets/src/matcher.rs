@@ -188,7 +188,7 @@ mod tests {
             "last_update": "2026-01-01T00:00:00Z",
             "volatility": {
                 "realized_variance": null,
-                "structural_flag": "None",
+                "structural_flag": "none",
                 "interpretation": ""
             },
             "status": "open",
@@ -219,14 +219,17 @@ mod tests {
 
     #[test]
     fn token_overlap_identical_questions_score_one() {
-        assert!((token_overlap("Will the Fed cut rates", "Will the Fed cut rates") - 1.0).abs() < 1e-9);
+        assert!(
+            (token_overlap("Will the Fed cut rates", "Will the Fed cut rates") - 1.0).abs() < 1e-9
+        );
     }
 
     #[test]
     fn token_overlap_ignores_stopwords() {
         // "will" and "in" are stopwords — adding them must not change the overlap.
         assert!(
-            (token_overlap("Fed cut rates in December", "Fed cut rates December") - 1.0).abs() < 1e-9
+            (token_overlap("Fed cut rates in December", "Fed cut rates December") - 1.0).abs()
+                < 1e-9
         );
     }
 
@@ -238,7 +241,10 @@ mod tests {
     #[test]
     fn extract_deadline_prefers_iso_date() {
         let date = extract_deadline("Will X happen by 2027-04-28 or later?").expect("iso date");
-        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2027, 4, 28).expect("valid date"));
+        assert_eq!(
+            date,
+            chrono::NaiveDate::from_ymd_opt(2027, 4, 28).expect("valid date")
+        );
     }
 
     #[test]
@@ -246,7 +252,10 @@ mod tests {
         // Mid-year, not end-of-year: "the January 2028 meeting" must not be
         // ~340 days from a Dec-31 pivot of the same year.
         let date = extract_deadline("Who wins the 2028 election?").expect("year");
-        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2028, 7, 1).expect("valid date"));
+        assert_eq!(
+            date,
+            chrono::NaiveDate::from_ymd_opt(2028, 7, 1).expect("valid date")
+        );
     }
 
     #[test]

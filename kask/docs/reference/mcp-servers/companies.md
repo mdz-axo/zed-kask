@@ -170,10 +170,10 @@ status: VERIFIED (v8 — 2026-08-28: the duplicate portfolio surface (portfolio_
 
 > Count pinned end-to-end by `tool_surface_is_exactly_43_registered_tools`
 > (`CompaniesServer::combined_router().list_all().len()`), mirroring the
-> media/scenarios/swarm pins. The tabulated groups below cover 38 tools; 5
+> media/scenarios/swarm pins. The tabulated groups below cover 36 tools; 7
 > tools are not yet tabulated.
 
-### Financial data (8)
+### Financial data (9)
 
 | Tool | Description | Provider routing |
 |------|-------------|------------------|
@@ -185,6 +185,7 @@ status: VERIFIED (v8 — 2026-08-28: the duplicate portfolio surface (portfolio_
 | `key_metrics` | Key financial metrics (default limit 5) | FMP primary; EODHD approximated for missing fields |
 | `historical_price` | Historical price data | FMP primary; EODHD fallback |
 | `symbol_search` | Symbol search | FMP and EODHD search endpoints |
+| `resolve_symbol` | Resolve company name and/or ticker (optional exchange/country disambiguators) to the primary exchange symbol | EODHD multi-signal ranking (exact ticker > name overlap > exchange/country > primary listing) |
 
 ### Analysis and research (5)
 

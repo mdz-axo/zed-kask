@@ -30,10 +30,12 @@ use ui::SharedString;
 /// ```
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LispEvalToolInput {
-    /// The Lisp form to evaluate. Supports: `quote`, `if`, `let`, `lambda`,
-    /// `define`, `begin`, `and`, `or`, `not`, `cond`, arithmetic (`+`, `-`,
-    /// `*`, `/`, `<`, `>`, `<=`, `>=`, `=`), `assoc`, `length`, `map`,
-    /// `filter`, `reduce`, `string-append`, `string->number`, and more.
+    /// The Lisp form to evaluate. Special forms: `quote`, `if`, `let`,
+    /// `lambda`, `define`, `begin`, `and`, `or`, `not`, `cond`. Builtins:
+    /// arithmetic (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`),
+    /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
+    /// `numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `eq`,
+    /// `string=`, `string-contains`, `concat`.
     form: String,
     /// JSON object whose keys become top-level Lisp bindings. Values are
     /// converted to Lisp values: objects become association lists, arrays
@@ -289,5 +291,106 @@ mod tests {
             serde_json::from_value(input).expect("bare object must parse");
         assert_eq!(result.env.len(), 1);
         assert!(result.env.contains_key("step_5_result"));
+    }
+
+    // ── Canonical skill-form contract tests ─────────────────────────────
+    // The grounding-verify skill pins literal lisp_eval forms in its SKILL.md
+    // and agents call them verbatim. These tests execute the exact forms so
+    // interpreter evolution cannot silently break them — the Step 6 floor
+    // form shipped broken (`min`/`mapcar` are not builtins, and symbol keys
+    // never match JSON string keys) because nothing ran it.
+
+    #[test]
+    fn test_canonical_fact_score_form() {
+        // grounding-verify SKILL.md Step 5 — fact_score with nil-propagation.
+        let form = r#"(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"#;
+        let ok = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"sar": 0.9, "cvr": 0.8, "hfr": 1.0, "nlr": 0.9, "claims_checked": 10}),
+            100_000,
+            64,
+        )
+        .expect("fact_score form must evaluate");
+        let score = ok.as_f64().expect("happy path returns a number");
+        assert!((score - 0.895).abs() < 1e-9, "got {score}");
+
+        // A nil sub-metric must propagate to nil — never a zero-fallback score.
+        let nil = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"sar": null, "cvr": 0.8, "hfr": 1.0, "nlr": 0.9, "claims_checked": 10}),
+            100_000,
+            64,
+        )
+        .expect("nil-path form must evaluate");
+        assert_eq!(nil, json!(null), "nil sub-metric must yield null, not 0");
+    }
+
+    #[test]
+    fn test_canonical_provenance_floor_form() {
+        // grounding-verify SKILL.md Step 6 — provenance floor as a recursive
+        // min over claim strengths (string keys: JSON objects bind strings).
+        let form = r#"(define floor-strength (lambda (cs) (if (= (length cs) 1) (assoc "strength" (nth 0 cs)) (let ((rest_min (floor-strength (cdr cs)))) (let ((this (assoc "strength" (car cs)))) (if (< this rest_min) this rest_min)))))) (floor-strength claims)"#;
+        let multi = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"claims": [{"claim_id": "c1", "strength": 2}, {"claim_id": "c2", "strength": 1}, {"claim_id": "c3", "strength": 2}]}),
+            100_000,
+            64,
+        )
+        .expect("floor form must evaluate");
+        assert_eq!(multi, json!(1), "floor is the weakest claim's strength");
+
+        let single = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"claims": [{"claim_id": "c1", "strength": 2}]}),
+            100_000,
+            64,
+        )
+        .expect("single-claim floor must evaluate");
+        assert_eq!(single, json!(2));
+    }
+
+    #[test]
+    fn test_canonical_step1_structural_form() {
+        // grounding-verify SKILL.md Step 1 — zero-claim guard.
+        let form = r#"(if (= (length claims) 0) 'no_factual_claims 'ok)"#;
+        let ok = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"claims": [{"claim_id": "c1"}]}),
+            100_000,
+            64,
+        )
+        .expect("step 1 form must evaluate");
+        assert_eq!(ok, json!("ok"));
+
+        let empty =
+            hkask_lisp::eval_sandboxed_with_budget(form, &json!({"claims": []}), 100_000, 64)
+                .expect("empty-claims form must evaluate");
+        assert_eq!(empty, json!("no_factual_claims"));
+    }
+
+    #[test]
+    fn test_skill_md_pins_canonical_forms() {
+        // The forms above are a contract with the skill text: if the SKILL.md
+        // drifts from them (or regresses to a non-executable form), this fails
+        // until the skill and the tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/grounding-verify/SKILL.md"
+        ))
+        .expect("grounding-verify SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains(
+                "(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"
+            ),
+            "fact_score form must stay pinned in grounding-verify SKILL.md"
+        );
+        assert!(
+            skill_md.contains(r#"(define floor-strength (lambda (cs)"#),
+            "Step 6 floor form must stay pinned in grounding-verify SKILL.md"
+        );
+        assert!(
+            !skill_md.contains("(min (mapcar"),
+            "mapcar is not a builtin — the old floor form was broken"
+        );
     }
 }

@@ -1,7 +1,9 @@
 //! Financial data tools — profile, quote, statements, metrics, history, search.
 use crate::{
     CompaniesServer, fibo, providers,
-    types::{HistoricalRequest, SearchRequest, SymbolLimitRequest, SymbolRequest},
+    types::{
+        HistoricalRequest, ResolveSymbolRequest, SearchRequest, SymbolLimitRequest, SymbolRequest,
+    },
     validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -141,36 +143,60 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Resolve a company name or plain ticker to its primary exchange symbol. Searches EODHD for the primary common stock listing (isPrimary=true, Type=Common Stock) and returns the symbol in {CODE}.{EXCHANGE} format, the company name, and whether it's a US listing (FMP primary) or international (EODHD primary). Use this before calling company_profile, income_statement, etc. when you only have the company name. If the input already contains a dot (e.g., VOD.LSE), it's returned as-is."
+        description = "Resolve a company name and/or ticker to its primary exchange symbol. Pass the company name from the prompt (e.g. 'Capital One Financial Corp') and the ticker if the prompt gives one (e.g. 'COF'); optionally pass the exchange (e.g. 'NASDAQ', 'LSE', 'Toronto') or the country of domicile (e.g. 'US', 'Canada') to disambiguate the same ticker listed on several exchanges. Ranks EODHD common-stock candidates by exact ticker match, company-name token overlap, exchange/country match, and primary-listing status. Returns the symbol in {CODE}.{EXCHANGE} format, the company name, and whether it's a US listing (FMP primary) or international (EODHD primary). Use this before calling company_profile, income_statement, etc. when you only have the company name. A ticker that already includes an exchange suffix (e.g. VOD.LSE) is returned as-is."
     )]
     pub async fn resolve_symbol(
         &self,
-        Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
+        Parameters(ResolveSymbolRequest {
+            company_name,
+            ticker,
+            exchange,
+            country,
+        }): Parameters<ResolveSymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "resolve_symbol",
-            async {
-                if symbol.is_empty() {
-                    return Err(McpToolError::invalid_argument("symbol must not be empty"));
-                }
-                let resolved = providers::resolve_symbol(
-                    &self.client,
-                    &symbol,
-                    &self.eodhd_api_key,
-                )
-                .await?;
+        execute_tool(self, "resolve_symbol", async {
+            let company_name = non_empty(company_name);
+            let ticker = non_empty(ticker);
+            let exchange = non_empty(exchange);
+            let country = non_empty(country);
+            if company_name.is_none() && ticker.is_none() {
+                return Err(McpToolError::invalid_argument(
+                    "resolve_symbol requires the company name and/or the ticker; \
+                         exchange and country are optional disambiguators",
+                ));
+            }
+            let input = providers::ResolveSymbolInput {
+                company_name,
+                ticker,
+                exchange,
+                country,
+            };
+            let resolved =
+                providers::resolve_symbol(&self.client, &input, &self.eodhd_api_key).await?;
 
-                Ok(serde_json::json!({
-                    "query": symbol,
-                    "symbol": resolved.symbol,
-                    "companyName": resolved.company_name,
-                    "isUS": resolved.is_us,
-                    "primaryProvider": if resolved.is_us { "FMP" } else { "EODHD" },
-                    "framework": "EODHD symbol resolution. Searches for the primary common stock listing (isPrimary=true) and returns the canonical symbol for data fetching."
-                }))
-            },
-        )
+            Ok(serde_json::json!({
+                "query": {
+                    "companyName": input.company_name,
+                    "ticker": input.ticker,
+                    "exchange": input.exchange,
+                    "country": input.country,
+                },
+                "symbol": resolved.symbol,
+                "companyName": resolved.company_name,
+                "isUS": resolved.is_us,
+                "primaryProvider": if resolved.is_us { "FMP" } else { "EODHD" },
+                "framework": "Multi-signal EODHD symbol resolution: ranks common-stock \
+                               candidates by exact ticker match, company-name token overlap, \
+                               exchange/country match, and primary-listing status."
+            }))
+        })
         .await
     }
+}
+
+/// Trimmed input, or `None` when empty or blank.
+fn non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

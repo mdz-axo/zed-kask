@@ -19,8 +19,12 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    section's `listen_for` criteria.
 3. **Cite** — the model returns the chunk_id, the exact substring it found,
    and the character offset where it starts.
-4. **Verify** — a post-processing step checks that each cited substring is
-   actually present in the referenced chunk. Fabricated quotes are rejected.
+4. **Verify** — call `lisp_eval` `string-contains` for each cited substring
+   against its referenced chunk:
+   - form: `"(string-contains cited_substring chunk_text)"`
+   - env: `{ "cited_substring": <the cited text>, "chunk_text": <the referenced chunk's text> }`
+   Fabricated quotes are rejected — the check is mechanical, not
+   model-mediated.
 
 The model never "writes" a quote — it "finds" one and points to where it found
 it. The verification is mechanical (substring match), not model-mediated.
@@ -50,8 +54,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Single-pass (sense→act, not iterative).
 - No-fabrication invariant is process-embedded: the model retrieves from
   numbered chunks and cites what it found; the process verifies each citation
-  mechanically (substring match). The model cannot fabricate a quote because
-  the process never gives it a "write a quote" step.
+  mechanically (`lisp_eval` `string-contains`). The model cannot fabricate a
+  quote because the process never gives it a "write a quote" step.
 - The linkage, not the calendar date, is the admissibility bar.
 - Certainty vocabulary: proximate (≥67%) / probable (33–66%) / possible (<32%).
 - No verdict or forecast input may be derived from `ignored_short_term` entries.

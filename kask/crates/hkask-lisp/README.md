@@ -30,11 +30,12 @@ by brundonsmith, with these deviations:
 ## Supported forms
 
 **Special forms**: `quote`, `if`, `let`, `lambda`, `define`, `begin`, `and`,
-`or`, `not`
+`or`, `not`, `cond`
 
 **Built-in functions**: `car`, `cdr`, `cons`, `list`, `length`, `nth`,
 `reverse`, `+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`, `is_null`,
-`assoc`
+`numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `eq`,
+`string=`, `string-contains`, `concat`
 
 ## Usage
 

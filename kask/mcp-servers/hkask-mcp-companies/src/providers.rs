@@ -1657,76 +1657,441 @@ fn parse_screener_row(row: &Value) -> Option<CompanyListing> {
     })
 }
 
-/// Resolve a company name or plain ticker to its primary exchange symbol.
+/// Inputs for multi-signal symbol resolution: the company name and ticker
+/// from the prompt, plus optional exchange / country disambiguators. At
+/// least one of `company_name` / `ticker` must be present (enforced by
+/// the tool layer).
+pub struct ResolveSymbolInput {
+    pub company_name: Option<String>,
+    pub ticker: Option<String>,
+    pub exchange: Option<String>,
+    pub country: Option<String>,
+}
+
+impl ResolveSymbolInput {
+    /// The given signals, for error messages.
+    fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(ticker) = &self.ticker {
+            parts.push(format!("ticker '{ticker}'"));
+        }
+        if let Some(company_name) = &self.company_name {
+            parts.push(format!("company name '{company_name}'"));
+        }
+        if let Some(exchange) = &self.exchange {
+            parts.push(format!("exchange '{exchange}'"));
+        }
+        if let Some(country) = &self.country {
+            parts.push(format!("country '{country}'"));
+        }
+        parts.join(", ")
+    }
+}
+
+/// One EODHD search entry, filtered to a common stock listing.
+struct SearchCandidate {
+    code: String,
+    exchange: String,
+    name: String,
+    country: Option<String>,
+    is_primary: bool,
+}
+
+// Additive ranking weights. An exact ticker match dominates every other
+// signal (the prompt's ticker is the authoritative identifier); name
+// signals follow; explicit exchange/country disambiguators outrank
+// listing-quality signals so a stated exchange or country overrides the
+// default primary-listing preference. The US nudge stays small enough
+// that it never overrides an explicit signal — it only breaks ties toward
+// the listing whose data FMP covers as primary provider.
+const SCORE_TICKER_EXACT: i64 = 1000;
+const SCORE_TICKER_PREFIX: i64 = 100;
+const SCORE_NAME_EXACT: i64 = 500;
+const SCORE_NAME_OVERLAP_MAX: i64 = 300;
+const SCORE_EXCHANGE_MATCH: i64 = 200;
+const SCORE_COUNTRY_MATCH: i64 = 150;
+const SCORE_PRIMARY_LISTING: i64 = 50;
+const SCORE_US_EXCHANGE: i64 = 10;
+
+/// Resolve a company name and/or ticker to its primary exchange symbol.
 ///
-/// Searches EODHD for the company, filters for `isPrimary == true` and
-/// `Type == "Common Stock"`, and returns the symbol as `{Code}.{Exchange}`.
-/// If the input already contains a `.`, it's assumed to be already resolved.
+/// Multi-signal resolution against EODHD search: candidates are gathered
+/// from the ticker (when given) and the company name (when given), kept
+/// only when `Type == "Common Stock"`, then ranked by an additive score —
+/// exact ticker match, company-name token overlap, explicit
+/// exchange/country match, then listing quality (primary listing, US
+/// exchange). EODHD's search matches substrings inside company names, so a
+/// bare ticker like "COF" surfaces dozens of name matches ("Swiss Water
+/// Decaffeinated Coffee Inc" contains "cof") — the ranking is what picks
+/// Capital One's COF.US out of that noise.
+///
+/// A ticker that already carries an EODHD exchange suffix ("VOD.LSE") is
+/// its own answer and is returned as-is without a search.
 ///
 /// Returns the resolved EODHD-format symbol and whether it's a US listing
 /// (FMP primary) or international (EODHD primary).
 pub async fn resolve_symbol(
     client: &reqwest::Client,
-    query: &str,
+    input: &ResolveSymbolInput,
     eodhd_api_key: &str,
 ) -> Result<ResolvedSymbol, McpToolError> {
-    // Already in EXCHANGE.FORMAT — use as-is.
-    if query.contains('.') {
-        let exchange = query.split('.').nth(1).unwrap_or("");
-        let is_us = exchange == "US";
-        return Ok(ResolvedSymbol {
-            symbol: query.to_string(),
-            is_us,
-            company_name: None,
-        });
+    // A dotted suffix of 2+ characters is an EODHD exchange code (US, TO,
+    // LSE, …). Single-letter suffixes are share classes ("BRK.B"), not
+    // exchanges — those resolve through search like a bare ticker.
+    if let Some(ticker) = input.ticker.as_deref() {
+        if is_exchange_qualified(ticker) {
+            let exchange = ticker
+                .rsplit_once('.')
+                .map(|(_, suffix)| suffix)
+                .unwrap_or_default();
+            return Ok(ResolvedSymbol {
+                symbol: ticker.to_string(),
+                is_us: exchange.eq_ignore_ascii_case("US"),
+                company_name: None,
+            });
+        }
     }
 
-    // Search EODHD for the primary listing.
-    let results = eodhd_search_get(client, query, "50", eodhd_api_key).await?;
+    let mut entries: Vec<Value> = Vec::new();
 
-    let arr = results
-        .as_array()
-        .ok_or_else(|| McpToolError::unavailable("EODHD search returned non-array"))?;
-
-    // Prefer: isPrimary == true AND Type == "Common Stock".
-    let best = arr
-        .iter()
-        .filter(|e| {
-            e.get("Type")
-                .and_then(|v| v.as_str())
-                .map(|t| t == "Common Stock")
-                .unwrap_or(false)
-        })
-        .max_by_key(|e| {
-            e.get("isPrimary")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
+    // Ticker search first: when it surfaces an exact code match, the
+    // ticker is authoritative and name searches cannot improve on it.
+    let mut ticker_exact_found = false;
+    if let Some(ticker) = input.ticker.as_deref() {
+        let query = ticker_search_query(ticker);
+        let results = eodhd_search_get(client, &query, "50", eodhd_api_key).await?;
+        let normalized_ticker = normalize_alphanumeric(ticker);
+        ticker_exact_found = results.as_array().is_some_and(|array| {
+            array.iter().any(|entry| {
+                parse_search_candidate(entry).is_some_and(|candidate| {
+                    normalize_alphanumeric(&candidate.code) == normalized_ticker
+                })
+            })
         });
+        extend_entries(&mut entries, results);
+    }
 
-    let best = best.ok_or_else(|| {
+    // Name searches: the raw name first, then — only while nothing has
+    // matched — the stopword-stripped name and shorter prefixes. EODHD
+    // matches substrings verbatim, so a name that isn't word-for-word in
+    // the listing (a leading "The", a trailing "Ltd") needs the shorter
+    // query.
+    if input.company_name.is_some() && !ticker_exact_found {
+        let queries = name_search_queries(input.company_name.as_deref().unwrap_or_default());
+        for query in queries {
+            let results = eodhd_search_get(client, &query, "50", eodhd_api_key).await?;
+            let matched = results.as_array().is_some_and(|array| {
+                array
+                    .iter()
+                    .any(|entry| parse_search_candidate(entry).is_some())
+            });
+            extend_entries(&mut entries, results);
+            if matched {
+                break;
+            }
+        }
+    }
+
+    let best = select_best_candidate(&entries, input).ok_or_else(|| {
         McpToolError::unavailable(format!(
-            "No primary common stock listing found for '{query}'"
+            "No common stock listing found on EODHD for {}",
+            input.describe()
         ))
     })?;
 
-    let code = best
-        .get("Code")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpToolError::unavailable("EODHD search result missing 'Code'"))?;
-    let exchange = best
-        .get("Exchange")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| McpToolError::unavailable("EODHD search result missing 'Exchange'"))?;
-    let company_name = best.get("Name").and_then(|v| v.as_str()).map(String::from);
-
-    let symbol = format!("{code}.{exchange}");
-    let is_us = exchange == "US";
-
+    let is_us = best.exchange == "US";
     Ok(ResolvedSymbol {
-        symbol,
+        symbol: format!("{}.{}", best.code, best.exchange),
         is_us,
-        company_name,
+        company_name: if best.name.is_empty() {
+            None
+        } else {
+            Some(best.name)
+        },
     })
+}
+
+fn extend_entries(entries: &mut Vec<Value>, results: Value) {
+    if let Some(array) = results.as_array() {
+        entries.extend(array.iter().cloned());
+    }
+}
+
+/// Parse an EODHD search entry, returning `None` unless it is a common
+/// stock listing — ETFs, funds, bonds, and indices share tickers with
+/// common stock and must not win resolution.
+fn parse_search_candidate(entry: &Value) -> Option<SearchCandidate> {
+    let asset_type = entry.get("Type").and_then(Value::as_str)?;
+    if asset_type != "Common Stock" {
+        return None;
+    }
+    Some(SearchCandidate {
+        code: entry.get("Code").and_then(Value::as_str)?.to_string(),
+        exchange: entry.get("Exchange").and_then(Value::as_str)?.to_string(),
+        name: entry
+            .get("Name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        country: entry
+            .get("Country")
+            .and_then(Value::as_str)
+            .map(String::from),
+        is_primary: entry
+            .get("isPrimary")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// Pick the best common-stock candidate by additive score. Ties keep the
+/// first candidate in EODHD's own ordering — the search engine's
+/// popularity ranking is the deterministic tiebreak.
+fn select_best_candidate(entries: &[Value], input: &ResolveSymbolInput) -> Option<SearchCandidate> {
+    let mut best: Option<(i64, SearchCandidate)> = None;
+    for entry in entries {
+        let Some(candidate) = parse_search_candidate(entry) else {
+            continue;
+        };
+        let score = candidate_score(&candidate, input);
+        if best
+            .as_ref()
+            .map_or(true, |(best_score, _)| score > *best_score)
+        {
+            best = Some((score, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+fn candidate_score(candidate: &SearchCandidate, input: &ResolveSymbolInput) -> i64 {
+    let mut score = 0;
+
+    if let Some(ticker) = input.ticker.as_deref() {
+        let normalized_ticker = normalize_alphanumeric(ticker);
+        if !normalized_ticker.is_empty() {
+            let code = normalize_alphanumeric(&candidate.code);
+            if code == normalized_ticker {
+                score += SCORE_TICKER_EXACT;
+            } else if code.starts_with(&normalized_ticker) {
+                score += SCORE_TICKER_PREFIX;
+            }
+        }
+    }
+
+    if let Some(company_name) = input.company_name.as_deref() {
+        let query_tokens = name_tokens(company_name);
+        if !query_tokens.is_empty() {
+            let candidate_tokens = name_tokens(&candidate.name);
+            if query_tokens == candidate_tokens {
+                score += SCORE_NAME_EXACT;
+            } else {
+                let overlap = query_tokens.intersection(&candidate_tokens).count();
+                score += SCORE_NAME_OVERLAP_MAX * overlap as i64 / query_tokens.len() as i64;
+            }
+        }
+    }
+
+    if let Some(exchange) = input.exchange.as_deref() {
+        if canonical_exchange(exchange) == canonical_exchange(&candidate.exchange) {
+            score += SCORE_EXCHANGE_MATCH;
+        }
+    }
+
+    if let (Some(country), Some(candidate_country)) =
+        (input.country.as_deref(), candidate.country.as_deref())
+    {
+        if canonical_country(country) == canonical_country(candidate_country) {
+            score += SCORE_COUNTRY_MATCH;
+        }
+    }
+
+    if candidate.is_primary {
+        score += SCORE_PRIMARY_LISTING;
+    }
+    if candidate.exchange == "US" {
+        score += SCORE_US_EXCHANGE;
+    }
+
+    score
+}
+
+/// Lowercase alphanumerics only: "U.S.A." → "usa", "BRK.B" → "brkb".
+/// Used for ticker, exchange, and country comparison so punctuation
+/// variants compare equal.
+fn normalize_alphanumeric(text: &str) -> String {
+    text.chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(|character| character.to_lowercase())
+        .collect()
+}
+
+/// Corporate-designation words ignored when comparing company names. Both
+/// sides of the comparison are filtered, so dropping them never breaks a
+/// match — it only stops "Capital One Financial Corp" from failing to
+/// equal "Capital One Financial Corporation".
+const NAME_STOPWORDS: &[&str] = &[
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "ltd",
+    "limited",
+    "plc",
+    "sa",
+    "spa",
+    "ag",
+    "nv",
+    "oyj",
+    "asa",
+    "ab",
+    "co",
+    "company",
+    "holdings",
+    "holding",
+    "group",
+    "the",
+    "partners",
+    "lp",
+    "llc",
+];
+
+/// Significant tokens of a company name: lowercase words minus corporate
+/// designations and single letters ("S.A." contributes nothing).
+fn name_tokens(name: &str) -> std::collections::BTreeSet<String> {
+    name.split(|character: char| !character.is_alphanumeric())
+        .map(|word| word.to_lowercase())
+        .filter(|word| word.len() > 1 && !NAME_STOPWORDS.contains(&word.as_str()))
+        .collect()
+}
+
+/// Whether a dotted ticker carries an EODHD exchange code ("VOD.LSE") as
+/// opposed to a share-class suffix ("BRK.B"). Exchange codes are 2+
+/// characters; class suffixes are a single letter.
+fn is_exchange_qualified(ticker: &str) -> bool {
+    ticker
+        .rsplit_once('.')
+        .is_some_and(|(_, suffix)| suffix.len() >= 2)
+}
+
+/// EODHD search query for a ticker: a class-share dot becomes a dash
+/// ("BRK.B" → "BRK-B"), EODHD's spelling for multi-class tickers.
+fn ticker_search_query(ticker: &str) -> String {
+    if ticker.contains('.') {
+        ticker.replace('.', "-")
+    } else {
+        ticker.to_string()
+    }
+}
+
+/// EODHD search queries for a company name: the raw name first, then the
+/// stopword-stripped name and progressively shorter prefixes. EODHD
+/// matches substrings verbatim, so these retries cover names that are
+/// not word-for-word in the listing (a leading "The", a trailing "Ltd").
+fn name_search_queries(name: &str) -> Vec<String> {
+    let trimmed = name.trim();
+    let mut queries = vec![trimmed.to_string()];
+    let words: Vec<&str> = trimmed
+        .split_whitespace()
+        .filter(|word| {
+            let normalized = normalize_alphanumeric(word);
+            normalized.len() > 1 && !NAME_STOPWORDS.contains(&normalized.as_str())
+        })
+        .collect();
+    let cleaned = words.join(" ");
+    if !cleaned.is_empty() && cleaned != trimmed {
+        queries.push(cleaned);
+    }
+    for word_count in [3usize, 2] {
+        if words.len() > word_count {
+            let prefix = words[..word_count].join(" ");
+            if !queries.contains(&prefix) {
+                queries.push(prefix);
+            }
+        }
+    }
+    queries
+}
+
+/// Canonical country for comparison: ISO-2/ISO-3 codes and common names
+/// collapse to one form per country ("US", "USA", "United States" →
+/// "usa"), so the EODHD `Country` value matches whatever spelling the
+/// prompt used. Unknown inputs pass through normalized — an exact
+/// EODHD-style spelling still compares equal to itself.
+fn canonical_country(input: &str) -> String {
+    let normalized = normalize_alphanumeric(input);
+    match normalized.as_str() {
+        "us" | "usa" | "unitedstates" | "unitedstatesofamerica" | "america" => "usa",
+        "uk" | "gb" | "gbr" | "unitedkingdom" | "greatbritain" | "britain" | "england" => "uk",
+        "ca" | "can" | "canada" => "canada",
+        "de" | "deu" | "germany" | "deutschland" => "germany",
+        "fr" | "fra" | "france" => "france",
+        "jp" | "jpn" | "japan" => "japan",
+        "cn" | "chn" | "china" => "china",
+        "hk" | "hkg" | "hongkong" => "hongkong",
+        "ch" | "che" | "switzerland" | "swiss" => "switzerland",
+        "nl" | "nld" | "netherlands" | "holland" => "netherlands",
+        "se" | "swe" | "sweden" => "sweden",
+        "no" | "nor" | "norway" => "norway",
+        "dk" | "dnk" | "denmark" => "denmark",
+        "fi" | "fin" | "finland" => "finland",
+        "it" | "ita" | "italy" => "italy",
+        "es" | "esp" | "spain" => "spain",
+        "pt" | "prt" | "portugal" => "portugal",
+        "kr" | "kor" | "korea" | "southkorea" => "southkorea",
+        "in" | "ind" | "india" => "india",
+        "au" | "aus" | "australia" => "australia",
+        "nz" | "nzl" | "newzealand" => "newzealand",
+        "sg" | "sgp" | "singapore" => "singapore",
+        "il" | "isr" | "israel" => "israel",
+        "br" | "bra" | "brazil" => "brazil",
+        "mx" | "mex" | "mexico" => "mexico",
+        "za" | "zaf" | "southafrica" => "southafrica",
+        "ru" | "rus" | "russia" => "russia",
+        "tw" | "twn" | "taiwan" => "taiwan",
+        "ie" | "irl" | "ireland" => "ireland",
+        "at" | "aut" | "austria" => "austria",
+        "be" | "bel" | "belgium" => "belgium",
+        _ => return normalized,
+    }
+    .to_string()
+}
+
+/// Canonical exchange for comparison. EODHD folds all major US exchanges
+/// into code "US", so NYSE/NASDAQ/AMEX map there; other well-known names
+/// map to their EODHD codes, and ambiguous spellings ("PA"/"PAR",
+/// "MI"/"MIL") collapse to one form so both sides compare equal.
+/// Anything else (already an EODHD code like "LIS" or "STO") passes
+/// through normalized.
+fn canonical_exchange(input: &str) -> String {
+    let normalized = normalize_alphanumeric(input);
+    match normalized.as_str() {
+        "us"
+        | "usa"
+        | "unitedstates"
+        | "nyse"
+        | "nasdaq"
+        | "amex"
+        | "nyseamerican"
+        | "nysearca"
+        | "nysemkt"
+        | "bats"
+        | "cboe"
+        | "newyorkstockexchange" => "us",
+        "to" | "tsx" | "toronto" | "torontostockexchange" => "to",
+        "lse" | "lon" | "london" | "londonstockexchange" => "lse",
+        "ger" | "xetra" | "germany" | "german" | "deutschland" | "frankfurt" => "ger",
+        "pa" | "par" | "paris" | "euronextparis" => "par",
+        "mi" | "mil" | "italy" | "borsaitaliana" => "mil",
+        "br" | "bru" | "brussels" | "euronextbrussels" => "bru",
+        "lis" | "lisbon" | "euronextlisbon" => "lis",
+        "sw" | "swx" | "six" | "swiss" | "switzerland" => "sw",
+        "hk" | "hkex" | "hongkong" | "hongkongstockexchange" => "hk",
+        "tse" | "tokyo" | "japan" | "tokyostockexchange" => "tse",
+        "asx" | "australia" | "australiansecuritiesexchange" => "asx",
+        _ => return normalized,
+    }
+    .to_string()
 }
 
 /// Result of symbol resolution: the EODHD-format symbol, whether it's a US
@@ -1738,3 +2103,279 @@ pub struct ResolvedSymbol {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(
+        code: &str,
+        exchange: &str,
+        name: &str,
+        country: Option<&str>,
+        is_primary: bool,
+    ) -> Value {
+        let mut object = serde_json::json!({
+            "Code": code,
+            "Exchange": exchange,
+            "Name": name,
+            "Type": "Common Stock",
+            "isPrimary": is_primary,
+        });
+        if let Some(country) = country {
+            object["Country"] = Value::String(country.to_string());
+        }
+        object
+    }
+
+    fn input(
+        ticker: Option<&str>,
+        company_name: Option<&str>,
+        exchange: Option<&str>,
+        country: Option<&str>,
+    ) -> ResolveSymbolInput {
+        ResolveSymbolInput {
+            ticker: ticker.map(String::from),
+            company_name: company_name.map(String::from),
+            exchange: exchange.map(String::from),
+            country: country.map(String::from),
+        }
+    }
+
+    // The reported mismatch: EODHD's substring search for "COF" surfaces
+    // dozens of name matches ("Swiss Water Decaffeinated Coffee Inc"
+    // contains "cof"), and the old max_by_key(isPrimary) pick chose
+    // SWP.TO. The exact code match must dominate name-substring noise.
+    #[test]
+    fn bare_ticker_prefers_exact_code_match() {
+        let entries = vec![
+            entry(
+                "COF",
+                "US",
+                "Capital One Financial Corp.",
+                Some("USA"),
+                true,
+            ),
+            entry(
+                "SWP",
+                "TO",
+                "Swiss Water Decaffeinated Coffee Inc",
+                Some("Canada"),
+                true,
+            ),
+        ];
+        let best = select_best_candidate(&entries, &input(Some("COF"), None, None, None))
+            .expect("an exact code match must win");
+        assert_eq!(best.code, "COF");
+        assert_eq!(best.exchange, "US");
+    }
+
+    #[test]
+    fn non_common_stock_entries_are_filtered() {
+        let entries = vec![
+            serde_json::json!({
+                "Code": "COF", "Exchange": "US", "Name": "Capital One ETF",
+                "Type": "ETF", "isPrimary": true,
+            }),
+            entry(
+                "COF",
+                "US",
+                "Capital One Financial Corp.",
+                Some("USA"),
+                true,
+            ),
+        ];
+        let best = select_best_candidate(&entries, &input(Some("COF"), None, None, None))
+            .expect("ETF entries must be skipped");
+        assert_eq!(best.code, "COF");
+    }
+
+    #[test]
+    fn company_name_tokens_beat_substring_noise() {
+        let entries = vec![
+            entry(
+                "COF",
+                "US",
+                "Capital One Financial Corp.",
+                Some("USA"),
+                true,
+            ),
+            entry(
+                "SWP",
+                "TO",
+                "Swiss Water Decaffeinated Coffee Inc",
+                Some("Canada"),
+                true,
+            ),
+        ];
+        let best = select_best_candidate(
+            &entries,
+            &input(None, Some("Capital One Financial Corp"), None, None),
+        )
+        .expect("token overlap must beat substring noise");
+        assert_eq!(best.code, "COF");
+    }
+
+    #[test]
+    fn primary_listing_wins_when_signals_tie() {
+        // The EODHD AAPL shape: a US primary plus a Canadian CDR with the
+        // same code. With only a name, the primary listing must win.
+        let entries = vec![
+            entry("AAPL", "US", "Apple Inc", Some("USA"), true),
+            entry(
+                "AAPL",
+                "TO",
+                "Apple CDR (CAD Hedged)",
+                Some("Canada"),
+                false,
+            ),
+        ];
+        let best = select_best_candidate(&entries, &input(None, Some("Apple"), None, None))
+            .expect("primary listing must win ties");
+        assert_eq!(best.exchange, "US");
+    }
+
+    #[test]
+    fn country_disambiguates_same_ticker() {
+        let entries = vec![
+            entry("AAPL", "US", "Apple Inc", Some("USA"), true),
+            entry(
+                "AAPL",
+                "TO",
+                "Apple CDR (CAD Hedged)",
+                Some("Canada"),
+                false,
+            ),
+        ];
+        let best =
+            select_best_candidate(&entries, &input(None, Some("Apple"), None, Some("Canada")))
+                .expect("explicit country must disambiguate");
+        assert_eq!(best.exchange, "TO");
+    }
+
+    #[test]
+    fn exchange_name_maps_to_eodhd_code() {
+        let entries = vec![
+            entry("AAPL", "US", "Apple Inc", Some("USA"), true),
+            entry(
+                "AAPL",
+                "TO",
+                "Apple CDR (CAD Hedged)",
+                Some("Canada"),
+                false,
+            ),
+        ];
+        let best =
+            select_best_candidate(&entries, &input(None, Some("Apple"), Some("NASDAQ"), None))
+                .expect("NASDAQ must match EODHD code US");
+        assert_eq!(best.exchange, "US");
+    }
+
+    #[test]
+    fn ticker_signal_dominates_name_signal() {
+        // A prompt whose ticker and name disagree: the ticker is the
+        // authoritative identifier.
+        let entries = vec![
+            entry(
+                "COF",
+                "US",
+                "Capital One Financial Corp.",
+                Some("USA"),
+                true,
+            ),
+            entry(
+                "SWP",
+                "TO",
+                "Swiss Water Decaffeinated Coffee Inc",
+                Some("Canada"),
+                true,
+            ),
+        ];
+        let best = select_best_candidate(
+            &entries,
+            &input(
+                Some("COF"),
+                Some("Swiss Water Decaffeinated Coffee"),
+                None,
+                None,
+            ),
+        )
+        .expect("ticker must dominate name");
+        assert_eq!(best.code, "COF");
+    }
+
+    #[test]
+    fn no_common_stock_candidates_yields_none() {
+        let entries = vec![serde_json::json!({
+            "Code": "COF", "Exchange": "US", "Name": "x", "Type": "ETF", "isPrimary": true,
+        })];
+        assert!(select_best_candidate(&entries, &input(Some("COF"), None, None, None)).is_none());
+        assert!(select_best_candidate(&[], &input(Some("COF"), None, None, None)).is_none());
+    }
+
+    #[test]
+    fn class_share_dot_compares_equal_to_dash() {
+        assert_eq!(
+            normalize_alphanumeric("BRK.B"),
+            normalize_alphanumeric("BRK-B")
+        );
+        assert!(is_exchange_qualified("VOD.LSE"));
+        assert!(is_exchange_qualified("COF.US"));
+        assert!(!is_exchange_qualified("BRK.B"));
+        assert!(!is_exchange_qualified("COF"));
+        assert_eq!(ticker_search_query("BRK.B"), "BRK-B");
+        assert_eq!(ticker_search_query("COF"), "COF");
+    }
+
+    #[tokio::test]
+    async fn dotted_ticker_passes_through_without_search() {
+        // An already-qualified ticker is its own answer — no request is
+        // made, so an unroutable key proves the passthrough.
+        let client = reqwest::Client::new();
+        let resolved = resolve_symbol(
+            &client,
+            &input(Some("VOD.LSE"), None, None, None),
+            "unused-key",
+        )
+        .await
+        .expect("qualified ticker resolves without a search");
+        assert_eq!(resolved.symbol, "VOD.LSE");
+        assert!(!resolved.is_us);
+
+        let resolved = resolve_symbol(
+            &client,
+            &input(Some("COF.US"), None, None, None),
+            "unused-key",
+        )
+        .await
+        .expect("qualified ticker resolves without a search");
+        assert_eq!(resolved.symbol, "COF.US");
+        assert!(resolved.is_us);
+    }
+
+    #[test]
+    fn name_search_queries_shorten_significant_words() {
+        let queries = name_search_queries("The Swiss Water Decaffeinated Coffee Inc");
+        assert_eq!(
+            queries,
+            vec![
+                "The Swiss Water Decaffeinated Coffee Inc",
+                "Swiss Water Decaffeinated Coffee",
+                "Swiss Water Decaffeinated",
+                "Swiss Water",
+            ]
+        );
+    }
+
+    #[test]
+    fn country_and_exchange_aliases_canonicalize() {
+        for spelling in ["US", "USA", "U.S.A.", "United States"] {
+            assert_eq!(canonical_country(spelling), canonical_country("USA"));
+        }
+        assert_eq!(canonical_country("GB"), canonical_country("United Kingdom"));
+        assert_eq!(canonical_exchange("NASDAQ"), canonical_exchange("US"));
+        assert_eq!(canonical_exchange("NYSE"), canonical_exchange("US"));
+        assert_eq!(canonical_exchange("Toronto"), canonical_exchange("TO"));
+        assert_eq!(canonical_exchange("PA"), canonical_exchange("Paris"));
+    }
+}

@@ -12,8 +12,8 @@
 //! The interpreter supports a minimal but practical Lisp subset:
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
-//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, assoc, append,
-//!     string=, concat, abs, sqrt, eq, member
+//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, assoc,
+//!     append, string=, string-contains, concat, abs, sqrt, eq, member
 //!
 //! `assoc` is defensive: a non-list alist argument returns nil instead of
 //! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
@@ -784,6 +784,13 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // Non-string args error. Use this to build defect labels from field
         // names (e.g. (concat "missing_" key)).
         ("concat", concat_fn),
+        // Substring containment. (string-contains needle haystack) returns
+        // true iff needle is a non-empty substring of haystack. Arg order
+        // follows assoc/member: searched-for first, searched-in second.
+        // An empty needle errors — in citation verification an empty needle
+        // would verify anything, and a check that fires on correct output is
+        // worse than no check.
+        ("string-contains", string_contains_fn),
         // Absolute value. (abs x) returns the magnitude of a numeric arg.
         // Used by convergence-gap forms that need a symmetric delta.
         ("abs", abs_fn),
@@ -1176,6 +1183,42 @@ fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
     Ok(LispValue::String(combined))
 }
 
+/// Substring containment: `(string-contains needle haystack)` returns true
+/// iff `needle` is a non-empty substring of `haystack`. Arg order follows
+/// `assoc`/`member` (searched-for first, searched-in second). An empty
+/// needle errors rather than returning true — in citation verification an
+/// empty needle would verify anything, and a check that fires on correct
+/// output is worse than no check.
+fn string_contains_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("string-contains expects 2 args".into()));
+    }
+    let needle = match &args[0] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    let haystack = match &args[1] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    if needle.is_empty() {
+        return Err(LispError::Runtime(
+            "string-contains: needle must be a non-empty string".into(),
+        ));
+    }
+    Ok(LispValue::Bool(haystack.contains(needle.as_str())))
+}
+
 /// Absolute value: `(abs x)` returns the magnitude of a numeric arg.
 /// Preserves Int vs Float: `(abs -3)` → `3` (Int), `(abs -3.5)` → `3.5` (Float).
 fn abs_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
@@ -1469,5 +1512,48 @@ mod tests {
             err,
             LispError::StepLimitExceeded(_) | LispError::DepthLimitExceeded(_)
         ));
+    }
+
+    #[test]
+    fn string_contains_finds_substring() {
+        let result = eval_sandboxed(
+            r#"(string-contains "growth" "revenue growth of 12%")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(result, serde_json::json!(true));
+    }
+
+    #[test]
+    fn string_contains_rejects_absent_substring() {
+        let result = eval_sandboxed(
+            r#"(string-contains "decline" "revenue growth of 12%")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(result, serde_json::json!(false));
+    }
+
+    #[test]
+    fn string_contains_empty_needle_errors_not_verifies() {
+        // An empty needle would "verify" any source text — in citation
+        // verification that is a check that fires on correct output. It
+        // must error, not return true.
+        let err = eval_sandboxed(
+            r#"(string-contains "" "revenue growth of 12%")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LispError::Runtime(_)), "got: {err}");
+    }
+
+    #[test]
+    fn string_contains_non_string_args_error() {
+        let err = eval_sandboxed(
+            r#"(string-contains 5 "revenue growth of 12%")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LispError::TypeError { .. }), "got: {err}");
     }
 }

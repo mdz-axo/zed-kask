@@ -880,4 +880,80 @@ mod tests {
             "Apple primary exchange should be US"
         );
     }
+
+    // Multi-signal resolution: these pin the ranking against the live
+    // EODHD search API (the same shape the unit tests cover synthetically).
+
+    #[tokio::test]
+    async fn resolve_symbol_bare_ticker_picks_exact_code() {
+        // Reproduction of the reported mismatch: EODHD's substring search
+        // for "COF" returns name matches like SWP.TO ("Swiss Water
+        // Decaffeinated Coffee Inc" contains "cof"); the ranking must
+        // pick Capital One's COF.US instead.
+        let Some(key) = eodhd_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = client();
+        let input = hkask_mcp_companies::providers::ResolveSymbolInput {
+            ticker: Some("COF".to_string()),
+            company_name: None,
+            exchange: None,
+            country: None,
+        };
+        let resolved = hkask_mcp_companies::providers::resolve_symbol(&client, &input, &key)
+            .await
+            .expect("COF must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "COF.US",
+            "bare ticker COF must resolve to Capital One, not a name-substring match"
+        );
+        assert!(resolved.is_us);
+    }
+
+    #[tokio::test]
+    async fn resolve_symbol_company_name_only() {
+        let Some(key) = eodhd_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = client();
+        let input = hkask_mcp_companies::providers::ResolveSymbolInput {
+            ticker: None,
+            company_name: Some("Capital One Financial Corp".to_string()),
+            exchange: None,
+            country: None,
+        };
+        let resolved = hkask_mcp_companies::providers::resolve_symbol(&client, &input, &key)
+            .await
+            .expect("company name must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "COF.US",
+            "'Capital One Financial Corp' must resolve to Capital One's US listing"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_symbol_country_picks_local_listing() {
+        // AAPL also trades as a Canadian CDR on TO (EODHD's own docs sample
+        // shape); an explicit country must pick it over the US primary.
+        let Some(key) = eodhd_key() else {
+            eprintln!("SKIP: no EODHD API key");
+            return;
+        };
+        let client = client();
+        let input = hkask_mcp_companies::providers::ResolveSymbolInput {
+            ticker: Some("AAPL".to_string()),
+            company_name: None,
+            exchange: None,
+            country: Some("Canada".to_string()),
+        };
+        let resolved = hkask_mcp_companies::providers::resolve_symbol(&client, &input, &key)
+            .await
+            .expect("AAPL must resolve to a common stock listing");
+        assert_eq!(
+            resolved.symbol, "AAPL.TO",
+            "country=Canada must pick the Canadian CDR over the US primary"
+        );
+    }
 }

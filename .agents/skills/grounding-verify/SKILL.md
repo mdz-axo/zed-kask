@@ -146,10 +146,14 @@ cited.
 
 1. For each claim provisionally classified as `tool_verified` in Step 2,
    perform the mechanical verification:
-   - **Cited quotes**: verify that the exact substring exists in the
-     referenced source chunk. This is a mechanical substring match —
-     not model-mediated. The LLM found the quote and pointed to it;
-     the process verifies the pointer.
+   - **Cited quotes**: call `lisp_eval` for each cited quote:
+     - form: `"(string-contains quote source_text)"`
+     - env: `{ "quote": <the cited substring>, "source_text": <the text of the referenced source chunk> }`
+     This is a mechanical substring match — not model-mediated. The LLM
+     found the quote and pointed to it; the process verifies the pointer.
+     An empty `quote` errors the call — an empty needle would verify
+     anything, and a check that fires on correct output is worse than no
+     check.
    - **Cited numbers**: call `lisp_eval` to verify that the numeric value
      appears in the referenced source output. For derived numbers (e.g.,
      "revenue growth of 12%"), the `cross_check` form states the
@@ -232,8 +236,12 @@ cited.
    a report is only as strong as its weakest claim.
 
 2. Call `lisp_eval`:
-   - form: `"(min (mapcar (lambda (c) (assoc 'strength c)) claims))"`
+   - form: `"(define floor-strength (lambda (cs) (if (= (length cs) 1) (assoc \"strength\" (nth 0 cs)) (let ((rest_min (floor-strength (cdr cs)))) (let ((this (assoc \"strength\" (car cs)))) (if (< this rest_min) this rest_min)))))) (floor-strength claims)"`
    - env: `{ "claims": <verified claims with strength values> }`
+   - The interpreter has no `min`/`mapcar` builtins and JSON objects bind
+     string keys, so the floor is a recursive helper with `assoc "strength"`
+     lookups. A claim record missing `strength` errors the call — a
+     malformed claim must surface, not silently floor.
 
 3. Derive the confidence band from the floor:
    - Floor = 2 (all claims tool_verified or platform_derived): band = `high`
@@ -339,9 +347,9 @@ registry.
 - The extraction ceiling: LLM-synthesized claims are `model_inference`
   (strength 1), never `tool_verified` (strength 2). Only direct citations
   verified via mechanical match can be `tool_verified`.
-- Citation verification is mechanical (substring match for quotes,
-  `lisp_eval` numeric match for numbers), not model-mediated. The LLM
-  finds and points; the process verifies.
+- Citation verification is mechanical (`lisp_eval` `string-contains` for
+  quotes, `lisp_eval` numeric match for numbers), not model-mediated. The
+  LLM finds and points; the process verifies.
 - Every `tool_verified` claim must carry a `cross_check` specification.
   A `tool_verified` claim with no cross-check is a claim nobody can
   falsify — reclassify as `model_inference` with a `why`.

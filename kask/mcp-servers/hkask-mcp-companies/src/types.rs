@@ -33,6 +33,26 @@ pub struct SearchRequest {
     pub limit: Option<u32>,
 }
 
+/// Multi-signal symbol resolution: the company name and ticker from the
+/// prompt, plus optional exchange / country disambiguators. At least one
+/// of `company_name` / `ticker` must be present — exchange and country
+/// alone cannot identify a listing.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ResolveSymbolRequest {
+    /// Company name from the prompt, e.g. "Capital One Financial Corp".
+    pub company_name: Option<String>,
+    /// Ticker if the prompt gives one, e.g. "COF". A ticker that already
+    /// carries an EODHD exchange suffix ("VOD.LSE") is returned as-is.
+    pub ticker: Option<String>,
+    /// Exchange name or code if given, e.g. "NASDAQ", "US", "LSE",
+    /// "Toronto". Disambiguates the same ticker listed on several
+    /// exchanges.
+    pub exchange: Option<String>,
+    /// Country of domicile if given, e.g. "US", "USA", "Canada".
+    /// Disambiguates the same ticker listed in several countries.
+    pub country: Option<String>,
+}
+
 // ── Portfolio analytics request structs ──────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
