@@ -187,8 +187,10 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 2. Record the user's decisions. Only approved proposals are executed.
 
 3. Call `lisp_eval` to count approved proposals:
-   - form: "(length (filter (lambda (p) (eq (assoc \"approved\" p) t)) proposals))"
+   - form: "(define count-approved (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"approved\" (car lst)) t) (+ 1 (count-approved (cdr lst))) (count-approved (cdr lst)))))) (count-approved proposals)"
    - env: { "proposals": <your proposal list with user decisions> }
+   - The interpreter has no `filter` builtin — the count is a recursive
+     helper (the floor-strength pattern).
    - If the result is 0, report "No proposals approved. Memory unchanged." and exit.
 
 ### Phase 5 — Execute
@@ -214,8 +216,11 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 4. Record the outcome of each execution (success/failure).
 
 5. Call `lisp_eval` to verify all executions succeeded:
-   - form: "(length (filter (lambda (r) (eq (assoc \"success\" r) nil)) results))"
+   - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"success\" (car lst)) nil) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
    - env: { "results": <your execution results> }
+   - The interpreter has no `filter` builtin — the count is a recursive
+     helper (the floor-strength pattern). A missing `success` counts as a
+     failure; an explicit `false` does not.
    - If the result is > 0, report the failures and suggest manual remediation.
 
 ### Phase 6 — Report

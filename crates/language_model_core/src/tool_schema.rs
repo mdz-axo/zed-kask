@@ -115,20 +115,38 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     Ok(())
 }
 
-/// Remove `description` and `default` from all nested objects in the
-/// schema tree. These fields inflate schema JSON by ~30-40% without
+/// Remove the `description` and `default` KEYWORDS from schema objects in
+/// the tree. These fields inflate schema JSON by ~30-40% without
 /// improving tool selection — the LLM infers parameter meaning from
 /// name + type, and defaults are enforced server-side. The root
 /// object's `description` (the tool-level description) is already
 /// removed by `adapt_schema_to_format` before this runs.
+///
+/// Name-map objects (`properties`, `patternProperties`, `$defs`,
+/// `definitions`) bind property NAMES to schemas — their keys are names,
+/// not keywords. A property named `description` (common in MCP tool
+/// inputs) must survive: stripping it leaves a schema that requires a
+/// property it no longer declares, and models emit empty objects for
+/// it. Only the schemas INSIDE the map get their keywords stripped.
 fn strip_verbose_property_fields(json: &mut Value) {
     match json {
         Value::Object(obj) => {
+            for (key, value) in obj.iter_mut() {
+                if matches!(
+                    key.as_str(),
+                    "properties" | "patternProperties" | "$defs" | "definitions"
+                ) {
+                    if let Value::Object(map) = value {
+                        for (_name, schema) in map.iter_mut() {
+                            strip_verbose_property_fields(schema);
+                        }
+                    }
+                } else {
+                    strip_verbose_property_fields(value);
+                }
+            }
             obj.remove("description");
             obj.remove("default");
-            for (_, v) in obj.iter_mut() {
-                strip_verbose_property_fields(v);
-            }
         }
         Value::Array(arr) => {
             for v in arr.iter_mut() {
@@ -1314,6 +1332,41 @@ mod tests {
                     }
                 },
                 "required": ["query"]
+            })
+        )
+    }
+
+    #[test]
+    fn test_strip_verbose_property_fields_preserves_property_named_description() {
+        // A property NAMED `description` (common in MCP tool inputs — e.g.
+        // kanban_goal_create's criteria items) is a name-map entry, not the
+        // `description` keyword. Stripping it leaves a schema that REQUIRES a
+        // property it no longer declares, so models emit empty objects and
+        // every call fails with "missing field `description`" (observed 7/7
+        // across two sessions before this fix).
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "The criterion text"
+                },
+                "name": { "type": "string", "default": "x" }
+            },
+            "required": ["description"]
+        });
+
+        strip_verbose_property_fields(&mut json);
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string" },
+                    "name": { "type": "string" }
+                },
+                "required": ["description"]
             })
         );
     }
