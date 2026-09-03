@@ -50,6 +50,32 @@ impl CorpusServer {
                 let result = ConvertService::from_corpus(self)
                     .convert(path, force_ocr, target_pages)
                     .await?;
+                // Honor the `output` parameter on the file path: the
+                // extracted text lands at the caller's destination instead
+                // of the parameter being silently dropped (the directory
+                // path persists per-file outputs; the file path ignored
+                // `output` entirely — observed when a full-book OCR result
+                // returned inline with no file written).
+                if let Some(output_path) = output.as_deref() {
+                    hkask_mcp_server::validate_path("output", output_path, 4096)
+                        .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+                    let destination = crate::path_safety::contain_for_write(output_path)?;
+                    if let Some(parent) = destination.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            map_corpus_io_error(
+                                e,
+                                &format!("Failed to create '{}'", parent.display()),
+                            )
+                        })?;
+                    }
+                    let text = result["text"].as_str().unwrap_or("");
+                    std::fs::write(&destination, text).map_err(|e| {
+                        map_corpus_io_error(
+                            e,
+                            &format!("Failed to write '{}'", destination.display()),
+                        )
+                    })?;
+                }
                 // Ground the artifact's state identity at ingest: the DC type
                 // from the source file's extension (canonical MIME mapping),
                 // never an LLM-invented one. Unmapped extensions surface a
@@ -72,7 +98,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "OCR a document using a local vision model. Requires HKASK_OCR_MODEL env var or explicit model parameter. The model must be a vision-capable model available in the inference catalog."
+        description = "OCR a PDF or image through the page pipeline (per-page vision OCR with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model defaults to the configured OCR model (HKASK_OCR_MODEL or the built-in default); an explicit vision-capable model override is accepted."
     )]
     pub async fn corpus_ocr(
         &self,
@@ -80,6 +106,7 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_ocr", async {
             let resolved = crate::path_safety::contain_for_read(&path)?;
+            let (format, _, _) = convert::detect_format(&path);
 
             let service = ConvertService::from_corpus(self);
             let model = match service.resolve_ocr_model(model.as_deref()).await {
@@ -99,18 +126,37 @@ impl CorpusServer {
                 }
             };
 
-            match service.do_ocr(&file_bytes, &model).await {
-                Ok(text) => {
-                    let result = serde_json::json!({
-                        "path": path,
-                        "model": model,
-                        "text": text,
-                        "word_count": text.split_whitespace().count(),
-                    });
-                    Ok(result)
-                }
-                Err(e) => Err(McpToolError::unavailable(e.to_string())),
-            }
+            // PDFs and images go through the page pipeline (decimate to page
+            // images, OCR per page, verification report) — the same execution
+            // path as `corpus_convert` with force_ocr. The raw-bytes
+            // single-shot path sends the whole file as one vision call, which
+            // returned empty text as a success for book-sized PDFs and wrote
+            // multi-MB base64 IPC lines that broke the inference bridge.
+            // `ocr_via_pipeline` errors on zero text, so an empty result can
+            // never surface as a silent success.
+            let outcome = service
+                .ocr_via_pipeline(
+                    &resolved,
+                    format,
+                    &file_bytes,
+                    &model,
+                    service.pipeline_executor(),
+                )
+                .await?;
+
+            let result = serde_json::json!({
+                "path": path,
+                "model": model,
+                "method": "ocr_pipeline",
+                "text": outcome.text,
+                "word_count": outcome.text.split_whitespace().count(),
+                "pages": outcome.pages,
+                "verification_passed": outcome.verification_passed,
+                "page_count_match": outcome.page_count_match,
+                "empty_pages": outcome.empty_pages,
+                "error_count": outcome.error_count,
+            });
+            Ok(result)
         })
         .await
     }

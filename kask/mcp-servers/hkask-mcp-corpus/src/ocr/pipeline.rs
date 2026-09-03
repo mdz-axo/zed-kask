@@ -37,6 +37,10 @@ pub(crate) enum OcrError {
     EmptyFile,
     #[error("OCR inference failed: {0}")]
     InferenceFailed(String),
+    #[error(
+        "OCR model '{model}' returned no text for {input_bytes} bytes of input — empty output is a failure, not a success"
+    )]
+    EmptyOcrOutput { model: String, input_bytes: usize },
 }
 
 /// Trait for executing OCR on a single page image via a specific backend.

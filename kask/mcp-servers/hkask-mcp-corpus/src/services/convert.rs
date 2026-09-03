@@ -58,6 +58,17 @@ pub(crate) struct ConvertService<'a> {
     index: &'a Mutex<Vec<IndexedPassage>>,
 }
 
+/// Successful page-pipeline OCR outcome: assembled text plus the
+/// verification-report fields tool results surface.
+pub(crate) struct PipelineOcrOutcome {
+    pub(crate) text: String,
+    pub(crate) pages: usize,
+    pub(crate) verification_passed: bool,
+    pub(crate) page_count_match: bool,
+    pub(crate) empty_pages: Vec<usize>,
+    pub(crate) error_count: usize,
+}
+
 impl<'a> ConvertService<'a> {
     pub fn new(
         inference_router: Arc<dyn InferencePort>,
@@ -185,7 +196,100 @@ impl<'a> ConvertService<'a> {
         if file_bytes.is_empty() {
             return Err(OcrError::EmptyFile);
         }
-        crate::ocr::llm_ocr::vision_ocr_bytes(&*self.inference_router, file_bytes, model).await
+        let text =
+            crate::ocr::llm_ocr::vision_ocr_bytes(&*self.inference_router, file_bytes, model)
+                .await?;
+        // A non-empty input that OCRs to nothing is a failure. Returning
+        // Ok("") here surfaced as silent zero-word "ok" tool results when
+        // whole-book PDFs went through the raw-bytes path — the caller
+        // cannot distinguish "OCR worked" from "OCR produced nothing".
+        if text.trim().is_empty() {
+            return Err(OcrError::EmptyOcrOutput {
+                model: model.to_string(),
+                input_bytes: file_bytes.len(),
+            });
+        }
+        Ok(text)
+    }
+
+    /// The server's page-pipeline OCR executor as the trait object the
+    /// pipeline functions consume.
+    pub(crate) fn pipeline_executor(&self) -> std::sync::Arc<dyn OcrExecutor> {
+        std::sync::Arc::clone(&self.pipeline_executor) as std::sync::Arc<dyn OcrExecutor>
+    }
+
+    /// OCR a file through the page pipeline — the same execution path as
+    /// `convert(force_ocr)`. PDFs are decimated to 72-DPI page images; image
+    /// files become a single page. Returns the assembled text plus the
+    /// pipeline's verification report.
+    ///
+    /// This is the only correct OCR path for multi-page documents: the
+    /// raw-bytes single-shot (`do_ocr`) sends the whole file as one vision
+    /// call, which returns empty text as a success for book-sized inputs and
+    /// writes multi-MB base64 IPC lines that can break the inference bridge.
+    /// The executor is a parameter (the seam `run_pipeline` itself uses) so
+    /// tests can inject a mock executor.
+    pub async fn ocr_via_pipeline(
+        &self,
+        resolved: &std::path::Path,
+        format: &str,
+        file_bytes: &[u8],
+        model: &str,
+        executor: std::sync::Arc<dyn OcrExecutor>,
+    ) -> Result<PipelineOcrOutcome, McpToolError> {
+        let page_images = if format == "pdf" {
+            decimation::pdf_to_images(resolved, 72)
+                .await
+                .map_err(|e| McpToolError::unavailable(format!("PDF page rendering failed: {e}")))?
+        } else {
+            let image = image::load_from_memory(file_bytes).map_err(|e| {
+                McpToolError::invalid_argument(format!(
+                    "file is neither a PDF nor a decodable image: {e}"
+                ))
+            })?;
+            vec![image]
+        };
+        let expected = page_images.len();
+        if expected == 0 {
+            return Err(McpToolError::unavailable(format!(
+                "'{}' rendered zero pages for OCR",
+                resolved.display()
+            )));
+        }
+        let outcome = pipeline::run_pipeline(
+            page_images,
+            expected,
+            executor,
+            &self.ocr_thresholds,
+            Some(model),
+            Some(max_concurrency()),
+        )
+        .await;
+        self.persist_pipeline_outcome(&outcome).await;
+        let text = outcome
+            .results
+            .iter()
+            .map(|result| result.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        // Zero text after a pipeline run is a failure (every page empty or
+        // errored) — surface it with the pipeline's own diagnostics rather
+        // than returning a silent empty success.
+        if text.trim().is_empty() {
+            return Err(McpToolError::unavailable(format!(
+                "OCR produced no text: pages={expected}, empty_pages={:?}, errors={}",
+                outcome.report.empty_pages,
+                outcome.errors.len()
+            )));
+        }
+        Ok(PipelineOcrOutcome {
+            text,
+            pages: expected,
+            verification_passed: outcome.report.passed,
+            page_count_match: outcome.report.page_count_match,
+            empty_pages: outcome.report.empty_pages,
+            error_count: outcome.errors.len(),
+        })
     }
 
     /// Persist pipeline outcome for Regulation observability.
