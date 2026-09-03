@@ -27,14 +27,8 @@ const OCR_FALLBACK_PROMPT: &str = "Extract all text from this page image as Mark
 /// Build the OCR prompt, preferring the `docproc/ocr-extract.j2` template
 /// (tunable without recompile) and falling back to `OCR_FALLBACK_PROMPT` when
 /// the template is absent or fails to render.
-///
-/// `anchored_text` optionally supplies native text blocks from the page's text
-/// layer (document anchoring — improves reading order on complex layouts).
-pub(crate) fn build_ocr_prompt(anchored_text: Option<&str>) -> String {
-    let mut vars = std::collections::HashMap::new();
-    if let Some(t) = anchored_text {
-        vars.insert("anchored_text", t.to_string());
-    }
+pub(crate) fn build_ocr_prompt() -> String {
+    let vars = std::collections::HashMap::new();
     let rendered = crate::render_docproc_template("ocr-extract", &vars);
     if rendered.is_empty() {
         OCR_FALLBACK_PROMPT.to_string()
@@ -61,7 +55,7 @@ pub(crate) async fn vision_ocr_bytes(
         ..Default::default()
     };
     let result = router
-        .generate_vision(&build_ocr_prompt(None), &[b64_data], &params, Some(model))
+        .generate_vision(&build_ocr_prompt(), &[b64_data], &params, Some(model))
         .await
         .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
     if result.text.trim().is_empty() {
@@ -240,7 +234,6 @@ impl OcrHealthRecorder {
 pub(crate) struct LlmOcrExecutor {
     /// Shared inference port (constructed once, used by all concurrent tasks).
     router: Arc<dyn InferencePort>,
-    /// Maximum output tokens per page.
     /// Circuit breaker for rate-limit resilience.
     breaker: CircuitBreaker,
     /// Write side of the cross-process OCR health file. `None` in tests —

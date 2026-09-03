@@ -129,11 +129,9 @@ async fn run_pipeline_sequential(
     let mut results: Vec<OcrResult> = Vec::with_capacity(expected_pages);
     let mut errors: Vec<PipelineError> = Vec::new();
     let mut cross_validations: Vec<CrossValidation> = Vec::new();
-    let mut backend_counts: std::collections::HashMap<OcrBackend, usize> =
-        std::collections::HashMap::new();
 
     for (page_index, image) in pages.into_iter().enumerate() {
-        let (result, cv, err, used_backend) = process_single_page(
+        let (result, cv, err) = process_single_page(
             page_index, &image, executor, thresholds, &mut state, llm_model,
         )
         .await;
@@ -142,9 +140,6 @@ async fn run_pipeline_sequential(
             errors.push(e);
         }
         if let Some(r) = result {
-            *backend_counts
-                .entry(used_backend.unwrap_or(r.backend.clone()))
-                .or_insert(0) += 1;
             results.push(r);
         }
         if let Some(cv) = cv {
@@ -229,10 +224,6 @@ async fn run_pipeline_parallel(
     ]));
     let cvs_slots = Arc::new(tokio::sync::Mutex::new(Vec::<CrossValidation>::new()));
     let errors_slots = Arc::new(tokio::sync::Mutex::new(Vec::<PipelineError>::new()));
-    let backend_counts = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
-        OcrBackend,
-        usize,
-    >::new()));
 
     // Shared progress tracking for parallel mode
     let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -243,7 +234,6 @@ async fn run_pipeline_parallel(
         let results = Arc::clone(&results_slots);
         let cvs = Arc::clone(&cvs_slots);
         let errs = Arc::clone(&errors_slots);
-        let counts = Arc::clone(&backend_counts);
         let exec = Arc::clone(&executor);
         let thresh = *thresholds;
         let llm = llm_model.map(|s| s.to_string());
@@ -253,7 +243,7 @@ async fn run_pipeline_parallel(
         join_set.spawn(async move {
             let _permit = sem.acquire().await;
             let mut local_state = task.routing_state;
-            let (result, cv, err, used_backend) = process_single_page(
+            let (result, cv, err) = process_single_page(
                 task.page_index,
                 &task.image,
                 &*exec,
@@ -282,12 +272,6 @@ async fn run_pipeline_parallel(
             drop(last);
 
             if let Some(r) = result {
-                let mut counts_guard = counts.lock().await;
-                *counts_guard
-                    .entry(used_backend.unwrap_or(r.backend.clone()))
-                    .or_insert(0) += 1;
-                drop(counts_guard);
-
                 let mut results_guard = results.lock().await;
                 results_guard[task.page_index] = Some(r);
             }
@@ -341,7 +325,6 @@ async fn process_single_page(
     Option<OcrResult>,
     Option<CrossValidation>,
     Option<PipelineError>,
-    Option<OcrBackend>,
 ) {
     let score = score_page_complexity(image, thresholds);
     let backends = route_page(score, state, None, llm_model);
@@ -380,23 +363,22 @@ async fn process_single_page(
                 page_index,
                 backends_tried: vec![],
             }),
-            None,
         );
     }
 
     // Execute OCR
-    let (primary, secondary, backend_used, err) = execute_with_fallback(
+    let (primary, secondary, err) = execute_with_fallback(
         page_index, image, executor, &available, score, state, llm_model,
     )
     .await;
 
     if let Some(e) = err {
-        return (None, None, Some(e), None);
+        return (None, None, Some(e));
     }
 
     let primary = match primary {
         Some(r) => r,
-        None => return (None, None, None, None),
+        None => return (None, None, None),
     };
 
     // Cross-validation for dual-routed pages. Both-empty collusion is no
@@ -410,7 +392,7 @@ async fn process_single_page(
         None
     };
 
-    (Some(primary), cv, None, backend_used)
+    (Some(primary), cv, None)
 }
 
 /// Execute OCR on available backends with fallback on failure.
@@ -426,12 +408,7 @@ async fn execute_with_fallback(
     score: ComplexityScore,
     state: &mut SamplingState,
     llm_model: Option<&str>,
-) -> (
-    Option<OcrResult>,
-    Option<OcrResult>,
-    Option<OcrBackend>,
-    Option<PipelineError>,
-) {
+) -> (Option<OcrResult>, Option<OcrResult>, Option<PipelineError>) {
     let mut primary_result: Option<OcrResult> = None;
     let mut secondary_result: Option<OcrResult> = None;
     let mut backends_tried: Vec<OcrBackend> = Vec::new();
@@ -477,7 +454,6 @@ async fn execute_with_fallback(
                         return (
                             None,
                             None,
-                            None,
                             Some(PipelineError::OcrFailed {
                                 page_index,
                                 backends_tried: backends_tried.clone(),
@@ -493,10 +469,9 @@ async fn execute_with_fallback(
     }
 
     let Some(primary) = primary_result.take() else {
-        return (None, None, None, None);
+        return (None, None, None);
     };
     let secondary = secondary_result.take();
-    let backend_used = Some(primary.backend.clone());
 
     // Invert Moderate dual-routing trust:
     // If both Tesseract and LLM ran on a Moderate page, and the LLM has
@@ -534,7 +509,7 @@ async fn execute_with_fallback(
         (primary, secondary)
     };
 
-    (Some(primary), secondary, backend_used, None)
+    (Some(primary), secondary, None)
 }
 
 /// Shared outcome finalization: verification + Regulation tracing.
@@ -562,7 +537,6 @@ fn finalize_outcome_inner(
             target: "reg.pipeline.ocr",
             page_index = cv.page_index,
             similarity = cv.similarity,
-            semantic_similarity = cv.semantic_similarity,
             tier = ?cv.tier,
             backend_a = %cv.backend_a,
             backend_b = %cv.backend_b,
@@ -612,7 +586,6 @@ pub(crate) fn compute_cross_validation(
         tier: ComplexityTier::Moderate,
         backend_a: primary.backend.clone(),
         backend_b: secondary.backend.clone(),
-        semantic_similarity: None,
     })
 }
 
@@ -809,7 +782,7 @@ mod tests {
         };
         let mut state = SamplingState::default();
 
-        let (primary, secondary, backend_used, err) = execute_with_fallback(
+        let (primary, secondary, err) = execute_with_fallback(
             0,
             &image,
             &executor,
@@ -832,6 +805,5 @@ mod tests {
             secondary.is_none(),
             "the failed LLM secondary must be dropped"
         );
-        assert_eq!(backend_used, Some(OcrBackend::Tesseract));
     }
 }

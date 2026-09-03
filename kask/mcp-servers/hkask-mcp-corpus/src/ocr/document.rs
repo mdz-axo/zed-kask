@@ -57,10 +57,6 @@ pub struct CrossValidation {
     pub(crate) backend_a: super::config::OcrBackend,
     /// Second backend used.
     pub(crate) backend_b: super::config::OcrBackend,
-    /// Semantic (embedding) similarity [0.0, 1.0] when available.
-    /// Populated by `verify_semantic` if an embedding router is provided.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub semantic_similarity: Option<f32>,
 }
 
 // ── Pipeline Errors ───────────────────────────────────────────────────────
@@ -77,8 +73,6 @@ pub(crate) enum PipelineError {
         page_index: usize,
         backends_tried: Vec<super::config::OcrBackend>,
     },
-    /// Assembly (results → text) failed.
-    AssemblyFailed(String),
 }
 
 impl std::fmt::Display for PipelineError {
@@ -100,7 +94,6 @@ impl std::fmt::Display for PipelineError {
                         .join(", ")
                 )
             }
-            PipelineError::AssemblyFailed(msg) => write!(f, "assembly failed: {}", msg),
         }
     }
 }

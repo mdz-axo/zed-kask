@@ -10,10 +10,6 @@ use crate::ocr::{ComplexityScore, ComplexityTier, DEFAULT_LLM_OCR_MODEL, OcrBack
 /// Counters only — no side effects, no hidden state.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SamplingState {
-    /// Total Moderate pages seen (accumulates across a pipeline run).
-    pub moderate_pages_seen: usize,
-    /// Moderate pages that were dual-routed.
-    pub moderate_pages_dual_routed: usize,
     /// Round-robin counter for every_nth sampling.
     counter: usize,
     /// Sampling interval: dual-route every Nth Moderate page.
@@ -91,10 +87,8 @@ pub(crate) fn route_page(
             }
         }
         ComplexityTier::Moderate => {
-            state.moderate_pages_seen += 1;
             let should_sample = state.should_dual_route();
             if should_sample {
-                state.moderate_pages_dual_routed += 1;
                 let model = llm_model.unwrap_or(DEFAULT_LLM_OCR_MODEL);
                 let backends = vec![OcrBackend::Tesseract, OcrBackend::LlmOcr(model.to_string())];
                 filter_excluded(backends, exclude_backend)

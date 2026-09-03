@@ -42,7 +42,7 @@ tools/
   storage.rs          — corpus_cache, corpus_query, corpus_clear_index
 ocr/ (13 modules)
   pipeline.rs         — OcrExecutor trait, run_pipeline orchestrator, cross-validation
-  config.rs           — ComplexityTier, ThresholdConfig, TriageConfig, default_ocr_max_tokens
+  config.rs           — ComplexityTier, ThresholdConfig, TriageConfig
   document.rs         — OcrResult, CrossValidation, PipelineOutcome, split_pdftotext_pages
   llm_ocr.rs          — Vision LLM OCR + shared vision_ocr_bytes primitive
   decimation.rs       — PDF→images via pdftoppm + Otsu binarization
