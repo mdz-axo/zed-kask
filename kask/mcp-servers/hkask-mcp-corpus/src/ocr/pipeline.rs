@@ -33,8 +33,6 @@ pub(crate) enum OcrError {
     NoModel,
     #[error("Model '{model}' exists but may not support vision input")]
     NotVisionModel { model: String },
-    #[error("File is empty")]
-    EmptyFile,
     #[error("OCR inference failed: {0}")]
     InferenceFailed(String),
     #[error(
@@ -171,7 +169,7 @@ async fn run_pipeline_sequential(
         }
     }
 
-    finalize_outcome(results, cross_validations, errors, expected_pages, start).await
+    finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
 }
 
 /// Parallel pipeline — uses `Arc<Semaphore>` + `tokio::spawn` for concurrent page processing.
@@ -401,17 +399,12 @@ async fn process_single_page(
         None => return (None, None, None, None),
     };
 
-    // Cross-validation for dual-routed pages
+    // Cross-validation for dual-routed pages. Both-empty collusion is no
+    // longer possible to observe here: an empty LLM result is a typed
+    // `EmptyOcrOutput` error (dropped as a failed secondary), never an
+    // Ok-empty result, so the former both-empty warn was unreachable and
+    // was removed with the empty-output classification.
     let cv = if let Some(ref sec) = secondary {
-        if primary.text.trim().is_empty() && sec.text.trim().is_empty() {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.collusion",
-                page_index = page_index,
-                backend_a = %primary.backend,
-                backend_b = %sec.backend,
-                "Both OCR backends produced empty output — possible blank page or collusion"
-            );
-        }
         compute_cross_validation(&primary, sec)
     } else {
         None
@@ -542,20 +535,6 @@ async fn execute_with_fallback(
     };
 
     (Some(primary), secondary, backend_used, None)
-}
-
-/// Finalize a sequential pipeline outcome with Regulation tracing.
-async fn finalize_outcome(
-    results: Vec<OcrResult>,
-    cross_validations: Vec<CrossValidation>,
-    errors: Vec<PipelineError>,
-    expected_pages: usize,
-    start: Instant,
-) -> PipelineOutcome {
-    // Semantic enrichment requires the original text strings, which CrossValidation
-    // doesn't store (it stores backend identifiers and confidences). Enrichment is
-    // done inline in the sequential loop where text is available, and skipped here.
-    finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
 }
 
 /// Shared outcome finalization: verification + Regulation tracing.
@@ -810,5 +789,49 @@ mod tests {
         let result = &outcome.results[0];
         assert_eq!(result.backend, OcrBackend::Tesseract);
         assert_eq!(result.text, "breaker-open rescue text");
+    }
+
+    /// A Moderate dual-routed page whose LLM secondary returns empty output
+    /// (a typed `EmptyOcrOutput` error post-classification) must keep its
+    /// Tesseract primary: the failed secondary is dropped and the
+    /// cross-validation is skipped — a failed CV pass must not fail the page.
+    #[tokio::test]
+    async fn moderate_dual_route_with_empty_llm_secondary_keeps_tesseract_primary() {
+        let executor = EmptyLlmExecutor;
+        let image = complex_scoring_image();
+        let available = vec![
+            OcrBackend::Tesseract,
+            OcrBackend::LlmOcr("mock-model".to_string()),
+        ];
+        let score = ComplexityScore {
+            value: 0.1,
+            tier: ComplexityTier::Moderate,
+        };
+        let mut state = SamplingState::default();
+
+        let (primary, secondary, backend_used, err) = execute_with_fallback(
+            0,
+            &image,
+            &executor,
+            &available,
+            score,
+            &mut state,
+            Some("mock-model"),
+        )
+        .await;
+
+        assert!(
+            err.is_none(),
+            "secondary failure must not fail the page: {err:?}"
+        );
+        let primary = primary.expect("Tesseract primary survives the secondary failure");
+        assert_eq!(primary.backend, OcrBackend::Tesseract);
+        assert_eq!(primary.text, "rescue text");
+        assert!(!primary.was_fallback);
+        assert!(
+            secondary.is_none(),
+            "the failed LLM secondary must be dropped"
+        );
+        assert_eq!(backend_used, Some(OcrBackend::Tesseract));
     }
 }

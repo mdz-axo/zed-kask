@@ -328,9 +328,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             };
             crate::helpers::set_corpus_db_passphrase(db_passphrase);
 
-            let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
-                &inference_port,
-            )));
+            // The health recorder publishes OCR degradation events to the
+            // cross-process health file the zed-side cybernetics loop senses
+            // (`BridgeOcrHealthSource` → `OcrHealthSensor`). Without it the
+            // loop reports `signal_count=0` during an OCR silent-failure
+            // storm — the subprocess's tracing warns never reach it.
+            let llm_ocr = Arc::new(
+                crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_port))
+                    .with_health_recorder(Arc::new(crate::ocr::llm_ocr::OcrHealthRecorder::new(
+                        hkask_types::ocr_health::ocr_health_path(),
+                    ))),
+            );
             let pipeline_executor =
                 Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 

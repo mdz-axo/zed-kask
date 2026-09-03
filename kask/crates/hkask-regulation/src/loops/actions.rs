@@ -60,6 +60,15 @@ pub enum RegulationData {
         healthy_count: u64,
         total_count: u64,
     },
+    /// OCR silent failures exceeded the set-point (0) — the corpus OCR
+    /// endpoint returned empty output on page(s) within the recent window.
+    ///
+    /// Carries the count at escalation time so `verify_impact` can re-sense
+    /// and compare: as the storm's entries age out of the window the count
+    /// declines, the re-sensed delta turns negative (improvement for a
+    /// ceiling metric), and `auto_resolve_cleared` closes the escalation
+    /// without operator action.
+    OcrSilentFailuresExceeded { count: f64, threshold: f64 },
     /// Curator (metacognition) budget override directed at a named agent.
     ///
     /// Carries the LLM-produced target agent name and new budget so `act()`
@@ -127,6 +136,7 @@ impl RegulationData {
             RegulationData::CommunicationBackpressure { .. } => "queue_depth",
             RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
             RegulationData::ContextServerFleetHealth { .. } => "context_server_health",
+            RegulationData::OcrSilentFailuresExceeded { .. } => "ocr_silent_failures",
             RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",
             RegulationData::RolloutImpactCheck { metric, .. } => metric,
             RegulationData::NoData => "no_metric",
@@ -195,6 +205,9 @@ impl RegulationData {
             )),
             RegulationData::ToolReliabilityDegraded { reliability, .. } => {
                 Some((SignalMetric::ToolReliability, *reliability))
+            }
+            RegulationData::OcrSilentFailuresExceeded { count, .. } => {
+                Some((SignalMetric::OcrSilentFailures, *count))
             }
             _ => None,
         }
@@ -463,6 +476,17 @@ mod tests {
         assert_eq!(
             reliability.impact_before_value(),
             Some((SignalMetric::ToolReliability, 0.0))
+        );
+
+        // OCR silent failures carry the storm count — the before-value the
+        // re-sense arm compares against as entries age out of the window.
+        let ocr = RegulationData::OcrSilentFailuresExceeded {
+            count: 14.0,
+            threshold: 0.0,
+        };
+        assert_eq!(
+            ocr.impact_before_value(),
+            Some((SignalMetric::OcrSilentFailures, 14.0))
         );
 
         // No before-value: verify_impact warns and skips these.

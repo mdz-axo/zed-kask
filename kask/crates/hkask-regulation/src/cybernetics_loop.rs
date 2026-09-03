@@ -210,6 +210,11 @@ pub struct CyberneticsLoop {
     /// re-sense path.
     context_server_health_source:
         Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
+    /// Optional OCR health source, stored directly so `verify_impact` can
+    /// re-sense the recent silent-failure count without going through the
+    /// sensor registry — the verify-phase re-sense path, mirroring
+    /// `context_server_health_source`.
+    ocr_health_source: Option<Arc<dyn crate::sensor_provider::OcrHealthSource>>,
 }
 
 impl CyberneticsLoop {
@@ -301,6 +306,7 @@ impl CyberneticsLoop {
                 SignalMetric::InferenceAvailable,
                 SignalMetric::InferenceModelAvailable,
                 SignalMetric::ContextServerHealth,
+                SignalMetric::OcrSilentFailures,
                 SignalMetric::TripleCount,
                 SignalMetric::LowConfidenceCount,
                 SignalMetric::ConsolidationCandidates,
@@ -321,6 +327,7 @@ impl CyberneticsLoop {
                 SignalMetric::InferenceAvailable,
                 SignalMetric::InferenceModelAvailable,
                 SignalMetric::ContextServerHealth,
+                SignalMetric::OcrSilentFailures,
                 SignalMetric::AlgedonicEvents,
                 SignalMetric::AlgedonicLogApproachingCap,
                 SignalMetric::PendingEscalations,
@@ -370,6 +377,7 @@ impl CyberneticsLoop {
             calibrated_thresholds,
             rollout_events: None,
             context_server_health_source: None,
+            ocr_health_source: None,
         }
     }
 
@@ -525,6 +533,32 @@ impl CyberneticsLoop {
             crate::sensor_provider::ContextServerHealthSensor::new(Arc::clone(&source)),
         ));
         self.context_server_health_source = Some(source);
+        self
+    }
+
+    /// Wire an OCR health source so the cybernetics loop can sense OCR
+    /// silent-failure storms in the corpus MCP server.
+    ///
+    /// Without this, the loop reports `signal_count=0` during an OCR
+    /// silent-failure storm (a dead-but-responsive OCR endpoint returning
+    /// HTTP 200 with empty content on every Complex page) because the
+    /// `reg.pipeline.ocr.silent_failure` warns live in the corpus
+    /// subprocess's tracing — the loop's existing sensors read ledger/DB
+    /// state in the zed main process. The `OcrHealthSensor` emits
+    /// `SignalMetric::OcrSilentFailures` from the cross-process health
+    /// file, closing the blind-feedback-loop gap.
+    ///
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_ocr_health_source(
+        mut self,
+        source: Arc<dyn crate::sensor_provider::OcrHealthSource>,
+    ) -> Self {
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::OcrHealthSensor::new(
+                Arc::clone(&source),
+            )));
+        self.ocr_health_source = Some(source);
         self
     }
 

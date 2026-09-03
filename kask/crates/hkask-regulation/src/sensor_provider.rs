@@ -631,9 +631,85 @@ impl Sensor for ContextServerHealthSensor {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// OCR HEALTH SENSOR
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Source of OCR silent-failure counts for the cybernetics loop.
+///
+/// The bridge implements this trait over the corpus MCP server's
+/// cross-process health file and passes an `Arc<dyn OcrHealthSource>` to
+/// `CyberneticsLoop::with_ocr_health_source`.
+///
+/// Without this sensor, the cybernetics loop reports `signal_count=0`
+/// during an OCR silent-failure storm (a dead-but-responsive OCR endpoint
+/// returning HTTP 200 with empty content on every Complex page) because
+/// the `reg.pipeline.ocr.silent_failure` warns live in the corpus
+/// subprocess's tracing — the loop's existing sensors read ledger/DB state
+/// in the zed main process. This is the same blind-feedback-loop class as
+/// `InferenceHealthSource`/`ContextServerHealthSource` but for a subprocess
+/// whose events cross the process boundary via a health file.
+#[async_trait::async_trait]
+pub trait OcrHealthSource: Send + Sync {
+    /// OCR silent failures (empty LLM output on a page) observed in the
+    /// recent window. `Ok(0)` = none observed (or no health file yet — the
+    /// legitimate "no OCR has run" state). `Err` = the health file is
+    /// present but unreadable — a broken sensor, which the caller must
+    /// `warn!` about, never collapse into `Ok(0)` (the `.rules`
+    /// `unwrap_or(0)` trap: an unreadable file would read as "no
+    /// deviation").
+    async fn recent_silent_failures(&self) -> Result<u64, String>;
+}
+
+/// Senses OCR silent failures from the corpus server's health file.
+///
+/// Emits `SignalMetric::OcrSilentFailures` with the recent-window count when
+/// any silent failures have been observed. The set-point is `0.0` — any
+/// positive count is a deviation (an endpoint that returns empty content
+/// for a page with text is failing, even once).
+pub(crate) struct OcrHealthSensor {
+    source: Arc<dyn OcrHealthSource>,
+}
+
+impl OcrHealthSensor {
+    pub fn new(source: Arc<dyn OcrHealthSource>) -> Self {
+        Self { source }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for OcrHealthSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let count = match self.source.recent_silent_failures().await {
+            Ok(count) => count,
+            Err(error) => {
+                // A broken sensor is not "no deviation" — warn so an
+                // unreadable health file is distinguishable from a healthy
+                // OCR pipeline (the `.rules` failure-signal rule).
+                tracing::warn!(
+                    target: "hkask.sensor.ocr",
+                    error = %error,
+                    "OcrHealthSensor: OCR health file unreadable — returning no signal (not 'no deviation')"
+                );
+                return None;
+            }
+        };
+        // Healthy states produce no signal, matching the other sensors.
+        if count == 0 {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::OcrSilentFailures,
+            count as f64,
+            0.0, // set-point: no silent failures
+        ))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MEMORY HEALTH SENSOR
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Source of memory health metrics for the cybernetics loop.
 ///
@@ -1026,5 +1102,62 @@ mod tests {
             "0% reliability vs the 0.80 floor must extract as (0, 80) percent — \
              the truncated (0, 0) is the live-observed false-positive appearance"
         );
+    }
+
+    // ── OcrHealthSensor: closes the subprocess-tracing blind-feedback gap ──
+
+    struct MockOcrHealth {
+        recent_count: u64,
+        broken: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrHealthSource for MockOcrHealth {
+        async fn recent_silent_failures(&self) -> Result<u64, String> {
+            if self.broken {
+                Err("health file unreadable".to_string())
+            } else {
+                Ok(self.recent_count)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ocr_health_sensor_returns_none_when_healthy() {
+        let sensor = OcrHealthSensor::new(Arc::new(MockOcrHealth {
+            recent_count: 0,
+            broken: false,
+        }));
+        assert!(
+            sensor.sense().await.is_none(),
+            "zero silent failures is healthy"
+        );
+    }
+
+    #[tokio::test]
+    async fn ocr_health_sensor_emits_on_silent_failure_storm() {
+        let sensor = OcrHealthSensor::new(Arc::new(MockOcrHealth {
+            recent_count: 14,
+            broken: false,
+        }));
+        let signal = sensor
+            .sense()
+            .await
+            .expect("a silent-failure storm must emit a signal");
+        assert_eq!(signal.metric, SignalMetric::OcrSilentFailures);
+        assert_eq!(signal.value, 14.0);
+        assert_eq!(signal.set_point, 0.0);
+    }
+
+    /// A broken source (unreadable health file) must produce NO signal —
+    /// never a fabricated 0, which would read as "no deviation" (the
+    /// `.rules` `unwrap_or(0)` trap on sense inputs).
+    #[tokio::test]
+    async fn ocr_health_sensor_returns_none_on_broken_source() {
+        let sensor = OcrHealthSensor::new(Arc::new(MockOcrHealth {
+            recent_count: 14,
+            broken: true,
+        }));
+        assert!(sensor.sense().await.is_none());
     }
 }

@@ -91,6 +91,9 @@ pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
 mod context_server_health_bridge;
 pub use context_server_health_bridge::BridgeContextServerHealthSource;
 
+mod ocr_health_bridge;
+pub use ocr_health_bridge::BridgeOcrHealthSource;
+
 mod rollout_event_bridge;
 
 pub use rollout_event_bridge::{

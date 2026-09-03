@@ -18,6 +18,7 @@ pub mod inference_ipc;
 pub mod json_extract;
 pub(crate) mod kanban_status;
 pub mod kanban_wire;
+pub mod ocr_health;
 
 pub mod regulation;
 pub mod secret;

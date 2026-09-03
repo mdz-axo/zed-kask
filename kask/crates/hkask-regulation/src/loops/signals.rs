@@ -46,6 +46,15 @@ pub enum SignalMetric {
     /// Without this metric the loop reports `signal_count=0` while every
     /// MCP server is hung on `initialize` — the blind-feedback-loop trap.
     ContextServerHealth,
+    /// OCR silent-failure count in the recent window (Cybernetics Loop 6).
+    /// Empty LLM OCR output on a page — the dead-but-responsive-endpoint
+    /// signature (HTTP 200 with empty content). Sensed from the corpus
+    /// server's cross-process health file. Set-point 0.0; any positive
+    /// count is a deviation. Without this metric the loop reports
+    /// `signal_count=0` during an OCR silent-failure storm because the
+    /// warns live in the corpus subprocess's tracing, not the loop's
+    /// ledger/DB state — the same blind-feedback-loop trap.
+    OcrSilentFailures,
     /// Actionable algedonic alert count — Warning or Critical entries in
     /// the in-memory log (Cybernetics Loop 6). Info diagnostics don't count.
     AlgedonicEvents,
@@ -114,6 +123,7 @@ impl SignalMetric {
             SignalMetric::InferenceAvailable => "inference_available",
             SignalMetric::InferenceModelAvailable => "inference_model_available",
             SignalMetric::ContextServerHealth => "context_server_health",
+            SignalMetric::OcrSilentFailures => "ocr_silent_failures",
             SignalMetric::AlgedonicEvents => "algedonic_events",
             SignalMetric::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             SignalMetric::PendingEscalations => "pending_escalations",
@@ -145,6 +155,7 @@ impl SignalMetric {
             SignalMetric::InferenceAvailable,
             SignalMetric::InferenceModelAvailable,
             SignalMetric::ContextServerHealth,
+            SignalMetric::OcrSilentFailures,
             SignalMetric::AlgedonicEvents,
             SignalMetric::AlgedonicLogApproachingCap,
             SignalMetric::PendingEscalations,
@@ -172,7 +183,7 @@ impl SignalMetric {
             SignalMetric::EnergyRemaining
             | SignalMetric::ContextServerHealth
             | SignalMetric::ToolReliability => Some(true),
-            SignalMetric::VarietyDeficit => Some(false),
+            SignalMetric::VarietyDeficit | SignalMetric::OcrSilentFailures => Some(false),
             _ => None,
         }
     }
@@ -195,6 +206,10 @@ mod tests {
         );
         assert_eq!(SignalMetric::ToolReliability.impact_direction(), Some(true));
         assert_eq!(SignalMetric::VarietyDeficit.impact_direction(), Some(false));
+        assert_eq!(
+            SignalMetric::OcrSilentFailures.impact_direction(),
+            Some(false)
+        );
         assert_eq!(SignalMetric::ErrorRate.impact_direction(), None);
         assert_eq!(SignalMetric::TestCoverage.impact_direction(), None);
     }
@@ -236,6 +251,8 @@ mod tests {
             "circuit_breaker_state",
             "inference_available",
             "inference_model_available",
+            "context_server_health",
+            "ocr_silent_failures",
             "algedonic_events",
             "algedonic_log_approaching_cap",
             "pending_escalations",

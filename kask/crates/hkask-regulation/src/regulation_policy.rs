@@ -42,6 +42,7 @@ pub(crate) enum RegulationReason {
     InferenceUnavailable,
     ModelUnavailable,
     ContextServerFleetDegraded,
+    OcrSilentFailuresExceeded,
 }
 
 impl RegulationReason {
@@ -71,6 +72,7 @@ impl RegulationReason {
             Self::InferenceUnavailable => "inference_unavailable",
             Self::ModelUnavailable => "model_unavailable",
             Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
+            Self::OcrSilentFailuresExceeded => "ocr_silent_failures_exceeded",
         }
     }
 }
@@ -367,6 +369,24 @@ impl RegulationPolicy {
                         reason: ContextServerFleetDegraded,
                     }],
                 },
+                // OcrSilentFailures (Cybernetics Loop 6) → Escalate
+                //
+                // A dead-but-responsive OCR endpoint (HTTP 200 with empty
+                // content on every Complex page) is not something the loop
+                // can self-heal — the corpus pipeline already degrades to
+                // Tesseract and quarantines the endpoint via its circuit
+                // breaker. Escalate to Curation for operator attention:
+                // the endpoint needs fixing (prompt format, RAW_OPENAI_OUTPUT,
+                // image encoding) or replacing.
+                RegulationRule {
+                    metric: OcrSilentFailures,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: OcrSilentFailuresExceeded,
+                    }],
+                },
             ],
         }
     }
@@ -439,6 +459,9 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             healthy_count,
             total_count,
         } => Some((*total_count - *healthy_count, *total_count)),
+        RegulationData::OcrSilentFailuresExceeded { count, threshold } => {
+            Some((rounded_count(*count), rounded_count(*threshold)))
+        }
         RegulationData::CuratorBudgetOverride { .. }
         | RegulationData::RolloutImpactCheck { .. }
         | RegulationData::NoData => None,
@@ -736,6 +759,7 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
         SignalMetric::ContextServerHealth => &[Escalate, Calibrate],
+        SignalMetric::OcrSilentFailures => &[Escalate, Calibrate],
         // ── Observational (no substitution — Notify is terminal) ──
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount

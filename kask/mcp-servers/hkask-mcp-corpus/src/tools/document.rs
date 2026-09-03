@@ -5,9 +5,11 @@
 //! moved to `services::convert::ConvertService`. The `#[tool]` methods below
 //! are now thin I/O framing: deserialize params, construct a `ConvertService`
 //! borrowing `self`, delegate, and return. The shared OCR helpers
-//! (`resolve_ocr_model`, `do_ocr`, `has_ocr`, `persist_pipeline_outcome`) and
-//! `index_passages` also live on `ConvertService`, so `corpus_ocr` and the
-//! file-case `corpus_chunk` path delegate to the service for those calls too.
+//! (`resolve_ocr_model`, `has_ocr`, `persist_pipeline_outcome`,
+//! `ocr_via_pipeline`) and `index_passages` also live on `ConvertService`, so
+//! `corpus_ocr` and the file-case `corpus_chunk` path delegate to the service
+//! for those calls too. The page pipeline is the only OCR mechanism — the
+//! former raw-bytes single-shot (`do_ocr`) was removed.
 //!
 //! `convert_directory` stays here (on `CorpusServer`) because it recurses
 //! through the `corpus_convert` tool wrapper to preserve per-file Regulation
@@ -291,7 +293,7 @@ impl CorpusServer {
             let service = ConvertService::from_corpus(self);
 
             // Resolve the source text
-            let source_text: String;
+            let mut source_text: String;
             let source_label: String;
             // Structure from office-format backends — enables section-aware chunking.
             let mut source_structure: Option<hkask_types::document::DocStructure> = None;
@@ -336,28 +338,44 @@ impl CorpusServer {
                     } => {
                         source_text = extracted;
                     }
-                    ExtractOutcome::NeedsOcr {
-                        partial_text,
-                        word_count: _,
-                    } => {
-                        // Try OCR fallback; use partial_text if OCR unavailable/fails
+                    ExtractOutcome::NeedsOcr { partial_text, .. } => {
+                        // The page pipeline is the only OCR mechanism (the
+                        // raw-bytes single-shot fallback was removed). Use
+                        // the partial native text when the pipeline is
+                        // unavailable or fails — the degradation is warned,
+                        // never silent.
+                        source_text = partial_text.clone();
                         if let Ok(model) = service.resolve_ocr_model(None).await {
-                            let file_bytes = std::fs::read(file_path).map_err(|e| {
+                            let resolved = crate::path_safety::contain_for_read(file_path)?;
+                            let file_bytes = std::fs::read(&resolved).map_err(|e| {
                                 map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
                             })?;
-                            match service.do_ocr(&file_bytes, &model).await {
-                                Ok(ocr_text) if !ocr_text.is_empty() => {
+                            let (file_format, _, _) = convert::detect_format(file_path);
+                            match service
+                                .ocr_via_pipeline(
+                                    &resolved,
+                                    file_format,
+                                    &file_bytes,
+                                    &model,
+                                    service.pipeline_executor(),
+                                )
+                                .await
+                            {
+                                Ok(outcome) => {
                                     source_structure = Some(crate::backend::markdown_to_structure(
-                                        &ocr_text, "pdf",
+                                        &outcome.text,
+                                        "pdf",
                                     ));
-                                    source_text = ocr_text;
+                                    source_text = outcome.text;
                                 }
-                                _ => {
-                                    source_text = partial_text;
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "hkask.docproc",
+                                        error = %error,
+                                        "chunk OCR pipeline failed — using partial native text"
+                                    );
                                 }
                             }
-                        } else {
-                            source_text = partial_text;
                         }
                     }
                     ExtractOutcome::PartialOcr {
@@ -369,25 +387,42 @@ impl CorpusServer {
                         // Chunk's selective-OCR optimization is deferred; for
                         // now, fall back to whole-doc OCR (like NeedsOcr) so no
                         // page is silently lost. The joined native text is the
-                        // fallback if OCR is unavailable.
+                        // fallback when the pipeline is unavailable or fails.
                         let partial = page_texts.join("\n\x0c");
+                        source_text = partial.clone();
                         if !ocr_pages.is_empty()
                             && let Ok(model) = service.resolve_ocr_model(None).await
                         {
-                            let file_bytes = std::fs::read(file_path).map_err(|e| {
+                            let resolved = crate::path_safety::contain_for_read(file_path)?;
+                            let file_bytes = std::fs::read(&resolved).map_err(|e| {
                                 map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
                             })?;
-                            match service.do_ocr(&file_bytes, &model).await {
-                                Ok(ocr_text) if !ocr_text.is_empty() => {
+                            let (file_format, _, _) = convert::detect_format(file_path);
+                            match service
+                                .ocr_via_pipeline(
+                                    &resolved,
+                                    file_format,
+                                    &file_bytes,
+                                    &model,
+                                    service.pipeline_executor(),
+                                )
+                                .await
+                            {
+                                Ok(outcome) => {
                                     source_structure = Some(crate::backend::markdown_to_structure(
-                                        &ocr_text, "pdf",
+                                        &outcome.text,
+                                        "pdf",
                                     ));
-                                    source_text = ocr_text;
+                                    source_text = outcome.text;
                                 }
-                                _ => source_text = partial,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "hkask.docproc",
+                                        error = %error,
+                                        "chunk OCR pipeline failed — using joined native text"
+                                    );
+                                }
                             }
-                        } else {
-                            source_text = partial;
                         }
                     }
                 }

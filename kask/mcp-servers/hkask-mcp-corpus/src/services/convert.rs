@@ -3,9 +3,13 @@
 //! Extracted from `CorpusServer::corpus_convert` (single-file OCR orchestration,
 //! ~450 lines) and `CorpusServer::chunk_directory` (directory-scanning chunking)
 //! in `tools/document.rs`. The shared OCR helpers (`has_ocr`, `resolve_ocr_model`,
-//! `do_ocr`, `persist_pipeline_outcome`) and `index_passages` — previously methods
-//! on `CorpusServer` — also live here so the service is self-contained and the OCR
-//! logic is not duplicated between the service and the server.
+//! `persist_pipeline_outcome`) and `index_passages` — previously methods on
+//! `CorpusServer` — also live here so the service is self-contained and the OCR
+//! logic is not duplicated between the service and the server. The page
+//! pipeline (`ocr_via_pipeline`) is the ONLY OCR mechanism — the former
+//! raw-bytes single-shot (`do_ocr`) was removed: it sent whole file bytes to
+//! one vision call, returned empty-as-success for book-sized inputs, and
+//! wrote multi-MB base64 IPC lines.
 //!
 //! Follows the `AssertionsService` / `ConsolidationService` pattern: a service struct
 //! holding the shared inference router (plus OCR pipeline + index state), async
@@ -144,8 +148,8 @@ impl<'a> ConvertService<'a> {
     /// model registry. When the inference port returns empty model lists
     /// (the MediaRouter fallback when `HKASK_INFERENCE_SOCKET` is not set),
     /// this returns an error rather than silently passing the model through —
-    /// a silent pass-through would let `do_ocr` fail later with a cryptic
-    /// "media_generate not supported" error from the MediaRouter.
+    /// a silent pass-through would let the OCR vision call fail later with a
+    /// cryptic "media_generate not supported" error from the MediaRouter.
     pub async fn resolve_ocr_model(
         &self,
         override_model: Option<&str>,
@@ -170,7 +174,7 @@ impl<'a> ConvertService<'a> {
 
         // Empty vision list means the inference port can't enumerate models —
         // the IPC bridge is not configured (MediaRouter fallback). Fail early
-        // with a diagnostic error instead of letting do_ocr fail later.
+        // with a diagnostic error instead of letting the vision call fail later.
         if vision_models.is_empty() {
             return Err(OcrError::InferenceFailed(
                 "No vision models available — the inference IPC bridge is not configured \
@@ -220,27 +224,6 @@ impl<'a> ConvertService<'a> {
         Ok(model)
     }
 
-    /// Perform OCR by sending base64-encoded bytes to a vision model.
-    pub async fn do_ocr(&self, file_bytes: &[u8], model: &str) -> Result<String, OcrError> {
-        if file_bytes.is_empty() {
-            return Err(OcrError::EmptyFile);
-        }
-        let text =
-            crate::ocr::llm_ocr::vision_ocr_bytes(&*self.inference_router, file_bytes, model)
-                .await?;
-        // A non-empty input that OCRs to nothing is a failure. Returning
-        // Ok("") here surfaced as silent zero-word "ok" tool results when
-        // whole-book PDFs went through the raw-bytes path — the caller
-        // cannot distinguish "OCR worked" from "OCR produced nothing".
-        if text.trim().is_empty() {
-            return Err(OcrError::EmptyOcrOutput {
-                model: model.to_string(),
-                input_bytes: file_bytes.len(),
-            });
-        }
-        Ok(text)
-    }
-
     /// The server's page-pipeline OCR executor as the trait object the
     /// pipeline functions consume.
     pub(crate) fn pipeline_executor(&self) -> std::sync::Arc<dyn OcrExecutor> {
@@ -252,10 +235,10 @@ impl<'a> ConvertService<'a> {
     /// files become a single page. Returns the assembled text plus the
     /// pipeline's verification report.
     ///
-    /// This is the only correct OCR path for multi-page documents: the
-    /// raw-bytes single-shot (`do_ocr`) sends the whole file as one vision
-    /// call, which returns empty text as a success for book-sized inputs and
-    /// writes multi-MB base64 IPC lines that can break the inference bridge.
+    /// This is the ONLY OCR mechanism: the former raw-bytes single-shot
+    /// (`do_ocr`) was removed — it sent whole file bytes as one vision call,
+    /// returned empty text as a success for book-sized inputs, and wrote
+    /// multi-MB base64 IPC lines that could break the inference bridge.
     /// The executor is a parameter (the seam `run_pipeline` itself uses) so
     /// tests can inject a mock executor.
     pub async fn ocr_via_pipeline(
@@ -577,33 +560,23 @@ impl<'a> ConvertService<'a> {
                         return Ok(result);
                     }
                     Err(e) => {
-                        tracing::warn!(target: "hkask.docproc", error = %e, "Decimation failed — falling back to raw bytes OCR");
+                        // The page pipeline is the only OCR mechanism — the
+                        // former raw-bytes fallback was removed. A decimation
+                        // failure is a typed error, never a silent fallthrough
+                        // to a second (broken) OCR path.
+                        return Err(McpToolError::unavailable(format!(
+                            "PDF page rendering failed: {e}"
+                        )));
                     }
                 }
             }
 
-            // Final fallback: raw bytes OCR
-            match self.resolve_ocr_model(None).await {
-                Ok(model) => match self.do_ocr(&file_bytes, &model).await {
-                    Ok(text) => {
-                        let result = serde_json::json!({
-                            "format": format,
-                            "path": path,
-                            "method": "ocr",
-                            "model": model,
-                            "text": text,
-                            "word_count": text.split_whitespace().count(),
-                        });
-                        return Ok(result);
-                    }
-                    Err(e) => {
-                        return Err(McpToolError::unavailable(e.to_string()));
-                    }
-                },
-                Err(guidance) => {
-                    return Err(McpToolError::failed_precondition(guidance.to_string()));
-                }
-            }
+            // Not an image and not a PDF — no pipeline path exists. The
+            // former raw-bytes fallback was removed; fail typed instead of
+            // sending office-format bytes to a vision model.
+            return Err(McpToolError::invalid_argument(format!(
+                "force_ocr supports images and PDFs; format '{format}' has no OCR pipeline path — use the text-extraction path (call without force_ocr)"
+            )));
         }
 
         // ── Text extraction path ──
@@ -794,12 +767,20 @@ impl<'a> ConvertService<'a> {
                         return Ok(result);
                     }
                     Err(e) => {
-                        tracing::warn!(target: "hkask.docproc", error = %e, "Decimation failed — falling back to generic OCR");
+                        // The page pipeline is the only OCR mechanism — the
+                        // former raw-bytes fallback was removed. A decimation
+                        // failure is a typed error, never a silent fallthrough
+                        // to a second (broken) OCR path.
+                        return Err(McpToolError::unavailable(format!(
+                            "PDF page rendering failed: {e} — text extraction was insufficient and no text could be recovered"
+                        )));
                     }
                 }
             }
 
-            // Pipeline unavailable or failed — reuse the cached extraction result
+            // Pipeline unavailable (no OCR model configured) — reuse the
+            // cached extraction result; the NeedsOcr arm below surfaces the
+            // gap instead of silently dropping it.
             pdf_extract_result = Some(quick_result);
         }
 
@@ -839,71 +820,29 @@ impl<'a> ConvertService<'a> {
                 partial_text,
                 word_count,
             } => {
-                // Fall back to OCR — re-read file bytes for do_ocr
-                let file_bytes = std::fs::read(&path).map_err(|e| {
-                    map_corpus_io_error(e, &format!("Failed to read file '{}' for OCR", path))
-                })?;
-                match self.resolve_ocr_model(None).await {
-                    Ok(model) => match self.do_ocr(&file_bytes, &model).await {
-                        Ok(ocr_text) => {
-                            let ocr_word_count = ocr_text.split_whitespace().count();
-                            let (final_text, final_word_count, method) =
-                                if ocr_word_count > word_count {
-                                    (ocr_text, ocr_word_count, "ocr")
-                                } else {
-                                    (
-                                        partial_text,
-                                        word_count,
-                                        "text_extraction_ocr_fallback_insufficient",
-                                    )
-                                };
-                            let result = serde_json::json!({
-                                "format": format,
-                                "path": path,
-                                "method": method,
-                                "model": model,
-                                "text": final_text,
-                                "word_count": final_word_count,
-                                "extraction_word_count": word_count,
-                            });
-                            Ok(result)
-                        }
-                        Err(e) => {
-                            if word_count > 0 {
-                                Ok(serde_json::json!({
-                                    "format": format,
-                                    "path": path,
-                                    "method": "text_extraction_ocr_failed",
-                                    "text": partial_text,
-                                    "word_count": word_count,
-                                    "ocr_error": e.to_string(),
-                                }))
-                            } else {
-                                Err(McpToolError::unavailable(format!(
-                                    "Text extraction returned near-empty result and OCR failed: {}",
-                                    e
-                                )))
-                            }
-                        }
-                    },
-                    Err(guidance) => {
-                        if word_count > 0 {
-                            Ok(serde_json::json!({
-                                "format": format,
-                                "path": path,
-                                "method": "text_extraction_no_ocr_available",
-                                "text": partial_text,
-                                "word_count": word_count,
-                                "ocr_available": false,
-                                "ocr_guidance": guidance.to_string(),
-                            }))
-                        } else {
-                            Err(McpToolError::failed_precondition(format!(
-                                "PDF text extraction returned no text and no OCR model is configured. {}",
-                                guidance
-                            )))
-                        }
-                    }
+                // The page pipeline (above) is the only OCR mechanism — the
+                // raw-bytes single-shot fallback was removed. Reaching here
+                // means the pipeline did not run: no OCR model is configured
+                // (decimation failures return as typed errors above). Surface
+                // the gap — partial text with `ocr_available: false`, or a
+                // typed error when there is no text at all. Never a silent
+                // drop.
+                if word_count > 0 {
+                    Ok(serde_json::json!({
+                        "format": format,
+                        "path": path,
+                        "method": "text_extraction_ocr_unavailable",
+                        "text": partial_text,
+                        "word_count": word_count,
+                        "ocr_available": false,
+                    }))
+                } else {
+                    Err(McpToolError::failed_precondition(
+                        "PDF text extraction returned no text and the OCR page pipeline did not run — \
+                         no text could be recovered. Configure the OCR model (HKASK_OCR_MODEL) \
+                         or check the OCR-model resolution error in the log."
+                            .to_string(),
+                    ))
                 }
             }
             ExtractOutcome::PartialOcr {
@@ -1588,14 +1527,14 @@ mod ocr_guards {
     }
 
     #[tokio::test]
-    async fn do_ocr_empty_vision_output_is_a_typed_error() {
-        let service = test_service(Arc::new(VisionMockPort {
+    async fn vision_ocr_bytes_empty_output_is_a_typed_error() {
+        let port = VisionMockPort {
             vision_text: String::new(),
-        }));
-        let error = service
-            .do_ocr(b"non-empty input bytes", "mock-model")
-            .await
-            .expect_err("empty vision output must be an error, not a silent success");
+        };
+        let error =
+            crate::ocr::llm_ocr::vision_ocr_bytes(&port, b"non-empty input bytes", "mock-model")
+                .await
+                .expect_err("empty vision output must be an error, not a silent success");
         assert!(
             matches!(error, OcrError::EmptyOcrOutput { .. }),
             "expected EmptyOcrOutput, got: {error}"
@@ -1603,20 +1542,20 @@ mod ocr_guards {
     }
 
     #[tokio::test]
-    async fn do_ocr_nonempty_output_passes_through() {
-        let service = test_service(Arc::new(VisionMockPort {
+    async fn vision_ocr_bytes_nonempty_output_passes_through() {
+        let port = VisionMockPort {
             vision_text: "real text".to_string(),
-        }));
-        let text = service
-            .do_ocr(b"input", "mock-model")
+        };
+        let text = crate::ocr::llm_ocr::vision_ocr_bytes(&port, b"input", "mock-model")
             .await
             .expect("non-empty vision output passes the guard");
         assert_eq!(text, "real text");
     }
 
-    /// The pipeline executor must enforce the same empty-output contract as
-    /// `do_ocr`: an HTTP 200 with empty content is a typed `EmptyOcrOutput`
-    /// failure, and consecutive empty outputs open the circuit breaker so a
+    /// The pipeline executor must uphold the empty-output contract enforced
+    /// by `vision_ocr_bytes` (the single OCR vision primitive): an HTTP 200
+    /// with empty content arrives as a typed `EmptyOcrOutput` failure, and
+    /// consecutive empty outputs open the circuit breaker so a
     /// dead-but-responsive endpoint is quarantined instead of resetting the
     /// breaker as a success.
     #[tokio::test]
@@ -1648,6 +1587,37 @@ mod ocr_guards {
             !executor.is_available(&backend),
             "circuit breaker must open after 5 consecutive empty outputs"
         );
+    }
+
+    /// The wired recorder must publish silent failures to the cross-process
+    /// health file — the write side of the contract `BridgeOcrHealthSource`
+    /// (zed main process) reads. Without this, the cybernetics loop reports
+    /// `signal_count=0` during an OCR silent-failure storm.
+    #[tokio::test]
+    async fn llm_executor_with_recorder_publishes_silent_failures_to_the_health_file() {
+        let health_path = std::env::temp_dir().join(format!(
+            "ocr-guards-health-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let port: Arc<dyn InferencePort> = Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        });
+        let recorder = Arc::new(crate::ocr::llm_ocr::OcrHealthRecorder::new(
+            health_path.clone(),
+        ));
+        let executor = LlmOcrExecutor::new(Arc::clone(&port)).with_health_recorder(recorder);
+        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let backend = OcrBackend::LlmOcr("mock-model".to_string());
+
+        let result = executor.execute(0, &backend, &image, false).await;
+        assert!(result.is_err(), "empty output must be an error");
+
+        let contents = std::fs::read_to_string(&health_path)
+            .expect("the recorder must publish the health file on a silent failure");
+        let snapshot: hkask_types::ocr_health::OcrHealthSnapshot =
+            serde_json::from_str(&contents).expect("health file must parse");
+        assert_eq!(snapshot.silent_failure_timestamps.len(), 1);
     }
 
     #[tokio::test]

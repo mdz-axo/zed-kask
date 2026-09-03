@@ -874,6 +874,32 @@ impl super::CyberneticsLoop {
                             continue;
                         }
                     }
+                    SignalMetric::OcrSilentFailures => {
+                        // Re-sense the recent-window count from the source stored
+                        // on the loop. A broken or unwired source must warn and
+                        // skip — a silent 0.0 would read as "storm over" and
+                        // falsely auto-resolve the escalation (the .rules
+                        // unwrap_or(0) trap).
+                        if let Some(ref source) = self.ocr_health_source {
+                            match source.recent_silent_failures().await {
+                                Ok(count) => count as f64,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "reg.cybernetics",
+                                        error = %error,
+                                        "verify_impact: OCR health source unreadable — cannot re-sense, skipping"
+                                    );
+                                    continue;
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                target: "reg.cybernetics",
+                                "verify_impact: OCR health source not wired — cannot re-sense silent failures, skipping"
+                            );
+                            continue;
+                        }
+                    }
                     _ => continue,
                 };
             }
@@ -1327,6 +1353,28 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
+            // OcrSilentFailuresExceeded carries the storm count so
+            // verify_impact can re-sense and compare as entries age out of
+            // the window, and auto_resolve_cleared can close the escalation
+            // when the storm ends — the same typed-data pattern as
+            // ContextServerFleetDegraded below.
+            RegulationReason::OcrSilentFailuresExceeded => {
+                let at = self
+                    .try_substitute(dev.signal.metric, proposed.action_type)
+                    .await;
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    at,
+                    RegulatoryActionParams::with_data(
+                        proposed.reason.as_str(),
+                        RegulationData::OcrSilentFailuresExceeded {
+                            count: dev.signal.value,
+                            threshold: dev.signal.set_point,
+                        },
+                    ),
+                    dev.signal.metric.as_str().into(),
+                ))
+            }
             // ContextServerFleetDegraded carries typed fleet-health data so
             // verify_impact can re-sense and compare, and extract_deficit_threshold
             // can populate the error_context with real counts instead of (0, 0).
@@ -1748,6 +1796,7 @@ mod tests {
                 (InferenceAvailable, BelowSetPoint, 0.0, 1.0),
                 (InferenceModelAvailable, BelowSetPoint, 0.0, 1.0),
                 (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
+                (OcrSilentFailures, AboveSetPoint, 14.0, 0.0),
             ];
 
             for &(metric, direction, value, set_point) in cases {

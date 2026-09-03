@@ -872,8 +872,23 @@ fn main() {
             kask_bridge::BridgeContextServerHealthSource::new(),
         );
         let context_server_health_source_for_poller = context_server_health_source.clone();
+        // zed-kask: OCR health source for the cybernetics loop.
+        //
+        // Without this, the loop reports `signal_count=0` during an OCR
+        // silent-failure storm (a dead-but-responsive OCR endpoint returning
+        // HTTP 200 with empty content on every Complex page) — the
+        // `reg.pipeline.ocr.silent_failure` warns live in the corpus
+        // subprocess's tracing, which the loop's ledger/DB sensors cannot
+        // see. The source reads the corpus server's cross-process health
+        // file (`mcp/corpus/ocr-health.json`, written by its
+        // `OcrHealthRecorder`); the `OcrHealthSensor` emits
+        // `SignalMetric::OcrSilentFailures`, and the policy escalates to
+        // Curation for operator attention.
+        let ocr_health_source =
+            std::sync::Arc::new(kask_bridge::BridgeOcrHealthSource::new());
         let cybernetics_loop_inner = cybernetics_loop_inner
-            .with_context_server_health_source(context_server_health_source);
+            .with_context_server_health_source(context_server_health_source)
+            .with_ocr_health_source(ocr_health_source);
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             cybernetics_loop_inner,
         ));

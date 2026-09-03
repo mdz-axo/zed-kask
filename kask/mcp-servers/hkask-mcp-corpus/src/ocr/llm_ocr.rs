@@ -44,11 +44,12 @@ pub(crate) fn build_ocr_prompt(anchored_text: Option<&str>) -> String {
 }
 
 /// Encode `bytes` as base64 and dispatch a single OCR vision call via `router`,
-/// returning the raw extracted text.
+/// returning the extracted text.
 ///
-/// This is the shared primitive used by both [`CorpusServer::do_ocr`] (raw file
-/// bytes) and [`LlmOcrExecutor::execute`] (re-encoded page images). Callers own
-/// their own post-processing (circuit-breaker integration, `OcrResult` assembly).
+/// This is the single OCR vision primitive — the one enforcement point for
+/// the empty-is-failure contract: an HTTP 200 with empty content is a typed
+/// `EmptyOcrOutput` error, never an `Ok("")`. Callers own their own
+/// post-processing (circuit-breaker integration, `OcrResult` assembly).
 pub(crate) async fn vision_ocr_bytes(
     router: &dyn InferencePort,
     bytes: &[u8],
@@ -63,6 +64,12 @@ pub(crate) async fn vision_ocr_bytes(
         .generate_vision(&build_ocr_prompt(None), &[b64_data], &params, Some(model))
         .await
         .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
+    if result.text.trim().is_empty() {
+        return Err(OcrError::EmptyOcrOutput {
+            model: model.to_string(),
+            input_bytes: bytes.len(),
+        });
+    }
     Ok(result.text)
 }
 
@@ -127,6 +134,101 @@ fn now_unix() -> i64 {
         .as_secs() as i64
 }
 
+/// Records OCR health events to the cross-process health file read by the
+/// cybernetics loop's `BridgeOcrHealthSource`.
+///
+/// The corpus server is a subprocess — its `reg.pipeline.ocr.silent_failure`
+/// tracing warns never reach the zed main process's regulation sensors. This
+/// recorder is the write side of the `hkask_types::ocr_health` file contract:
+/// every silent failure (empty LLM output) and every circuit-breaker state
+/// change is appended atomically (tmp+rename) so the loop's `OcrHealthSensor`
+/// can sense OCR degradation storms instead of reporting `signal_count=0`.
+pub(crate) struct OcrHealthRecorder {
+    path: std::path::PathBuf,
+    state: std::sync::Mutex<hkask_types::ocr_health::OcrHealthSnapshot>,
+}
+
+impl OcrHealthRecorder {
+    /// Create a recorder writing to `path`. Callers in the server wiring use
+    /// `hkask_types::ocr_health::ocr_health_path()`; tests pass an explicit path.
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            state: std::sync::Mutex::new(hkask_types::ocr_health::OcrHealthSnapshot::default()),
+        }
+    }
+
+    /// Record one silent failure (empty LLM output on a page) at the current
+    /// time and persist the snapshot.
+    pub fn record_silent_failure(&self) {
+        let mut state = self.state.lock().expect("OCR health state mutex poisoned");
+        state.record_silent_failure(now_unix());
+        self.persist(&mut state);
+    }
+
+    /// Record a circuit-breaker state transition. A no-op when the state is
+    /// unchanged — the success path calls this after every page, and only a
+    /// genuine transition (opened or closed) should touch the file.
+    pub fn record_breaker_state(&self, open: bool) {
+        let mut state = self.state.lock().expect("OCR health state mutex poisoned");
+        if state.circuit_breaker_open == open {
+            return;
+        }
+        state.circuit_breaker_open = open;
+        self.persist(&mut state);
+    }
+
+    /// Serialize + atomically publish the snapshot (tmp+rename). A write
+    /// failure is warned, never silently dropped — an unwritable health file
+    /// means the regulation loop is blind to OCR degradation, which the
+    /// operator must be able to distinguish from "no events".
+    fn persist(&self, state: &mut hkask_types::ocr_health::OcrHealthSnapshot) {
+        state.updated_unix = now_unix();
+        let json = match serde_json::to_string(&*state) {
+            Ok(json) => json,
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.pipeline.ocr.health",
+                    path = %self.path.display(),
+                    error = %error,
+                    "Failed to serialize OCR health snapshot — regulation loop is blind to OCR degradation"
+                );
+                return;
+            }
+        };
+        // Self-healing posture (D28): every write path creates its parent.
+        if let Some(parent) = self.path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.health",
+                path = %self.path.display(),
+                error = %error,
+                "Failed to create OCR health file parent — regulation loop is blind to OCR degradation"
+            );
+            return;
+        }
+        let temp_path = self.path.with_extension("json.tmp");
+        if let Err(error) = std::fs::write(&temp_path, json) {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.health",
+                path = %temp_path.display(),
+                error = %error,
+                "Failed to write OCR health snapshot — regulation loop is blind to OCR degradation"
+            );
+            return;
+        }
+        if let Err(error) = std::fs::rename(&temp_path, &self.path) {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.health",
+                path = %self.path.display(),
+                error = %error,
+                "Failed to publish OCR health snapshot — regulation loop is blind to OCR degradation"
+            );
+        }
+    }
+}
+
 /// Vision LLM OCR executor using the hkask-inference router.
 ///
 /// Encodes page images as base64 PNG and dispatches to vision-capable
@@ -141,6 +243,9 @@ pub(crate) struct LlmOcrExecutor {
     /// Maximum output tokens per page.
     /// Circuit breaker for rate-limit resilience.
     breaker: CircuitBreaker,
+    /// Write side of the cross-process OCR health file. `None` in tests —
+    /// the recorder only exists in the server wiring.
+    recorder: Option<Arc<OcrHealthRecorder>>,
 }
 
 impl LlmOcrExecutor {
@@ -149,7 +254,16 @@ impl LlmOcrExecutor {
         Self {
             router,
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
+            recorder: None,
         }
+    }
+
+    /// Attach the cross-process health recorder (the server wiring path —
+    /// tests construct without it).
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_health_recorder(mut self, recorder: Arc<OcrHealthRecorder>) -> Self {
+        self.recorder = Some(recorder);
+        self
     }
 }
 #[async_trait]
@@ -210,21 +324,37 @@ impl OcrExecutor for LlmOcrExecutor {
         // as a success. The rate-limit warn fires only for backpressure
         // (GAP-4 Regulation variety).
         match &result {
-            Ok(text) if text.trim().is_empty() => {
+            Ok(_) => {
+                self.breaker.record_success();
+                // No-op unless the breaker just closed after a quarantine —
+                // the recorder skips unchanged state.
+                if let Some(ref recorder) = self.recorder {
+                    recorder.record_breaker_state(false);
+                }
+            }
+            // Empty output is classified as a typed failure by
+            // `vision_ocr_bytes` (the single enforcement point). Count it
+            // against the breaker so a dead-but-responsive endpoint is
+            // quarantined like a transport failure, and record the silent
+            // failure for the regulation loop's health file.
+            Err(OcrError::EmptyOcrOutput { model, input_bytes }) => {
                 self.breaker.record_failure();
                 tracing::warn!(
                     target: "reg.pipeline.ocr.silent_failure",
                     page_index = page_index,
                     llm_model = %model,
-                    input_bytes = img_bytes.len(),
+                    input_bytes = input_bytes,
                     "OCR model returned empty output — treating as failure, degrading to fallback backend"
                 );
+                if let Some(ref recorder) = self.recorder {
+                    recorder.record_silent_failure();
+                    recorder.record_breaker_state(!self.breaker.is_closed());
+                }
                 return Err(OcrError::EmptyOcrOutput {
                     model: model.clone(),
-                    input_bytes: img_bytes.len(),
+                    input_bytes: *input_bytes,
                 });
             }
-            Ok(_) => self.breaker.record_success(),
             Err(OcrError::InferenceFailed(err_str)) => {
                 let is_rate_limit = err_str.contains("429")
                     || err_str.contains("rate limit")
@@ -240,6 +370,9 @@ impl OcrExecutor for LlmOcrExecutor {
                 if is_rate_limit || err_str.contains("timed out") || err_str.contains("connection")
                 {
                     self.breaker.record_failure();
+                }
+                if let Some(ref recorder) = self.recorder {
+                    recorder.record_breaker_state(!self.breaker.is_closed());
                 }
             }
             Err(_) => {}
@@ -275,5 +408,61 @@ impl OcrExecutor for LlmOcrExecutor {
             duration_ms,
             was_fallback: is_fallback,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_health_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("ocr-recorder-test-{name}-{}", std::process::id()))
+    }
+
+    fn read_snapshot(path: &std::path::Path) -> hkask_types::ocr_health::OcrHealthSnapshot {
+        let contents = std::fs::read_to_string(path).expect("health file must exist");
+        serde_json::from_str(&contents).expect("health file must parse")
+    }
+
+    #[test]
+    fn silent_failures_are_persisted_with_timestamps() {
+        let path = temp_health_path("failures");
+        let recorder = OcrHealthRecorder::new(path.clone());
+        recorder.record_silent_failure();
+        recorder.record_silent_failure();
+        recorder.record_silent_failure();
+
+        let snapshot = read_snapshot(&path);
+        assert_eq!(snapshot.silent_failure_timestamps.len(), 3);
+        // All entries are recent (within a minute of now).
+        let now = now_unix();
+        assert!(
+            snapshot
+                .silent_failure_timestamps
+                .iter()
+                .all(|&ts| now - ts < 60)
+        );
+        assert!(!snapshot.circuit_breaker_open);
+    }
+
+    #[test]
+    fn breaker_state_transitions_persist_and_no_ops_skip_the_write() {
+        let path = temp_health_path("breaker");
+        let recorder = OcrHealthRecorder::new(path.clone());
+
+        recorder.record_breaker_state(true);
+        let after_open = std::fs::read_to_string(&path).expect("open transition writes");
+        assert!(read_snapshot(&path).circuit_breaker_open);
+
+        // Same state again — no write, file content unchanged.
+        recorder.record_breaker_state(true);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("file still readable"),
+            after_open,
+            "an unchanged breaker state must not touch the file"
+        );
+
+        recorder.record_breaker_state(false);
+        assert!(!read_snapshot(&path).circuit_breaker_open);
     }
 }
