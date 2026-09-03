@@ -52,6 +52,28 @@ pub fn strip_leading_mentions(task: &str) -> String {
     remaining.to_string()
 }
 
+/// Extract tool names from an ABW `capabilities.mcp_tools` array. Current
+/// fermi (`build_agent_json`) emits `[{name, description}]` objects; older
+/// deploys emitted plain strings. Both are accepted — anything else is
+/// dropped by the caller's `filter_mcp_tools` warnings, which is the
+/// authority gate for what a cloned card may dispatch.
+pub fn extract_tool_names(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    entry
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .or_else(|| entry.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Validate a cloned card's declared `mcp_tools` (third-party ABW data).
 /// Each entry must be `server/tool` with charset-safe, non-empty segments.
 /// When `allowed_servers` is set (the governed server set from
@@ -260,4 +282,37 @@ pub fn sanitize_run_status_message(msg: &serde_json::Value) -> serde_json::Value
         obj.remove("response");
     }
     msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// fermi's `build_agent_json` emits `capabilities.mcp_tools` as
+    /// `[{name, description}]` objects; older deploys emitted strings. The
+    /// extractor must accept both so cloned cards keep their tool names
+    /// (before `filter_mcp_tools` applies the governed-server gate).
+    #[test]
+    fn extract_tool_names_accepts_objects_and_strings() {
+        let objects = serde_json::json!([
+            { "name": "execute_agent", "description": "Invoke a member agent." },
+            { "name": "web_search", "description": "" }
+        ]);
+        assert_eq!(
+            extract_tool_names(Some(&objects)),
+            vec!["execute_agent".to_string(), "web_search".to_string()]
+        );
+
+        let strings = serde_json::json!(["research/web_search"]);
+        assert_eq!(
+            extract_tool_names(Some(&strings)),
+            vec!["research/web_search".to_string()]
+        );
+
+        assert!(extract_tool_names(None).is_empty());
+        assert!(extract_tool_names(Some(&serde_json::json!(null))).is_empty());
+        // An object without a name key contributes nothing.
+        let malformed = serde_json::json!([{ "description": "no name" }]);
+        assert!(extract_tool_names(Some(&malformed)).is_empty());
+    }
 }

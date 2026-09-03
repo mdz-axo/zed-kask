@@ -166,7 +166,9 @@ async fn create_apply_batch_seed_returns_materialize_loop() {
     let seed_content = unwrap_content(&seed);
     assert_eq!(seed_content["seeded_count"], 2, "both prices seeded");
 
-    // Returns now compute (TWR over the seeded window).
+    // Returns now compute (TWR over the seeded window). The 2026-01-05
+    // deposit lands before the window start, so start_value = 5k cash +
+    // 100 AAPL @ 150 = 20k; the gain is 100 × (165 − 150) = +1,500 → +7.5%.
     let returns = server
         .portfolio_returns(Parameters(PortfolioReturnsRequest {
             portfolio: "growth".into(),
@@ -179,10 +181,9 @@ async fn create_apply_batch_seed_returns_materialize_loop() {
     let total_return = returns_content["total_return"]
         .as_f64()
         .expect("total_return is a number");
-    // 100 shares × (165 − 150) = +1500 on a 15000 start → +10%.
     assert!(
-        (total_return - 0.10).abs() < 1e-9,
-        "AAPL 150→165 on a 15k start is +10%, got {total_return}: {returns_content}"
+        (total_return - 0.075).abs() < 1e-9,
+        "+1500 gain on a 20k start is +7.5%, got {total_return}: {returns_content}"
     );
 
     // Materialize + read the daily series.

@@ -21,7 +21,10 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 // Re-export the pure helpers from `cloud` so the `test_utils` module and
 // any internal callers can reach them at the crate root.
-pub use crate::cloud_swarm::{build_create_agent_card, extract_execute_response};
+pub use crate::cloud_swarm::{
+    build_agent_update_payload, build_create_agent_card, extract_execute_response,
+    unsupported_create_fields,
+};
 
 /// Map one ABW catalogue agent (fermi `build_agent_json`) into the trimmed
 /// envelope `swarm_list_agents` returns. Pure over its input — extracted from
@@ -993,16 +996,66 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
+            // fermi's create accepts a flat subset; the richer card fields
+            // (mcp_servers, valence, model_ladder, capability_gates) are
+            // update-only (`AgentUpdate`), so apply them via a follow-up PUT
+            // to the freshly created agent. fermi's create response carries
+            // `agent_name` (the slug `PUT /api/agents/:id` resolves — fermi's
+            // `resolve_agent` accepts name or UUID).
+            let update = build_agent_update_payload(&req);
+            let update_applied = if update.as_object().is_some_and(|o| !o.is_empty()) {
+                let slug = data
+                    .get("agent_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(req.agent_name.as_str());
+                self.client
+                    .request(
+                        reqwest::Method::PUT,
+                        &format!("/agents/{}", url_encode_segment(slug)),
+                        &[],
+                        Some(&update),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                true
+            } else {
+                false
+            };
+
             // Sanitize the full response (KA-01): ABW may augment or regenerate
             // the agent description and other text fields. `sanitize_workspace_payload`
             // walks the entire payload — display fields become plain sanitized
             // strings, model-consumed fields get the container. The operator-
             // supplied system_prompt is echoed back but `sanitize_workspace_payload`
             // treats it as a display field (plain string), which is correct.
-            Ok(self
-                .client
-                .with_wallet(sanitize_workspace_payload(data))
-                .await)
+            let mut payload = sanitize_workspace_payload(data);
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "update_applied".to_string(),
+                    serde_json::json!(update_applied),
+                );
+                // Fields the ABW API cannot store on a non-curated agent at
+                // all — surface the drop instead of losing it silently.
+                let unsupported = unsupported_create_fields(&req);
+                if !unsupported.is_empty() {
+                    obj.insert(
+                        "unsupported_fields".to_string(),
+                        serde_json::json!(unsupported),
+                    );
+                    obj.insert(
+                        "note".to_string(),
+                        serde_json::json!(format!(
+                            "the ABW API cannot store these fields on a non-curated agent; they were dropped: {}",
+                            unsupported
+                                .iter()
+                                .map(|f| *f)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )),
+                    );
+                }
+            }
+            Ok(self.client.with_wallet(payload).await)
         })
         .await
     }

@@ -213,6 +213,27 @@ fn build_gateway_card(registry: &LocalAgentRegistry, base_url: &str) -> AgentCar
         .map(|card| crate::a2a::to_a2a_skill(card))
         .collect();
 
+    // Default I/O modes are the union over the roster (fermi's
+    // `derive_modes` per agent — schema-ID ports mean `application/json`,
+    // free-text labels mean `text/plain`). A gateway fronting mixed agents
+    // advertises both; an empty roster is permissive (both), mirroring
+    // fermi's empty-ports default.
+    let mut input_modes = std::collections::BTreeSet::new();
+    let mut output_modes = std::collections::BTreeSet::new();
+    for card in &agents {
+        let (inputs, outputs) = crate::a2a::derive_modes(&card.accepts, &card.produces);
+        input_modes.extend(inputs);
+        output_modes.extend(outputs);
+    }
+    if input_modes.is_empty() {
+        input_modes.insert("text/plain".to_string());
+        input_modes.insert("application/json".to_string());
+    }
+    if output_modes.is_empty() {
+        output_modes.insert("text/plain".to_string());
+        output_modes.insert("application/json".to_string());
+    }
+
     AgentCard {
         name: "hKask Local Swarm Gateway".to_string(),
         description: format!(
@@ -228,8 +249,8 @@ fn build_gateway_card(registry: &LocalAgentRegistry, base_url: &str) -> AgentCar
             extensions: None,
             extended_agent_card: Some(false),
         },
-        default_input_modes: vec!["text/plain".to_string()],
-        default_output_modes: vec!["text/plain".to_string()],
+        default_input_modes: input_modes.into_iter().collect(),
+        default_output_modes: output_modes.into_iter().collect(),
         skills,
         provider: None,
         documentation_url: None,

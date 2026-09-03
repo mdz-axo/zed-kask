@@ -155,6 +155,13 @@ pub struct LocalAgentCapabilities {
     /// Optional output contract for the agent's structured output.
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
+    /// Typed input contract — what callers must send to invoke this agent
+    /// (fermi A2A: `capabilities.input_contract`, compiled from
+    /// `input_contract.sketch.json`). Symmetric to `output_contract`.
+    /// Absence means no input validation — same semantics as fermi's
+    /// `input_contract: None`.
+    #[serde(default)]
+    pub input_contract: Option<serde_json::Value>,
     /// Per-card declared evaluators (the evaluator contract, event-substrate
     /// phase 4). When present, `swarm_delegate_local` runs each against the
     /// delegation response and stamps the verdict onto `task_success` with

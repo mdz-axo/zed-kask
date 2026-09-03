@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Research MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-research`
-**Tools:** 22 — `web_ping`, `web_search`, `web_recommend_provider`, `web_find_similar`, `web_extract`, `web_browse`, plus 16 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family)
+**Tools:** 22 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), and 2 evidence tools (`cite_sources`, `evaluate_evidence`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
 **Auto-start:** Yes (free providers work with no credentials)
 
 The research server is the web-research surface: a provider pool

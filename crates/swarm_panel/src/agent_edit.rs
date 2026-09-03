@@ -109,12 +109,13 @@ impl AgentDetail {
         }
     }
 
-    /// Parse a cloud agent card from the `swarm_get_agent` response. The card
-    /// shape mirrors `CreateAgentRequest`'s output (see
-    /// `hkask-mcp-swarm/src/cloud_swarm_tools.rs::build_agent_card`):
-    /// `agent_id`/`agent_type`/`system_prompt`/`visibility` top-level,
-    /// `metadata.description`/`metadata.tags`/`metadata.valence`,
-    /// `capabilities.model`/`capabilities.mcp_tools`/`capabilities.skills`.
+    /// Parse a cloud agent card from the `swarm_get_agent` response. The
+    /// shape is fermi's `build_agent_json`: `description`, `tags`, `valence`,
+    /// `sample_queries`, `accepts`, `produces`, `visibility`, and
+    /// `system_prompt` at the TOP level; a `metadata` object is only
+    /// overlaid for curated agents that have a filesystem card. Read
+    /// top-level first so API-created agents (no `metadata` key) keep their
+    /// fields; the metadata fallback preserves curated cards.
     fn parse_cloud(card: &serde_json::Value) -> Self {
         let agent_id = card
             .get("agent_id")
@@ -128,9 +129,13 @@ impl AgentDetail {
             .unwrap_or("research")
             .to_string();
         let description = card
-            .get("metadata")
-            .and_then(|m| m.get("description"))
+            .get("description")
             .and_then(|d| d.as_str())
+            .or_else(|| {
+                card.get("metadata")
+                    .and_then(|m| m.get("description"))
+                    .and_then(|d| d.as_str())
+            })
             .unwrap_or("")
             .to_string();
         let system_prompt = card
@@ -138,29 +143,39 @@ impl AgentDetail {
             .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string();
-        let tags = card
-            .get("metadata")
-            .and_then(|m| m.get("tags"))
-            .and_then(|t| t.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Prefer the top-level field; fall back to the curated card's
+        // metadata. Chaining both would duplicate entries for curated
+        // agents (the DB row and the card file carry the same values).
+        let tags = {
+            let top_level = string_array(card.get("tags"));
+            if top_level.is_empty() {
+                string_array(card.get("metadata").and_then(|m| m.get("tags")))
+            } else {
+                top_level
+            }
+        };
         let visibility = card
             .get("visibility")
             .and_then(|v| v.as_str())
             .unwrap_or("private")
             .to_string();
-        let valence = card.get("metadata").and_then(|m| m.get("valence"));
+        let valence = card
+            .get("valence")
+            .filter(|v| !v.is_null())
+            .or_else(|| card.get("metadata").and_then(|m| m.get("valence")));
         let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
             parse_valence(valence);
-        // fermi contract fields: sample queries live under metadata (the
-        // create-card builder puts them there); accepts/produces are
-        // top-level on the ABW card.
-        let sample_queries =
-            string_array(card.get("metadata").and_then(|m| m.get("sample_queries")));
+        // fermi contract fields: sample queries are top-level on the DB row
+        // (curated cards also carry them under metadata); accepts/produces
+        // are top-level on the ABW card.
+        let sample_queries = {
+            let top_level = string_array(card.get("sample_queries"));
+            if top_level.is_empty() {
+                string_array(card.get("metadata").and_then(|m| m.get("sample_queries")))
+            } else {
+                top_level
+            }
+        };
         let accepts = string_array(card.get("accepts"));
         let produces = string_array(card.get("produces"));
         Self {
@@ -640,6 +655,59 @@ mod tests {
             Some("enthusiasm".to_string())
         );
         assert_eq!(detail.valence_personality_traits, vec!["imaginative"]);
+    }
+
+    #[test]
+    fn parse_cloud_reads_fermi_flat_shape() {
+        // fermi's `build_agent_json` carries description/tags/valence at the
+        // TOP level; `metadata` is only overlaid for curated agents with a
+        // filesystem card. API-created agents have no `metadata` key at all.
+        let card = serde_json::json!({
+            "agent_id": "api_created_agent",
+            "agent_type": "research",
+            "description": "Built via the ABW API",
+            "system_prompt": "You research things.",
+            "tags": ["api", "research"],
+            "visibility": "private",
+            "sample_queries": ["query one"],
+            "valence": {
+                "arousal": 0.4,
+                "valence": 0.6,
+                "primary_affect": "curiosity",
+                "personality_traits": ["methodical"]
+            }
+        });
+        let detail = AgentDetail::parse_cloud(&card);
+        assert_eq!(detail.agent_id, "api_created_agent");
+        assert_eq!(detail.description, "Built via the ABW API");
+        assert_eq!(detail.tags, vec!["api", "research"]);
+        assert_eq!(detail.sample_queries, vec!["query one"]);
+        assert_eq!(detail.valence_arousal, Some(0.4));
+        assert_eq!(detail.valence_valence, Some(0.6));
+        assert_eq!(detail.valence_primary_affect, Some("curiosity".to_string()));
+        assert_eq!(detail.valence_personality_traits, vec!["methodical"]);
+    }
+
+    #[test]
+    fn parse_cloud_prefers_top_level_over_metadata() {
+        // A curated agent has BOTH the DB row's top-level fields and the
+        // card file's metadata overlay — the top level wins (no duplicates).
+        let card = serde_json::json!({
+            "agent_id": "curated_agent",
+            "agent_type": "research",
+            "description": "from the DB row",
+            "tags": ["db"],
+            "sample_queries": ["db query"],
+            "metadata": {
+                "description": "from the card file",
+                "tags": ["card"],
+                "sample_queries": ["card query"]
+            }
+        });
+        let detail = AgentDetail::parse_cloud(&card);
+        assert_eq!(detail.description, "from the DB row");
+        assert_eq!(detail.tags, vec!["db"]);
+        assert_eq!(detail.sample_queries, vec!["db query"]);
     }
 
     #[test]

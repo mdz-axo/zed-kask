@@ -4,7 +4,7 @@
 //! `hkask_mcp_swarm.rs` (M2). All operate on the local registry/runtime; no
 //! ABW round-trips except `swarm_clone_to_local`/`swarm_push_to_cloud`.
 use crate::SwarmServer;
-use crate::abw_util::{make_swarm_slug, url_encode_segment};
+use crate::abw_util::{make_swarm_slug, url_encode_segment, validate_agent_name};
 use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
 use crate::local_knowledge;
 use crate::local_registry::{
@@ -13,8 +13,8 @@ use crate::local_registry::{
 use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
 use crate::request_types::*;
 use crate::sanitize::{
-    filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
-    sanitize_workspace_payload,
+    extract_tool_names, filter_declared_skills, filter_mcp_tools, sanitize_abw_text,
+    sanitize_agent_id, sanitize_workspace_payload,
 };
 use crate::spend_gate;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -691,19 +691,34 @@ impl SwarmServer {
             // row. The `-clone` suffix also differentiates the local card
             // from the cloud card in `swarm_delegate_local` lookups.
             let clone_agent_id = self.local_registry.unique_clone_id(&safe_agent_id);
-            // Display label: prefer the ABW agent_name (human-readable),
-            // append " (Clone)" so the operator can distinguish the local
-            // clone from the cloud original in the panel.
-            let display_name = format!("{} (Clone)", req.agent_name);
+            // Display label: prefer the ABW display_alias (human-readable),
+            // fall back to the agent_name, and append " (Clone)" so the
+            // operator can distinguish the local clone from the cloud
+            // original in the panel.
+            let display_base = abw_card
+                .get("display_alias")
+                .and_then(|d| d.as_str())
+                .filter(|d| !d.is_empty())
+                .unwrap_or(req.agent_name.as_str());
+            let display_name = format!("{} (Clone)", display_base);
             let agent_type = abw_card
                 .get("agent_type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("research")
                 .to_string();
+            // fermi's `build_agent_json` carries `description` at the top
+            // level; `metadata` is only overlaid for curated agents with a
+            // filesystem card. Read top-level first so API-created agents
+            // (no `metadata` key at all) keep their description.
             let description = abw_card
-                .get("metadata")
-                .and_then(|m| m.get("description"))
+                .get("description")
                 .and_then(|d| d.as_str())
+                .or_else(|| {
+                    abw_card
+                        .get("metadata")
+                        .and_then(|m| m.get("description"))
+                        .and_then(|d| d.as_str())
+                })
                 .unwrap_or("")
                 .to_string();
             let accepts: Vec<String> = abw_card
@@ -768,12 +783,52 @@ impl SwarmServer {
                     .unwrap_or_default()
             };
             let abw_caps = abw_card.get("capabilities");
+            // fermi emits `capabilities.mcp_tools` as `[{name, description}]`
+            // objects (its `McpTool` shape); older deploys emitted strings.
+            // `extract_tool_names` accepts both, then `filter_mcp_tools`
+            // remains the authority gate — only governed `server/tool`
+            // names survive into the local card's dispatch allowlist.
             let mcp_tools = filter_mcp_tools(
-                string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
+                extract_tool_names(abw_caps.and_then(|c| c.get("mcp_tools"))),
                 self.client.config().allowed_tool_servers.as_deref(),
             );
             let skills =
                 filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
+            // fermi's `build_agent_json` carries these at the top level:
+            // `output_contract` (the typed schema the agent declares), tags,
+            // visibility, sample_queries, and valence. `input_contract` is
+            // not yet exposed by fermi's GET response — read both the top
+            // level and `capabilities` so the clone picks it up the day
+            // fermi adds it.
+            let output_contract = abw_card
+                .get("output_contract")
+                .filter(|v| !v.is_null())
+                .cloned();
+            let input_contract = abw_card
+                .get("input_contract")
+                .or_else(|| abw_caps.and_then(|c| c.get("input_contract")))
+                .filter(|v| !v.is_null())
+                .cloned();
+            let tags = string_list(abw_card.get("tags"));
+            let visibility = abw_card
+                .get("visibility")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let sample_queries = string_list(abw_card.get("sample_queries"));
+            let valence =
+                abw_card
+                    .get("valence")
+                    .filter(|v| !v.is_null())
+                    .map(|v| LocalAgentValence {
+                        arousal: v.get("arousal").and_then(|a| a.as_f64()),
+                        valence: v.get("valence").and_then(|a| a.as_f64()),
+                        primary_affect: v
+                            .get("primary_affect")
+                            .and_then(|a| a.as_str())
+                            .map(String::from),
+                        personality_traits: string_list(v.get("personality_traits")),
+                    });
             let import_labels: Vec<String> =
                 accepts.iter().chain(produces.iter()).cloned().collect();
             let local_card = LocalAgentCard {
@@ -790,13 +845,15 @@ impl SwarmServer {
                     system_prompt,
                     mcp_tools,
                     skills,
+                    output_contract,
+                    input_contract,
                     ..Default::default()
                 },
                 cloud_swarm_id: Some(req.agent_name),
-                tags: Vec::new(),
-                sample_queries: Vec::new(),
-                visibility: String::new(),
-                valence: None,
+                tags,
+                sample_queries,
+                visibility,
+                valence,
             };
             // The ABW catalogue's port labels are the card's own
             // taxonomy, not locally-authored free strings. Register them
@@ -823,13 +880,22 @@ impl SwarmServer {
         .await
     }
 
-    /// Push a local agent to ABW. Reads the local card, creates or updates
-    /// the ABW agent via `POST /api/agents`, and sets `cloud_swarm_id` on the local
-    /// card to the ABW agent id (marking it as synced). Requires the ABW API
-    /// key. If the agent already has a `cloud_swarm_id`, the ABW agent is updated;
-    /// otherwise a new ABW agent is created.
+    /// Push a local agent to ABW. Reads the local card and either creates the
+    /// ABW agent (`POST /api/agents`, when the card has no `cloud_swarm_id`) or
+    /// updates the existing one (`PUT /api/agents/:id`, when it does), then
+    /// records the sync link. Requires the ABW API key.
+    ///
+    /// fermi's create requires `agent_name` (a snake_case slug) and reads flat
+    /// fields; its update accepts the richer card fields (`output_contract`,
+    /// `input_contract`, `valence`). The local card's `mcp_tools` are zed-side
+    /// `server/tool` names dispatched through the zed IPC bridge — a different
+    /// namespace from fermi's dispatch-table tools — so they are NOT pushed
+    /// (fermi would reject them as undispatchable, and a clone re-imports its
+    /// own allowlist anyway). `skills`, `sample_queries`, and `dependencies`
+    /// have no ABW API surface at all (they live only on fermi's filesystem
+    /// cards for curated agents) and are likewise not pushed.
     #[tool(
-        description = "Push a local agent to ABW. Creates or updates the ABW agent from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
+        description = "Push a local agent to ABW. Creates the ABW agent (POST) or updates the existing one (PUT) from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
     )]
     pub(crate) async fn swarm_push_to_cloud(
         &self,
@@ -852,32 +918,111 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
-            // Build the ABW create/update payload from the local card.
-            let payload = serde_json::json!({
-                "agent_id": local_card.agent_id,
-                "agent_type": local_card.agent_type,
+            // The update payload carries the fields fermi's `AgentUpdate`
+            // accepts: description, system_prompt, tags, model, accepts,
+            // produces, output_contract, input_contract, valence. Built once —
+            // the create path issues it as a follow-up PUT after the POST;
+            // the update path issues it directly.
+            let mut update_payload = serde_json::json!({
                 "description": local_card.description,
+                "system_prompt": local_card.capabilities.system_prompt,
+                "tags": local_card.tags,
                 "accepts": local_card.accepts,
                 "produces": local_card.produces,
-                "dependencies": local_card.dependencies,
-                "model": local_card.capabilities.model,
-                "system_prompt": local_card.capabilities.system_prompt,
-                "mcp_tools": local_card.capabilities.mcp_tools,
-                "skills": local_card.capabilities.skills,
+                "output_contract": local_card.capabilities.output_contract,
+                "input_contract": local_card.capabilities.input_contract,
             });
-            // POST to ABW. If the agent already exists (cloud_swarm_id is set),
-            // ABW updates it; otherwise a new agent is created.
-            let result = self
-                .client
-                .post("/agents", &payload)
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-            // Update the local card's cloud_swarm_id to mark it as synced.
-            let cloud_swarm_id = result
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&local_card.agent_id)
-                .to_string();
+            // An empty model would overwrite fermi's default with "" — omit
+            // the key so fermi keeps whatever it has (create) or its default.
+            if !local_card.capabilities.model.trim().is_empty() {
+                update_payload["model"] =
+                    serde_json::json!(local_card.capabilities.model);
+            }
+            if let Some(valence) = &local_card.valence {
+                update_payload["valence"] = serde_json::json!({
+                    "primary_affect": valence.primary_affect.clone().unwrap_or_else(|| "neutral".to_string()),
+                    "arousal": valence.arousal.unwrap_or(0.5),
+                    "valence": valence.valence.unwrap_or(0.5),
+                    "personality_traits": valence.personality_traits,
+                });
+            }
+            let update_is_empty = update_payload
+                .as_object()
+                .is_some_and(|o| o.is_empty());
+
+            let (cloud_swarm_id, created, result) = if let Some(existing) =
+                local_card.cloud_swarm_id.as_deref()
+            {
+                // Synced card — update the existing ABW agent in place.
+                // fermi's `resolve_agent` accepts the agent_name slug or the
+                // UUID; `cloud_swarm_id` stores the slug.
+                let result = self
+                    .client
+                    .request(
+                        reqwest::Method::PUT,
+                        &format!("/agents/{}", url_encode_segment(existing)),
+                        &[],
+                        Some(&update_payload),
+                    )
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                (existing.to_string(), false, result)
+            } else {
+                // Unsynced card — create a new ABW agent. fermi's create
+                // requires `agent_name` (snake_case slug, 3–64 chars) and
+                // reads flat fields; unknown keys are ignored, so the old
+                // `agent_id`-keyed payload failed deserialization on the
+                // missing `agent_name` — every push returned 400.
+                validate_agent_name(&local_card.agent_id)
+                    .map_err(crate::error::map_local_swarm_error)?;
+                let mut create_payload = serde_json::json!({
+                    "agent_name": local_card.agent_id,
+                    "agent_type": local_card.agent_type,
+                    "description": local_card.description,
+                    "system_prompt": local_card.capabilities.system_prompt,
+                    "tags": local_card.tags,
+                    "visibility": if local_card.visibility.trim().is_empty() {
+                        "private".to_string()
+                    } else {
+                        local_card.visibility.clone()
+                    },
+                    "accepts": local_card.accepts,
+                    "produces": local_card.produces,
+                });
+                if !local_card.capabilities.model.trim().is_empty() {
+                    create_payload["model"] =
+                        serde_json::json!(local_card.capabilities.model);
+                }
+                let result = self
+                    .client
+                    .post("/agents", &create_payload)
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                // Apply the update-only fields (contracts, valence) via a
+                // follow-up PUT to the freshly created agent.
+                if !update_is_empty {
+                    self.client
+                        .request(
+                            reqwest::Method::PUT,
+                            &format!("/agents/{}", url_encode_segment(&local_card.agent_id)),
+                            &[],
+                            Some(&update_payload),
+                        )
+                        .await
+                        .map_err(SwarmError::into_tool_error)?;
+                }
+                // fermi's create response carries `agent_name` (the slug)
+                // and `agent_id` (the UUID). The panel matches
+                // `cloud_swarm_id` against the cloud catalogue's `agent_id`
+                // field, which fermi fills with the agent_name slug — so the
+                // sync link must store the slug, not the UUID.
+                let slug = result
+                    .get("agent_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(local_card.agent_id.as_str())
+                    .to_string();
+                (slug, true, result)
+            };
             let mut updated_card = local_card.clone();
             updated_card.cloud_swarm_id = Some(cloud_swarm_id.clone());
             // Write the updated card back to the local registry. Sanitize
@@ -906,6 +1051,7 @@ impl SwarmServer {
             Ok(serde_json::json!({
                 "pushed": local_card.agent_id,
                 "cloud_id": cloud_swarm_id,
+                "created": created,
                 "synced": true,
                 "result": result,
             }))
@@ -1046,6 +1192,7 @@ impl SwarmServer {
                     ),
                     skills: req.skills,
                     output_contract: req.output_contract.map(serde_json::Value::from),
+                    input_contract: req.input_contract.map(serde_json::Value::from),
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },
@@ -2961,6 +3108,7 @@ mod tests {
                 mcp_tools: vec![],
                 skills: vec![],
                 output_contract: None,
+                input_contract: None,
                 evaluators: vec![],
                 reasoning: false,
             },

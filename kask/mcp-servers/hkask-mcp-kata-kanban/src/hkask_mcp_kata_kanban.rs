@@ -1091,13 +1091,12 @@ impl KanbanServer {
                     )));
                 }
             };
-            Ok(serde_json::to_value(TaskKataResponse {
+            serde_json::to_value(TaskKataResponse {
                 task_id: tid.to_string(),
                 prompt,
-                ontology: kanban_type_to_pko("kanban_task_kata_prompt")
-                    .map(|s| s.to_string()),
+                ontology: kanban_type_to_pko("kanban_task_kata_prompt").map(|s| s.to_string()),
             })
-            .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
         })
         .await
     }

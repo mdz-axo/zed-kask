@@ -17,4 +17,7 @@ pub mod helpers;
 
 // Re-export the pure helpers so `cloud_swarm_tools.rs` and `test_utils` can import
 // them from `cloud` without reaching into the sub-module.
-pub use helpers::{build_create_agent_card, extract_execute_response};
+pub use helpers::{
+    build_agent_update_payload, build_create_agent_card, extract_execute_response,
+    unsupported_create_fields,
+};

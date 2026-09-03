@@ -117,7 +117,9 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     pub use crate::abw_util::*;
-    pub use crate::cloud_swarm_tools::build_create_agent_card;
+    pub use crate::cloud_swarm_tools::{
+        build_agent_update_payload, build_create_agent_card, unsupported_create_fields,
+    };
     pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
     pub use crate::error::SwarmError;

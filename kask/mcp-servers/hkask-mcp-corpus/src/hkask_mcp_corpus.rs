@@ -280,6 +280,22 @@ impl CorpusServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for CorpusServer {}
 
+#[cfg(test)]
+mod tool_surface_tests {
+    use crate::CorpusServer;
+
+    /// The corpus server registers exactly 23 tools. A `#[tool]` method in an
+    /// impl block WITHOUT `#[tool_router]` silently registers nothing while
+    /// `cargo check` passes — `corpus_prepare_training_dataset` shipped that
+    /// way (attributed, implemented, unreachable) until this pin caught the
+    /// class. Mirrors the media/scenarios pin tests.
+    #[test]
+    fn tool_surface_is_exactly_23_registered_tools() {
+        let n = CorpusServer::combined_router().list_all().len();
+        assert_eq!(n, 23, "corpus registered tool surface changed; got {n}");
+    }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 /// Run the corpus MCP server (used by binary target).

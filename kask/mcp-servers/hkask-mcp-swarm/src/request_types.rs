@@ -480,6 +480,11 @@ pub struct CreateLocalAgentRequest {
     /// Optional output contract for the agent's structured output.
     #[serde(default)]
     pub output_contract: Option<AnyJsonValue>,
+    /// Optional input contract — what callers must send to invoke this
+    /// agent (fermi A2A `capabilities.input_contract`). Symmetric to
+    /// `output_contract`.
+    #[serde(default)]
+    pub input_contract: Option<AnyJsonValue>,
     /// Per-card declared evaluators (the evaluator contract). When present,
     /// every `swarm_delegate_local` call to this agent runs them against the
     /// response and stamps a deterministic `task_success` verdict.
