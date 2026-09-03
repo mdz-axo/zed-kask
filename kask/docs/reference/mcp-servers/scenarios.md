@@ -19,7 +19,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 21 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by `check_sequence` (warn-only, non-blocking). Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 22 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -115,8 +115,8 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-08-11
-verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (20 tool routers + check_sequence), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 20 #[tool] annotations
-status: VERIFIED (v4 — tool count updated to 20: deleted scenario_from_companies)
+verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (22 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 22 #[tool] annotations (pinned by tool_surface_is_exactly_22_registered_tools)
+status: VERIFIED (v5 — tool count updated to 22: deleted scenario_from_companies; scenario_from_cmp_indices producer is market_cmp_indices on hkask-mcp-prediction-markets)
 -->
 
 ## Tool reference

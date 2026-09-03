@@ -745,6 +745,13 @@ step-up ramp.
    - `output_path`: `corpus/qa/{{ entity_ref_prefix }}-chatml.jsonl`
    - `dataset`: `{{ dataset_name }}`
    - `train_split`: `{{ train_split }}`
+   - `db_path`: the corpus memory DB path used by `corpus_ingest_qa` in Stage 8
+   - `passphrase`: the corpus DB passphrase (HKASK_DB_PASSPHRASE)
+
+   WITHOUT `db_path` + `passphrase` the assembler queries the TRAINING
+   server's own DB, which is empty for this corpus — Stage 8's QA pairs
+   live in the corpus DB, and the assembler finds zero pairs. Always pass
+   both fields.
 
 2. Count the training examples:
    ```

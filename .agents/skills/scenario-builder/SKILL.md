@@ -82,7 +82,7 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 
 ### scenario_build (step 9, execute — no template)
 
-1. Step 9 is an `execute` step (no template): persists the generated scenarios to the scenarios MCP via `scenario_build` (hkask-mcp-scenarios) for later comparison against actual outcomes. Closes the persistence half of the calibration loop — the scenarios are now in the forecast store where `scenario_score` can later Brier-score them.
+1. Step 9 is an `execute` step (no template): generates the scenario event scaffold via `scenario_build` (hkask-mcp-scenarios). NOTE: `scenario_build` does NOT persist anything — it returns an extraction scaffold the agent fills against research. The forecast journal is written only by `scenario_score` when outcomes are later recorded; keep the built events in the conversation (or your notes) until then.
 
 ## Registry Templates
 

@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 68 skills ship. 316 Jinja2 templates across 64 crates remain under
+> plus a markdown body of process instructions. 74 skills ship. 316 Jinja2 templates across 64 crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -42,11 +42,11 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 ---
 
-## Registry counts (verified 2026-08-28)
+## Registry counts (verified 2026-09-03)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **68** | Every directory contains a `SKILL.md` |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **74** | Every directory contains a `SKILL.md` |
 | Template crates (`kask/registry/templates/*/`) | **64** (316 `.j2` templates) | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
@@ -126,7 +126,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Specialized (18 skills)
+## Specialized (24 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -148,6 +148,12 @@ read-only resources the skill body may reference via `render_template`.
 | `swarm-intelligence` | ABW agent-swarm composition PDCA: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE |
 | `swarm-steering` | Focused local-swarm steering: codifies the execute-and-feed-back loop |
 | `ui-layout-discipline` | Measured layout discipline for GPUI card/panel renderers |
+| `portfolio-review` | Transaction-ledger portfolio performance review: seed prices from live quotes, TWR/MWR returns, Brinson-style attribution, durable review note |
+| `scenario-planning` | Complete scenario-planning project over the scenarios server: Schwartz framing, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
+| `cmp-term-structure` | Constant-Maturity Prediction term structures: ladder, context, provenance-carrying indices, event-tree composition, contract-price coherence, equity-duration matching |
+| `calibration-stewardship` | Prediction-market calibration loop maintenance: two-phase resolution scans, snapshot pairing, per-bucket Brier, reliability-tier demotion verification |
+| `transcript-reel` | Recording → highlight reel over the educt layer system: transcribe, correct, highlight, EDL, render, export |
+| `adapter-lifecycle` | Verifier-gated fine-tuning loop: rollout harness, verdict-bridged datasets, gated submit, A/B evaluation, feedback retrain |
 
 ---
 
@@ -187,11 +193,13 @@ read-only resources the skill body may reference via `render_template`.
 | Reasoning & Analysis | 10 |
 | Kata & Coaching | 3 |
 | Meta & Maintenance | 10 |
-| Specialized | 18 |
+| Specialized | 24 |
 | Research & Corpus | 5 |
 | Cross-Cutting & Audit | 8 |
-| **Total** | **68** |
+| **Total** | **74** |
 
-> **Filesystem reality (verified 2026-08-28):** `.agents/skills/` (repo root) contains 68 SKILL.md
-> directories (66 at the prior verification plus `eqm` and `eqm-improvement`, added 2026-08-28). `kask/registry/templates/` contains 64 template crates holding 316 `.j2` files (companion Jinja2 resources
+> **Filesystem reality (verified 2026-09-03):** `.agents/skills/` (repo root) contains 74 SKILL.md
+> directories (68 at the prior verification plus `portfolio-review`, `scenario-planning`,
+> `cmp-term-structure`, `calibration-stewardship`, `transcript-reel`, and `adapter-lifecycle`,
+> added 2026-09-03 to operationalize previously uncomposed MCP tool clusters). `kask/registry/templates/` contains 64 template crates holding 316 `.j2` files (companion Jinja2 resources
 > for `render_template`).

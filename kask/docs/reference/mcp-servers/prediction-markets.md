@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 32 — 17 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
+**Tools:** 33 — 18 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_indices`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
 > **Tool count note:** the server registers **32 `#[tool]` methods** — 17 in
@@ -49,20 +49,34 @@ server is the outside-view sense arm for the scenarios server:
 
 ## The calibration feedback loop
 
-The server closes a self-feeding calibration loop:
+The server closes a self-feeding calibration loop. The scan is two-phase
+so the scored probability is honest:
 
-1. **Sense:** `market_check_resolutions` scans both platforms for newly
-   resolved markets and records definitive outcomes into the calibration store
-   (idempotent; only terminal prices ≥0.99/≤0.01 or explicit Kalshi results
-   count — ambiguous 50-50 resolutions are skipped, never fabricated).
-2. **Record:** `market_record_resolution` is the manual sense arm — it writes a
+1. **Sense (snapshots):** `market_check_resolutions` first scans OPEN
+   markets and snapshots each one's current price as the pre-resolution
+   probability-at-observation (the EARLIEST snapshot per market is kept —
+   a later price is resolution-informed). Snapshots persist in a
+   pending journal alongside the observation journal.
+2. **Sense (resolutions):** newly resolved markets then consume their
+   snapshot — the Brier loop scores the price the scanner first saw,
+   never the post-resolution price (scoring the terminal price would be
+   self-fulfilling: the outcome is derived from that same price, so
+   Brier ≈ 0 by construction and the demotion gate could never fire). A
+   market that resolves before its first scan is counted in
+   `resolved_without_snapshot` and skipped — never fabricated. Ambiguous
+   50-50 resolutions are skipped the same way. The scan is idempotent.
+3. **Record:** `market_record_resolution` is the manual sense arm — it writes a
    (bucket, probability-at-observation, outcome) observation.
-3. **Evaluate:** `market_calibration` computes per-bucket Brier scores from the
+4. **Evaluate:** `market_calibration` computes per-bucket Brier scores from the
    accrued observations. A bucket with no resolved data returns `stale: true` —
    never a synthetic Brier of 0.
-4. **Act:** poorly calibrated buckets are demoted to lower reliability tiers on
+5. **Act:** poorly calibrated buckets are demoted to lower reliability tiers on
    subsequent `market_lookup` / `market_match` calls, which downstream
    consumers (`scenario_from_markets`) read as a gate on base-rate anchoring.
+
+Consequence: scans must run often enough that open markets are snapshotted
+before they resolve — a high `resolved_without_snapshot` rate means the
+scan cadence is too slow (see the `calibration-stewardship` skill).
 
 `market_subscribe_resolutions` streams Polymarket resolution events as
 notifications only — the wire carries no pre-resolution probability, and
@@ -86,7 +100,7 @@ feed the loop.
 |------|-------------|------------|
 | `market_calibration` | Calibration reading (Brier score, sample size, staleness) for a domain or series bucket, computed from resolved observations via `hkask-forecast`. No-data buckets return `stale: true`. | `bucket` |
 | `market_record_resolution` | Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store — the manual sense arm of the feedback loop. | `bucket`, `probability`, `outcome` |
-| `market_check_resolutions` | Scan both platforms for newly resolved markets and record definitive outcomes (idempotent). Terminal prices or explicit Kalshi results only; ambiguous resolutions skipped. | `series`, `limit` |
+| `market_check_resolutions` | Two-phase scan: (1) snapshot open markets' current prices as pre-resolution probability-at-observation (earliest per market kept), (2) consume snapshots for newly resolved markets. Resolutions without a snapshot are counted (`resolved_without_snapshot`) and skipped — the post-resolution price is never scored. Idempotent. | `series`, `limit` |
 | `market_subscribe_resolutions` | Subscribe to Polymarket's public market channel for resolution events on given CLOB asset IDs; events arrive as notifications and do NOT write calibration observations. | `asset_ids`, `bucket`, `max_resolutions` |
 
 ### Term structure and decomposition
@@ -96,6 +110,7 @@ feed the loop.
 | `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
 | `market_cmp` | Constant Maturity Prediction: synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns `bucketed_sparse` with the bracket width. Base events come only from `HKASK_PREDICTION_MARKETS_BASE_EVENTS` — unregistered series refused. | `series`, `tenor_days` |
 | `market_cmp_index` | Full CMP index for a registered base event: probability curve across the standard tenor grid (7d/30d/90d/180d/1y/2y), log-odds interpolated, with curve slope (log-odds/year) as the term-structure signal. Uncovered tenors return null. | `series` |
+| `market_cmp_indices` | Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) from live open markets per (family, venue) — the producer for `scenario_from_cmp_indices` (hkask-mcp-scenarios). Withheld buckets and rejection reasons are surfaced; never fabricated. | `series`, `venue`, `limit`, `reference`, `volatility`, `predicted_level`, `direction_up` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |
 
 ### History

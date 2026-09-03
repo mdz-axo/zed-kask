@@ -119,7 +119,7 @@ scenario_quantify                      scenario_impact_valuation
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 43 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `ResearchStore` operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
+The diagram traces the dispatch seam shared by all 44 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `ResearchStore` operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD
@@ -163,12 +163,12 @@ flowchart TD
 id: DIAG-RF-004
 verified_date: 2026-07-29
 verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/research_store.rs (ResearchStore), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
-status: VERIFIED (v8 — 2026-08-28: the duplicate portfolio surface (portfolio_list, portfolio_delete, ledger_import, ledger_export, transaction_note_append, portfolio_comparison, portfolio_returns) was removed from this server — the portfolio MCP server owns the ledger. Tool surface now pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()`; ontology coverage pinned by `ontology_anchor_covers_all_registered_tools`, which flushed out four previously unmapped tools (driver_forecast, resolve_symbol, stock_universe, company_screener). Sub-router counts: financial_data 9, analysis 5, notes 6, analytics 5, valuation 12, economic_profit 1, expectations 1, transcript 1, artifacts 3 = 43. PortfolioManager renamed ResearchStore; portfolio.rs renamed research_store.rs.)
+status: VERIFIED (v8 — 2026-08-28: the duplicate portfolio surface (portfolio_list, portfolio_delete, ledger_import, ledger_export, transaction_note_append, portfolio_comparison, portfolio_returns) was removed from this server — the portfolio MCP server owns the ledger. Tool surface now pinned end-to-end by `tool_surface_is_exactly_44_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()`; ontology coverage pinned by `ontology_anchor_covers_all_registered_tools`, which flushed out four previously unmapped tools (driver_forecast, resolve_symbol, stock_universe, company_screener). Sub-router counts: financial_data 9, analysis 6 (company_research_search registered 2026-09-03 after shipping un-routed while two skills called it), notes 6, analytics 5, valuation 12, economic_profit 1, expectations 1, transcript 1, artifacts 3 = 44. PortfolioManager renamed ResearchStore; portfolio.rs renamed research_store.rs.)
 -->
 
-## Tools (43)
+## Tools (44)
 
-> Count pinned end-to-end by `tool_surface_is_exactly_43_registered_tools`
+> Count pinned end-to-end by `tool_surface_is_exactly_44_registered_tools`
 > (`CompaniesServer::combined_router().list_all().len()`), mirroring the
 > media/scenarios/swarm pins. The tabulated groups below cover 36 tools; 7
 > tools are not yet tabulated.
@@ -234,7 +234,7 @@ The portfolio ledger tools that previously lived here (`portfolio_list`,
 `portfolio_delete`, `ledger_import`, `ledger_export`, `transaction_note_append`,
 `portfolio_comparison`, `portfolio_returns`) were removed when the portfolio
 MCP server took ownership of the ledger; they are pinned absent by the
-43-tool surface test.
+44-tool surface test.
 
 | Tool | Description |
 |------|-------------|
@@ -311,7 +311,7 @@ The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at
 cargo test -p hkask-mcp-companies
 ```
 
-The suite covers provider-error handling, EODHD normalization, valuation request validation, research-store owner isolation, attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, attribution weight and contribution math, the `LearningState` flaky-provider override loop, and the tool-surface pin (`tool_surface_is_exactly_43_registered_tools`) that keeps the portfolio server's ledger tools out of this server. End-to-end MCP wire-format coverage remains future work.[^bach-bolton-companies-validation]
+The suite covers provider-error handling, EODHD normalization, valuation request validation, research-store owner isolation, attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, attribution weight and contribution math, the `LearningState` flaky-provider override loop, and the tool-surface pin (`tool_surface_is_exactly_44_registered_tools`) that keeps the portfolio server's ledger tools out of this server. End-to-end MCP wire-format coverage remains future work.[^bach-bolton-companies-validation]
 
 ## Cross-links
 

@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Portfolio MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-portfolio`
-**Tools:** 13 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_roll`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`
+**Tools:** 14 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_roll`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
 The portfolio server is the general-purpose transaction-ledger portfolio store.
@@ -73,12 +73,24 @@ one over the guideline; each has a distinct purpose).
 | `portfolio_materialize_returns` | Materialize the daily returns view for a date range |
 | `portfolio_daily_returns` | Read the materialized daily returns |
 
+**Price semantics (2026-09-03):** the cached resolver is as-of — the
+latest price on or before each date (weekends carry the prior close). A
+held position with no resolvable price is a data gap, NOT a zero
+valuation: `portfolio_returns` and `portfolio_materialize_returns`
+error naming the missing (symbol, date) pairs instead of fabricating
+returns. The gate is skipped for `NoPrices` portfolios (CMP indices —
+holdings value at zero by design), which `rebuild_views` selects
+automatically by the portfolio's asset type. `portfolio_seed_price`
+invalidates materialized views from the seeded date forward, so
+materialize-then-seed never serves stale rows.
+
 ## Consumers
 
-- **`hkask-mcp-companies`** — delegates portfolio CRUD, ledger, and returns
-  computation to this crate. The companies `portfolio_returns` tool seeds the
-  price cache from FMP/EODHD, then calls `compute_returns` here. Provenance
-  points to `hkask-mcp-portfolio`.
+- **`hkask-mcp-companies`** — registers `portfolio_attribution` and
+  `portfolio_characteristics`, which read this crate's ledger for
+  positions; prices are fetched from FMP/EODHD at call time (the price
+  cache here is seeded by the caller via `portfolio_seed_price`, not by
+  the companies server). Provenance points to `hkask-mcp-portfolio`.
 - **`hkask-mcp-prediction-markets`** — stores CMP indices as transaction-ledger
   portfolios via `market_cmp_index_store` and `market_cmp_portfolio_store`.
 - **`hkask-portfolio-widget`** — renders holdings + returns for any portfolio
