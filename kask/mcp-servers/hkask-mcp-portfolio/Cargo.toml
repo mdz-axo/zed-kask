@@ -31,6 +31,9 @@ tracing.workspace = true
 [build-dependencies]
 regex.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 

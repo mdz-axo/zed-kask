@@ -418,6 +418,13 @@ pub(crate) struct ForecastPersistRequest {
     /// `forecast_price`, the tool computes `forecast_price_change` if that
     /// field is omitted.
     pub current_price: Option<f64>,
+    /// The forecast's own probability that the price change lands within the
+    /// tolerance band (0.0-1.0). Stored in the snapshot and consumed by
+    /// forecast_record as the Brier prior. Without it, forecast_record falls
+    /// back to a hardcoded 0.7 and the Brier score measures the fallback, not
+    /// the forecast's calibration — so skills persisting PTs should always
+    /// provide it.
+    pub forecast_probability: Option<f64>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Optional caller-supplied forecast ID. When omitted, the server

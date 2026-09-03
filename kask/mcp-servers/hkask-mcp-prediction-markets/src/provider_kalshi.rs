@@ -72,6 +72,70 @@ impl KalshiMarket {
     }
 }
 
+// ── Calibration scan decision cores (pure, HTTP-free) ─────────────────
+
+/// Snapshot open markets into the calibration store — the honest
+/// probability-at-observation for the future Brier score (last trade,
+/// falling back to the quote midpoint for untraded markets). Returns the
+/// count of markets snapshotted for the first time; re-scanning keeps the
+/// EARLIEST snapshot per market.
+pub(crate) fn snapshot_open_markets(
+    markets: &[KalshiMarket],
+    store: &mut crate::calibration::CalibrationStore,
+) -> u32 {
+    let mut snapshotted = 0;
+    for market in markets {
+        let probability = parse_fp(&market.last_price_dollars).or_else(|| market.yes_midpoint());
+        let Some(probability) = probability else {
+            continue;
+        };
+        let bucket = crate::types::canonical_bucket(&market.event_ticker);
+        if store.record_pending(
+            &market.ticker,
+            crate::calibration::PendingSnapshot {
+                bucket,
+                probability,
+            },
+        ) {
+            snapshotted += 1;
+        }
+    }
+    snapshotted
+}
+
+/// Consume pre-resolution snapshots for settled markets. A settled market
+/// with no snapshot is counted in `resolved_without_snapshot` and NEVER
+/// recorded — scoring its post-resolution `last_price_dollars` would be
+/// self-fulfilling (the outcome is derived from the same terminal price,
+/// so Brier ≈ 0 by construction and the reliability-tier demotion gate
+/// could never fire from scan data).
+pub(crate) fn resolved_observations_from_snapshots(
+    markets: &[KalshiMarket],
+    store: &mut crate::calibration::CalibrationStore,
+    resolved_without_snapshot: &mut u32,
+) -> Vec<(String, crate::calibration::ResolvedObservation)> {
+    let mut observations = Vec::new();
+    for market in markets {
+        let outcome = match market.result.as_str() {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        };
+        let Some(outcome) = outcome else { continue };
+        match store.take_pending(&market.ticker) {
+            Some(snapshot) => observations.push((
+                snapshot.bucket,
+                crate::calibration::ResolvedObservation {
+                    probability: snapshot.probability,
+                    outcome,
+                },
+            )),
+            None => *resolved_without_snapshot += 1,
+        }
+    }
+    observations
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct KalshiMarketsResponse {
@@ -245,4 +309,78 @@ pub async fn fetch_events(
     let response: KalshiEventsResponse =
         get_json(client, &format!("{KALSHI_BASE}/events"), &query).await?;
     Ok(response.events)
+}
+
+#[cfg(test)]
+mod calibration_scan_tests {
+    use super::*;
+    use crate::calibration::CalibrationStore;
+
+    fn market(ticker: &str, event_ticker: &str, last_price: &str, result: &str) -> KalshiMarket {
+        KalshiMarket {
+            ticker: ticker.to_string(),
+            event_ticker: event_ticker.to_string(),
+            last_price_dollars: last_price.to_string(),
+            result: result.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn settled_market_without_snapshot_is_never_recorded() {
+        // The self-fulfilling guard: pre-fix behavior scored the settled
+        // market's last_price_dollars (0.99 on a yes result), guaranteeing
+        // Brier ≈ 0 for every scan observation. Now it is counted and skipped.
+        let mut store = CalibrationStore::new();
+        let settled = vec![market("KX-a", "KXEVENT", "0.99", "yes")];
+        let mut resolved_without_snapshot = 0;
+        let observations = resolved_observations_from_snapshots(
+            &settled,
+            &mut store,
+            &mut resolved_without_snapshot,
+        );
+        assert!(observations.is_empty());
+        assert_eq!(resolved_without_snapshot, 1);
+    }
+
+    #[test]
+    fn snapshot_then_resolution_scores_the_pre_resolution_price() {
+        let mut store = CalibrationStore::new();
+        let open = vec![market("KX-a", "KXEVENT", "0.30", "")];
+        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
+        // The price drifts toward resolution; the EARLIEST snapshot is kept.
+        let drifted = vec![market("KX-a", "KXEVENT", "0.95", "")];
+        assert_eq!(snapshot_open_markets(&drifted, &mut store), 0);
+        let settled = vec![market("KX-a", "KXEVENT", "0.99", "yes")];
+        let mut resolved_without_snapshot = 0;
+        let observations = resolved_observations_from_snapshots(
+            &settled,
+            &mut store,
+            &mut resolved_without_snapshot,
+        );
+        assert_eq!(resolved_without_snapshot, 0);
+        assert_eq!(observations.len(), 1);
+        assert!((observations[0].1.probability - 0.30).abs() < 1e-9);
+        assert!(observations[0].1.outcome);
+        // The snapshot is consumed — a second pass cannot re-record it.
+        let mut second_pass = 0;
+        let again = resolved_observations_from_snapshots(
+            &settled,
+            &mut store,
+            &mut second_pass,
+        );
+        assert!(again.is_empty());
+        assert_eq!(second_pass, 1);
+    }
+
+    #[test]
+    fn untraded_open_market_snapshots_the_quote_midpoint() {
+        let mut store = CalibrationStore::new();
+        let mut untraded = market("KX-b", "KXEVENT", "", "");
+        untraded.yes_bid_dollars = "0.40".to_string();
+        untraded.yes_ask_dollars = "0.50".to_string();
+        assert_eq!(snapshot_open_markets(&[untraded], &mut store), 1);
+        let snapshot = store.take_pending("KX-b").expect("snapshotted");
+        assert!((snapshot.probability - 0.45).abs() < 1e-9);
+    }
 }

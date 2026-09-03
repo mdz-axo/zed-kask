@@ -55,7 +55,7 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 pub use server::{map_portfolio_error, run};
 
 #[cfg(test)]
-mod tests {
+mod tool_name_pin {
     // Pins the generated TOOL_NAMES const against the live rmcp tool
     // surface — a tool added/renamed fails here instead of degrading to
     // "tool not found" at dispatch.
@@ -75,3 +75,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -217,6 +217,15 @@ fn rebuild_views_from_ledger() {
         .unwrap();
     let _ = store.snapshot("test", "2024-02-01").unwrap();
 
+    // Seed the price cache before rebuilding — a held stock position
+    // without a cached price is a data gap that fails the rebuild (never a
+    // silent zero valuation). As-of resolution carries this price forward
+    // through the whole range.
+    let seeder = CachedPriceResolver::new(&store, "test");
+    seeder
+        .seed_cache("AAPL", "2024-01-02", 150.0, "test-fixture")
+        .unwrap();
+
     // Simulate corruption: drop the cache, then rebuild.
     {
         let conn = store.open().unwrap();
@@ -865,9 +874,156 @@ fn cmp_index_storage_as_ledger() {
     assert_eq!(snap.holdings.len(), 2);
 
     // Rebuild views from the ledger after a simulated corruption.
+    // Prediction-contract portfolios use the NoPrices semantics (the index
+    // probability is the value, not a traded price), so the rebuild succeeds
+    // without seeded prices and materializes cash-only daily returns.
     store.rebuild_views("cmp-fed-1m").unwrap();
     let rebuilt = store.snapshot("cmp-fed-1m", "2024-02-01").unwrap();
     assert_eq!(rebuilt.holdings.len(), 2);
+    let returns_rows = store
+        .daily_returns("cmp-fed-1m", "2024-01-15", "2024-01-16")
+        .unwrap();
+    assert!(!returns_rows.is_empty());
+    assert!(returns_rows.iter().all(|row| row.market_value == 0.0));
+}
+
+#[test]
+fn returns_errors_naming_missing_prices_instead_of_zero_valuing() {
+    // Pre-fix behavior: an unseeded price cache valued the AAPL holding at
+    // zero, fabricating a large fake loss. The fix refuses and names the
+    // gap so the caller seeds it.
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
+        )
+        .unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx(
+                "2024-01-15",
+                "buy",
+                Some("AAPL"),
+                Some(100.0),
+                Some(150.0),
+                None,
+            ),
+        )
+        .unwrap();
+
+    let resolver = CachedPriceResolver::new(&store, "test");
+    let err = returns(&store, "test", "2024-01-15", "2024-02-15", &resolver)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("missing cached prices"), "got: {err}");
+    assert!(err.contains("AAPL"), "must name the symbol, got: {err}");
+    assert!(
+        err.contains("portfolio_seed_price"),
+        "must name the remedy, got: {err}"
+    );
+
+    // Seeding the price closes the gap and the computation succeeds.
+    resolver
+        .seed_cache("AAPL", "2024-01-15", 150.0, "test-fixture")
+        .unwrap();
+    let report = returns(&store, "test", "2024-01-15", "2024-02-15", &resolver).unwrap();
+    assert!(report.start_value > 0.0);
+}
+
+#[test]
+fn materialize_returns_fails_without_writing_on_missing_prices() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+        )
+        .unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx(
+                "2024-01-02",
+                "buy",
+                Some("AAPL"),
+                Some(10.0),
+                Some(150.0),
+                None,
+            ),
+        )
+        .unwrap();
+
+    let resolver = CachedPriceResolver::new(&store, "test");
+    let err = store
+        .materialize_returns("test", "2024-01-02", "2024-01-03", &resolver)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("missing cached prices"), "got: {err}");
+    // Buffered writes: the failing materialization leaves no partial view.
+    assert!(
+        store
+            .daily_returns("test", "2024-01-02", "2024-01-03")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn cached_resolver_resolves_as_of_and_seed_invalidates_views() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+        )
+        .unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx(
+                "2024-01-02",
+                "buy",
+                Some("AAPL"),
+                Some(10.0),
+                Some(150.0),
+                None,
+            ),
+        )
+        .unwrap();
+
+    let resolver = CachedPriceResolver::new(&store, "test");
+    // As-of resolution: a price seeded on Friday carries through the weekend.
+    resolver
+        .seed_cache("AAPL", "2024-01-05", 151.0, "test-fixture")
+        .unwrap();
+    assert_eq!(resolver.resolve("AAPL", "2024-01-07"), Some(151.0));
+    assert_eq!(resolver.resolve("AAPL", "2024-01-04"), None);
+
+    store
+        .materialize_returns("test", "2024-01-05", "2024-01-08", &resolver)
+        .unwrap();
+    let rows = store
+        .daily_returns("test", "2024-01-05", "2024-01-08")
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+
+    // Seeding a new price from a date invalidates the materialized view
+    // from that date forward — materialize-then-seed never serves stale rows.
+    resolver
+        .seed_cache("AAPL", "2024-01-06", 160.0, "test-fixture")
+        .unwrap();
+    let remaining = store
+        .daily_returns("test", "2024-01-05", "2024-01-08")
+        .unwrap();
+    assert!(remaining.iter().all(|row| row.date.as_str() < "2024-01-06"));
 }
 
 // Silence unused-import warnings for the test helper's Datelike import

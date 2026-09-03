@@ -547,7 +547,7 @@ impl PredictionMarketsServer {
 
     /// Scan for resolved markets and record their outcomes.
     #[tool(
-        description = "Scan Polymarket and Kalshi for newly resolved markets and record definitive outcomes into the calibration store (idempotent — re-scanning is safe). Only terminal prices (>=0.99 / <=0.01) or explicit Kalshi results count; ambiguous 50-50 resolutions are skipped, never fabricated. This is the self-feeding sense arm of the calibration loop."
+        description = "Scan Polymarket and Kalshi for open and newly resolved markets, feeding the calibration store in two phases: (1) every open market's current price is snapshotted as the pre-resolution probability-at-observation (the earliest snapshot per market is kept), and (2) newly resolved markets consume their snapshot — the Brier loop scores the price the scanner first saw, never the post-resolution price. A market that resolves before its first scan is counted in resolved_without_snapshot and skipped, never fabricated. Ambiguous 50-50 resolutions are skipped. Idempotent — re-scanning is safe. This is the self-feeding sense arm of the calibration loop; run it periodically so snapshots accumulate before resolutions."
     )]
     pub async fn market_check_resolutions(
         &self,
@@ -559,8 +559,47 @@ impl PredictionMarketsServer {
             let mut recorded = 0u32;
             let mut skipped_ambiguous = 0u32;
             let mut already_known = 0u32;
+            let mut snapshotted = 0u32;
+            let mut resolved_without_snapshot = 0u32;
             let mut warnings: Vec<String> = Vec::new();
 
+            // Phase 1 — snapshot open markets: the honest probability-at-
+            // observation. Pre-fix behavior scored the post-resolution price
+            // (Kalshi last_price_dollars of a settled market; a resolved
+            // Polymarket market's terminal price with the outcome derived
+            // from that same price), which guaranteed Brier ≈ 0 for every
+            // scan observation and made the reliability-tier demotion gate
+            // unreachable from scan data.
+            match provider_kalshi::fetch_markets_by_status(
+                &self.http,
+                req.series.as_deref(),
+                "open",
+                limit,
+            )
+            .await
+            {
+                Ok(markets) => {
+                    let mut store = self
+                        .calibration_store
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    snapshotted += provider_kalshi::snapshot_open_markets(&markets, &mut store);
+                }
+                Err(e) => warnings.push(format!("kalshi open scan failed: {e}")),
+            }
+
+            match provider_polymarket::fetch_markets(&self.http, limit, false).await {
+                Ok(markets) => {
+                    let mut store = self
+                        .calibration_store
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    snapshotted += provider_polymarket::snapshot_open_markets(&markets, &mut store);
+                }
+                Err(e) => warnings.push(format!("polymarket open scan failed: {e}")),
+            }
+
+            // Phase 2 — consume snapshots for newly settled markets.
             match provider_kalshi::fetch_markets_by_status(
                 &self.http,
                 req.series.as_deref(),
@@ -570,26 +609,17 @@ impl PredictionMarketsServer {
             .await
             {
                 Ok(markets) => {
-                    let observations: Vec<(String, calibration::ResolvedObservation)> = markets
-                        .iter()
-                        .filter_map(|market| {
-                            let outcome = match market.result.as_str() {
-                                "yes" => Some(true),
-                                "no" => Some(false),
-                                _ => None,
-                            }?;
-                            let bucket = types::canonical_bucket(&market.event_ticker);
-                            let probability =
-                                provider_kalshi::parse_fp(&market.last_price_dollars)?;
-                            Some((
-                                bucket,
-                                calibration::ResolvedObservation {
-                                    probability,
-                                    outcome,
-                                },
-                            ))
-                        })
-                        .collect();
+                    let observations = {
+                        let mut store = self
+                            .calibration_store
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        provider_kalshi::resolved_observations_from_snapshots(
+                            &markets,
+                            &mut store,
+                            &mut resolved_without_snapshot,
+                        )
+                    };
                     self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
                 }
                 Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
@@ -597,38 +627,24 @@ impl PredictionMarketsServer {
 
             match provider_polymarket::fetch_markets(&self.http, limit, true).await {
                 Ok(markets) => {
-                    let mut observations: Vec<(String, calibration::ResolvedObservation)> =
-                        Vec::new();
-                    for market in &markets {
-                        if market.uma_resolution_status != "resolved" {
-                            continue;
-                        }
-                        let Some(price) = market.yes_probability() else {
-                            continue;
-                        };
-                        let outcome = if price >= 0.99 {
-                            Some(true)
-                        } else if price <= 0.01 {
-                            Some(false)
-                        } else {
-                            skipped_ambiguous += 1;
-                            None
-                        };
-                        let Some(outcome) = outcome else { continue };
-                        observations.push((
-                            types::canonical_bucket(&market.slug),
-                            calibration::ResolvedObservation {
-                                probability: price,
-                                outcome,
-                            },
-                        ));
-                    }
+                    let observations = {
+                        let mut store = self
+                            .calibration_store
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        provider_polymarket::resolved_observations_from_snapshots(
+                            &markets,
+                            &mut store,
+                            &mut skipped_ambiguous,
+                            &mut resolved_without_snapshot,
+                        )
+                    };
                     self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
                 }
                 Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
             }
 
-            if recorded > 0
+            if (recorded > 0 || snapshotted > 0)
                 && let Some(path) = &self.calibration_path
             {
                 let store = self
@@ -643,6 +659,8 @@ impl PredictionMarketsServer {
             serde_json::to_value(serde_json::json!({
                 "recorded": recorded,
                 "already_known": already_known,
+                "snapshotted": snapshotted,
+                "resolved_without_snapshot": resolved_without_snapshot,
                 "skipped_ambiguous": skipped_ambiguous,
                 "warnings": warnings,
             }))

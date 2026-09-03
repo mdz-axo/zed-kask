@@ -355,6 +355,9 @@ impl CompaniesServer {
         })
         .await
     }
+    #[tool(
+        description = "Multi-provider fundamental research search for a company (Exa, Tavily, Brave). Returns research claims classified by category (guidance, competitive, macro, financial, risk) with numeric values, mentioned tickers, and dates extracted — the claim feed for expectations_gap's management-guidance estimate and for research notes. Coverage-honest: per-provider status is surfaced; a provider without a configured key is named in the status, never silently skipped."
+    )]
     pub async fn company_research_search(
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,

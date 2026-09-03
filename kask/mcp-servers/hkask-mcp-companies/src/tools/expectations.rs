@@ -14,7 +14,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 #[tool_router(router = expectations_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Expectations gap analysis (Mauboussin's Expectations Investing). Compares three growth estimates: (1) market-implied growth from reverse DCF — what the stock price bakes in, (2) management guidance extracted from recent research claims, (3) your own estimate. Produces a structured gap report showing whether the market is pricing in more or less growth than management guidance and your thesis. Use with research_search to populate claims, then provide your own growth estimate to see the gaps."
+        description = "Expectations gap analysis (Mauboussin's Expectations Investing). Compares three growth estimates: (1) market-implied growth from reverse DCF — what the stock price bakes in, (2) management guidance extracted from recent research claims, (3) your own estimate. Produces a structured gap report showing whether the market is pricing in more or less growth than management guidance and your thesis. Use with company_research_search to populate claims, then provide your own growth estimate to see the gaps."
     )]
     pub async fn expectations_gap(
         &self,
@@ -261,7 +261,7 @@ fn build_gap_analysis(
             "Market-implied growth is broadly consistent with management guidance. The stock is fairly priced relative to the information consensus. Your edge must come from a differentiated view on moat durability, margin trajectory, or competitive dynamics beyond simple growth rates."
         }
         _ => {
-            "Insufficient data to assess the gap between market expectations and management guidance. Try running research_search with a revenue-guidance query to populate claims."
+            "Insufficient data to assess the gap between market expectations and management guidance. Try running company_research_search with a revenue-guidance query to populate claims."
         }
     };
 

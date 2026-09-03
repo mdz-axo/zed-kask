@@ -13,6 +13,79 @@ use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use uuid::Uuid;
 
+/// An attribution row before JSON serialization. `security_return` is
+/// `None` when the end price is missing — the return is unknown, not -100%.
+pub(crate) struct AttributionRow {
+    pub symbol: String,
+    pub mv_start: f64,
+    pub security_return: Option<f64>,
+    pub shares_end: f64,
+    pub p_end: Option<f64>,
+}
+
+/// Symbols excluded from or null-valued in the attribution table because a
+/// close price is missing. Surfaced in the tool output so a data outage is
+/// never indistinguishable from a computed result.
+pub(crate) struct AttributionGaps {
+    pub missing_start_prices: Vec<String>,
+    pub missing_end_prices: Vec<String>,
+}
+
+/// Build attribution rows from start/end positions and fetched close prices.
+///
+/// Pre-fix behavior zero-valued a missing end price, which fabricated a
+/// -100% return and a `gain_loss` of `-mv_start` for every symbol with a
+/// data outage. Now a missing end price nulls the row's return/contribution
+/// and lists the symbol in `missing_end_prices`; a missing start price
+/// excludes the row (it cannot be weighted) and lists it in
+/// `missing_start_prices`. A closed position (shares_end ≈ 0) does not need
+/// an end price — its end weight is 0 by construction — so a missing end
+/// price there is not reported as a gap.
+pub(crate) fn build_attribution_rows(
+    positions_start: &std::collections::HashMap<String, f64>,
+    positions_end: &std::collections::HashMap<String, f64>,
+    prices_start: &serde_json::Map<String, serde_json::Value>,
+    prices_end: &serde_json::Map<String, serde_json::Value>,
+) -> (Vec<AttributionRow>, AttributionGaps) {
+    let mut rows = Vec::new();
+    let mut gaps = AttributionGaps {
+        missing_start_prices: Vec::new(),
+        missing_end_prices: Vec::new(),
+    };
+    for (sym, shares) in positions_start {
+        let Some(p_start) = prices_start
+            .get(sym)
+            .and_then(|v| v.as_f64())
+            .filter(|p| *p > 0.0)
+        else {
+            gaps.missing_start_prices.push(sym.clone());
+            continue;
+        };
+        let p_end = prices_end
+            .get(sym)
+            .and_then(|v| v.as_f64())
+            .filter(|p| *p > 0.0);
+        let shares_end = positions_end.get(sym).copied().unwrap_or(0.0);
+        let security_return = match p_end {
+            Some(p) => Some((p - p_start) / p_start),
+            None => {
+                if shares_end > 0.0001 {
+                    gaps.missing_end_prices.push(sym.clone());
+                }
+                None
+            }
+        };
+        rows.push(AttributionRow {
+            symbol: sym.clone(),
+            mv_start: shares * p_start,
+            security_return,
+            shares_end,
+            p_end,
+        });
+    }
+    (rows, gaps)
+}
+
 #[tool_router(router = analytics_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
@@ -104,54 +177,52 @@ impl CompaniesServer {
             // exceeds this, keep the largest by starting market value. This
             // bounds the calculation and presentation for a single portfolio.
             const MAX_HOLDINGS: usize = 99;
-            let mut rows = Vec::new();
-            for (sym, shares) in &positions_start {
-                let p_start = prices_start
-                    .get(sym)
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let p_end = prices_end
-                    .get(sym)
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                if p_start <= 0.0 {
-                    continue;
-                }
-                let security_return = (p_end - p_start) / p_start;
-                let mv_start = shares * p_start;
-                rows.push((sym.clone(), mv_start, security_return));
-            }
+            let (mut rows, gaps) = build_attribution_rows(
+                &positions_start,
+                &positions_end,
+                &prices_start,
+                &prices_end,
+            );
 
             // If over the cap, sort by market value descending and keep top 99.
             if rows.len() > MAX_HOLDINGS {
                 rows.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                    b.mv_start
+                        .partial_cmp(&a.mv_start)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 rows.truncate(MAX_HOLDINGS);
             }
 
-            let total_mv: f64 = rows.iter().map(|(_, mv, _)| mv).sum();
+            let total_mv: f64 = rows.iter().map(|row| row.mv_start).sum();
             let mut attribution: Vec<serde_json::Value> = rows
                 .into_iter()
-                .map(|(sym, mv_start, ret)| {
+                .map(|row| {
                     let weight = if total_mv > 0.0 {
-                        mv_start / total_mv
+                        row.mv_start / total_mv
                     } else {
                         0.0
                     };
-                    let contribution_bps = weight * ret * 10000.0;
-                    let shares_end = positions_end.get(&sym).copied().unwrap_or(0.0);
-                    let p_end = prices_end
-                        .get(&sym)
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
+                    let contribution_bps = row
+                        .security_return
+                        .map(|ret| weight * ret * 10000.0);
+                    // A closed position has an end weight of 0 by
+                    // construction; an open one needs the end price.
+                    let weight_end_pct = if total_mv <= 0.0 {
+                        Some(0.0)
+                    } else if row.shares_end <= 0.0001 {
+                        Some(0.0)
+                    } else {
+                        row.p_end
+                            .map(|p| row.shares_end * p / total_mv * 100.0)
+                    };
                     serde_json::json!({
-                        "symbol": sym,
+                        "symbol": row.symbol,
                         "weight_start_pct": (weight * 100.0),
-                        "weight_end_pct": if total_mv > 0.0 { shares_end * p_end / total_mv * 100.0 } else { 0.0 },
-                        "security_return_pct": (ret * 100.0),
+                        "weight_end_pct": weight_end_pct,
+                        "security_return_pct": row.security_return.map(|ret| ret * 100.0),
                         "contribution_bps": contribution_bps,
-                        "gain_loss": mv_start * ret,
+                        "gain_loss": row.security_return.map(|ret| row.mv_start * ret),
                     })
                 })
                 .collect();
@@ -163,11 +234,28 @@ impl CompaniesServer {
                 cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
             });
 
+            let missing_prices = serde_json::json!({
+                "start": gaps.missing_start_prices,
+                "end": gaps.missing_end_prices,
+            });
+            let price_gap_note = if gaps.missing_start_prices.is_empty()
+                && gaps.missing_end_prices.is_empty()
+            {
+                None
+            } else {
+                Some(format!(
+                    "{} symbol(s) excluded or null-valued for missing close prices — see missing_prices; returns are unknown, not -100%",
+                    gaps.missing_start_prices.len() + gaps.missing_end_prices.len()
+                ))
+            };
+
             Ok(fibo::enrich_with_ontology(serde_json::json!({
                 "portfolio": req.portfolio,
                 "from": req.from,
                 "to": req.to,
                 "attribution": attribution,
+                "missing_prices": missing_prices,
+                "note": price_gap_note,
                 "errors": errors,
             }), "portfolio_attribution"))
         }).await
@@ -219,19 +307,30 @@ impl CompaniesServer {
             }
             positions.retain(|_, v| *v > 0.0001);
 
-            // Fetch prices and market values
+            // Fetch prices and market values. A quote that succeeds but
+            // carries no parseable price is a data gap, not a zero-valued
+            // holding — zeroing it made the symbol silently vanish from the
+            // weighted averages.
             let mut market_values = Vec::new();
             let mut errors = Vec::new();
+            let mut missing_prices = Vec::new();
             for sym in positions.keys() {
                 match self.fetch("stock_quote", sym, &[]).await {
                     Ok(value) => {
                         let price = value
                             .as_array()
                             .and_then(|a| a.first())
-                            .and_then(|q| q.get("price").and_then(|p| p.as_f64()))
-                            .unwrap_or(0.0);
-                        let shares = positions.get(sym).copied().unwrap_or(0.0);
-                        market_values.push((sym.clone(), shares, price, shares * price));
+                            .and_then(|q| q.get("price").and_then(|p| p.as_f64()));
+                        match price {
+                            Some(price) => {
+                                let shares = positions.get(sym).copied().unwrap_or(0.0);
+                                market_values.push((sym.clone(), shares, price, shares * price));
+                            }
+                            None => {
+                                missing_prices
+                                    .push(format!("{sym}: quote returned no parseable price"));
+                            }
+                        }
                     }
                     Err(e) => {
                         errors.push(format!("{sym} quote: {}", e.to_json_string()));
@@ -242,7 +341,7 @@ impl CompaniesServer {
             let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
             if total_mv <= 0.0 {
                 return Ok(serde_json::json!(
-                    {"characteristics": {}, "message": "no market value"}
+                    {"characteristics": {}, "message": "no market value", "missing_prices": missing_prices, "errors": errors}
                 ));
             }
 
@@ -376,6 +475,7 @@ impl CompaniesServer {
                     "total_market_value": total_mv,
                     "position_count": market_values.len(),
                     "characteristics": characteristics,
+                    "missing_prices": missing_prices,
                     "errors": errors,
                 }),
                 "portfolio_characteristics",
@@ -975,5 +1075,84 @@ impl CompaniesServer {
 
             Ok(fibo::enrich_with_ontology(output, "scenario_analysis"))
         }).await
+    }
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn positions(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    fn prices(pairs: &[(&str, f64)]) -> serde_json::Map<String, serde_json::Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+            .collect()
+    }
+
+    #[test]
+    fn missing_end_price_nulls_return_instead_of_fabricating_total_loss() {
+        // Pre-fix: p_end missing -> unwrap_or(0.0) -> (0-100)/100 = -100%.
+        let (rows, gaps) = build_attribution_rows(
+            &positions(&[("AAPL", 10.0)]),
+            &positions(&[("AAPL", 10.0)]),
+            &prices(&[("AAPL", 100.0)]),
+            &prices(&[]),
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].security_return.is_none(),
+            "return must be unknown, not -1.0"
+        );
+        assert_eq!(gaps.missing_end_prices, vec!["AAPL".to_string()]);
+        assert!(gaps.missing_start_prices.is_empty());
+    }
+
+    #[test]
+    fn closed_position_with_missing_end_price_is_not_a_data_gap() {
+        // Sold before the to-date: the end weight is 0 by construction, so a
+        // missing end price is not reported as a gap.
+        let (rows, gaps) = build_attribution_rows(
+            &positions(&[("AAPL", 10.0)]),
+            &positions(&[]),
+            &prices(&[("AAPL", 100.0)]),
+            &prices(&[]),
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].security_return.is_none());
+        assert!(gaps.missing_end_prices.is_empty());
+    }
+
+    #[test]
+    fn missing_start_price_excludes_row_and_is_surfaced() {
+        let (rows, gaps) = build_attribution_rows(
+            &positions(&[("AAPL", 10.0), ("MSFT", 5.0)]),
+            &positions(&[("AAPL", 10.0), ("MSFT", 5.0)]),
+            &prices(&[("MSFT", 200.0)]),
+            &prices(&[("MSFT", 220.0)]),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].symbol, "MSFT");
+        assert_eq!(gaps.missing_start_prices, vec!["AAPL".to_string()]);
+    }
+
+    #[test]
+    fn present_prices_compute_return() {
+        let (rows, gaps) = build_attribution_rows(
+            &positions(&[("AAPL", 10.0)]),
+            &positions(&[("AAPL", 10.0)]),
+            &prices(&[("AAPL", 100.0)]),
+            &prices(&[("AAPL", 110.0)]),
+        );
+        assert_eq!(rows.len(), 1);
+        let ret = rows[0].security_return.expect("both prices present");
+        assert!((ret - 0.10).abs() < 1e-9);
+        assert_eq!(rows[0].mv_start, 1000.0);
+        assert!(gaps.missing_start_prices.is_empty());
+        assert!(gaps.missing_end_prices.is_empty());
     }
 }

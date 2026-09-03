@@ -66,23 +66,45 @@ pub fn returns(
 
     positions_start.retain(|_, v| *v > 0.0001);
 
-    let all_symbols: Vec<String> = positions_start
-        .keys()
-        .chain(positions_end.keys())
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
     let mut prices_at: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    for date in [from, to] {
-        for sym in &all_symbols {
-            if let Some(close) = prices.resolve(sym, date) {
-                prices_at.insert(format!("{date}:{sym}"), close);
+    // A held position without a resolvable price is a data gap, not a zero
+    // valuation. Pre-fix behavior zero-valued missing prices, which fabricated
+    // large fake losses (a cash deposit plus an unseeded cache read as a
+    // total loss). Gate only resolvers that expect prices — NoPrices
+    // portfolios (CMP contract indices) legitimately value holdings at zero.
+    let mut missing_prices: Vec<String> = Vec::new();
+    let valuation_dates: [(&str, &std::collections::HashMap<String, f64>); 2] =
+        [(from, &positions_start), (to, &positions_end)];
+    for (date, positions) in valuation_dates {
+        for (sym, shares) in positions {
+            if shares.abs() <= 0.0001 {
+                continue;
+            }
+            match prices.resolve(sym, date) {
+                Some(close) => {
+                    prices_at.insert(format!("{date}:{sym}"), close);
+                }
+                None if prices.expects_prices() => {
+                    missing_prices.push(format!("{date}:{sym}"));
+                }
+                None => {}
             }
         }
     }
+    if !missing_prices.is_empty() {
+        return Err(format!(
+            "missing cached prices for {} held position(s): {}. A missing price \
+             is a data gap, not a zero valuation — seed each (symbol, date) with \
+             portfolio_seed_price and retry",
+            missing_prices.len(),
+            missing_prices.join(", ")
+        )
+        .into());
+    }
 
+    // Every held position has a price by this point (or the resolver
+    // legitimately expects none, in which case holdings value at zero by
+    // design); the fallback only ever multiplies a ~zero position.
     let mv_at = |positions: &std::collections::HashMap<String, f64>, date: &str| -> f64 {
         positions
             .iter()
@@ -240,9 +262,12 @@ impl CachedPriceResolver {
         }
     }
 
-    /// Seed the cache with a price observation. Used by the companies server
-    /// after a successful FMP/EODHD fetch so subsequent `returns` calls hit
-    /// the cache instead of the API.
+    /// Seed the cache with a price observation (the `portfolio_seed_price`
+    /// tool). Fetch prices via the companies server's `stock_quote` /
+    /// `historical_price` and seed them here; `returns` and
+    /// `materialize_returns` read only this cache. Invalidates materialized
+    /// views from `date` forward — the same invalidation `apply` performs
+    /// for a transaction — so materialize-then-seed never serves stale rows.
     pub fn seed_cache(
         &self,
         symbol: &str,
@@ -257,16 +282,33 @@ impl CachedPriceResolver {
             params![self.portfolio, symbol, date, close, source, now_rfc3339()],
         )
         .map_err(|e| format!("seed price cache: {e}"))?;
+        conn.execute(
+            "DELETE FROM daily_holdings WHERE portfolio_name = ?1 AND date >= ?2",
+            params![self.portfolio, date],
+        )
+        .map_err(|e| format!("invalidate holdings after seed: {e}"))?;
+        conn.execute(
+            "DELETE FROM daily_returns WHERE portfolio_name = ?1 AND date >= ?2",
+            params![self.portfolio, date],
+        )
+        .map_err(|e| format!("invalidate returns after seed: {e}"))?;
         Ok(())
     }
 }
 
 impl PriceResolver for CachedPriceResolver {
+    /// As-of resolution: the latest cached price on or before `date`.
+    /// Valuing at the last known price is the standard semantics and keeps
+    /// weekend/holiday days on the cache working (they carry the prior close)
+    /// instead of silently zeroing. A `None` means no price was ever seeded
+    /// on or before the date — a genuine gap the caller must seed.
     fn resolve(&self, symbol: &str, date: &str) -> Option<f64> {
         let conn = self.store.open().ok()?;
         let mut stmt = conn
             .prepare(
-                "SELECT close FROM price_cache WHERE portfolio_name = ?1 AND symbol = ?2 AND date = ?3",
+                "SELECT close FROM price_cache
+                 WHERE portfolio_name = ?1 AND symbol = ?2 AND date <= ?3
+                 ORDER BY date DESC LIMIT 1",
             )
             .ok()?;
         let close: Option<f64> = stmt

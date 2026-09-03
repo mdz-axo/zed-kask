@@ -332,10 +332,21 @@ impl<'a> LedgerFilter<'a> {
 }
 
 /// Resolves prices for a set of (symbol, date) pairs. Implemented by the
-/// consumer (the companies server reads its FMP/EODHD cache + live API; a
-/// test reads a fixture). The portfolio store is provider-agnostic.
+/// consumer (a test reads a fixture; the portfolio server's
+/// [`CachedPriceResolver`](crate::returns::CachedPriceResolver) reads the
+/// `price_cache` table seeded via the `portfolio_seed_price` tool). The
+/// portfolio store is provider-agnostic.
 pub trait PriceResolver {
     fn resolve(&self, symbol: &str, date: &str) -> Option<f64>;
+
+    /// Whether the resolver is expected to produce prices for held
+    /// positions. When false, a missing price is the intended semantics
+    /// (not a data gap), so returns computations skip the missing-price
+    /// gate and value holdings at zero. [`NoPrices`] returns false;
+    /// cache-backed resolvers keep the default (true).
+    fn expects_prices(&self) -> bool {
+        true
+    }
 }
 
 /// A no-op resolver that returns `None` for every symbol — for portfolios
@@ -346,6 +357,10 @@ pub struct NoPrices;
 impl PriceResolver for NoPrices {
     fn resolve(&self, _symbol: &str, _date: &str) -> Option<f64> {
         None
+    }
+
+    fn expects_prices(&self) -> bool {
+        false
     }
 }
 

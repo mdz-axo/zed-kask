@@ -141,6 +141,82 @@ impl GammaMarket {
     }
 }
 
+// ── Calibration scan decision cores (pure, HTTP-free) ─────────────────
+
+/// Snapshot open (unresolved) markets into the calibration store — the
+/// honest probability-at-observation for the future Brier score. Returns
+/// the count of markets snapshotted for the first time; re-scanning keeps
+/// the EARLIEST snapshot per market.
+pub(crate) fn snapshot_open_markets(
+    markets: &[GammaMarket],
+    store: &mut crate::calibration::CalibrationStore,
+) -> u32 {
+    let mut snapshotted = 0;
+    for market in markets {
+        if market.closed || market.uma_resolution_status == "resolved" {
+            continue;
+        }
+        let Some(probability) = market.yes_probability() else {
+            continue;
+        };
+        let bucket = crate::types::canonical_bucket(&market.slug);
+        if store.record_pending(
+            &market.id,
+            crate::calibration::PendingSnapshot {
+                bucket,
+                probability,
+            },
+        ) {
+            snapshotted += 1;
+        }
+    }
+    snapshotted
+}
+
+/// Consume pre-resolution snapshots for resolved markets. The outcome is
+/// derived from the terminal price (>=0.99 yes / <=0.01 no — for a resolved
+/// market the terminal price IS the resolution declaration); the scored
+/// probability comes from the pre-resolution snapshot. A resolved market
+/// with no snapshot is counted in `resolved_without_snapshot` and NEVER
+/// recorded — its terminal price is not an observation, and scoring it
+/// would be self-fulfilling (Brier ≈ 0 by construction).
+pub(crate) fn resolved_observations_from_snapshots(
+    markets: &[GammaMarket],
+    store: &mut crate::calibration::CalibrationStore,
+    skipped_ambiguous: &mut u32,
+    resolved_without_snapshot: &mut u32,
+) -> Vec<(String, crate::calibration::ResolvedObservation)> {
+    let mut observations = Vec::new();
+    for market in markets {
+        if market.uma_resolution_status != "resolved" {
+            continue;
+        }
+        let Some(price) = market.yes_probability() else {
+            continue;
+        };
+        let outcome = if price >= 0.99 {
+            Some(true)
+        } else if price <= 0.01 {
+            Some(false)
+        } else {
+            *skipped_ambiguous += 1;
+            None
+        };
+        let Some(outcome) = outcome else { continue };
+        match store.take_pending(&market.id) {
+            Some(snapshot) => observations.push((
+                snapshot.bucket,
+                crate::calibration::ResolvedObservation {
+                    probability: snapshot.probability,
+                    outcome,
+                },
+            )),
+            None => *resolved_without_snapshot += 1,
+        }
+    }
+    observations
+}
+
 /// Fetch markets directly (not via events). `closed=true` returns
 /// resolved/closed markets — the resolution-check feed.
 pub async fn fetch_markets(
@@ -232,4 +308,86 @@ pub async fn fetch_events(
     }
     serde_json::from_str(&body)
         .map_err(|e| McpToolError::unavailable(format!("Gamma events parse failed: {e}")))
+}
+
+#[cfg(test)]
+mod calibration_scan_tests {
+    use super::*;
+    use crate::calibration::CalibrationStore;
+
+    fn gamma(id: &str, slug: &str, prices: &str, resolved: bool, closed: bool) -> GammaMarket {
+        GammaMarket {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            outcome_prices: prices.to_string(),
+            uma_resolution_status: if resolved {
+                "resolved".to_string()
+            } else {
+                String::new()
+            },
+            closed,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolved_market_without_snapshot_is_never_recorded() {
+        // Pre-fix behavior scored the resolved market's terminal price (1.0
+        // on yes), which is the outcome source itself — Brier ≈ 0 by
+        // construction. Now it is counted and skipped.
+        let mut store = CalibrationStore::new();
+        let resolved = vec![gamma("pm-1", "will-x-happen", "[\"1\", \"0\"]", true, true)];
+        let mut skipped_ambiguous = 0;
+        let mut resolved_without_snapshot = 0;
+        let observations = resolved_observations_from_snapshots(
+            &resolved,
+            &mut store,
+            &mut skipped_ambiguous,
+            &mut resolved_without_snapshot,
+        );
+        assert!(observations.is_empty());
+        assert_eq!(resolved_without_snapshot, 1);
+        assert_eq!(skipped_ambiguous, 0);
+    }
+
+    #[test]
+    fn snapshot_then_resolution_scores_the_pre_resolution_price() {
+        let mut store = CalibrationStore::new();
+        let open = vec![gamma("pm-1", "will-x-happen", "[\"0.35\", \"0.65\"]", false, false)];
+        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
+        // Drift toward resolution keeps the earliest snapshot.
+        let drifted = vec![gamma("pm-1", "will-x-happen", "[\"0.90\", \"0.10\"]", false, false)];
+        assert_eq!(snapshot_open_markets(&drifted, &mut store), 0);
+        let resolved = vec![gamma("pm-1", "will-x-happen", "[\"1.0\", \"0.0\"]", true, true)];
+        let mut skipped_ambiguous = 0;
+        let mut resolved_without_snapshot = 0;
+        let observations = resolved_observations_from_snapshots(
+            &resolved,
+            &mut store,
+            &mut skipped_ambiguous,
+            &mut resolved_without_snapshot,
+        );
+        assert_eq!(observations.len(), 1);
+        assert!((observations[0].1.probability - 0.35).abs() < 1e-9);
+        assert!(observations[0].1.outcome);
+    }
+
+    #[test]
+    fn ambiguous_resolution_is_skipped_never_fabricated() {
+        let mut store = CalibrationStore::new();
+        let open = vec![gamma("pm-2", "will-y-happen", "[\"0.55\", \"0.45\"]", false, false)];
+        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
+        let ambiguous = vec![gamma("pm-2", "will-y-happen", "[\"0.55\", \"0.45\"]", true, true)];
+        let mut skipped_ambiguous = 0;
+        let mut resolved_without_snapshot = 0;
+        let observations = resolved_observations_from_snapshots(
+            &ambiguous,
+            &mut store,
+            &mut skipped_ambiguous,
+            &mut resolved_without_snapshot,
+        );
+        assert!(observations.is_empty());
+        assert_eq!(skipped_ambiguous, 1);
+        assert_eq!(resolved_without_snapshot, 0);
+    }
 }

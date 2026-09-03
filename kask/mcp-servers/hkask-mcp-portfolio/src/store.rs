@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::returns::{CachedPriceResolver, parse_ymd};
 use crate::types::{
-    AssetType, DailyReturnRow, Holding, HoldingsSnapshot, LedgerFilter, PortfolioError,
+    AssetType, DailyReturnRow, Holding, HoldingsSnapshot, LedgerFilter, NoPrices, PortfolioError,
     PriceResolver, Transaction, TxType,
 };
 
@@ -185,6 +185,29 @@ impl PortfolioStore {
             self.check_exists(&conn, name)?;
         }
         Ok(())
+    }
+
+    /// The portfolio's asset type (from the `portfolios` table).
+    /// Determines the price semantics [`rebuild_views`](Self::rebuild_views)
+    /// uses: prediction-contract portfolios value holdings at the index
+    /// probability (the documented NoPrices semantics), stock portfolios
+    /// require seeded prices.
+    pub fn asset_type(&self, name: &str) -> Result<AssetType, PortfolioError> {
+        let conn = self.open()?;
+        self.check_exists(&conn, name)?;
+        let asset_type: String = conn
+            .query_row(
+                "SELECT asset_type FROM portfolios WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("query asset_type: {e}"))?;
+        match asset_type.as_str() {
+            "stock" => Ok(AssetType::Stock),
+            "prediction_contract" => Ok(AssetType::PredictionContract),
+            "portfolio" => Ok(AssetType::Portfolio),
+            other => Err(format!("unknown asset_type '{other}' for portfolio {name}").into()),
+        }
     }
 
     /// Delete a portfolio and all its transactions, holdings, and returns
@@ -475,14 +498,25 @@ impl PortfolioStore {
             self.snapshot(name, date)?;
         }
         // Materialize daily returns across the full date span. Uses the
-        // price cache (seeded by the consumer) for market values; days
-        // without cached prices report market_value = 0 and daily_return
-        // derived from cash flows only.
+        // price cache (seeded via portfolio_seed_price) for stock
+        // portfolios; prediction-contract portfolios (CMP indices) value
+        // holdings at the index probability, not a traded price, so they
+        // use the NoPrices semantics. A held stock position with no price
+        // on or before a day is a data gap and fails the rebuild — it is
+        // never silently zero-valued.
+        let asset_type = self.asset_type(name)?;
         if let Some(first) = dates.iter().next()
             && let Some(last) = dates.iter().next_back()
         {
-            let resolver = CachedPriceResolver::new(self, name);
-            self.materialize_returns(name, first, last, &resolver)?;
+            match asset_type {
+                AssetType::PredictionContract => {
+                    self.materialize_returns(name, first, last, &NoPrices)?;
+                }
+                AssetType::Stock | AssetType::Portfolio => {
+                    let resolver = CachedPriceResolver::new(self, name);
+                    self.materialize_returns(name, first, last, &resolver)?;
+                }
+            }
         }
         Ok(())
     }
@@ -492,7 +526,13 @@ impl PortfolioStore {
     /// of holdings at that day's prices + cash) and the day-over-day return,
     /// then writes a row to `daily_returns`. Reads prices via the supplied
     /// resolver (typically [`CachedPriceResolver`] over the `price_cache`
-    /// table). Days without prices contribute market_value = 0.
+    /// table, which resolves as-of the last price on or before each day).
+    ///
+    /// A held position with no resolvable price is a data gap, not a zero
+    /// valuation: the call fails naming the gaps and writes nothing (rows
+    /// are buffered and committed only when the range is gap-free). The gap
+    /// gate is skipped for resolvers that do not expect prices (NoPrices
+    /// portfolios value holdings at zero by design).
     ///
     /// This is the realization of the `daily_returns` materialized view
     /// declared in the schema. Idempotent: re-running over the same range
@@ -539,6 +579,10 @@ impl PortfolioStore {
 
         let mut prev_total: Option<f64> = None;
         let mut current_date = from_date;
+        // Buffered rows — committed only when the range is gap-free, so a
+        // failing materialization never leaves a partial view.
+        let mut rows: Vec<(String, f64, f64, f64, f64)> = Vec::new();
+        let mut missing_prices: Vec<String> = Vec::new();
         while current_date <= to_date {
             let date_str = current_date.format("%Y-%m-%d").to_string();
 
@@ -549,15 +593,23 @@ impl PortfolioStore {
                 }
             }
 
-            // Market value: sum(shares * price) using the resolver.
-            let market_value: f64 = positions
-                .iter()
-                .filter(|(_, shares)| shares.abs() > 0.0001)
-                .map(|(symbol, shares)| {
-                    let price = prices.resolve(symbol, &date_str).unwrap_or(0.0);
-                    shares * price
-                })
-                .sum();
+            // Market value: sum(shares * price) using the resolver. A held
+            // position with no resolvable price is a data gap — collected
+            // and reported, never silently zero-valued (the pre-fix behavior
+            // fabricated a one-day total-loss crash in the return series).
+            let mut market_value: f64 = 0.0;
+            for (symbol, shares) in positions.iter() {
+                if shares.abs() <= 0.0001 {
+                    continue;
+                }
+                match prices.resolve(symbol, &date_str) {
+                    Some(price) => market_value += shares * price,
+                    None if prices.expects_prices() => {
+                        missing_prices.push(format!("{date_str}:{symbol}"));
+                    }
+                    None => {}
+                }
+            }
             let total = market_value + cash;
 
             // Cash flow on this date: sum of deposit/withdrawal amounts.
@@ -580,18 +632,33 @@ impl PortfolioStore {
                 _ => 0.0,
             };
 
-            conn.execute(
-                "INSERT OR REPLACE INTO daily_returns (portfolio_name, date, market_value, cash, total, daily_return)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![name, date_str, market_value, cash, total, daily_return],
-            )
-            .map_err(|e| format!("materialize daily_returns: {e}"))?;
+            rows.push((date_str, market_value, cash, total, daily_return));
 
             prev_total = Some(total);
             match current_date.succ_opt() {
                 Some(next) => current_date = next,
                 None => break,
             }
+        }
+
+        if !missing_prices.is_empty() {
+            return Err(format!(
+                "missing cached prices for {} held position(s) across {from}..={to}: {}. \
+                 A missing price is a data gap, not a zero valuation — seed each \
+                 (symbol, date) with portfolio_seed_price and retry",
+                missing_prices.len(),
+                missing_prices.join(", ")
+            )
+            .into());
+        }
+
+        for (date_str, market_value, cash, total, daily_return) in rows {
+            conn.execute(
+                "INSERT OR REPLACE INTO daily_returns (portfolio_name, date, market_value, cash, total, daily_return)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![name, date_str, market_value, cash, total, daily_return],
+            )
+            .map_err(|e| format!("materialize daily_returns: {e}"))?;
         }
         Ok(())
     }

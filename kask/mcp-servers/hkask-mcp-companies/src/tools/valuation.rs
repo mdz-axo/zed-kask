@@ -1137,7 +1137,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Use this when a skill valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
+        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Pass forecast_probability (the forecast's own confidence that the price change lands within the tolerance band) so Brier scoring measures the forecast's calibration — without it, forecast_record falls back to a hardcoded 0.7 prior. Use this when a skill valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
     )]
     pub async fn forecast_persist(
         &self,
@@ -1153,6 +1153,14 @@ impl CompaniesServer {
             }
             if let Some(value) = req.current_price {
                 validate_finite("current_price", value)?;
+            }
+            if let Some(probability) = req.forecast_probability {
+                validate_finite("forecast_probability", probability)?;
+                if !(0.0..=1.0).contains(&probability) {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "forecast_probability must be within [0, 1], got {probability}"
+                    )));
+                }
             }
             // Resolve the forecast price change: prefer the direct field, else
             // compute from forecast_price and current_price. Reject if neither
@@ -1211,6 +1219,7 @@ impl CompaniesServer {
                 "forecast_price": req.forecast_price,
                 "current_price": req.current_price,
                 "forecast_price_change": forecast_price_change,
+                "forecast_probability": req.forecast_probability,
             });
 
             self.save_forecast(PersistedForecast {
@@ -1234,7 +1243,12 @@ impl CompaniesServer {
                 "forecast_price": req.forecast_price,
                 "current_price": req.current_price,
                 "forecast_price_change": forecast_price_change,
-                "note": "Pre-computed price target persisted without a decomposition model. Call forecast_record with this forecast_id when the horizon passes to close the Brier loop. Gap decomposition will be unavailable (no projected model).",
+                "forecast_probability": req.forecast_probability,
+                "note": if req.forecast_probability.is_some() {
+                    "Pre-computed price target persisted without a decomposition model. Call forecast_record with this forecast_id when the horizon passes to close the Brier loop. Gap decomposition will be unavailable (no projected model)."
+                } else {
+                    "Persisted WITHOUT forecast_probability — forecast_record will fall back to a hardcoded 0.7 Brier prior, so the score will not measure this forecast's own calibration. Pass forecast_probability on the next persist."
+                },
             }))
         })
         .await
