@@ -315,35 +315,59 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
 4. For PDFs that may need OCR, call `corpus_is_complex` first:
    - `path`: path to each PDF
    - If complex and OCR is available, call `corpus_convert` with
-     `force_ocr: true` for that file. OCR concurrency is bounded by
+     `force_ocr: true` for that file (the page-by-page OCR pipeline —
+     `corpus_ocr` is the single-image tool; on PDFs it routes through the
+     same pipeline and errors on zero text). OCR concurrency is bounded by
      `ocr_concurrency` (default 4, overridable via `HKASK_OCR_CONCURRENCY`).
      For multiple complex PDFs, spawn subagents per PDF up to
      `ocr_concurrency` concurrent agents.
-   - If complex and OCR unavailable, log warning: "PDF {{ filename }}
-     requires OCR but OCR is unavailable — skipping" and continue.
+   - If complex and OCR unavailable, HALT with a failure report naming
+     the file: "PDF {{ filename }} requires OCR but OCR is unavailable".
+     Never skip the file and continue — a silently skipped source is data
+     loss presented as progress.
+   - After OCR, verify the OCR output the same way as any extraction
+     (word-count floor in step 5). An OCR result with zero words is a
+     failure, not a success.
 
-5. Verify the conversion output:
+5. Verify the conversion output — count reconciliation AND per-file word
+   counts. Byte-size checks are insufficient: a 412-byte extraction of a
+   scanned PDF is zero-word garbage that passes a `< 100c` check (observed:
+   5 of 138 extractions were 21–412 bytes of garbage and passed the old
+   gate). Run the word-count audit:
    ```
-   find corpus/extracted/{{ entity_ref_prefix }}/ -type f | wc -l
-   ```
-   Also check that output files have non-trivial content (not empty or
-   near-empty):
-   ```
-   find corpus/extracted/{{ entity_ref_prefix }}/ -type f -size -100c | wc -l
+   python3 -c "
+   import os
+   d = 'corpus/extracted/{{ entity_ref_prefix }}'
+   files = sorted(os.listdir(d))
+   failed = []
+   for f in files:
+       text = open(os.path.join(d, f), encoding='utf-8', errors='replace').read()
+       words = len(text.split())
+       if words < 50:
+           failed.append((f, len(text), words))
+   print(f'{len(files)} extracted, {len(failed)} failed the word-count floor')
+   for f, size, words in failed:
+       print(f'  {f}: {size}B, {words} words')
+   "
    ```
 
-6. **Quality gate**: conversion rate ≥ 80% AND fewer than 10% of output
-   files are near-empty (< 100 bytes). Call `lisp_eval`:
+6. **Quality gate**: extracted_count == source_count (every input file
+   has an output — no silent skips) AND zero failed extractions (every
+   file passes the ≥ 50-word floor or has been routed through OCR). A file
+   whose extraction is empty or garbage is a FAILED EXTRACTION requiring
+   OCR — it is NEVER "not a valid source". Call `lisp_eval`:
    ```
-   form: "(let ((conv_rate (/ extracted_count source_count))
-                 (empty_rate (/ empty_count extracted_count)))
-            (if (and (>= conv_rate 0.80) (< empty_rate 0.10))
-              'pass
-              'fail))"
+   form: "(if (= extracted_count source_count)
+            (if (= failed_extractions 0) 'pass 'fail-quality)
+            'fail-coverage)"
    ```
-   Substitute actual counts as literals. If `'fail`, halt with error:
-   "conversion quality below threshold: {{ conv_rate }} converted,
-   {{ empty_rate }} near-empty".
+   Substitute actual counts as literals.
+   - `'pass`: proceed to Stage 2
+   - `'fail-coverage`: HALT — files were skipped silently; identify them
+     before proceeding
+   - `'fail-quality`: route every failed extraction through OCR
+     (`corpus_convert` with `force_ocr: true`), re-run the audit, and do
+     not proceed until all pass. Never drop a failed file from the corpus.
 
 ### Stage 2 — Chunk the text
 
@@ -411,12 +435,32 @@ directory:
    "
    ```
 
-4. **Quality gate**: chunk count > 0 AND chunk count is in the expected
-   range for the corpus size. Call `lisp_eval`:
+4. Verify source coverage — every extracted file must appear in the chunk
+   output. A silent per-file drop here corrupted a real run (13 of 133
+   sources vanished from the v2 chunk set with no error). Reconcile:
+   ```
+   python3 -c "
+   import json, os
+   sources = set()
+   with open('corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl') as f:
+       for line in f:
+           sources.add(json.loads(line).get('source'))
+   extracted = set(os.listdir('corpus/extracted/{{ entity_ref_prefix }}'))
+   missing = extracted - sources
+   print(f'{len(sources)} of {len(extracted)} sources chunked')
+   for m in sorted(missing):
+       print(f'  MISSING: {m}')
+   "
+   ```
+
+5. **Quality gate**: chunk count > 0 AND chunk count in the expected
+   range AND source coverage complete (distinct_sources ==
+   extracted_count). Call `lisp_eval`:
    ```
    form: "(if (and (> chunk_count 0)
                     (>= chunk_count expected_min)
-                    (<= chunk_count expected_max))
+                    (<= chunk_count expected_max)
+                    (= distinct_sources extracted_count))
             'pass
             (if (> chunk_count 0)
               'suspicious
@@ -429,6 +473,10 @@ directory:
      chunking parameters, but proceed if investigation confirms the count
      is reasonable for this corpus
    - `'fail`: halt with error: "chunking produced no output"
+   - Missing sources (coverage failure) is a HALT regardless of the chunk
+     count: re-chunk the missing files; never proceed with silent coverage
+     loss. The chunk tool's own result reports `total_documents` — verify
+     it equals the extracted file count at invocation time.
 
 ### Stage 3 — Embed the chunks
 
@@ -751,9 +799,9 @@ step-up ramp.
 |---------|-----------|--------|
 | Empty corpus source folder | `find` returns 0 files | Error: "corpus_source is empty or does not exist" — HALT |
 | No text-extractable files | All files are binary/corrupt | Error: "no readable text files in corpus_source" — HALT |
-| OCR needed but unavailable | `corpus_is_complex` returns true, OCR fails | Log warning per file, skip, continue with remaining files |
+| OCR needed but unavailable | `corpus_is_complex` returns true, OCR fails | HALT with a failure report naming the file — never skip silently |
 | Empty conversion output | `corpus_convert` produces 0 text files | Error: "no text extracted from any file" — HALT |
-| Low conversion quality | >20% of files failed to convert, or >10% near-empty | Error with conversion rate — HALT |
+| Low conversion quality | any extraction fails the ≥ 50-word floor | Route failed files through OCR and re-audit — HALT until all pass; a failed extraction is never "not a valid source" |
 | Zero chunks produced | `corpus_chunk` output has 0 lines | Error: "chunking produced no output" — HALT |
 | Chunk count outside expected range | chunk_count < expected_min or > expected_max | Warning: investigate chunking parameters before proceeding |
 | Tagging batch timeout | `corpus_tag_chunks` times out on a batch | Reduce concurrency to 2, retry. If still fails, reduce batch size to 100 and re-split. Do NOT skip batches. |

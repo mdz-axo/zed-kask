@@ -60,6 +60,7 @@ pub(crate) struct ConvertService<'a> {
 
 /// Successful page-pipeline OCR outcome: assembled text plus the
 /// verification-report fields tool results surface.
+#[derive(Debug)]
 pub(crate) struct PipelineOcrOutcome {
     pub(crate) text: String,
     pub(crate) pages: usize,
@@ -67,6 +68,34 @@ pub(crate) struct PipelineOcrOutcome {
     pub(crate) page_count_match: bool,
     pub(crate) empty_pages: Vec<usize>,
     pub(crate) error_count: usize,
+}
+
+/// Assemble pipeline results into an outcome, erroring when the assembled
+/// text is empty — zero text after a pipeline run is a failure (every page
+/// empty or errored), never a silent success.
+fn assemble_pipeline_outcome(outcome: PipelineOutcome) -> Result<PipelineOcrOutcome, McpToolError> {
+    let text = outcome
+        .results
+        .iter()
+        .map(|result| result.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.trim().is_empty() {
+        return Err(McpToolError::unavailable(format!(
+            "OCR produced no text: pages={}, empty_pages={:?}, errors={}",
+            outcome.results.len(),
+            outcome.report.empty_pages,
+            outcome.errors.len()
+        )));
+    }
+    Ok(PipelineOcrOutcome {
+        text,
+        pages: outcome.results.len(),
+        verification_passed: outcome.report.passed,
+        page_count_match: outcome.report.page_count_match,
+        empty_pages: outcome.report.empty_pages,
+        error_count: outcome.errors.len(),
+    })
 }
 
 impl<'a> ConvertService<'a> {
@@ -266,30 +295,7 @@ impl<'a> ConvertService<'a> {
         )
         .await;
         self.persist_pipeline_outcome(&outcome).await;
-        let text = outcome
-            .results
-            .iter()
-            .map(|result| result.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        // Zero text after a pipeline run is a failure (every page empty or
-        // errored) — surface it with the pipeline's own diagnostics rather
-        // than returning a silent empty success.
-        if text.trim().is_empty() {
-            return Err(McpToolError::unavailable(format!(
-                "OCR produced no text: pages={expected}, empty_pages={:?}, errors={}",
-                outcome.report.empty_pages,
-                outcome.errors.len()
-            )));
-        }
-        Ok(PipelineOcrOutcome {
-            text,
-            pages: expected,
-            verification_passed: outcome.report.passed,
-            page_count_match: outcome.report.page_count_match,
-            empty_pages: outcome.report.empty_pages,
-            error_count: outcome.errors.len(),
-        })
+        assemble_pipeline_outcome(outcome)
     }
 
     /// Persist pipeline outcome for Regulation observability.
@@ -1426,4 +1432,233 @@ pub(crate) enum ExtractOutcome {
         ocr_pages: Vec<usize>,
         verdicts: Vec<crate::ocr::TriageVerdict>,
     },
+}
+
+#[cfg(test)]
+mod ocr_guards {
+    use super::*;
+    use crate::ocr::document::VerificationReport;
+    use crate::ocr::llm_ocr::LlmOcrExecutor;
+    use crate::ocr::{OcrBackend, OcrResult};
+    use hkask_types::template::LLMParameters;
+    use hkask_types::{ChatToolDefinition, InferenceError, InferenceResult, InferenceUsage};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// Canonical 1x1 transparent PNG — decodes via `image::load_from_memory`.
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    /// Mock port whose `generate_vision` returns a configurable text — the
+    /// fixture for the raw-bytes OCR guard.
+    struct VisionMockPort {
+        vision_text: String,
+    }
+
+    impl InferencePort for VisionMockPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async {
+                Err(InferenceError::VisionUnsupported(
+                    "mock port has no text generate".to_string(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let result = InferenceResult {
+                text: self.vision_text.clone(),
+                model: "mock".to_string(),
+                usage: InferenceUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                },
+                finish_reason: "stop".to_string(),
+                tool_calls: vec![],
+                reasoning: None,
+                cost_usd: None,
+            };
+            Box::pin(async { Ok(result) })
+        }
+    }
+
+    /// Mock page executor returning a fixed text per page.
+    struct FixedTextExecutor {
+        text: String,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrExecutor for FixedTextExecutor {
+        async fn execute(
+            &self,
+            page_index: usize,
+            _backend: &OcrBackend,
+            _image: &image::DynamicImage,
+            _is_fallback: bool,
+        ) -> Result<OcrResult, OcrError> {
+            Ok(OcrResult {
+                page_index,
+                backend: OcrBackend::Tesseract,
+                text: self.text.clone(),
+                confidence: 0.9,
+                duration_ms: 1,
+                was_fallback: false,
+            })
+        }
+    }
+
+    /// A ConvertService wired with mock ports — the internal pipeline
+    /// executor is never invoked by `ocr_via_pipeline` (the executor comes
+    /// from the parameter); it only needs to exist for construction.
+    fn test_service(port: Arc<dyn InferencePort>) -> ConvertService<'static> {
+        let cv_accumulator: &'static Mutex<Vec<CrossValidation>> = Box::leak(Box::default());
+        let index: &'static Mutex<Vec<IndexedPassage>> = Box::leak(Box::default());
+        let llm_executor = Arc::new(LlmOcrExecutor::new(Arc::clone(&port)));
+        let pipeline_executor = Arc::new(PipelineExecutor::new(llm_executor));
+        ConvertService::new(
+            port,
+            None,
+            ThresholdConfig::default(),
+            pipeline_executor,
+            cv_accumulator,
+            index,
+        )
+    }
+
+    fn outcome_with_text(text: &str) -> PipelineOutcome {
+        PipelineOutcome {
+            results: vec![OcrResult {
+                page_index: 0,
+                backend: OcrBackend::Tesseract,
+                text: text.to_string(),
+                confidence: 0.9,
+                duration_ms: 1,
+                was_fallback: false,
+            }],
+            report: VerificationReport {
+                page_count_match: true,
+                empty_pages: if text.trim().is_empty() {
+                    vec![0]
+                } else {
+                    vec![]
+                },
+                error_count: 0,
+                passed: !text.trim().is_empty(),
+            },
+            cross_validations: vec![],
+            errors: vec![],
+        }
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_errors_on_zero_text() {
+        let error = assemble_pipeline_outcome(outcome_with_text("   "))
+            .expect_err("zero-text pipeline output must be an error");
+        assert!(
+            error.to_string().contains("OCR produced no text"),
+            "expected the zero-text diagnostic, got: {error}"
+        );
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_passes_nonempty_text() {
+        let outcome = assemble_pipeline_outcome(outcome_with_text("real page text"))
+            .expect("non-empty assembled text passes");
+        assert_eq!(outcome.text, "real page text");
+        assert_eq!(outcome.pages, 1);
+        assert!(outcome.verification_passed);
+    }
+
+    #[tokio::test]
+    async fn do_ocr_empty_vision_output_is_a_typed_error() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        }));
+        let error = service
+            .do_ocr(b"non-empty input bytes", "mock-model")
+            .await
+            .expect_err("empty vision output must be an error, not a silent success");
+        assert!(
+            matches!(error, OcrError::EmptyOcrOutput { .. }),
+            "expected EmptyOcrOutput, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn do_ocr_nonempty_output_passes_through() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: "real text".to_string(),
+        }));
+        let text = service
+            .do_ocr(b"input", "mock-model")
+            .await
+            .expect("non-empty vision output passes the guard");
+        assert_eq!(text, "real text");
+    }
+
+    #[tokio::test]
+    async fn ocr_via_pipeline_rejects_undecodable_formats() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        }));
+        let executor: Arc<dyn OcrExecutor> = Arc::new(FixedTextExecutor {
+            text: "unused".to_string(),
+        });
+        let error = service
+            .ocr_via_pipeline(
+                std::path::Path::new("/tmp/not-an-image.txt"),
+                "txt",
+                b"plain text is not OCR input",
+                "mock-model",
+                executor,
+            )
+            .await
+            .expect_err("undecodable input must be rejected, not sent to a vision model");
+        assert!(
+            error
+                .to_string()
+                .contains("neither a PDF nor a decodable image"),
+            "expected the format diagnostic, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ocr_via_pipeline_routes_images_through_the_pipeline() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        }));
+        let executor: Arc<dyn OcrExecutor> = Arc::new(FixedTextExecutor {
+            text: "page text".to_string(),
+        });
+        let outcome = service
+            .ocr_via_pipeline(
+                std::path::Path::new("/tmp/tiny.png"),
+                "image",
+                TINY_PNG,
+                "mock-model",
+                executor,
+            )
+            .await
+            .expect("image input goes through the page pipeline");
+        assert_eq!(outcome.text, "page text");
+        assert_eq!(outcome.pages, 1);
+    }
 }
