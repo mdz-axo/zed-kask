@@ -58,9 +58,7 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "kanban_task_verify" | "Verification" | "VerificationCriterion" => Some(STEP_VERIFICATION),
         "Comment" | "kanban_task_comment" => Some(USER_FEEDBACK_OCCURRENCE),
         "Comment.question"
-        | "kanban_task_kata_coaching"
-        | "kanban_task_kata_improvement"
-        | "kanban_task_kata_practice" => Some(USER_QUESTION_OCCURRENCE),
+        | "kanban_task_kata_prompt" => Some(USER_QUESTION_OCCURRENCE),
         "UnjamItem" | "kanban_unjam" => Some(ISSUE_OCCURRENCE),
         "UnjamItem.error" => Some(ERROR),
         "Assignee" | "kanban_task_assign" => Some(WAS_ASSOCIATED_WITH),

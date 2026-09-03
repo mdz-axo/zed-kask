@@ -192,17 +192,6 @@ fn default_one_hour() -> f64 {
     1.0
 }
 
-/// Request for market_cmp: constant-maturity prediction for a registered
-/// base event at a fixed tenor.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketCmpRequest {
-    /// Base-event series ticker (must be in the configured registry —
-    /// HKASK_PREDICTION_MARKETS_BASE_EVENTS, "domain:series,..." pairs).
-    pub series: String,
-    /// Tenor in days (e.g. 30, 90, 180).
-    pub tenor_days: u32,
-}
-
 /// Request for market_history: a market's record enriched with realized
 /// variance computed from its price history.
 #[derive(Debug, Deserialize, JsonSchema)]

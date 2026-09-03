@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 33 — 18 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp`, `market_cmp_index`, `market_cmp_indices`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
+**Tools:** 32 — 17 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp_index`, `market_cmp_indices`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
 > **Tool count note:** the server registers **32 `#[tool]` methods** — 17 in
@@ -108,7 +108,6 @@ feed the loop.
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
-| `market_cmp` | Constant Maturity Prediction: synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns `bucketed_sparse` with the bracket width. Base events come only from `HKASK_PREDICTION_MARKETS_BASE_EVENTS` — unregistered series refused. | `series`, `tenor_days` |
 | `market_cmp_index` | Full CMP index for a registered base event: probability curve across the standard tenor grid (7d/30d/90d/180d/1y/2y), log-odds interpolated, with curve slope (log-odds/year) as the term-structure signal. Uncovered tenors return null. | `series` |
 | `market_cmp_indices` | Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) from live open markets per (family, venue) — the producer for `scenario_from_cmp_indices` (hkask-mcp-scenarios). Withheld buckets and rejection reasons are surfaced; never fabricated. | `series`, `venue`, `limit`, `reference`, `volatility`, `predicted_level`, `direction_up` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |
@@ -198,7 +197,7 @@ Settings live in the `kask.prediction_markets` subsection
 | `base_events` | Base-event registry: `"domain:series,..."` pairs for CMP construction. |
 
 At runtime the base-event registry is read from
-`HKASK_PREDICTION_MARKETS_BASE_EVENTS` (see `market_cmp`).
+`HKASK_PREDICTION_MARKETS_BASE_EVENTS` (see `market_cmp_index` and `market_cmp_indices`).
 
 ## Consumers
 

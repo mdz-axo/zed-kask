@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Portfolio MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-portfolio`
-**Tools:** 14 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_roll`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`
+**Tools:** 13 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`. (2026-09-03: `portfolio_roll` removed — it was a thin wrapper emitting one Roll transaction with hardcoded fields; emit the roll via `ledger_apply` with tx_type "roll" instead. `portfolio_seed_price` gained a batch `prices` array — one call instead of N per (symbol, date).)
 **Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
 
 The portfolio server is the general-purpose transaction-ledger portfolio store.
@@ -67,8 +67,7 @@ one over the guideline; each has a distinct purpose).
 | `portfolio_returns` | TWR + IRR for a date range (reads from price cache) |
 | `ledger_import` | Import CSV/JSON (auto-creates portfolio) |
 | `ledger_export` | Export CSV/JSON |
-| `portfolio_seed_price` | Seed the price cache for (portfolio, symbol, date) |
-| `portfolio_roll` | Roll a constituent to a successor contract (CMP index maintenance) |
+| `portfolio_seed_price` | Seed the price cache for one (symbol, date) or a batch (`prices` array); invalidates materialized views from each seeded date forward |
 | `portfolio_rebuild_views` | Rebuild all materialized views from the ledger |
 | `portfolio_materialize_returns` | Materialize the daily returns view for a date range |
 | `portfolio_daily_returns` | Read the materialized daily returns |

@@ -760,24 +760,6 @@ fn default_screener_limit() -> u32 {
     20
 }
 
-/// Request for the stock_universe tool. Exhaustive bulk listing from EODHD.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub(crate) struct StockUniverseRequest {
-    /// Minimum market cap in USD (default $500 million)
-    #[serde(default = "default_min_market_cap")]
-    pub min_market_cap: f64,
-    /// EODHD exchange code (default "US" for all US exchanges)
-    #[serde(default = "default_exchange")]
-    pub exchange: String,
-}
-
-fn default_min_market_cap() -> f64 {
-    500_000_000.0
-}
-
-fn default_exchange() -> String {
-    "US".to_string()
-}
 
 // ── Economic Profit valuation request ────────────────────────────────
 

@@ -90,6 +90,13 @@ fn default_true() -> bool {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GallerySearchRequest {
     pub query: String,
+    /// Search mode: "tags" (default — fuzzy match against AI-generated tags;
+    /// works without embeddings) or "semantic" (caption-embedding cosine
+    /// similarity; requires gallery_analyze to have generated captions).
+    pub mode: Option<String>,
+    /// Semantic mode only: find images similar to this gallery image (by its
+    /// caption embedding) instead of the query text.
+    pub image_index: Option<usize>,
     pub limit: Option<usize>,
     pub tag_types: Option<Vec<String>>,
     pub min_similarity: Option<f64>,
@@ -399,27 +406,6 @@ fn default_count() -> usize {
 }
 fn default_per_period() -> usize {
     3
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GalleryFindSimilarRequest {
-    /// Find images similar to this text description.
-    pub text: Option<String>,
-    /// Find images visually similar to this gallery image (uses its AI caption).
-    pub image_index: Option<usize>,
-    /// Maximum results to return (default: 5).
-    #[serde(default = "default_similar_limit")]
-    pub limit: usize,
-    /// Minimum similarity threshold 0.0–1.0 (default: 0.3).
-    #[serde(default = "default_similar_threshold")]
-    pub min_similarity: f32,
-}
-
-fn default_similar_limit() -> usize {
-    5
-}
-fn default_similar_threshold() -> f32 {
-    0.3
 }
 
 // ── Image editing request types ──────────────────────────────────────────
@@ -749,24 +735,19 @@ pub struct JobCancelRequest {
 
 // ── Media import request types ──────────────────────────────────────────
 
-/// Request to import a video file into the gallery index.
+/// Request for gallery_add_media: import a video or audio file into the
+/// gallery index (the former gallery_add_video / gallery_add_audio pair,
+/// merged — the bodies differed only in media type and dimensions).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GalleryAddVideoRequest {
-    /// Absolute path to the video file.
+pub struct GalleryAddMediaRequest {
+    /// Absolute path to the media file.
     pub path: String,
-    /// Optional: video width in pixels (0 if unknown).
-    #[serde(default)]
-    pub width: u32,
-    /// Optional: video height in pixels (0 if unknown).
-    #[serde(default)]
-    pub height: u32,
-}
-
-/// Request to import an audio file into the gallery index.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GalleryAddAudioRequest {
-    /// Absolute path to the audio file.
-    pub path: String,
+    /// Media kind: "video" or "audio".
+    pub media_type: String,
+    /// Video width in pixels (video only; optional metadata).
+    pub width: Option<u32>,
+    /// Video height in pixels (video only; optional metadata).
+    pub height: Option<u32>,
 }
 
 // ── Asset detail request types ──────────────────────────────────────────
@@ -831,27 +812,6 @@ pub struct GalleryDeleteAlbumRequest {
 pub struct GalleryListAlbumMembersRequest {
     /// Album ID to list members for.
     pub album_id: String,
-}
-
-// ── Variant generation request types ────────────────────────────────────
-
-/// Request to generate N image variants from a single prompt. Each variant
-/// is persisted individually with its own gallery entry and lineage record.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateVariantsRequest {
-    /// The prompt for image generation.
-    pub prompt: String,
-    /// Number of variants to generate (1–10).
-    #[serde(default = "default_variant_count")]
-    pub count: u32,
-    /// Optional image size (e.g. "1024x1024").
-    pub image_size: Option<String>,
-    /// Optional style preset.
-    pub style: Option<String>,
-}
-
-fn default_variant_count() -> u32 {
-    4
 }
 
 // ── Region-selective editing request types ──────────────────────────────

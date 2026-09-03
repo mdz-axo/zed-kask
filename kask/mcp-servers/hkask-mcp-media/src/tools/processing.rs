@@ -133,21 +133,15 @@ impl MediaServer {
                     .get_all_tags(&ga.gallery_id)
                     .map_err(map_gallery_store_error)?;
 
-                let mut image_scores: HashMap<String, f64> = HashMap::new();
-                for (tag, relative_path) in &all_tags {
-                    for term in terms {
-                        let sim = levenshtein_similarity(term, &tag.value);
-                        if sim >= 0.3 {
-                            let weighted = sim * tag.confidence;
-                            let entry = image_scores.entry(relative_path.clone()).or_insert(0.0);
-                            *entry = entry.max(weighted);
-                        }
-                    }
-                }
-
-                let mut ranked: Vec<(String, f64)> = image_scores.into_iter().collect();
-                ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                ranked.truncate(max_items);
+                let ranked = crate::tools::gallery::rank_images_by_tag_similarity(
+                    &all_tags,
+                    terms,
+                    0.3,
+                    None,
+                )
+                .into_iter()
+                .take(max_items)
+                .collect::<Vec<_>>();
 
                 for (rel_path, _score) in &ranked {
                     paths.push(ga.root_path.join(rel_path));
@@ -167,25 +161,20 @@ impl MediaServer {
                     .get_all_tags(&ga.gallery_id)
                     .map_err(map_gallery_store_error)?;
 
-                let mut image_scores: HashMap<String, f64> = HashMap::new();
-                for (tag, relative_path) in &all_tags {
-                    let abs_path = ga.root_path.join(relative_path);
-                    if abs_path == ref_path {
-                        continue;
-                    }
-                    for ref_tag in &ref_tags {
-                        let sim = levenshtein_similarity(&ref_tag.value, &tag.value);
-                        if sim >= 0.3 {
-                            let weighted = sim * tag.confidence;
-                            let entry = image_scores.entry(relative_path.clone()).or_insert(0.0);
-                            *entry = entry.max(weighted);
-                        }
-                    }
-                }
-
-                let mut ranked: Vec<(String, f64)> = image_scores.into_iter().collect();
-                ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                ranked.truncate(max_items.saturating_sub(1));
+                let ref_rel_path = ref_path
+                    .strip_prefix(&ga.root_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ref_path.to_string_lossy().to_string());
+                let terms: Vec<String> = ref_tags.iter().map(|t| t.value.clone()).collect();
+                let ranked = crate::tools::gallery::rank_images_by_tag_similarity(
+                    &all_tags,
+                    &terms,
+                    0.3,
+                    Some(&ref_rel_path),
+                )
+                .into_iter()
+                .take(max_items.saturating_sub(1))
+                .collect::<Vec<_>>();
 
                 paths.push(ref_path);
                 for (rel_path, _score) in &ranked {
@@ -1002,7 +991,8 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if !output_path.exists() {
-                return Err(McpToolError::internal(format!( // rr0044-ok: ytdlp-succeeded-no-output
+                return Err(McpToolError::internal(format!(
+                    // rr0044-ok: ytdlp-succeeded-no-output
                     "yt-dlp completed but output file not found: {}",
                     output_path.display()
                 )));

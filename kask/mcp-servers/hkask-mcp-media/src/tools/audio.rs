@@ -29,6 +29,58 @@ fn timed_words_from_provider(entries: &[serde_json::Value]) -> Vec<TimedWord> {
         .collect()
 }
 
+/// Build a `TranscriptBundle` from a raw provider transcription response.
+/// Shared by `transcribe_bundle` and `record_and_transcribe` — the capture
+/// path previously parsed the response inline WITHOUT the separator-prefix
+/// trimming, so its stored words made every `educt_locate` quote no_match.
+fn transcript_bundle_from_raw(
+    raw: &serde_json::Value,
+    audio_path: String,
+    language: Option<String>,
+    duration_fallback_secs: f64,
+    repl_chat_ref: Option<String>,
+) -> TranscriptBundle {
+    TranscriptBundle {
+        format: "hkask-transcript-v1".to_string(),
+        audio_path,
+        repl_chat_ref,
+        audio_duration_secs: raw
+            .get("duration")
+            .and_then(|d| d.as_f64())
+            .unwrap_or(duration_fallback_secs) as f32,
+        full_text: raw
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        words: raw
+            .get("words")
+            .and_then(|w| w.as_array())
+            .map(|arr| timed_words_from_provider(arr))
+            .unwrap_or_default(),
+        segments: raw
+            .get("segments")
+            .and_then(|s| s.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| {
+                        Some(TranscriptSegment {
+                            text: s.get("text")?.as_str()?.to_string(),
+                            start_ms: (s.get("start")?.as_f64()? * 1000.0) as u64,
+                            end_ms: (s.get("end")?.as_f64()? * 1000.0) as u64,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        language,
+        model: raw
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string()),
+    }
+}
+
 #[tool_router(router = audio_router, vis = "pub")]
 impl MediaServer {
     // ── Voice tools ──────────────────────────────────────────────────────────
@@ -130,33 +182,7 @@ impl MediaServer {
     // ── Audio tools ─────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Transcribe speech audio to text. Returns transcribed text for REPL injection."
-    )]
-    pub async fn transcribe(
-        &self,
-        Parameters(TranscribeRequest {
-            audio_url,
-            language,
-        }): Parameters<TranscribeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "transcribe", async {
-            validate_tool_url_with_dns(&audio_url).await?;
-
-            let media_params = hkask_types::MediaGenerateParams {
-                audio_url: Some(audio_url.clone()),
-                language: language.clone(),
-                ..Default::default()
-            };
-            self.vision_port
-                .media_generate("transcribe", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Transcription failed", e))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Transcribe audio and return a synchronized TranscriptBundle with word-level timings. Enables interactive highlighting and click-to-seek in frontends."
+        description = "Transcribe audio and return a synchronized TranscriptBundle with word-level timings (full_text carries the plain text). Enables interactive highlighting and click-to-seek in frontends, and is the ingest format for the educt transcript layers."
     )]
     pub async fn transcribe_bundle(
         &self,
@@ -179,48 +205,8 @@ impl MediaServer {
                 .await
                 .map_err(|e| classify_inference_error("Transcription failed", e))?;
 
-            let full_text = raw
-                .get("text")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
-            let duration = raw.get("duration").and_then(|d| d.as_f64()).unwrap_or(0.0) as f32;
-            let model = raw
-                .get("model")
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string());
-            let words: Vec<TimedWord> = raw
-                .get("words")
-                .and_then(|w| w.as_array())
-                .map(|arr| timed_words_from_provider(arr))
-                .unwrap_or_default();
-            let segments: Vec<TranscriptSegment> = raw
-                .get("segments")
-                .and_then(|s| s.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| {
-                            Some(TranscriptSegment {
-                                text: s.get("text")?.as_str()?.to_string(),
-                                start_ms: (s.get("start")?.as_f64()? * 1000.0) as u64,
-                                end_ms: (s.get("end")?.as_f64()? * 1000.0) as u64,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let bundle = TranscriptBundle {
-                format: "hkask-transcript-v1".to_string(),
-                audio_path: audio_url.clone(),
-                repl_chat_ref: None,
-                audio_duration_secs: duration,
-                full_text,
-                words,
-                segments,
-                language: language.clone(),
-                model,
-            };
+            let bundle =
+                transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0, None);
 
             Ok(serde_json::to_value(&bundle)
                 .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize bundle"})))
@@ -321,63 +307,14 @@ impl MediaServer {
 
             match transcribe_result {
                 Ok(raw) => {
-                    let full_text = raw
-                        .get("text")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let duration = raw
-                        .get("duration")
-                        .and_then(|d| d.as_f64())
-                        .unwrap_or(duration_secs as f64) as f32;
-                    let model = raw
-                        .get("model")
-                        .and_then(|m| m.as_str())
-                        .map(|s| s.to_string());
-                    let words: Vec<TimedWord> = raw
-                        .get("words")
-                        .and_then(|w| w.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|w| {
-                                    Some(TimedWord {
-                                        word: w.get("word")?.as_str()?.to_string(),
-                                        start_ms: (w.get("start")?.as_f64()? * 1000.0) as u64,
-                                        end_ms: (w.get("end")?.as_f64()? * 1000.0) as u64,
-                                        confidence: w.get("confidence").and_then(|c| c.as_f64()).map(hkask_types::Confidence::new),
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    let segments: Vec<TranscriptSegment> = raw
-                        .get("segments")
-                        .and_then(|s| s.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|s| {
-                                    Some(TranscriptSegment {
-                                        text: s.get("text")?.as_str()?.to_string(),
-                                        start_ms: (s.get("start")?.as_f64()? * 1000.0) as u64,
-                                        end_ms: (s.get("end")?.as_f64()? * 1000.0) as u64,
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
                     let audio_path_str = audio_path.display().to_string();
-                    let bundle = TranscriptBundle {
-                        format: "hkask-transcript-v1".to_string(),
-                        audio_path: audio_path_str,
-                        repl_chat_ref: Some("repl_chat_hook".to_string()),
-                        audio_duration_secs: duration,
-                        full_text,
-                        words,
-                        segments,
-                        language: language.clone(),
-                        model,
-                    };
+                    let bundle = transcript_bundle_from_raw(
+                        &raw,
+                        audio_path_str,
+                        language.clone(),
+                        duration_secs as f64,
+                        Some("repl_chat_hook".to_string()),
+                    );
 
                     let result = serde_json::to_value(&bundle).unwrap_or_else(|_| {
                         serde_json::json!({"error": "Failed to serialize bundle"})

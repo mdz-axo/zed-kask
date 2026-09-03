@@ -479,20 +479,14 @@ pub(crate) struct ContractProposeExpect {
 // ── Kata prompts ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskKataCoachingRequest {
+pub(crate) struct TaskKataPromptRequest {
     pub task_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskKataImprovementRequest {
-    pub task_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskKataPracticeRequest {
-    pub task_id: String,
-    /// What specific sub-problem to focus the observation drill on.
-    pub sub_problem: String,
+    /// Which kata to generate: "coaching" (5-question Coaching Kata
+    /// dialogue), "improvement" (Improvement Kata PDCA cycle), or
+    /// "practice" (Starter Kata observation drill — requires sub_problem).
+    pub stage: String,
+    /// The sub-problem to focus a practice-stage observation drill on.
+    pub sub_problem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

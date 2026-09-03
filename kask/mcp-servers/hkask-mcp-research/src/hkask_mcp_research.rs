@@ -24,15 +24,14 @@ use crate::research::{
     BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle, Continuation,
     DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DeleteSyntheticRequest, DiscoverRequest,
     EditTagRequest, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
-    FetchRequest, FetchSyntheticRequest, FindSimilarOutput, FindSimilarRequest,
-    FindSimilarResultOutput, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
-    ProviderProfileOutput, RateLimiter, RecommendProviderOutput, RecommendProviderRequest,
-    RerankInfo, ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest,
-    UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed,
-    llm_rerank, provider_profile,
+    FetchRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
+    GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES,
+    MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
+    MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput, ProviderProfileOutput,
+    ProviderRecommendation, RateLimiter, RerankInfo, ResponseCache, SearchMetadata, SearchOutput,
+    SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
+    cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile,
 };
 
 // ── Constants ──
@@ -165,8 +164,11 @@ impl ResearchServer {
 
     #[tool(description = "Search the web with RRF fusion across providers. \
          Set `provider` to query a single named provider (tavily, brave, exa, \
-         firecrawl, serpapi) — no fusion, no fallback. Use web_recommend_provider \
-         to pick deliberately. When `provider` is None, `strategy` selects: \
+         firecrawl, serpapi) — no fusion, no fallback. Or set `intent` (news, \
+         academic, semantic, freshness, general, transcript) to have the tool \
+         score the configured providers against the query and pick the top \
+         recommendation for you — the ranking is surfaced in \
+         provider_recommendations. When both are None, `strategy` selects: \
          quick (best-scored single keyword provider), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction).")]
     pub async fn web_search(
@@ -211,12 +213,29 @@ impl ResearchServer {
                     "include_domains": req.include_domains,
                     "exclude_domains": req.exclude_domains,
                     "provider": req.provider,
+                    "intent": req.intent,
                 }),
                 &fingerprint,
             );
 
             if let Some(cached) = self.cache.get(&ckey).await {
                 return Ok(cached);
+            }
+
+            // Deliberate single-provider selection without an explicit
+            // provider (the former web_recommend_provider + web_search(provider)
+            // two-step, folded in): score the configured providers against
+            // (query, intent) and query the top recommendation. The ranking is
+            // surfaced in the output so the choice is auditable.
+            let mut provider = req.provider.clone();
+            let mut provider_recommendations: Vec<ProviderRecommendation> = Vec::new();
+            if provider.is_none()
+                && let Some(ref intent) = req.intent
+            {
+                provider_recommendations = self.pool.score_providers(&req.query, Some(intent));
+                if let Some(top) = provider_recommendations.iter().find(|r| r.configured) {
+                    provider = Some(top.kind.clone());
+                }
             }
 
             let search_query = SearchQuery {
@@ -229,7 +248,7 @@ impl ResearchServer {
 
             let mut compound = self
                 .pool
-                .search(&search_query, strat, req.provider.as_deref())
+                .search(&search_query, strat, provider.as_deref())
                 .await
                 .map_err(McpToolError::from)?;
 
@@ -282,13 +301,14 @@ impl ResearchServer {
             };
 
             // Surface which provider was actually used when a single
-            // provider was selected (explicit override or quick strategy).
-            let selected_provider = if req.provider.is_some() || strat == SearchStrategy::Quick {
+            // provider was selected (explicit override, intent-driven pick,
+            // or quick strategy).
+            let selected_provider = if provider.is_some() || strat == SearchStrategy::Quick {
                 compound
                     .providers_succeeded
                     .first()
                     .cloned()
-                    .or_else(|| req.provider.clone())
+                    .or_else(|| provider.clone())
             } else {
                 None
             };
@@ -330,6 +350,7 @@ impl ResearchServer {
                 providers_failed: compound.providers_failed.clone(),
                 selected_provider,
                 provider_profiles,
+                provider_recommendations,
                 rerank,
             };
 
@@ -346,51 +367,6 @@ impl ResearchServer {
             }
 
             Ok(output)
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Recommend a web search provider for a query. Scores each \
-         configured provider (tavily, brave, exa, firecrawl, serpapi) against the \
-         query + optional intent (news, academic, semantic, freshness, general, \
-         transcript) using cost, latency, strengths/weaknesses, and capability match. \
-         Returns ranked recommendations with rationale. Call this before web_search \
-         when unsure which provider fits — then set the `provider` field on \
-         web_search to the recommended kind for a deliberate single-provider call."
-    )]
-    pub async fn web_recommend_provider(
-        &self,
-        Parameters(req): Parameters<RecommendProviderRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "web_recommend_provider", async {
-            self.rate_limiter.check("web_recommend_provider")?;
-
-            if req.query.is_empty() {
-                return Err(McpToolError::invalid_argument("query must not be empty"));
-            }
-            if req.query.len() > MAX_QUERY_LENGTH {
-                return Err(McpToolError::invalid_argument(format!(
-                    "query exceeds maximum length of {} characters",
-                    MAX_QUERY_LENGTH
-                )));
-            }
-
-            let recommendations = self.pool.score_providers(&req.query, req.intent.as_deref());
-            let recommended = recommendations
-                .iter()
-                .find(|r| r.configured)
-                .map(|r| r.kind.clone());
-
-            let output = RecommendProviderOutput {
-                query: req.query,
-                intent: req.intent,
-                recommendations,
-                recommended,
-            };
-
-            Ok(serde_json::to_value(&output)
-                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" })))
         })
         .await
     }
@@ -488,7 +464,20 @@ impl ResearchServer {
 
             validate_tool_url_with_dns(&url).await?;
 
-            let fmt = format.unwrap_or_else(|| "markdown".to_string());
+            // Format is an enum, not a free string: Firecrawl silently maps
+            // unknown formats to markdown while echoing the REQUESTED format
+            // in its output — the caller would read markdown labelled as
+            // something else. Reject unknown formats up front.
+            let fmt = match format.as_deref() {
+                Some("markdown") | Some("json") | None => {
+                    format.unwrap_or_else(|| "markdown".to_string())
+                }
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "format must be 'markdown' or 'json', got '{other}'"
+                    )));
+                }
+            };
             let main_content_only = main_content_only.unwrap_or(true);
             let wait_for_ms_val = wait_for_ms.unwrap_or(0);
             // Compute the cache key before moving json_schema into opts.
@@ -1176,40 +1165,8 @@ impl ResearchServer {
         .await
     }
 
-    #[tool(
-        description = "Re-extract from a synthetic feed's source URL and insert new entries. Called by rss_fetch for synthetic feeds, or directly to refresh a synthetic feed."
-    )]
-    pub async fn rss_fetch_synthetic(
-        &self,
-        Parameters(req): Parameters<FetchSyntheticRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_fetch_synthetic", async {
-            self.rate_limiter.check("rss_fetch_synthetic")?;
-            let db = require_rss_db!(self);
-
-            // Resolve the feed URL from the stream_id.
-            let sid = req.stream_id.clone();
-            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
-            let (feed_url, _etag, _lm) = match lookup {
-                Ok(Ok(v)) => v,
-                Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
-                Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
-            };
-
-            // Check if this is a synthetic feed.
-            if !feed_url.starts_with("synthetic://") {
-                return Err(McpToolError::invalid_argument(
-                    "not a synthetic feed; use rss_fetch instead",
-                ));
-            }
-
-            self.fetch_synthetic_inner(&req.stream_id, feed_url).await
-        })
-        .await
-    }
-
     /// Shared synthetic feed fetch logic. Called by both `rss_fetch` (when it
-    /// detects a `synthetic://` URL) and `rss_fetch_synthetic` (direct call).
+    /// detects a `synthetic://` URL).
     /// The `feed_url` must already be resolved and start with `synthetic://`.
     async fn fetch_synthetic_inner(
         &self,

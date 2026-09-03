@@ -22,7 +22,8 @@
 //! - `tools/notes.rs` — note_add, note_list, note_delete,
 //!   file_attach, file_list, file_delete
 //! - `tools/transcript.rs` — earnings-call transcript tools
-//! - `tools/analysis.rs` — company_screener, stock_universe,
+//! - `tools/analysis.rs` — company_screener (a market-cap-only prompt
+//!   covers the former stock_universe listing),
 //!   company_research_search (multi-provider research claims)
 
 //!
@@ -470,9 +471,9 @@ mod tool_behavior_tests {
     // this pin is what makes a re-introduction (or a silent registration drop)
     // fail CI instead of shipping as an undocumented duplicate.
     #[test]
-    fn tool_surface_is_exactly_44_registered_tools() {
+    fn tool_surface_is_exactly_43_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 44, "companies registered tool surface changed; got {n}");
+        assert_eq!(n, 43, "companies registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an ontology concept for

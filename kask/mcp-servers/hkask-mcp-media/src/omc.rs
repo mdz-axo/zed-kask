@@ -28,8 +28,7 @@ pub use hkask_bridge_ontology::omc::explain_tool_for;
 pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
     match tool {
         // Generation — produces a new creative work.
-        "generate_image" | "generate_video" | "video_meme" | "expand_prompt"
-        | "generate_variants" => Some(CREATIVE_WORK),
+        "generate_image" | "generate_video" | "video_meme" | "expand_prompt" => Some(CREATIVE_WORK),
         // Transform / upscale — produces a version of an existing work.
         "transform_image"
         | "upscale_image"
@@ -40,14 +39,12 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "describe_image" | "gallery_analyze" | "video_caption" => Some(SCENE),
         // Gallery management — produces/manages asset references.
         "gallery_search"
-        | "gallery_find_similar"
         | "gallery_timeline"
         | "gallery_organize"
         | "gallery_status"
         | "gallery_refresh"
         | "gallery_delete_image"
-        | "gallery_add_video"
-        | "gallery_add_audio"
+        | "gallery_add_media"
         | "gallery_asset_detail"
         | "gallery_list_assets"
         | "gallery_create_album"
@@ -66,7 +63,6 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "audio_capture"
         | "record_and_transcribe"
         | "voice_design"
-        | "transcribe"
         | "transcribe_bundle"
         | "audio_trim"
         | "audio_concat" => Some(CAPTURE),
@@ -134,7 +130,7 @@ mod tests {
     #[test]
     fn gallery_retrieval_maps_to_asset() {
         assert_eq!(tool_to_omc("gallery_search"), Some(ASSET));
-        assert_eq!(tool_to_omc("gallery_find_similar"), Some(ASSET));
+        assert_eq!(tool_to_omc("gallery_add_media"), Some(ASSET));
         assert_eq!(tool_to_omc("gallery_timeline"), Some(ASSET));
     }
 
@@ -194,7 +190,6 @@ mod tests {
     #[test]
     fn audio_transcription_maps_to_media_source() {
         assert_eq!(tool_to_omc("voice_design"), Some(CAPTURE));
-        assert_eq!(tool_to_omc("transcribe"), Some(CAPTURE));
         assert_eq!(tool_to_omc("transcribe_bundle"), Some(CAPTURE));
     }
 

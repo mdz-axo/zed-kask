@@ -14,12 +14,11 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (22) — pinned by `tool_surface_is_exactly_22_registered_tools`
+//! ## Tools (19) — pinned by `tool_surface_is_exactly_19_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument
 //! - `scenario_frame` — 7-turn conversational framing interview
 //! - `scenario_triage` — Goldilocks zone classification
-//! - `scenario_research` — Extract candidate events from web research
 //! - `scenario_brainstorm` — 4-round temperature-shifting protocol
 //! - `scenario_build` — Construct event tree template from research
 //! - `scenario_quantify` — Resolve conditional probability tree
@@ -27,13 +26,11 @@
 //! - `scenario_calibrate` — Fermi decomposition + outside/inside view
 //! - `scenario_update` — Bayesian evidence revision
 //! - `scenario_synthesize` — Dragonfly-eye multi-perspective aggregation
-//! - `scenario_sensitivity` — Variance contribution ranking
 //! - `scenario_score` — Brier scoring + forecast store + auto-update
 //! - `scenario_calibration` — Calibration curve + overconfidence detection
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation
-//! - `scenario_full` — Full pipeline orchestrator (single call)
-//! - `scenario_from_markets` — Bridge from prediction-markets MCP server (single record)
+//! - `scenario_full` — Tetlock core batch in a single call (no persist/propagate)
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
 //! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
 //! - `contract_price_coherence` — R5/H3 coherence: tree-implied joint vs contract price
@@ -377,7 +374,9 @@ impl ScenariosServer {
     /// sensitivity_ranking, calibrate_from_fermi, outside_view_adjustment,
     /// synthesize_perspectives, assess_project — same functions called by
     /// individual tools. The pipeline assembles their outputs into one envelope.
-    #[tool(description = "Run the complete scenario pipeline in a single call.")]
+    #[tool(
+        description = "Run the Tetlock core batch in a single call: triage the question, calibrate via inline Fermi decomposition + outside view, quantify the event tree, and synthesize perspectives. NOT the complete pipeline — it persists nothing (use scenario_score to write the forecast journal), does not propagate updates (scenario_propagate) or cross-validate (scenario_cross_validate), and its triage/calibrate steps are weaker inline versions of the staged tools. Use the staged tools for anything you want to revisit or score."
+    )]
     pub async fn scenario_full(
         &self,
         Parameters(req): Parameters<FullPipelineRequest>,
@@ -492,76 +491,21 @@ impl ScenariosServer {
         .await
     }
 
-    /// Bridge: convert a prediction-market record into a scenario event.
-    /// Caller-mediated: the agent pastes the annotated MarketRecord JSON
-    /// from hkask-mcp-prediction-markets. The domain-bias correction is
-    /// applied deterministically here; low reliability or weak match
-    /// confidence withholds the base rate.
-    #[tool(
-        description = "Convert a prediction-market record (from hkask-mcp-prediction-markets market_lookup/market_match) into a ScenarioEvent anchored on the market-implied base rate. Applies the domain-bias correction deterministically; withholds base_rate on low reliability or weak match confidence."
-    )]
-    pub async fn scenario_from_markets(
-        &self,
-        Parameters(req): Parameters<MarketsBridgeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "scenario_from_markets", async {
-            let record_value = decode_json_param(&req.market_record, "market record")?;
-            let record: hkask_mcp_prediction_markets::types::MarketRecord =
-                serde_json::from_value(record_value)
-                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
-
-            let (event, warnings) = {
-                let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                superforecast::convert_market_record(
-                    &record,
-                    req.match_confidence.as_deref(),
-                    Some(&store),
-                )
-            }
-            .map_err(map_scenario_error)?;
-
-            let output = serde_json::json!({
-                "event": {
-                    "id": event.id,
-                    "name": event.name,
-                    "question": event.question,
-                    "deadline": event.deadline.to_string(),
-                    "probability": event.probability,
-                    "base_rate": event.base_rate,
-                    "basis": event.basis,
-                    "reference_class": event.reference_class,
-                },
-                "warnings": warnings,
-                "provenance": provenance("scenario_from_markets", {
-                    let mut m = serde_json::Map::new();
-                    m.insert("source".into(), format!("{:?}:{}", record.source, record.market_id).into());
-                    m.insert("ontology_identifier".into(), record.ontology.state.identifier.into());
-                    m
-                }),
-                "bridge_note": "The prediction-markets server supplies annotated market-implied probabilities; this bridge anchors a trackable ScenarioEvent on them. base_rate is None when the reliability/match gates refuse the anchor — do not substitute the raw price.",
-                "ontology": dc_bibo::DATASET
-            });
-
-            Ok(output)
-        })
-        .await
-    }
-
     /// Bridge: compose a SET of prediction-market records into a dependent
-    /// event tree (T4a). Per-record gates from `scenario_from_markets` apply;
+    /// event tree (T4a). The per-record market-bridge gates apply;
     /// dependency edges are caller-authored (the server computes marginals
     /// but never invents conditional probabilities).
     ///
     /// MATURITY NOTE: this is the detailed end of the scenario-modeling
     /// ladder. The simple path — companies `scenario_analysis` (Schwartz 2x2)
     /// → `scenario_impact_valuation` on hkask-mcp-companies → single-market
-    /// `scenario_from_markets` — is the intended on-ramp; an analyst typically
+    /// the companies 2x2 path — is the intended on-ramp; an analyst typically
     /// arrives at a full tree only after research (company, industry, economy,
     /// technology, management, domain experts) reveals which events actually
     /// condition each other. The 2x2 mode is retained as a first-class citizen,
     /// not a legacy path.
     #[tool(
-        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the per-record market-bridge gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
     )]
     pub async fn scenario_from_markets_set(
         &self,
@@ -1159,125 +1103,6 @@ impl ScenariosServer {
         .await
     }
 
-    /// Extract candidate events from raw web research text.
-    #[tool(
-        description = "Extract candidate scenario events from raw web research text. Provide research_text (raw output from web searches about a subject) and this tool returns structured event suggestions with dependency hints. Each candidate event includes: suggested name, yes/no question framing, deadline suggestion, dependency hints, and Fermi sub-question scaffolding. The output is a draft that needs probability assignment and refinement, then feeds into scenario_quantify. Use this after web searching (brave_web_search, firecrawl_search, tavily_search) and before scenario_quantify."
-    )]
-    pub async fn scenario_research(
-        &self,
-        Parameters(req): Parameters<ResearchRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "scenario_research", async {
-            let horizon = parse_time_horizon(req.time_horizon.as_deref());
-            let scenario_type = parse_scenario_type(req.scenario_type.as_deref());
-            let max_events = req.max_events.unwrap_or(6);
-
-            // Analyze research text for structural clues
-            let text_lower = req.research_text.to_lowercase();
-            let word_count = req.research_text.split_whitespace().count();
-
-            // Heuristic: detect themes in the research
-            let has_regulatory = text_lower.contains("regulation") || text_lower.contains("approval") || text_lower.contains("fda") || text_lower.contains("ban");
-            let has_competition = text_lower.contains("competitor") || text_lower.contains("rival") || text_lower.contains("market share");
-            let has_technology = text_lower.contains("launch") || text_lower.contains("release") || text_lower.contains("chip") || text_lower.contains("model") || text_lower.contains("platform");
-            let has_financial = text_lower.contains("revenue") || text_lower.contains("earnings") || text_lower.contains("margin") || text_lower.contains("growth");
-            let has_macro = text_lower.contains("rate") || text_lower.contains("inflation") || text_lower.contains("recession") || text_lower.contains("fed") || text_lower.contains("gdp");
-            let has_supply_chain = text_lower.contains("supply") || text_lower.contains("shortage") || text_lower.contains("capacity") || text_lower.contains("manufacturing");
-
-            let deadline_hint = match horizon {
-                TimeHorizon::Tactical => "YYYY-MM-DD within 12-18 months from now",
-                TimeHorizon::Strategic => "YYYY-MM-DD within 3-5 years from now",
-                TimeHorizon::LongTerm => "YYYY-MM-DD within 7-10 years from now",
-            };
-
-            let mut theme_hints = Vec::new();
-            if has_regulatory { theme_hints.push("regulatory_risk"); }
-            if has_competition { theme_hints.push("competitive_dynamics"); }
-            if has_technology { theme_hints.push("technology_evolution"); }
-            if has_financial { theme_hints.push("financial_performance"); }
-            if has_macro { theme_hints.push("macro_economic"); }
-            if has_supply_chain { theme_hints.push("supply_chain"); }
-
-            let output = serde_json::json!({
-                "subject": req.subject,
-                "time_horizon": horizon.display(),
-                "scenario_type": serde_json::to_value(scenario_type).unwrap_or_default(),
-                "research_stats": {
-                    "word_count": word_count,
-                    "detected_themes": theme_hints,
-                },
-                "event_extraction_prompt": format!(
-                    "You are a superforecaster extracting scenario events from research about '{}'.\n\n\
-                     RESEARCH TEXT:\n{}\n\n\
-                     INSTRUCTIONS:\n\
-                     Extract up to {} key future events as binomial yes/no questions. Each event must:\n\
-                     1. Have a specific deadline ({})\n\
-                     2. Be framed as a clear yes/no question\n\
-                     3. Include dependency relationships (what must happen first?)\n\
-                     4. Include an initial probability estimate\n\
-                     5. Include 2-4 Fermi decomposition sub-questions\n\
-                     6. Tag the basis as 'technical_feasibility' or 'scaling_distribution'\n\n\
-                     Detected themes in the research: {}\n\n\
-                     Return ONLY a JSON array of ScenarioEvent objects with these fields:\n\
-                     id, name, question, deadline, time_horizon, scenario_type, subject, probability (0.0-1.0), basis, depends_on (array with parent_event_ids and conditionals fields), sub_questions (array of question/estimate/confidence objects), base_rate, reference_class, brier_score, update_count
-
-\
-                     Use null for unavailable base_rate, reference_class, and brier_score; use 0 for update_count.
-                     The output will be sent to scenario_quantify for conditional probability resolution.",
-                    req.subject, req.research_text, max_events, deadline_hint, theme_hints.join(", ")
-                ),
-                "detected_themes": theme_hints.iter().map(|t| {
-                    match *t {
-                        "regulatory_risk" => serde_json::json!({"theme": "Regulatory risk", "event_hint": "Will regulatory approval/restriction occur by [deadline]?"}),
-                        "competitive_dynamics" => serde_json::json!({"theme": "Competitive dynamics", "event_hint": "Will competitor X launch/exit/gain share by [deadline]?"}),
-                        "technology_evolution" => serde_json::json!({"theme": "Technology evolution", "event_hint": "Will technology Y reach milestone Z by [deadline]?"}),
-                        "financial_performance" => serde_json::json!({"theme": "Financial performance", "event_hint": "Will revenue/margin/cash flow reach target T by [deadline]?"}),
-                        "macro_economic" => serde_json::json!({"theme": "Macro-economic", "event_hint": "Will macro condition M change to state S by [deadline]?"}),
-                        "supply_chain" => serde_json::json!({"theme": "Supply chain", "event_hint": "Will supply/capacity constraint C be resolved by [deadline]?"}),
-                        _ => serde_json::json!({"theme": t, "event_hint": "Frame as specific yes/no question with deadline"})
-                    }
-                }).collect::<Vec<_>>(),
-                "event_template": {
-                    "id": "evt-N",
-                    "name": "Short descriptive name",
-                    "question": "Yes/no question with specific date/deadline",
-                    "deadline": deadline_hint,
-                    "time_horizon": horizon.display(),
-                    "scenario_type": serde_json::to_value(scenario_type).unwrap_or_default(),
-                    "subject": req.subject,
-                    "probability": 0.5,
-                    "basis": "technical_feasibility or scaling_distribution",
-                    "depends_on": [],
-                    "sub_questions": [
-                        {"question": "What enabling factor must be in place?", "estimate": 0.5, "confidence": 0.5},
-                        {"question": "What is the base rate for events of this type?", "estimate": 0.5, "confidence": 0.5},
-                        {"question": "What specific evidence would confirm this is happening?", "estimate": 0.5, "confidence": 0.5}
-                    ],
-                    "base_rate": null,
-                    "reference_class": null,
-                    "brier_score": null,
-                    "update_count": 0
-                },
-                "pipeline": {
-                    "step_1": "Use this prompt with an LLM to generate the JSON array of ScenarioEvent objects",
-                    "step_2": "Send the generated JSON to scenario_quantify to resolve conditional probabilities",
-                    "step_3": "Use scenario_calibrate for Fermi decomposition and an outside-view base-rate blend for each event",
-                    "step_4": "Use scenario_update to Bayesian-update as new evidence arrives",
-                    "step_5": "Use scenario_score to Brier-score outcomes and close the calibration loop"
-                },
-                "methodology": {
-                    "ontology": dc_bibo::DATASET,
-                    "framework": "MAIA event-based scenario planning — research → events → tree → calibrate → track",
-                    "reference": "Tetlock & Gardner, Superforecasting (2015) — Commandments 1-4"
-                }
-            });
-
-            self.record_experience("scenario_research");
-            Ok(output)
-        })
-        .await
-    }
-
     /// Quantify an event tree: compute marginal probabilities, joint probability,
     /// and build the full resolved tree with sensitivity rankings.
     #[tool(
@@ -1694,51 +1519,6 @@ impl ScenariosServer {
         .await
     }
 
-    /// Sensitivity ranking: which events drive outcome uncertainty.
-    #[tool(
-        description = "Rank events by their contribution to outcome uncertainty. For each event, computes an uncertainty score (1 - variance contribution; higher = more uncertainty) — events closer to 50/50 contribute more uncertainty. Returns events ranked from most uncertain to most certain. Useful for identifying which events to spend calibration effort on."
-    )]
-    pub async fn scenario_sensitivity(
-        &self,
-        Parameters(req): Parameters<SensitivityRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "scenario_sensitivity", async {
-            let events = &req.events;
-            let tree = superforecast::build_event_tree(events)
-                .map_err(map_scenario_error)?;
-
-            let ranking = superforecast::sensitivity_ranking(&tree);
-
-            let output = serde_json::json!({
-                "event_count": events.len(),
-                "ranking": ranking.iter().enumerate().map(|(i, (id, score))| {
-                    let event = events.iter().find(|e| &e.id == id);
-                    serde_json::json!({
-                        "rank": i + 1,
-                        "event_id": id,
-                        "event_name": event.map(|e| e.name.as_str()).unwrap_or(""),
-                        "probability": event.map(|e| e.probability),
-                        "probability_pct": event.map(|e| format!("{:.1}%", e.probability * 100.0)),
-                        "uncertainty_score": score,
-                        "interpretation": if *score > 0.6 {
-                                                    "high uncertainty — calibrate this event carefully"
-                                                } else if *score > 0.3 {
-                            "moderate uncertainty"
-                        } else {
-                            "low uncertainty — well-anchored estimate"
-                        },
-                    })
-                }).collect::<Vec<_>>(),
-                "guidance": "Focus calibration effort on high-uncertainty events (score > 0.6). These are the events where better Fermi decompositions, base rates, or evidence will most improve forecast accuracy.",
-                "methodology": "Variance contribution proxy: |P - 0.5| × 2. Events at 50% contribute maximum uncertainty; events at 0% or 100% contribute none."
-            });
-
-            self.record_experience("scenario_sensitivity");
-            Ok(output)
-        })
-        .await
-    }
-
     /// Synthesize multiple perspectives into one aggregated forecast (dragonfly-eye).
     #[tool(
         description = "Dragonfly-eye synthesis (Tetlock Stage 5). Aggregates multiple independent perspectives on a single event into one calibrated probability. Uses empirical-Bayes weighting: perspectives with better historical Brier scores get higher weight. Computes disagreement score (0=consensus, 1=polarized) and identifies the strongest dissenting view. Requires at least 2 perspectives. Returns the aggregated probability, weight distribution, dissent summary, and synthesis quality assessment."
@@ -2127,9 +1907,9 @@ mod tests {
     /// tool is an intentional surface change — this pin catches accidental
     /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_42_registered_tools`.
     #[test]
-    fn tool_surface_is_exactly_22_registered_tools() {
+    fn tool_surface_is_exactly_19_registered_tools() {
         let n = ScenariosServer::scenario_router().list_all().len();
-        assert_eq!(n, 22, "scenarios registered tool surface changed; got {n}");
+        assert_eq!(n, 19, "scenarios registered tool surface changed; got {n}");
     }
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per

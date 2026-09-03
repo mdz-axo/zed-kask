@@ -97,9 +97,18 @@ Each index is a weighted portfolio of real contracts whose weighted-average
 maturity matches a fixed target (1m/3m/6m). The time axis is taken out of the
 equation so the only thing that moves is the probability.
 
+The agent-reachable entry point is the `market_cmp_indices` MCP tool
+(hkask-mcp-prediction-markets): it fetches live open markets, adapts them to
+the catalog-record shapes, and runs the C0.4 builder below. Its output —
+`ProvenancedCmpIndex[]` — is the producer for `scenario_from_cmp_indices`
+(hkask-mcp-scenarios); the `fetch_contracts` bin's on-disk JSONL catalogs
+remain the offline path.
+
 ```mermaid
 flowchart TD
+    tool["market_cmp_indices MCP tool<br/>live open markets → catalog records"]
     records["Catalog records<br/>Kalshi / Gamma JSONL"] --> build["build_cmp_indices_from_lines<br/>C0.4 index builder"]
+    tool --> build
     build -->|"OrientedConstituent[]"| buckets["select_available_buckets<br/>maturity window check"]
     buckets -->|"available buckets"| bracket["solve_portfolio<br/>bracket pair interpolation"]
     buckets -->|"available buckets"| cohort["solve_portfolio_cohort<br/>C0.5 single-cohort fallback"]

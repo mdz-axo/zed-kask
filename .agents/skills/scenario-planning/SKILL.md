@@ -48,10 +48,11 @@ this skill is the operating procedure for that pipeline.
 4. Call `scenario_brainstorm` with the frame. Run its 4-round protocol
    (DIVERGE with the personas, GROUND in facts and base rates, LINK
    causal chains, PRUNE to the final tree).
-5. If research is needed, run web searches, then call `scenario_research`
-   with the raw research text to extract candidate events. Refine the
-   candidates into `ScenarioEvent` objects (yes/no questions, deadlines,
-   dependency edges with conditionals).
+5. If research is needed, run web searches, then call `scenario_build`
+   with the research text to get the extraction scaffold, and extract
+   candidate events against it. Refine the candidates into `ScenarioEvent`
+   objects (yes/no questions, deadlines, dependency edges with
+   conditionals).
 6. Call `scenario_quantify` with the events. It returns marginals, the
    joint probability, and a sensitivity ranking. Emit the `graph` viz
    block it describes so the operator sees the tree.

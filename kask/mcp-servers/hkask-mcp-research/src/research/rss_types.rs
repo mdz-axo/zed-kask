@@ -97,12 +97,6 @@ pub struct SynthesizeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FetchSyntheticRequest {
-    /// Stream ID of the synthetic feed (e.g. "feed/synthetic://123").
-    pub stream_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct DeleteSyntheticRequest {
     /// Stream ID or feed URL of the synthetic feed to delete.
     pub stream_id: String,

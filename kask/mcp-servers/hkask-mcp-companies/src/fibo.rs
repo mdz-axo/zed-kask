@@ -171,7 +171,6 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         // Data outputs — structured data, not analysis → Dublin Core.
         "portfolio_characteristics"
         | "stock_screener"
-        | "stock_universe"
         | "company_screener"
         | "key_metrics"
         | "income_statement"

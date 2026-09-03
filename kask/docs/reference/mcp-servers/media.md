@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # Media MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-media`
-**Tools:** 67 — pinned end-to-end by `tool_surface_is_exactly_67_registered_tools` (`src/hkask_mcp_media.rs:389-392`), which asserts `MediaServer::combined_router().list_all().len() == 67`. The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`src/hkask_mcp_media.rs:384-387`).
+**Tools:** 79 — pinned end-to-end by `tool_surface_is_exactly_79_registered_tools` (`src/hkask_mcp_media.rs:398-400`), which asserts `MediaServer::combined_router().list_all().len() == 79`. The count includes the 15 `educt_*` transcript-layer tools and the face-registry tools. The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images). The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`src/hkask_mcp_media.rs:384-387`).
 **Registration:** built-in server `id: "media"`, `binary: "hkask-mcp-media"` in `BUILT_IN_MCP_SERVERS` (`kask/crates/kask_bridge/src/mcp_servers.rs:405-430`).
 
 Tool count and every tool name below were verified against `#[tool(...)]`-annotated
@@ -29,7 +29,7 @@ flowchart TD
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
     server["MediaServer<br/>7 state fields"]
-    router["combined_router<br/>7 sub-routers, 67 tools"]
+    router["combined_router<br/>8 sub-routers, 79 tools"]
     semantic["execute_tool_semantic<br/>reg.tool.* span + OMC anchor"]
     sinks["Sinks: gallery.db rows,<br/>persisted assets, media_block hints"]
 
@@ -126,8 +126,7 @@ limit on the following turn). A persist failure surfaces as a tool error
 |------|------|-------------|
 | `gallery_organize` | 11 | Organize a photo gallery: create the index, scan a folder for images, return status. Run before `gallery_search`. |
 | `gallery_status` | 161 | Gallery status: path, mode, image count, total size. |
-| `gallery_search` | 186 | Search the gallery by description; fuzzy-matches AI-generated tags (objects, faces, colors, composition). |
-| `gallery_find_similar` | 289 | Find images similar to a text description or another image, via AI caption embeddings (requires `gallery_analyze` first); matches visual descriptions where `gallery_search` matches tags. |
+| `gallery_search` | 186 | Search the gallery by description. Mode `tags` (default): fuzzy-matches AI-generated tags (objects, faces, colors, composition). Mode `semantic`: caption-embedding cosine similarity against the query text or a reference `image_index` (requires `gallery_analyze` first). The former `gallery_find_similar` tool, folded in as the semantic mode. |
 | `gallery_refresh` | 439 | Rescan for new/removed images and update all AI metadata; face detection OFF by default, `include_faces=true` also scans the face reference folder and auto-matches against the face registry. |
 | `describe_image` | 565 | Describe an image in detail; styles: descriptive, artistic, technical, alt_text. |
 | `gallery_analyze` | 602 | Analyze gallery images with AI (faces, objects, colors, composition, scene descriptions); tags are persisted and become searchable. |
@@ -143,8 +142,7 @@ limit on the following turn). A persist failure surfaces as a tool error
 | `gallery_asset_detail` | 1108 | Complete details for a gallery asset — record, tags, lineage, face associations in one call; the inspector-panel data source. |
 | `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
 | `gallery_delete_image` | 1205 | Delete an image from the gallery index; by default index-only, `delete_file=true` also removes the file. |
-| `gallery_add_video` | 1256 | Import a video file into the gallery index; SHA-256 hash for deduplication. |
-| `gallery_add_audio` | 1315 | Import an audio file into the gallery index; SHA-256 hash for deduplication. |
+| `gallery_add_media` | 1256 | Import a video or audio file into the gallery index (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
 | `gallery_create_album` | 1375 | Create an album; metadata-only grouping, assets stay in place, an asset can be in multiple albums. |
 | `gallery_list_albums` | 1401 | List all albums in the current gallery. |
 | `gallery_move_to_album` | 1421 | Add a gallery asset to an album; idempotent. |
@@ -176,12 +174,11 @@ limit on the following turn). A persist failure surfaces as a tool error
 
 | Tool | Line | Description |
 |------|------|-------------|
-| `generate_image` | 9 | Generate an image from a text prompt. |
+| `generate_image` | 9 | Generate an image (or `num_images` variants) from a text prompt; variants are persisted individually with one display hint each for grid display. The former `generate_variants` tool, folded in. |
 | `transform_image` | 69 | Transform an existing image with a text prompt describing the change. |
 | `upscale_image` | 127 | Upscale an image to higher resolution. |
 | `generate_video` | 164 | Generate a short video from a text prompt describing the scene in motion. |
 | `expand_prompt` | 217 | Expand a short media prompt into a rich, detailed prompt using a vision LLM (Fooocus "V2" pattern); optional style preset (default, anime, realistic, cinematic, minimal). |
-| `generate_variants` | 282 | Generate multiple image variants from a single prompt (default 4), each persisted individually; returns an array of media blocks for grid display. |
 | `image_edit_region` | 399 | Region-selective edit (inpainting): mask (base64, white = edit, black = preserve) + prompt describing the edit. |
 
 ### Audio and voice (`tools/audio.rs`, 8 tools)
@@ -190,8 +187,7 @@ limit on the following turn). A persist failure surfaces as a tool error
 |------|------|-------------|
 | `voice_design` | 11 | Design a synthetic voice profile from a character description; returns a `VoiceDesign` JSON for `generate_speech`. |
 | `generate_speech` | 59 | Generate speech audio from text using a voice design; returns the persisted audio file path. |
-| `transcribe` | 127 | Transcribe speech audio to text for REPL injection. |
-| `transcribe_bundle` | 158 | Transcribe audio into a synchronized `TranscriptBundle` with word-level timings for interactive highlighting and click-to-seek. |
+| `transcribe_bundle` | 158 | Transcribe audio into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
 | `audio_capture` | 250 | Capture audio from the default system microphone to a WAV file optimized for Whisper transcription (16 kHz mono). |
 | `record_and_transcribe` | 302 | Record from microphone and transcribe in one call; returns linked audio file path and transcript. |
 | `audio_trim` | 451 | Trim an audio file to start/end times; ffmpeg stream copy, fast and lossless. |
@@ -244,7 +240,7 @@ Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`sr
 
 | Concept | Tools |
 |---------|-------|
-| `omc:CreativeWork` | `generate_image`, `generate_video`, `video_meme`, `expand_prompt`, `generate_variants`, `image_create_collage` |
+| `omc:CreativeWork` | `generate_image`, `generate_video`, `video_meme`, `expand_prompt`, `image_create_collage` |
 | `omc:VersionInfo` | `transform_image`, `upscale_image`, `image_remove_background`, `image_apply_style`, `image_edit_region` |
 | `omc:Scene` | `describe_image`, `gallery_analyze`, `video_caption` |
 | `omc:Asset` | gallery management + retrieval (`gallery_search` … `video_fetch`), all face tools — faces are gallery assets (people identified within images), not OMC `Participant`, which is a production-side concept about who made the media (`src/omc.rs:22-24`) |

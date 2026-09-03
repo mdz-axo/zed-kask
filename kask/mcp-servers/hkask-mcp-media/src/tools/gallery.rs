@@ -1,6 +1,36 @@
 //! Gallery tools — organize, search, find-similar, refresh, describe, analyze, faces, timeline.
 use crate::*;
 
+/// Score gallery images by Levenshtein tag similarity: for each (term, tag)
+/// pair at or above `min_similarity`, accumulate max(sim × confidence) per
+/// image, then rank descending. Shared by the collage's search-terms and
+/// similar-to-index modes — previously two inline copies of this loop (with
+/// gallery_search's detail-collecting variant a third).
+pub(crate) fn rank_images_by_tag_similarity(
+    all_tags: &[(hkask_storage::gallery::TagRecord, String)],
+    terms: &[String],
+    min_similarity: f64,
+    exclude_relative_path: Option<&str>,
+) -> Vec<(String, f64)> {
+    let mut image_scores: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for (tag, relative_path) in all_tags {
+        if exclude_relative_path == Some(relative_path.as_str()) {
+            continue;
+        }
+        for term in terms {
+            let sim = levenshtein_similarity(term, &tag.value);
+            if sim >= min_similarity {
+                let weighted = sim * tag.confidence;
+                let entry = image_scores.entry(relative_path.clone()).or_insert(0.0);
+                *entry = (*entry).max(weighted);
+            }
+        }
+    }
+    let mut ranked: Vec<(String, f64)> = image_scores.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    ranked
+}
+
 #[tool_router(router = gallery_router, vis = "pub")]
 impl MediaServer {
     // ── Gallery tools ────────────────────────────────────────────────────────
@@ -170,249 +200,284 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Search your gallery by describing what you're looking for. Fuzzy-matches against AI-generated tags (objects, faces, colors, composition)."
+        description = "Search your gallery by describing what you're looking for. Mode 'tags' (default) fuzzy-matches against AI-generated tags (objects, faces, colors, composition) — works without embeddings. Mode 'semantic' matches visual descriptions by caption-embedding cosine similarity (requires gallery_analyze to have generated captions); in semantic mode, pass image_index to find images similar to a given gallery image instead of matching the query text."
     )]
     pub async fn gallery_search(
         &self,
         Parameters(GallerySearchRequest {
             query,
+            mode,
+            image_index,
             limit,
             tag_types,
             min_similarity,
         }): Parameters<GallerySearchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_search", async {
-            if query.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("query must not be empty"));
+            let mode = mode.as_deref().unwrap_or("tags");
+            if !matches!(mode, "tags" | "semantic") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "mode must be 'tags' or 'semantic', got '{mode}'"
+                )));
             }
-            let ga = self.access_gallery().map_err(map_media_error)?;
-
-            let all_tags = self
-                .gallery_store
-                .get_all_tags(&ga.gallery_id)
-                .map_err(map_gallery_store_error)?;
-
-            let limit = limit.unwrap_or(10);
-            let min_sim = min_similarity.unwrap_or(0.3);
-            let type_filter: Option<Vec<String>> =
-                tag_types.map(|t| t.into_iter().map(|s| s.to_lowercase()).collect());
-
-            let mut image_scores: std::collections::HashMap<String, (f64, Vec<serde_json::Value>)> =
-                std::collections::HashMap::new();
-
-            for (tag, relative_path) in &all_tags {
-                if let Some(ref filter) = type_filter
-                    && !filter.contains(&tag.tag_type.to_lowercase())
-                {
-                    continue;
-                }
-
-                let sim = levenshtein_similarity(&query, &tag.value);
-                if sim < min_sim {
-                    continue;
-                }
-
-                let weighted_sim = sim * tag.confidence;
-                let entry = image_scores
-                    .entry(relative_path.clone())
-                    .or_insert((0.0, Vec::new()));
-                entry.0 = entry.0.max(weighted_sim);
-                entry.1.push(serde_json::json!({
-                    "tag_type": tag.tag_type,
-                    "value": tag.value,
-                    "similarity": sim,
-                    "confidence": tag.confidence,
-                }));
+            if mode == "tags" && query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "query must not be empty in tags mode",
+                ));
+            }
+            if mode == "semantic" && query.trim().is_empty() && image_index.is_none() {
+                return Err(McpToolError::invalid_argument(
+                    "semantic mode requires a query or an image_index",
+                ));
             }
 
-            let mut ranked: Vec<(String, f64, Vec<serde_json::Value>)> = image_scores
-                .into_iter()
-                .map(|(path, (score, matches))| (path, score, matches))
-                .collect();
-            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            ranked.truncate(limit);
-
-            // One renderable ```media block per result so the agent can surface
-            // the matched gallery images inline. absolute_path is
-            // root_path.join(relative_path) — that is what gallery_organize
-            // stored at scan time (gallery.rs:94), so the D18 MediaWidget
-            // (PathMediaStorage) can read the file.
-            let display_hints: Vec<String> = ranked
-                .iter()
-                .map(|(rel, _, _)| {
-                    crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
-                })
-                .collect();
-
-            let results: Vec<serde_json::Value> = ranked
-                .into_iter()
-                .map(|(path, score, matches)| {
-                    serde_json::json!({
-                        "image": path,
-                        "score": score,
-                        "matching_tags": matches,
-                    })
-                })
-                .collect();
-
-            Ok(serde_json::json!({
-                "query": query,
-                "results": results,
-                "total_matches": results.len(),
-                "display_hints": display_hints,
-            }))
+            match mode {
+                "semantic" => {
+                    self.gallery_search_semantic(query, image_index, limit, min_similarity)
+                        .await
+                }
+                _ => {
+                    self.gallery_search_tags(query, limit, tag_types, min_similarity)
+                        .await
+                }
+            }
         })
         .await
     }
 
-    #[tool(
-        description = "Find gallery images similar to a text description or to another image. Uses AI caption embeddings for semantic similarity (requires gallery_analyze to have been run first). Different from gallery_search which matches tags — this matches visual descriptions."
-    )]
-    pub async fn gallery_find_similar(
+    /// Tags-mode core: fuzzy match against AI-generated tags (the original
+    /// gallery_search body).
+    async fn gallery_search_tags(
         &self,
-        Parameters(GalleryFindSimilarRequest {
-            text,
-            image_index,
-            limit,
-            min_similarity,
-        }): Parameters<GalleryFindSimilarRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "gallery_find_similar", async {
-            let query_label = text
-                .clone()
-                .unwrap_or_else(|| format!("image_index={}", image_index.unwrap_or(0)));
+        query: String,
+        limit: Option<usize>,
+        tag_types: Option<Vec<String>>,
+        min_similarity: Option<f64>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let ga = self.access_gallery().map_err(map_media_error)?;
 
-            if text.is_none() && image_index.is_none() {
-                return Err(McpToolError::invalid_argument(
-                    "Provide either 'text' or 'image_index' (not both).",
-                ));
+        let all_tags = self
+            .gallery_store
+            .get_all_tags(&ga.gallery_id)
+            .map_err(map_gallery_store_error)?;
+
+        let limit = limit.unwrap_or(10);
+        let min_sim = min_similarity.unwrap_or(0.3);
+        let type_filter: Option<Vec<String>> =
+            tag_types.map(|t| t.into_iter().map(|s| s.to_lowercase()).collect());
+
+        let mut image_scores: std::collections::HashMap<String, (f64, Vec<serde_json::Value>)> =
+            std::collections::HashMap::new();
+
+        for (tag, relative_path) in &all_tags {
+            if let Some(ref filter) = type_filter
+                && !filter.contains(&tag.tag_type.to_lowercase())
+            {
+                continue;
             }
 
-            // Determine the query embedding
-            let query_embedding: Vec<f32> = if let Some(ref query_text) = text {
-                self.embed_text(query_text).await?
-            } else if let Some(idx) = image_index {
-                let image_id = self.resolve_image_id(idx).map_err(map_media_error)?;
-                let tags = self
-                    .gallery_store
-                    .get_tags(&image_id)
-                    .map_err(|e| map_media_error(e.into()))?;
-                let captions: Vec<&str> = tags
-                    .iter()
-                    .filter(|t| t.tag_type == "caption")
-                    .map(|t| t.value.as_str())
-                    .collect();
-                if captions.is_empty() {
-                    return Err(McpToolError::invalid_argument(
-                        "Image has no caption. Run gallery_analyze first to generate scene descriptions.",
-                    ));
-                }
-                let caption_text = captions.join(" ");
-                self.embed_text(&caption_text).await?
-            } else {
-                // Invariant: the early return at line 303 handles the
-                // `text.is_none() && image_index.is_none()` case, so exactly
-                // one is `Some` here. `debug_assert!` documents the invariant
-                // without panicking in release builds if a future refactor
-                // breaks the precondition.
-                debug_assert!(
-                    false,
-                    "gallery_find_similar: both text and image_index are None \
-                     despite the early return; this is a regression"
-                );
-                return Err(McpToolError::invalid_argument(
-                    "Provide either 'text' or 'image_index' (not both).",
-                ));
-            };
+            let sim = levenshtein_similarity(&query, &tag.value);
+            if sim < min_sim {
+                continue;
+            }
 
-            // Collect captions for all images in the gallery
-            let ga = self.access_gallery().map_err(map_media_error)?;
+            let weighted_sim = sim * tag.confidence;
+            let entry = image_scores
+                .entry(relative_path.clone())
+                .or_insert((0.0, Vec::new()));
+            entry.0 = entry.0.max(weighted_sim);
+            entry.1.push(serde_json::json!({
+                "tag_type": tag.tag_type,
+                "value": tag.value,
+                "similarity": sim,
+                "confidence": tag.confidence,
+            }));
+        }
 
-            let all_tags = self
+        let mut ranked: Vec<(String, f64, Vec<serde_json::Value>)> = image_scores
+            .into_iter()
+            .map(|(path, (score, matches))| (path, score, matches))
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.truncate(limit);
+
+        // One renderable ```media block per result so the agent can surface
+        // the matched gallery images inline. absolute_path is
+        // root_path.join(relative_path) — that is what gallery_organize
+        // stored at scan time (gallery.rs:94), so the D18 MediaWidget
+        // (PathMediaStorage) can read the file.
+        let display_hints: Vec<String> = ranked
+            .iter()
+            .map(|(rel, _, _)| {
+                crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
+            })
+            .collect();
+
+        let results: Vec<serde_json::Value> = ranked
+            .into_iter()
+            .map(|(path, score, matches)| {
+                serde_json::json!({
+                    "image": path,
+                    "score": score,
+                    "matching_tags": matches,
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "query": query,
+            "mode": "tags",
+            "results": results,
+            "total_matches": results.len(),
+            "display_hints": display_hints,
+        }))
+    }
+
+    /// Semantic-mode core (the former gallery_find_similar body): caption-
+    /// embedding cosine similarity against the query text or a reference
+    /// image's caption.
+    async fn gallery_search_semantic(
+        &self,
+        query: String,
+        image_index: Option<usize>,
+        limit: Option<usize>,
+        min_similarity: Option<f64>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let limit = limit.unwrap_or(5);
+        let min_similarity = min_similarity.unwrap_or(0.3) as f32;
+        let query_label = if query.trim().is_empty() {
+            format!("image_index={}", image_index.unwrap_or(0))
+        } else {
+            query.clone()
+        };
+
+        // Determine the query embedding
+        let query_embedding: Vec<f32> = if !query.trim().is_empty() {
+            self.embed_text(&query).await?
+        } else if let Some(idx) = image_index {
+            let image_id = self.resolve_image_id(idx).map_err(map_media_error)?;
+            let tags = self
                 .gallery_store
-                .get_all_tags(&ga.gallery_id)
+                .get_tags(&image_id)
                 .map_err(|e| map_media_error(e.into()))?;
-
-            // Group captions by image path and embed them
-            let mut candidates: Vec<(String, String)> = Vec::new();
-            let mut current_path = String::new();
-            let mut current_captions: Vec<String> = Vec::new();
-            for (tag, path) in &all_tags {
-                if tag.tag_type != "caption" {
-                    continue;
-                }
-                if path != &current_path {
-                    if !current_captions.is_empty() {
-                        candidates.push((std::mem::take(&mut current_path), current_captions.join(" ")));
-                        current_captions.clear();
-                    }
-                    current_path = path.clone();
-                }
-                current_captions.push(tag.value.clone());
-            }
-            if !current_captions.is_empty() {
-                candidates.push((current_path, current_captions.join(" ")));
-            }
-
-            if candidates.is_empty() {
-                return Ok(serde_json::json!({
-                    "query": query_label,
-                    "results": [],
-                    "message": "No captions found. Run gallery_analyze first.",
-                }));
-            }
-
-            // Embed candidate captions individually and compute similarity
-            let candidate_texts: Vec<&str> = candidates.iter().map(|(_, c)| c.as_str()).collect();
-            let mut candidate_embeddings = Vec::new();
-            for ct in &candidate_texts {
-                match self.embed_text(ct).await {
-                    Ok(v) => candidate_embeddings.push(v),
-                    Err(_) => candidate_embeddings.push(vec![]),
-                }
-            }
-
-            // Compute cosine similarity and rank
-            let mut scored: Vec<(String, f32)> = candidates
+            let captions: Vec<&str> = tags
                 .iter()
-                .zip(candidate_embeddings.iter())
-                .filter_map(|((path, _), emb)| {
-                    if emb.is_empty() {
-                        return None;
-                    }
-                    let sim = cosine_similarity(&query_embedding, emb);
-                    if sim >= min_similarity {
-                        Some((path.clone(), sim))
-                    } else {
-                        None
-                    }
-                })
+                .filter(|t| t.tag_type == "caption")
+                .map(|t| t.value.as_str())
                 .collect();
+            if captions.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "Image has no caption. Run gallery_analyze first to generate scene descriptions.",
+                ));
+            }
+            let caption_text = captions.join(" ");
+            self.embed_text(&caption_text).await?
+        } else {
+            // Unreachable: the tool's input validation requires a query or
+            // an image_index in semantic mode.
+            return Err(McpToolError::invalid_argument(
+                "semantic mode requires a query or an image_index",
+            ));
+        };
 
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.truncate(limit);
+        // Collect captions for all images in the gallery
+        let ga = self.access_gallery().map_err(map_media_error)?;
 
-            // One renderable ```media block per result (see gallery_search for
-            // the root_path.join rationale).
-            let display_hints: Vec<String> = scored
-                .iter()
-                .map(|(rel, _)| {
-                    crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
-                })
-                .collect();
+        let all_tags = self
+            .gallery_store
+            .get_all_tags(&ga.gallery_id)
+            .map_err(|e| map_media_error(e.into()))?;
 
-            let results: Vec<serde_json::Value> = scored
-                .into_iter()
-                .map(|(path, score)| serde_json::json!({"image": path, "similarity": score}))
-                .collect();
+        // Group captions by image path and embed them
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        let mut current_path = String::new();
+        let mut current_captions: Vec<String> = Vec::new();
+        for (tag, path) in &all_tags {
+            if tag.tag_type != "caption" {
+                continue;
+            }
+            if path != &current_path {
+                if !current_captions.is_empty() {
+                    candidates.push((
+                        std::mem::take(&mut current_path),
+                        current_captions.join(" "),
+                    ));
+                    current_captions.clear();
+                }
+                current_path = path.clone();
+            }
+            current_captions.push(tag.value.clone());
+        }
+        if !current_captions.is_empty() {
+            candidates.push((current_path, current_captions.join(" ")));
+        }
 
-            Ok(serde_json::json!({
+        if candidates.is_empty() {
+            return Ok(serde_json::json!({
                 "query": query_label,
-                "results": results,
-                "display_hints": display_hints,
-            }))
-        })
-        .await
+                "mode": "semantic",
+                "results": [],
+                "message": "No captions found. Run gallery_analyze first.",
+            }));
+        }
+
+        // Embed candidate captions individually and compute similarity.
+        // An embedding failure drops that candidate from the ranking — the
+        // dropped count is surfaced so it is never read as "no similar
+        // images".
+        let mut candidate_embeddings = Vec::new();
+        let mut failed_embeddings = 0u32;
+        for (_path, caption) in &candidates {
+            match self.embed_text(caption).await {
+                Ok(v) => candidate_embeddings.push(v),
+                Err(_) => {
+                    failed_embeddings += 1;
+                    candidate_embeddings.push(vec![]);
+                }
+            }
+        }
+
+        // Compute cosine similarity and rank
+        let mut scored: Vec<(String, f32)> = candidates
+            .iter()
+            .zip(candidate_embeddings.iter())
+            .filter_map(|((path, _), emb)| {
+                if emb.is_empty() {
+                    return None;
+                }
+                let sim = cosine_similarity(&query_embedding, emb);
+                if sim >= min_similarity {
+                    Some((path.clone(), sim))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+
+        // One renderable ```media block per result (see gallery_search_tags
+        // for the root_path.join rationale).
+        let display_hints: Vec<String> = scored
+            .iter()
+            .map(|(rel, _)| {
+                crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
+            })
+            .collect();
+
+        let results: Vec<serde_json::Value> = scored
+            .into_iter()
+            .map(|(path, score)| serde_json::json!({"image": path, "similarity": score}))
+            .collect();
+
+        Ok(serde_json::json!({
+            "query": query_label,
+            "mode": "semantic",
+            "results": results,
+            "failed_embeddings": failed_embeddings,
+            "display_hints": display_hints,
+        }))
     }
 
     #[tool(
@@ -1214,29 +1279,41 @@ impl MediaServer {
         .await
     }
 
-    /// Import a video file into the gallery index. Computes SHA-256 hash for
-    /// deduplication and indexes the file for gallery search.
+    /// Import a video or audio file into the gallery index. Computes SHA-256
+    /// hash for deduplication and indexes the file for gallery search (the
+    /// former gallery_add_video / gallery_add_audio pair, merged).
     #[tool(
-        description = "Import a video file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search."
+        description = "Import a video or audio file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search. media_type selects the kind: 'video' (with optional width/height metadata) or 'audio'."
     )]
-    pub async fn gallery_add_video(
+    pub async fn gallery_add_media(
         &self,
-        Parameters(GalleryAddVideoRequest {
+        Parameters(GalleryAddMediaRequest {
             path,
+            media_type,
             width,
             height,
-        }): Parameters<GalleryAddVideoRequest>,
+        }): Parameters<GalleryAddMediaRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "gallery_add_video", async {
+        execute_tool(self, "gallery_add_media", async {
+            let media_type = media_type.to_lowercase();
+            let (kind, fallback_ext) = match media_type.as_str() {
+                "video" => ("video", "mp4"),
+                "audio" => ("audio", "mp3"),
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "media_type must be 'video' or 'audio', got '{other}'"
+                    )));
+                }
+            };
             let ga = self.access_gallery().map_err(map_media_error)?;
             let file_path = std::path::Path::new(&path);
             if !file_path.exists() {
                 return Err(McpToolError::invalid_argument(format!(
-                    "Video file not found: {path}"
+                    "{kind} file not found: {path}"
                 )));
             }
             let bytes = std::fs::read(file_path).map_err(|e| {
-                McpToolError::invalid_argument(format!("Failed to read video file: {e}"))
+                McpToolError::invalid_argument(format!("Failed to read {kind} file: {e}"))
             })?;
             let hash = {
                 use sha2::Digest;
@@ -1247,110 +1324,41 @@ impl MediaServer {
             let filename = file_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("video.mp4");
+                .unwrap_or(&format!("file.{fallback_ext}"))
+                .to_string();
             let ext = file_path
                 .extension()
                 .and_then(|e| e.to_str())
-                .unwrap_or("mp4");
+                .unwrap_or(fallback_ext)
+                .to_string();
             let record = self
                 .gallery_store
                 .add_media(
                     &ga.gallery_id,
-                    filename,
+                    &filename,
                     &path,
                     &hash,
-                    width,
-                    height,
-                    ext,
+                    width.unwrap_or(0),
+                    height.unwrap_or(0),
+                    &ext,
                     bytes.len() as u64,
-                    "video",
+                    kind,
                 )
                 .map_err(|e| map_media_error(e.into()))?;
             let mut value = serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode video record: {e}")))?; // rr0044-ok: serde serialization of own data
-            // Render the imported video inline in the media widget —
+                .map_err(|e| McpToolError::internal(format!("encode {kind} record: {e}")))?; // rr0044-ok: serde serialization of own data
+            // Render the imported media inline in the media widget —
             // without a display_hint the caller has no way to view it.
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "display_hint".into(),
                     serde_json::Value::String(crate::media_block::media_block_with_omc(
-                        "video",
+                        kind,
                         &record.absolute_path,
-                        crate::omc::tool_to_omc("gallery_add_video"),
+                        crate::omc::tool_to_omc("gallery_add_media"),
                         Some(&crate::media_block::Provenance::for_tool(
-                            "gallery_add_video",
-                            serde_json::json!({"path": path}),
-                            None,
-                        )),
-                    )),
-                );
-            }
-            Ok(value)
-        })
-        .await
-    }
-
-    /// Import an audio file into the gallery index. Computes SHA-256 hash for
-    /// deduplication and indexes the file for gallery search.
-    #[tool(
-        description = "Import an audio file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search."
-    )]
-    pub async fn gallery_add_audio(
-        &self,
-        Parameters(GalleryAddAudioRequest { path }): Parameters<GalleryAddAudioRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "gallery_add_audio", async {
-            let ga = self.access_gallery().map_err(map_media_error)?;
-            let file_path = std::path::Path::new(&path);
-            if !file_path.exists() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Audio file not found: {path}"
-                )));
-            }
-            let bytes = std::fs::read(file_path).map_err(|e| {
-                McpToolError::invalid_argument(format!("Failed to read audio file: {e}"))
-            })?;
-            let hash = {
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&bytes);
-                format!("{:x}", hasher.finalize())
-            };
-            let filename = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("audio.mp3");
-            let ext = file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("mp3");
-            let record = self
-                .gallery_store
-                .add_media(
-                    &ga.gallery_id,
-                    filename,
-                    &path,
-                    &hash,
-                    0,
-                    0,
-                    ext,
-                    bytes.len() as u64,
-                    "audio",
-                )
-                .map_err(|e| map_media_error(e.into()))?;
-            let mut value = serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode audio record: {e}")))?; // rr0044-ok: serde serialization of own data
-            // Render the imported audio inline in the media widget.
-            if let Some(object) = value.as_object_mut() {
-                object.insert(
-                    "display_hint".into(),
-                    serde_json::Value::String(crate::media_block::media_block_with_omc(
-                        "audio",
-                        &record.absolute_path,
-                        crate::omc::tool_to_omc("gallery_add_audio"),
-                        Some(&crate::media_block::Provenance::for_tool(
-                            "gallery_add_audio",
-                            serde_json::json!({"path": path}),
+                            "gallery_add_media",
+                            serde_json::json!({"path": path, "media_type": kind}),
                             None,
                         )),
                     )),

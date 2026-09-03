@@ -17,14 +17,14 @@ use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,
     CreateCollageRequest, DescribeImageRequest, ExpandPromptRequest, FaceListRequest,
     FaceRegisterRequest, FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest,
-    GalleryAddAudioRequest, GalleryAddVideoRequest, GalleryAnalyzeRequest,
+    GalleryAddMediaRequest, GalleryAnalyzeRequest,
     GalleryAssetDetailRequest, GalleryCreateAlbumRequest, GalleryDeleteAlbumRequest,
-    GalleryDeleteImageRequest, GalleryFindSimilarRequest, GalleryLineageRequest,
+    GalleryDeleteImageRequest, GalleryLineageRequest,
     GalleryListAlbumMembersRequest, GalleryListAssetsRequest, GalleryMoveToAlbumRequest,
     GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRecordGenerationRequest,
     GalleryRefreshRequest, GalleryRemoveFromAlbumRequest, GalleryReproduceRequest,
     GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest,
-    GenerateVariantsRequest, GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest,
+    GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest,
     JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest,
     ModelListRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest,
     TransformImageRequest, UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest,
@@ -61,10 +61,7 @@ schema_clean_test!(
 );
 schema_clean_test!(gallery_organize_request_schema, GalleryOrganizeRequest);
 schema_clean_test!(gallery_search_request_schema, GallerySearchRequest);
-schema_clean_test!(
-    gallery_find_similar_request_schema,
-    GalleryFindSimilarRequest
-);
+schema_clean_test!(gallery_add_media_request_schema, GalleryAddMediaRequest);
 schema_clean_test!(gallery_refresh_request_schema, GalleryRefreshRequest);
 schema_clean_test!(describe_image_request_schema, DescribeImageRequest);
 schema_clean_test!(gallery_analyze_request_schema, GalleryAnalyzeRequest);
@@ -104,9 +101,7 @@ schema_clean_test!(job_submit_request_schema, JobSubmitRequest);
 schema_clean_test!(job_list_request_schema, JobListRequest);
 schema_clean_test!(job_status_request_schema, JobStatusRequest);
 schema_clean_test!(job_cancel_request_schema, JobCancelRequest);
-schema_clean_test!(gallery_add_video_request_schema, GalleryAddVideoRequest);
 schema_clean_test!(gallery_list_assets_request_schema, GalleryListAssetsRequest);
-schema_clean_test!(gallery_add_audio_request_schema, GalleryAddAudioRequest);
 schema_clean_test!(
     gallery_asset_detail_request_schema,
     GalleryAssetDetailRequest
@@ -135,7 +130,6 @@ schema_clean_test!(
     gallery_delete_image_request_schema,
     GalleryDeleteImageRequest
 );
-schema_clean_test!(generate_variants_request_schema, GenerateVariantsRequest);
 schema_clean_test!(image_edit_region_request_schema, ImageEditRegionRequest);
 schema_clean_test!(workflow_save_request_schema, WorkflowSaveRequest);
 schema_clean_test!(workflow_load_request_schema, WorkflowLoadRequest);

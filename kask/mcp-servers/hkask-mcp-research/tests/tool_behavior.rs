@@ -31,9 +31,9 @@ use hkask_mcp_research::research::rss_types::{
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
-    ExtractedContent, FindSimilarRequest, ProviderFailureRecord, ProviderHealthEntry,
-    ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy,
-    WebError,
+    ExtractedContent, FindSimilarRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry,
+    ProviderInfo, ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest,
+    SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -313,6 +313,7 @@ async fn web_search_rejects_empty_query() {
             freshness: None,
             strategy: None,
             provider: None,
+            intent: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -335,6 +336,7 @@ async fn web_search_rejects_oversized_query() {
             freshness: None,
             strategy: None,
             provider: None,
+            intent: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -357,6 +359,7 @@ async fn web_search_rejects_unknown_strategy() {
             freshness: None,
             strategy: Some("bogus".to_string()),
             provider: None,
+            intent: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -374,6 +377,7 @@ async fn web_search_rejects_unknown_freshness() {
             freshness: Some("bogus".to_string()),
             strategy: None,
             provider: None,
+            intent: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -393,6 +397,7 @@ async fn web_search_surfaces_missing_credentials_as_permission_denied() {
             freshness: None,
             strategy: None,
             provider: None,
+            intent: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::PermissionDenied);
@@ -743,6 +748,7 @@ fn deep_search_request() -> SearchRequest {
         exclude_domains: None,
         freshness: None,
         strategy: Some("deep".to_string()),
+        intent: None,
         provider: None,
     }
 }
@@ -961,6 +967,7 @@ async fn web_search_does_not_cache_provider_failures() {
         exclude_domains: None,
         freshness: None,
         strategy: Some("quick".to_string()),
+        intent: None,
         provider: None,
     };
 
@@ -984,5 +991,162 @@ async fn web_search_does_not_cache_provider_failures() {
             .as_array()
             .is_some_and(|f| f.is_empty()),
         "the second response must carry no failure record"
+    );
+}
+
+// ── web_search intent-driven provider selection ─────────────────────────────
+
+/// A pool fake with one configured recommendation: records the provider the
+/// tool selected, and returns a minimal successful compound. Pins the
+/// folded-in deliberate-selection path (the former web_recommend_provider +
+/// web_search(provider) two-step): intent set, provider unset → the top
+/// configured recommendation is queried and the ranking is surfaced.
+struct IntentSelectionPool {
+    selected_provider: std::sync::Mutex<Vec<Option<String>>>,
+}
+
+#[async_trait]
+impl WebSearchPort for IntentSelectionPool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        self.selected_provider
+            .lock()
+            .unwrap()
+            .push(provider.map(str::to_string));
+        Ok(CompoundSearchResult {
+            query: _query.query.clone(),
+            strategy: "quick".to_string(),
+            results: Vec::new(),
+            providers_queried: vec![ProviderInfo {
+                kind: provider.unwrap_or("default").to_string(),
+                capabilities: Vec::new(),
+            }],
+            providers_succeeded: vec![provider.unwrap_or("default").to_string()],
+            providers_failed: Vec::new(),
+            answer_box: None,
+            related_questions: Vec::new(),
+            total_before_dedup: 0,
+            duplicates_removed: 0,
+        })
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured("not configured".to_string()))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Err(WebError::NoProviderConfigured("not configured".to_string()))
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured("not configured".to_string()))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "intent-selection-stub".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        vec!["arxiv".to_string()]
+    }
+
+    fn score_providers(&self, _query: &str, intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        vec![
+            ProviderRecommendation {
+                kind: "arxiv".to_string(),
+                score: 1.0,
+                rationale: format!("best for {} intent", intent.unwrap_or("general")),
+                cost_per_call_usd: 0.0,
+                latency_tier: LatencyTier::Fast,
+                strengths: Vec::new(),
+                weaknesses: Vec::new(),
+                best_for: Vec::new(),
+                configured: true,
+                live_success_rate: None,
+                live_p50_latency_ms: None,
+                live_sample_count: None,
+            },
+            ProviderRecommendation {
+                kind: "tavily".to_string(),
+                score: 5.0,
+                rationale: "not configured".to_string(),
+                cost_per_call_usd: 0.01,
+                latency_tier: LatencyTier::Fast,
+                strengths: Vec::new(),
+                weaknesses: Vec::new(),
+                best_for: Vec::new(),
+                configured: false,
+                live_success_rate: None,
+                live_p50_latency_ms: None,
+                live_sample_count: None,
+            },
+        ]
+    }
+}
+
+#[tokio::test]
+async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking() {
+    let server = ResearchServer::new(
+        WebID::new(),
+        Arc::new(IntentSelectionPool {
+            selected_provider: std::sync::Mutex::new(Vec::new()),
+        }),
+        Arc::new(ResponseCache::new(0, Duration::from_secs(60))),
+        RateLimiter::new(10000, 60),
+        None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        Arc::new(FailingInferencePort),
+    );
+    let output = server
+        .web_search(Parameters(SearchRequest {
+            query: "rust async runtime benchmarks".to_string(),
+            num_results: Some(5),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            intent: Some("academic".to_string()),
+            provider: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+
+    // The ranking is surfaced — the choice is auditable.
+    let recommendations = parsed["provider_recommendations"]
+        .as_array()
+        .expect("provider_recommendations array");
+    assert_eq!(recommendations.len(), 2, "both recommendations surfaced");
+    assert_eq!(recommendations[0]["kind"].as_str(), Some("arxiv"));
+
+    // The top CONFIGURED provider was queried (not the unconfigured tavily)
+    // and surfaced as selected_provider.
+    assert_eq!(
+        parsed["selected_provider"].as_str(),
+        Some("arxiv"),
+        "the top configured recommendation is the selected provider, got: {parsed}"
     );
 }

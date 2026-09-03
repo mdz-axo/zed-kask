@@ -323,39 +323,6 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Exhaustive stock universe listing from EODHD Screener API. Returns ALL stocks on the specified exchange with market cap above the threshold, paginating through market cap bands to exhaust the full universe. Each row includes symbol, name, exchange, price, market cap, sector, and industry. Use this as Stage 1 of a multi-stage screen (financial filter, then expectations gap). Default: US exchange, market cap above $500M."
-    )]
-    pub async fn stock_universe(
-        &self,
-        Parameters(req): Parameters<types::StockUniverseRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "stock_universe", async {
-            let listings = providers::fetch_eodhd_screener_listing(
-                &self.client,
-                &self.eodhd_api_key,
-                &req.exchange,
-                req.min_market_cap,
-            )
-            .await?;
-
-            let count = listings.len();
-
-            let output = serde_json::json!({
-                "exchange": req.exchange,
-                "min_market_cap": req.min_market_cap,
-                "count": count,
-                "results": listings,
-                "fibo": {
-                    "market_capitalization": fibo::MARKET_CAPITALIZATION,
-                },
-                "source": "EODHD Screener API",
-            });
-
-            Ok(fibo::enrich_with_ontology(output, "company_screener"))
-        })
-        .await
-    }
-    #[tool(
         description = "Multi-provider fundamental research search for a company (Exa, Tavily, Brave). Returns research claims classified by category (guidance, competitive, macro, financial, risk) with numeric values, mentioned tickers, and dates extracted — the claim feed for expectations_gap's management-guidance estimate and for research notes. Coverage-honest: per-provider status is surfaced; a provider without a configured key is named in the status, never silently skipped."
     )]
     pub async fn company_research_search(

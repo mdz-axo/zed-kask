@@ -28,8 +28,8 @@ pub(crate) use feed::{discover_feeds, fetch_feed};
 pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
 pub(crate) use rss_types::{
     Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
-    FetchSyntheticRequest, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
-    MarkReadRequest, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
+    GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MarkReadRequest,
+    SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
 };
 pub(crate) use types::RateLimiter;
 pub(crate) use types::{
@@ -37,9 +37,9 @@ pub(crate) use types::{
     DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
-    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput, RecommendProviderOutput,
-    RecommendProviderRequest, RerankInfo, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, WebError, llm_rerank, provider_profile,
+    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput, ProviderRecommendation,
+    RerankInfo, SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput,
+    SearchStrategy, WebError, llm_rerank, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.

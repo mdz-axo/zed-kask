@@ -143,18 +143,6 @@ pub fn provider_profile(kind: &str) -> Option<&'static ProviderProfile> {
 
 // ── Provider recommendation (metacognitive scoring) ──
 
-/// Request for `web_recommend_provider`: score each configured provider
-/// against a query to guide deliberate selection.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RecommendProviderRequest {
-    /// The query to score providers against.
-    pub query: String,
-    /// Optional query intent hint: "news", "academic", "semantic",
-    /// "freshness", "general", "transcript". When set, providers whose
-    /// `best_for` includes this intent score higher.
-    pub intent: Option<String>,
-}
-
 /// A single provider's recommendation: score, rationale, and profile.
 /// Lower `score` is better (mirrors `score_static`: cost + latency penalty).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,15 +177,6 @@ pub struct ProviderRecommendation {
     pub live_sample_count: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecommendProviderOutput {
-    pub query: String,
-    pub intent: Option<String>,
-    /// Ranked recommendations, lowest score first.
-    pub recommendations: Vec<ProviderRecommendation>,
-    /// The top recommendation's kind, or `None` if no configured providers.
-    pub recommended: Option<String>,
-}
 
 // ── Request types ──
 
@@ -209,11 +188,22 @@ pub struct SearchRequest {
     pub exclude_domains: Option<Vec<String>>,
     pub freshness: Option<String>,
     pub strategy: Option<String>,
+    /// Deliberate provider selection without an explicit `provider`: when
+    /// `provider` is None and `intent` is set (news, academic, semantic,
+    /// freshness, general, transcript), the tool scores the configured
+    /// providers against (query, intent) — cost, latency, strengths,
+    /// capability match — and queries the top recommendation as a
+    /// single-provider call. The ranking is surfaced in the output's
+    /// `provider_recommendations` and the choice in `selected_provider`.
+    /// The former two-step web_recommend_provider + web_search(provider)
+    /// pattern, folded in.
+    pub intent: Option<String>,
     /// Explicit provider override: "tavily", "brave", "exa", "firecrawl",
     /// "serpapi". When set, only that provider is queried — no fusion, no
-    /// fallback. Use `web_recommend_provider` to pick deliberately. When
-    /// `None`, the `strategy` field selects providers (quick = best-scored
-    /// single keyword provider; web/news/deep = fan out with RRF fusion).
+    /// fallback. When `None` with an `intent`, the top-recommended provider
+    /// is queried; with neither, the `strategy` field selects providers
+    /// (quick = best-scored single keyword provider; web/news/deep = fan out
+    /// with RRF fusion).
     pub provider: Option<String>,
 }
 
@@ -555,6 +545,12 @@ pub(crate) struct SearchOutput {
     /// Empty when no profiles are registered (e.g. only free providers).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_profiles: Vec<ProviderProfileOutput>,
+    /// The provider ranking computed when `intent`-driven selection ran
+    /// (provider unset, intent set): every configured/unconfigured provider
+    /// with score, rationale, and profile. Empty for explicit `provider`
+    /// calls and compound strategies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_recommendations: Vec<ProviderRecommendation>,
     /// How the deep strategy's rerank stage ran. `mode: "llm"` when the
     /// templated LLM scoring calls produced the ordering; `mode:
     /// "heuristic"` when every scoring call failed and the heuristic RRF

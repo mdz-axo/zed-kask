@@ -1053,68 +1053,51 @@ impl KanbanServer {
 
     // ── Kata tools — scientific-thinking prompts scoped to a task ──────────
 
-    #[tool(description = "Generate a Coaching Kata prompt (5-question dialogue) for a task")]
-    pub async fn kanban_task_kata_coaching(
+    #[tool(
+        description = "Generate a kata prompt scoped to a task. stage selects the kata: 'coaching' (5-question Coaching Kata dialogue), 'improvement' (Improvement Kata PDCA cycle), or 'practice' (Starter Kata observation drill — requires sub_problem). The former kanban_task_kata_coaching/improvement/practice trio, merged."
+    )]
+    pub async fn kanban_task_kata_prompt(
         &self,
-        Parameters(TaskKataCoachingRequest { task_id }): Parameters<TaskKataCoachingRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_task_kata_coaching", async {
-            let tid = parse_task_id(&task_id)?;
-            match self.service.task_coaching_prompt(tid) {
-                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                    task_id: tid.to_string(),
-                    prompt,
-                    ontology: kanban_type_to_pko("kanban_task_kata_coaching")
-                        .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                Err(e) => Err(map_kanban_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(description = "Generate an Improvement Kata prompt (PDCA cycle) for a task")]
-    pub async fn kanban_task_kata_improvement(
-        &self,
-        Parameters(TaskKataImprovementRequest { task_id }): Parameters<TaskKataImprovementRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_task_kata_improvement", async {
-            let tid = parse_task_id(&task_id)?;
-            match self.service.task_improvement_prompt(tid) {
-                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                    task_id: tid.to_string(),
-                    prompt,
-                    ontology: kanban_type_to_pko("kanban_task_kata_improvement")
-                        .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                Err(e) => Err(map_kanban_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(description = "Generate a Starter Kata observation drill prompt for a task sub-problem")]
-    pub async fn kanban_task_kata_practice(
-        &self,
-        Parameters(TaskKataPracticeRequest {
+        Parameters(TaskKataPromptRequest {
             task_id,
+            stage,
             sub_problem,
-        }): Parameters<TaskKataPracticeRequest>,
+        }): Parameters<TaskKataPromptRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_task_kata_practice", async {
+        execute_tool(self, "kanban_task_kata_prompt", async {
             let tid = parse_task_id(&task_id)?;
-            match self.service.task_practice_prompt(tid, &sub_problem) {
-                Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
-                    task_id: tid.to_string(),
-                    prompt,
-                    ontology: kanban_type_to_pko("kanban_task_kata_practice")
-                        .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                Err(e) => Err(map_kanban_error(e)),
-            }
+            let prompt = match stage.as_str() {
+                "coaching" => self
+                    .service
+                    .task_coaching_prompt(tid)
+                    .map_err(map_kanban_error)?,
+                "improvement" => self
+                    .service
+                    .task_improvement_prompt(tid)
+                    .map_err(map_kanban_error)?,
+                "practice" => {
+                    let Some(sub_problem) = sub_problem else {
+                        return Err(McpToolError::invalid_argument(
+                            "sub_problem is required for stage 'practice'",
+                        ));
+                    };
+                    self.service
+                        .task_practice_prompt(tid, &sub_problem)
+                        .map_err(map_kanban_error)?
+                }
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "stage must be 'coaching', 'improvement', or 'practice', got '{other}'"
+                    )));
+                }
+            };
+            Ok(serde_json::to_value(TaskKataResponse {
+                task_id: tid.to_string(),
+                prompt,
+                ontology: kanban_type_to_pko("kanban_task_kata_prompt")
+                    .map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
         })
         .await
     }

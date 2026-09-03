@@ -47,7 +47,7 @@ mod requests;
 pub use requests::{
     MarketCalibrationRequest, MarketCheckResolutionsRequest, MarketCmpContextSuggestRequest,
     MarketCmpIndexRequest, MarketCmpIndexStoreRequest, MarketCmpIndicesRequest,
-    MarketCmpPortfolioStoreRequest, MarketCmpRequest, MarketHistoryRequest, MarketLadderRequest,
+    MarketCmpPortfolioStoreRequest, MarketHistoryRequest, MarketLadderRequest,
     MarketLookupRequest, MarketMatchRequest, MarketOntologyMapRequest,
     MarketRecordResolutionRequest, MarketResidualRequest, MarketSubscribeRequest,
     MarketVolatilityRequest, StatusRequest,
@@ -429,58 +429,6 @@ impl PredictionMarketsServer {
         })
         .await
     }
-    #[tool(
-        description = "Constant Maturity Prediction (CMP): synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns bucketed_sparse with the bracket width rather than a fabricated tight curve. Base events come only from HKASK_PREDICTION_MARKETS_BASE_EVENTS — unregistered series are refused."
-    )]
-    pub async fn market_cmp(
-        &self,
-        Parameters(req): Parameters<MarketCmpRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_cmp",
-            async {
-                self.record_call("market_cmp");
-                if !self.base_events.iter().any(|(_, series)| series == &req.series) {
-                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                        format!(
-                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                            req.series
-                        ),
-                    ));
-                }
-                let markets =
-                    provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
-                let now = chrono::Utc::now();
-                let points: Vec<cmp::TenorPoint> = markets
-                    .iter()
-                    .filter_map(|m| {
-                        let mid = m.yes_midpoint()?;
-                        let deadline =
-                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
-                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
-                            as f64
-                            / 86_400.0;
-                        (days > 0.0).then_some(cmp::TenorPoint {
-                            days_to_resolution: days,
-                            price: mid,
-                        })
-                    })
-                    .collect();
-                let value = cmp::constant_maturity(&points, req.tenor_days).ok_or_else(|| {
-                    hkask_mcp_server::server::McpToolError::not_found(format!(
-                        "no live markets with future deadlines for series '{}'",
-                        req.series
-                    ))
-                })?;
-                serde_json::to_value(&value).map_err(|e| {
-                    McpToolError::internal(format!("cmp serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
-        .await
-    }
-
     /// Residual risk decomposition: niche exposure to a base event.
     #[tool(
         description = "Decompose a niche market's movement into base-event exposure (beta in log-odds space) plus an idiosyncratic residual. Refuses with insufficient_overlap below 10 shared observations — never fabricates a residual from thin data. Output carries r_squared and observations so fit quality is explicit."
@@ -523,6 +471,43 @@ impl PredictionMarketsServer {
             })
         })
         .await
+    }
+
+    /// Refuse unregistered series — base events come only from
+    /// HKASK_PREDICTION_MARKETS_BASE_EVENTS; an unregistered series is never
+    /// silently treated as one.
+    fn require_registered_base_event(&self, series: &str) -> Result<(), McpToolError> {
+        if self.base_events.iter().any(|(_, s)| s == series) {
+            Ok(())
+        } else {
+            Err(McpToolError::invalid_argument(format!(
+                "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                series
+            )))
+        }
+    }
+
+    /// Extract (days-to-resolution, yes-midpoint) tenor points from open
+    /// Kalshi markets — shared by the CMP curve tools (previously copy-pasted
+    /// per tool). Markets without a parseable midpoint or a future deadline
+    /// are dropped; an empty result is the caller's not-found case.
+    fn kalshi_tenor_points(
+        markets: &[provider_kalshi::KalshiMarket],
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<cmp::TenorPoint> {
+        markets
+            .iter()
+            .filter_map(|m| {
+                let mid = m.yes_midpoint()?;
+                let deadline = chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
+                let days =
+                    (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64 / 86_400.0;
+                (days > 0.0).then_some(cmp::TenorPoint {
+                    days_to_resolution: days,
+                    price: mid,
+                })
+            })
+            .collect()
     }
 
     fn scan_and_record_provider(
@@ -730,55 +715,29 @@ impl PredictionMarketsServer {
         &self,
         Parameters(req): Parameters<MarketCmpIndexRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_cmp_index",
-            async {
-                self.record_call("market_cmp_index");
-                if !self.base_events.iter().any(|(_, series)| series == &req.series) {
-                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                        format!(
-                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                            req.series
-                        ),
-                    ));
-                }
-                let markets =
-                    provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
-                let now = chrono::Utc::now();
-                let points: Vec<cmp::TenorPoint> = markets
-                    .iter()
-                    .filter_map(|m| {
-                        let mid = m.yes_midpoint()?;
-                        let deadline =
-                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
-                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
-                            as f64
-                            / 86_400.0;
-                        (days > 0.0).then_some(cmp::TenorPoint {
-                            days_to_resolution: days,
-                            price: mid,
-                        })
-                    })
-                    .collect();
-                if points.is_empty() {
-                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                        "no live markets with future deadlines for series '{}'",
-                        req.series
-                    )));
-                }
-                let index =
-                    cmp::compute_index(&req.series, &points, &now.to_rfc3339());
-                let slope_30_365 = cmp::curve_slope(&index, 30, 365);
-                serde_json::to_value(serde_json::json!({
-                    "index": index,
-                    "slope_30d_1y_logodds_per_year": slope_30_365,
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("index serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+        execute_tool(self, "market_cmp_index", async {
+            self.record_call("market_cmp_index");
+            self.require_registered_base_event(&req.series)?;
+            let markets =
+                provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
+            let now = chrono::Utc::now();
+            let points = Self::kalshi_tenor_points(&markets, now);
+            if points.is_empty() {
+                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                    "no live markets with future deadlines for series '{}'",
+                    req.series
+                )));
+            }
+            let index = cmp::compute_index(&req.series, &points, &now.to_rfc3339());
+            let slope_30_365 = cmp::curve_slope(&index, 30, 365);
+            serde_json::to_value(serde_json::json!({
+                "index": index,
+                "slope_30d_1y_logodds_per_year": slope_30_365,
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("index serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -868,124 +827,102 @@ impl PredictionMarketsServer {
             MarketCmpIndexStoreRequest,
         >,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_cmp_index_store",
-            async {
-                self.record_call("market_cmp_index_store");
-                if !self.base_events.iter().any(|(_, s)| s == &series) {
-                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                        format!(
-                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                            series
-                        ),
-                    ));
-                }
-                let markets =
-                    provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
-                let now = chrono::Utc::now();
-                let points: Vec<cmp::TenorPoint> = markets
-                    .iter()
-                    .filter_map(|m| {
-                        let mid = m.yes_midpoint()?;
-                        let deadline =
-                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
-                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
-                            as f64
-                            / 86_400.0;
-                        (days > 0.0).then_some(cmp::TenorPoint {
-                            days_to_resolution: days,
-                            price: mid,
-                        })
-                    })
-                    .collect();
-                if points.is_empty() {
-                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                        "no live markets with future deadlines for series '{}'",
-                        series
-                    )));
-                }
-                let computed_at = date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-                let index = cmp::compute_index(&series, &points, &now.to_rfc3339());
+        execute_tool(self, "market_cmp_index_store", async {
+            self.record_call("market_cmp_index_store");
+            self.require_registered_base_event(&series)?;
+            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
+            let now = chrono::Utc::now();
+            let points = Self::kalshi_tenor_points(&markets, now);
+            if points.is_empty() {
+                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                    "no live markets with future deadlines for series '{}'",
+                    series
+                )));
+            }
+            let computed_at = date
+                .clone()
+                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+            let index = cmp::compute_index(&series, &points, &now.to_rfc3339());
 
-                // Persist the index as a portfolio ledger. Each supported
-                // tenor point becomes a constituent buy transaction with
-                // weight = probability. Unsupported tenors (probability: None)
-                // are withheld — never fabricated.
-                let portfolio_name = format!("cmp:{series}");
-                let response_portfolio = portfolio_name.clone();
-                let response_series = series.clone();
-                let response_date = computed_at.clone();
-                let response_points: Vec<serde_json::Value> = index
-                    .points
-                    .iter()
-                    .map(|p| serde_json::json!({
+            // Persist the index as a portfolio ledger. Each supported
+            // tenor point becomes a constituent buy transaction with
+            // weight = probability. Unsupported tenors (probability: None)
+            // are withheld — never fabricated.
+            let portfolio_name = format!("cmp:{series}");
+            let response_portfolio = portfolio_name.clone();
+            let response_series = series.clone();
+            let response_date = computed_at.clone();
+            let response_points: Vec<serde_json::Value> = index
+                .points
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
                         "tenor_days": p.tenor_days,
                         "probability": p.probability,
-                    }))
-                    .collect();
-                let store = self.portfolio_store.clone();
-                let created_at = now.to_rfc3339();
-                let stored = tokio::task::spawn_blocking(move || {
-                    use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
-                    // Create the portfolio (idempotent) as a prediction-contract portfolio.
-                    // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
-                    // Any error here (invalid name, DB failure) must propagate.
-                    store.create(&portfolio_name, AssetType::PredictionContract)?;
-                    let mut applied = 0usize;
-                    let mut withheld = 0usize;
-                    for point in &index.points {
-                        let Some(prob) = point.probability else {
-                            withheld += 1;
-                            continue;
-                        };
-                        // The constituent symbol is the tenor (e.g. "cmp:KXFEDDECISION:30d").
-                        // The weight is the synthesized probability; the
-                        // quantity is 1.0 (one unit of the index at this tenor).
-                        let symbol = format!("cmp:{series}:{}d", point.tenor_days);
-                        let tx = Transaction {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            date: computed_at.clone(),
-                            tx_type: TxType::Buy,
-                            asset_type: AssetType::PredictionContract,
-                            symbol: Some(symbol),
-                            quantity: Some(1.0),
-                            price: Some(prob),
-                            commission: Some(0.0),
-                            amount: None,
-                            weight: Some(prob),
-                            currency: "USD".to_string(),
-                            notes: format!(
-                                "CMP index constituent: tenor={}d method={:?} cohorts={} bracket={}",
-                                point.tenor_days, point.method, point.cohorts, point.bracket_days
-                            ),
-                            created_at: created_at.clone(),
-                        };
-                        store.apply(&portfolio_name, &tx)?;
-                        applied += 1;
-                    }
-                    // Materialize the holdings snapshot for the observation date.
-                    let snapshot = store.snapshot(&portfolio_name, &computed_at)?;
-                    Ok::<_, PortfolioError>((applied, withheld, snapshot))
+                    })
                 })
-                .await
-                .map_err(|e| map_join_error(e, "portfolio store task failed"))?;
-                let (applied, withheld, snapshot) = stored.map_err(map_portfolio_error)?;
-                serde_json::to_value(serde_json::json!({
-                    "status": "stored",
-                    "portfolio": response_portfolio,
-                    "series": response_series,
-                    "observation_date": response_date,
-                    "constituents_applied": applied,
-                    "constituents_withheld": withheld,
-                    "holdings": snapshot.holdings.len(),
-                    "index_probability_curve": response_points,
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
-            },
-        )
+                .collect();
+            let store = self.portfolio_store.clone();
+            let created_at = now.to_rfc3339();
+            let stored = tokio::task::spawn_blocking(move || {
+                use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
+                // Create the portfolio (idempotent) as a prediction-contract portfolio.
+                // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
+                // Any error here (invalid name, DB failure) must propagate.
+                store.create(&portfolio_name, AssetType::PredictionContract)?;
+                let mut applied = 0usize;
+                let mut withheld = 0usize;
+                for point in &index.points {
+                    let Some(prob) = point.probability else {
+                        withheld += 1;
+                        continue;
+                    };
+                    // The constituent symbol is the tenor (e.g. "cmp:KXFEDDECISION:30d").
+                    // The weight is the synthesized probability; the
+                    // quantity is 1.0 (one unit of the index at this tenor).
+                    let symbol = format!("cmp:{series}:{}d", point.tenor_days);
+                    let tx = Transaction {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        date: computed_at.clone(),
+                        tx_type: TxType::Buy,
+                        asset_type: AssetType::PredictionContract,
+                        symbol: Some(symbol),
+                        quantity: Some(1.0),
+                        price: Some(prob),
+                        commission: Some(0.0),
+                        amount: None,
+                        weight: Some(prob),
+                        currency: "USD".to_string(),
+                        notes: format!(
+                            "CMP index constituent: tenor={}d method={:?} cohorts={} bracket={}",
+                            point.tenor_days, point.method, point.cohorts, point.bracket_days
+                        ),
+                        created_at: created_at.clone(),
+                    };
+                    store.apply(&portfolio_name, &tx)?;
+                    applied += 1;
+                }
+                // Materialize the holdings snapshot for the observation date.
+                let snapshot = store.snapshot(&portfolio_name, &computed_at)?;
+                Ok::<_, PortfolioError>((applied, withheld, snapshot))
+            })
+            .await
+            .map_err(|e| map_join_error(e, "portfolio store task failed"))?;
+            let (applied, withheld, snapshot) = stored.map_err(map_portfolio_error)?;
+            serde_json::to_value(serde_json::json!({
+                "status": "stored",
+                "portfolio": response_portfolio,
+                "series": response_series,
+                "observation_date": response_date,
+                "constituents_applied": applied,
+                "constituents_withheld": withheld,
+                "holdings": snapshot.holdings.len(),
+                "index_probability_curve": response_points,
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 
@@ -1225,43 +1162,32 @@ impl PredictionMarketsServer {
             date,
         }): Parameters<MarketCmpPortfolioStoreRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_cmp_portfolio_store",
-            async {
-                self.record_call("market_cmp_portfolio_store");
-                if !self.base_events.iter().any(|(_, s)| s == &series) {
-                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                        format!(
-                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                            series
-                        ),
-                    ));
-                }
-                let markets =
-                    provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
-                let now = chrono::Utc::now();
-                let observation_date =
-                    date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-                let ctx = self.resolve_economic_context(
-                    &markets,
-                    &series,
-                    reference,
-                    volatility,
-                    predicted_level,
-                    direction_up,
-                );
-                let records = Self::build_annotated_market_records(
-                    &markets,
-                    &ctx,
-                    &observation_date,
-                    &series,
-                    now,
-                );
-                self.persist_cmp_portfolio(records, &series, &observation_date, &ctx, now)
-                    .await
-            },
-        )
+        execute_tool(self, "market_cmp_portfolio_store", async {
+            self.record_call("market_cmp_portfolio_store");
+            self.require_registered_base_event(&series)?;
+            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
+            let now = chrono::Utc::now();
+            let observation_date = date
+                .clone()
+                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+            let ctx = self.resolve_economic_context(
+                &markets,
+                &series,
+                reference,
+                volatility,
+                predicted_level,
+                direction_up,
+            );
+            let records = Self::build_annotated_market_records(
+                &markets,
+                &ctx,
+                &observation_date,
+                &series,
+                now,
+            );
+            self.persist_cmp_portfolio(records, &series, &observation_date, &ctx, now)
+                .await
+        })
         .await
     }
 
@@ -1283,12 +1209,7 @@ impl PredictionMarketsServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "market_cmp_indices", async {
             self.record_call("market_cmp_indices");
-            if !self.base_events.iter().any(|(_, s)| s == &series) {
-                return Err(McpToolError::invalid_argument(format!(
-                    "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                    series
-                )));
-            }
+            self.require_registered_base_event(&series)?;
             // Resolve the family from the series (Kalshi series-prefix
             // classification). Refuse when unclassifiable — never fabricate
             // a family or a materiality setting.
@@ -1494,14 +1415,7 @@ impl PredictionMarketsServer {
             "market_cmp_context_suggest",
             async {
                 self.record_call("market_cmp_context_suggest");
-                if !self.base_events.iter().any(|(_, s)| s == &series) {
-                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
-                        format!(
-                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                            series
-                        ),
-                    ));
-                }
+                self.require_registered_base_event(&series)?;
                 // Classify the family from the series ticker to pick the
                 // curated default, then try to fetch a live reference level
                 // (FRED for macro, CoinGecko for crypto). Falls back to the

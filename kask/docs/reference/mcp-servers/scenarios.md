@@ -11,7 +11,7 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-scenarios`
-**Tools:** 20 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_research`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_sensitivity`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets`, `scenario_from_markets_set`, `scenario_full`
+**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. (2026-09-03 consolidation: `scenario_research` folded into `scenario_build` (which already takes research_text), `scenario_sensitivity` folded into `scenario_quantify` (which already returns sensitivity_ranking), `scenario_from_markets` folded into `scenario_from_markets_set` (set-of-1).)
 **Auto-start:** No (in `CORE_EXCLUDED` — requires explicit opt-in via KaskSettings toggle (D9a); the former kask panel D10 was deleted)
 
 Tool count verified against `#[tool(description = ...)]` annotations in
@@ -19,7 +19,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 22 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 19 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -36,8 +36,6 @@ flowchart TD
 
     subgraph Structuring["Structuring Phase"]
         build["scenario_build\nEvent tree scaffold"]
-        research["scenario_research\nExtract from web text"]
-        from_markets["scenario_from_markets\nMarket record to event"]
         from_markets_set["scenario_from_markets_set\nMarket set to EventTree"]
         brainstorm --> build
         research -.-> build
@@ -50,7 +48,6 @@ flowchart TD
         propagate["scenario_propagate\nPrior update + tatonnement journal"]
         calibrate["scenario_calibrate\nFermi + outside view"]
         update["scenario_update\nBayesian revision"]
-        sensitivity["scenario_sensitivity\nVariance ranking"]
         build --> quantify
         quantify --> propagate
         quantify --> calibrate
@@ -115,8 +112,8 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-08-11
-verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (22 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 22 #[tool] annotations (pinned by tool_surface_is_exactly_22_registered_tools)
-status: VERIFIED (v5 — tool count updated to 22: deleted scenario_from_companies; scenario_from_cmp_indices producer is market_cmp_indices on hkask-mcp-prediction-markets)
+verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (19 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 19 #[tool] annotations (pinned by tool_surface_is_exactly_19_registered_tools)
+status: VERIFIED (v6 — 2026-09-03: tool count 19 after folding scenario_research into scenario_build, scenario_sensitivity into scenario_quantify, and scenario_from_markets into scenario_from_markets_set; scenario_from_cmp_indices producer is market_cmp_indices on hkask-mcp-prediction-markets)
 -->
 
 ## Tool reference
@@ -139,13 +136,11 @@ status: VERIFIED (v5 — tool count updated to 22: deleted scenario_from_compani
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_build` | Build a scenario event-tree scaffold from web research: returns an extraction template (event schema, dependency format, certainty tiers, Tetlock's 10 commandments) the LLM fills against `research_text`. | `frame`, `research_text` |
-| `scenario_research` | Extract candidate scenario events from raw web research text: suggested names, yes/no framing, deadline hints, dependency hints, Fermi sub-questions. Draft output feeds `scenario_quantify`. | `subject`, `research_text` |
 
 ### Market bridges (2)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_from_markets` | Convert a prediction-market record (from `hkask-mcp-prediction-markets` `market_lookup`/`market_match`) into a `ScenarioEvent` anchored on the market-implied base rate; applies the domain-bias correction deterministically and withholds `base_rate` on low reliability or weak match confidence. | `market_record`, `match_confidence` |
 | `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates, duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
 
 ### Computation (5)
@@ -156,7 +151,6 @@ status: VERIFIED (v5 — tool count updated to 22: deleted scenario_from_compani
 | `scenario_propagate` | Update one event's prior and propagate through the tree: descendant marginals and joint probability recomputed; returns the updated tree plus a per-node before/after propagation journal (tâtonnement record). CPTs untouched. | `events`, `event_id`, `new_prior` |
 | `scenario_calibrate` | Four-stage calibration (Fermi decomposition → outside view → inside view → calibration feedback from ≥5 resolved forecasts); returns calibrated probability, bounds, and certainty tier. | Fermi sub-questions, base rate |
 | `scenario_update` | Bayesian update: P(H\|E) = P(E\|H) × P(H) / P(E); returns posterior and update magnitude. | `prior`, `likelihood`, `evidence_base_rate` |
-| `scenario_sensitivity` | Rank events by contribution to outcome uncertainty (higher = closer to 50/50); identifies where to spend calibration effort. | `events` JSON |
 
 ### Aggregation (2)
 
@@ -189,16 +183,16 @@ status: VERIFIED (v5 — tool count updated to 22: deleted scenario_from_compani
 ## Key paths
 
 - **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
-- **Research entry:** `scenario_research` → `scenario_build` (skip brainstorming if events are extracted from web text)
+- **Research entry:** `scenario_build` with research text (skip brainstorming if events are extracted from web text)
 - **Companies bridge:** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
-- **Markets bridge:** `scenario_from_markets` (single market) or `scenario_from_markets_set` (full tree) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
+- **Markets bridge:** `scenario_from_markets_set` (a single market is a set-of-1) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
 - **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`
 - **Independent:** `scenario_triage`, `scenario_status` callable at any point
 
 ## Cross-links
 
-- [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets` / `scenario_from_markets_set`
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets_set`; CMP indices consumed by `scenario_from_cmp_indices`
 - [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — three-layer model (skill, math, servers)
 - Scenarios Adversarial Review — code smell inventory and action items
 - Scenarios Semantic Graph Audit — cross-skill/server dependency graph

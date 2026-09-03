@@ -123,24 +123,25 @@ pub enum ImportFormat {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PriceSeedRequest {
     pub portfolio: String,
+    /// Single-seed form: one (symbol, date, close) triple. Prefer the
+    /// `prices` array for multi-holding seeding — one call instead of N.
+    pub symbol: Option<String>,
+    pub date: Option<String>,
+    pub close: Option<f64>,
+    pub source: Option<String>,
+    /// Batch form: seed many (symbol, date, close) observations in one
+    /// call. When present, the single fields are ignored.
+    pub prices: Option<Vec<PriceSeedEntry>>,
+}
+
+/// One price observation in a batch `portfolio_seed_price` call.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PriceSeedEntry {
     pub symbol: String,
     pub date: String,
     pub close: f64,
-    pub source: String,
-}
-
-/// Request for portfolio_roll: roll a constituent from one contract to its
-/// successor at the same tenor (CMP index maintenance). Emits a `roll`
-/// transaction recording the move; the caller is responsible for the
-/// corresponding sell/buy legs.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PortfolioRollRequest {
-    pub portfolio: String,
-    pub from_symbol: String,
-    pub to_symbol: String,
-    pub date: String,
-    pub quantity: f64,
-    pub price: Option<f64>,
+    /// Where the price came from (e.g. "fmp", "eodhd", "manual").
+    pub source: Option<String>,
 }
 
 // ── Tool router ─────────────────────────────────────────────────────
@@ -368,7 +369,7 @@ impl PortfolioServer {
     }
 
     #[tool(
-        description = "Seed the price cache for a (portfolio, symbol, date) triple. Call before portfolio_returns for portfolios whose holdings have market prices."
+        description = "Seed the price cache for one (symbol, date, close) triple or a batch of them (the prices array — one call instead of N). Call before portfolio_returns for portfolios whose holdings have market prices; the resolver is as-of, so seeding the from/to dates carries each price forward. Materialized views are invalidated from each seeded date forward."
     )]
     pub async fn portfolio_seed_price(
         &self,
@@ -378,69 +379,69 @@ impl PortfolioServer {
             date,
             close,
             source,
+            prices,
         }): Parameters<PriceSeedRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "portfolio_seed_price", async {
             let resolver = CachedPriceResolver::new(&self.store, &portfolio);
-            resolver
-                .seed_cache(&symbol, &date, close, &source)
-                .map_err(map_portfolio_error)?;
+            let entries: Vec<(String, String, f64, String)> = if let Some(batch) = prices {
+                batch
+                    .into_iter()
+                    .map(|entry| {
+                        (
+                            entry.symbol,
+                            entry.date,
+                            entry.close,
+                            entry.source.unwrap_or_else(|| "batch".to_string()),
+                        )
+                    })
+                    .collect()
+            } else {
+                let symbol = symbol.ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "provide either the single (symbol, date, close) fields or the prices array",
+                    )
+                })?;
+                let date = date.ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "provide either the single (symbol, date, close) fields or the prices array",
+                    )
+                })?;
+                let close = close.ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "provide either the single (symbol, date, close) fields or the prices array",
+                    )
+                })?;
+                vec![(
+                    symbol,
+                    date,
+                    close,
+                    source.unwrap_or_else(|| "manual".to_string()),
+                )]
+            };
+            if entries.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "prices array must not be empty",
+                ));
+            }
+            let mut seeded = Vec::with_capacity(entries.len());
+            for (symbol, date, close, source) in &entries {
+                resolver
+                    .seed_cache(symbol, date, *close, source)
+                    .map_err(map_portfolio_error)?;
+                seeded.push(serde_json::json!({
+                    "symbol": symbol,
+                    "date": date,
+                    "close": close,
+                    "source": source,
+                }));
+            }
             Ok(serde_json::json!({
                 "status": "seeded",
                 "portfolio": portfolio,
-                "symbol": symbol,
-                "date": date,
-                "close": close,
-            }))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Roll a constituent from one contract to its successor at the same tenor (CMP index maintenance). Emits a roll transaction recording the move."
-    )]
-    pub async fn portfolio_roll(
-        &self,
-        Parameters(PortfolioRollRequest {
-            portfolio,
-            from_symbol,
-            to_symbol,
-            date,
-            quantity,
-            price,
-        }): Parameters<PortfolioRollRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "portfolio_roll", async {
-            parse_ymd(&date, "date").map_err(map_portfolio_error)?;
-            let response_portfolio = portfolio.clone();
-            let response_from = from_symbol.clone();
-            let response_to = to_symbol.clone();
-            let tx = crate::Transaction {
-                id: uuid::Uuid::new_v4().to_string(),
-                date: date.clone(),
-                tx_type: crate::TxType::Roll,
-                asset_type: crate::AssetType::PredictionContract,
-                symbol: Some(to_symbol.clone()),
-                quantity: Some(quantity),
-                price,
-                commission: Some(0.0),
-                amount: None,
-                weight: None,
-                currency: "USD".to_string(),
-                notes: format!("Roll from {from_symbol} to {to_symbol}"),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            };
-            run_store(self.store.clone(), move |store| {
-                store.apply(&portfolio, &tx)
-            })
-            .await?;
-            Ok(serde_json::json!({
-                "status": "rolled",
-                "portfolio": response_portfolio,
-                "from_symbol": response_from,
-                "to_symbol": response_to,
-                "date": date,
-                "quantity": quantity,
+                "seeded_count": seeded.len(),
+                "seeded": seeded,
+                "note": "Materialized views are invalidated from each seeded date forward; recompute returns/materialize after seeding.",
             }))
         })
         .await

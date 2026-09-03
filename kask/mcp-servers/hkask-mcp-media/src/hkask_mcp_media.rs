@@ -395,9 +395,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_83_registered_tools() {
+    fn tool_surface_is_exactly_79_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 83, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 79, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches

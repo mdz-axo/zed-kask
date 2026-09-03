@@ -61,20 +61,6 @@ pub(crate) struct FrameDocumentRequest {
     pub answers: AnyJsonValue,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MarketsBridgeRequest {
-    /// An annotated MarketRecord from hkask-mcp-prediction-markets
-    /// (market_lookup or market_match output; for market_match, pass the
-    /// nested `market` object and set match_confidence). Typed as
-    /// [`AnyJsonValue`] because `MarketRecord` is defined in the
-    /// prediction-markets crate and does not derive `JsonSchema`; the tool
-    /// body deserializes it into the typed struct.
-    pub market_record: AnyJsonValue,
-    /// Match confidence from market_match ("high"/"medium"/"low") — omit when
-    /// the caller resolved the market unambiguously (e.g. direct lookup).
-    pub match_confidence: Option<String>,
-}
-
 /// One dependency edge for `scenario_from_markets_set`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct DependencySpecRequest {
@@ -259,12 +245,6 @@ pub struct CalibrateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SensitivityRequest {
-    /// Events to analyze
-    pub events: Vec<ScenarioEvent>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SynthesizeRequest {
     /// Event ID to synthesize perspectives for
     pub event_id: String,
@@ -288,20 +268,6 @@ pub struct TriageRequest {
     pub has_reference_class: Option<bool>,
     /// Are resolution criteria clear?
     pub has_resolution_criteria: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ResearchRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Raw text from web searches about this subject
-    pub research_text: String,
-    /// Time horizon for the scenario scenario
-    pub time_horizon: Option<String>,
-    /// Scenario type
-    pub scenario_type: Option<String>,
-    /// Maximum number of events to extract
-    pub max_events: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

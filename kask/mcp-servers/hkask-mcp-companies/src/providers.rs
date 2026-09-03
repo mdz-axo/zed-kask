@@ -1438,24 +1438,6 @@ pub async fn eodhd_search_get(
 
 // ── EODHD bulk listing ───────────────────────────────────────────────
 
-/// A flat company listing row — the exhaustive screen output format.
-/// Identifier, name, exchange, price, shares outstanding, market cap.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CompanyListing {
-    pub symbol: String,
-    pub name: String,
-    pub exchange: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub price: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shares: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_cap: Option<f64>,
-    pub sector: Option<String>,
-    pub industry: Option<String>,
-    pub country: Option<String>,
-}
-
 /// Fetch the EODHD Screener API with arbitrary filter triples, returning
 /// the raw screener rows (each row contains all filter field values for
 /// the company — symbol, name, exchange, market cap, sector, industry,
@@ -1508,42 +1490,6 @@ pub async fn fetch_eodhd_screener(
     Ok(all_rows)
 }
 
-/// Fetch the full universe for an exchange with market cap above a
-/// threshold, using market cap band splitting to exhaust the offset limit.
-/// Convenience wrapper around [`fetch_eodhd_screener`] for the
-/// `stock_universe` tool.
-pub async fn fetch_eodhd_screener_listing(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
-    exchange: &str,
-    min_market_cap: f64,
-) -> Result<Vec<CompanyListing>, McpToolError> {
-    let filters = vec![serde_json::json!([
-        "market_capitalization",
-        ">=",
-        min_market_cap
-    ])];
-
-    let rows = fetch_eodhd_screener(client, eodhd_api_key, &filters).await?;
-
-    let mut listings: Vec<CompanyListing> = rows
-        .iter()
-        .filter_map(|row| parse_screener_row(row))
-        .filter(|l| {
-            l.exchange.eq_ignore_ascii_case(exchange) || exchange.eq_ignore_ascii_case("US")
-        })
-        .collect();
-
-    // Sort by market cap descending
-    listings.sort_by(|a, b| {
-        b.market_cap
-            .unwrap_or(0.0)
-            .partial_cmp(&a.market_cap.unwrap_or(0.0))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    Ok(listings)
-}
 
 /// Fetch the EODHD screener with market cap band splitting to exhaust
 /// the 1,000-result offset limit. Adds market_capitalization band filters
@@ -1643,46 +1589,6 @@ async fn fetch_screener_page(
     }
 }
 
-/// Parse a single row from the EODHD screener response into a CompanyListing.
-/// The screener returns flat fields (code, name, market_capitalization, etc.)
-/// rather than the nested blocks used by the bulk-fundamentals endpoint.
-fn parse_screener_row(row: &Value) -> Option<CompanyListing> {
-    let symbol = row.get("code").and_then(|v| v.as_str())?.to_string();
-    let name = row
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let exchange = row
-        .get("exchange")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let price = row.get("adjusted_close").and_then(|v| v.as_f64());
-    let market_cap = row.get("market_capitalization").and_then(|v| v.as_f64());
-    let sector = row
-        .get("sector")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(String::from);
-    let industry = row
-        .get("industry")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(String::from);
-
-    Some(CompanyListing {
-        symbol,
-        name,
-        exchange,
-        price,
-        shares: None,
-        market_cap,
-        sector,
-        industry,
-        country: None,
-    })
-}
 
 /// Inputs for multi-signal symbol resolution: the company name and ticker
 /// from the prompt, plus optional exchange / country disambiguators. At
