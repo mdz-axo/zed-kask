@@ -78,8 +78,17 @@ pub(crate) fn route_page(
         }
         ComplexityTier::Complex => {
             let model = llm_model.unwrap_or(DEFAULT_LLM_OCR_MODEL);
-            let backends = vec![OcrBackend::LlmOcr(model.to_string())];
-            filter_excluded(backends, exclude_backend)
+            let preferred = OcrBackend::LlmOcr(model.to_string());
+            if exclude_backend == Some(&preferred) {
+                // Degradation ladder: the preferred LLM backend failed or is
+                // unavailable (circuit breaker open). Degrade to Tesseract
+                // rather than returning an empty candidate list — an empty
+                // list hard-fails the page in `execute_with_fallback`, and a
+                // lower-quality extraction beats no extraction.
+                vec![OcrBackend::Tesseract]
+            } else {
+                vec![preferred]
+            }
         }
         ComplexityTier::Moderate => {
             state.moderate_pages_seen += 1;
@@ -103,5 +112,56 @@ fn filter_excluded(backends: Vec<OcrBackend>, exclude: Option<&OcrBackend>) -> V
         backends.into_iter().filter(|b| b != excluded).collect()
     } else {
         backends
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn complex_score() -> ComplexityScore {
+        ComplexityScore {
+            value: 0.9,
+            tier: ComplexityTier::Complex,
+        }
+    }
+
+    #[test]
+    fn complex_routes_to_llm_by_default() {
+        let mut state = SamplingState::default();
+        let backends = route_page(complex_score(), &mut state, None, None);
+        assert_eq!(
+            backends,
+            vec![OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string())]
+        );
+    }
+
+    /// The Complex degradation ladder: excluding the preferred LLM backend
+    /// must yield Tesseract, not an empty candidate list — an empty list
+    /// hard-fails the page in `execute_with_fallback`.
+    #[test]
+    fn complex_degrades_to_tesseract_when_llm_excluded() {
+        let mut state = SamplingState::default();
+        let llm = OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string());
+        let backends = route_page(complex_score(), &mut state, Some(&llm), None);
+        assert_eq!(backends, vec![OcrBackend::Tesseract]);
+    }
+
+    /// Excluding Tesseract on a Complex page (the degraded rung itself
+    /// failing) keeps the LLM preference — the ladder degrades only when the
+    /// excluded backend is the preferred rung.
+    #[test]
+    fn complex_excluding_tesseract_keeps_llm() {
+        let mut state = SamplingState::default();
+        let backends = route_page(
+            complex_score(),
+            &mut state,
+            Some(&OcrBackend::Tesseract),
+            None,
+        );
+        assert_eq!(
+            backends,
+            vec![OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string())]
+        );
     }
 }

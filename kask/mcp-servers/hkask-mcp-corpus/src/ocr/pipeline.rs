@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use tokio::sync::Semaphore;
 
 use crate::ocr::{
-    ComplexityTier, CrossValidation, OcrBackend, OcrResult, PipelineError, PipelineOutcome,
-    ThresholdConfig,
+    ComplexityScore, ComplexityTier, CrossValidation, OcrBackend, OcrResult, PipelineError,
+    PipelineOutcome, ThresholdConfig,
 };
 
 use image::DynamicImage;
@@ -349,9 +349,30 @@ async fn process_single_page(
     let backends = route_page(score, state, None, llm_model);
 
     let available: Vec<OcrBackend> = backends
-        .into_iter()
+        .iter()
         .filter(|b| executor.is_available(b))
+        .cloned()
         .collect();
+
+    // Degradation: every routed backend is unavailable (e.g. the LLM circuit
+    // breaker is open on a Complex page). Re-route through the unified
+    // exclusion path so the tier's next-best backend serves the page instead
+    // of hard-failing it with an empty backends_tried list.
+    let available = if available.is_empty() && !backends.is_empty() {
+        let mut degraded: Vec<OcrBackend> = Vec::new();
+        for excluded in &backends {
+            degraded = route_page(score, state, Some(excluded), llm_model)
+                .into_iter()
+                .filter(|b| executor.is_available(b) && !backends.contains(b))
+                .collect();
+            if !degraded.is_empty() {
+                break;
+            }
+        }
+        degraded
+    } else {
+        available
+    };
 
     if available.is_empty() {
         return (
@@ -365,11 +386,11 @@ async fn process_single_page(
         );
     }
 
-    let is_complex = score.tier == ComplexityTier::Complex;
-
     // Execute OCR
-    let (primary, secondary, backend_used, err) =
-        execute_with_fallback(page_index, image, executor, &available, state, llm_model).await;
+    let (primary, secondary, backend_used, err) = execute_with_fallback(
+        page_index, image, executor, &available, score, state, llm_model,
+    )
+    .await;
 
     if let Some(e) = err {
         return (None, None, Some(e), None);
@@ -378,34 +399,6 @@ async fn process_single_page(
     let primary = match primary {
         Some(r) => r,
         None => return (None, None, None, None),
-    };
-
-    // Tesseract anomaly detection for Complex pages:
-    // If the LLM produced empty/near-empty output on a Complex page,
-    // run Tesseract as a silent-failure detector. If Tesseract found
-    // substantially more text, use Tesseract result instead.
-    let primary = if is_complex
-        && primary.text.trim().is_empty()
-        && executor.is_available(&OcrBackend::Tesseract)
-    {
-        match executor
-            .execute(page_index, &OcrBackend::Tesseract, image, true)
-            .await
-        {
-            Ok(tess_result) if !tess_result.text.trim().is_empty() => {
-                tracing::warn!(
-                    target: "reg.pipeline.ocr.silent_failure",
-                    page_index = page_index,
-                    llm_model = %primary.backend,
-                    tesseract_words = tess_result.text.split_whitespace().count(),
-                    "LLM returned empty output on Complex page but Tesseract found text — using Tesseract result"
-                );
-                tess_result
-            }
-            _ => primary,
-        }
-    } else {
-        primary
     };
 
     // Cross-validation for dual-routed pages
@@ -437,6 +430,7 @@ async fn execute_with_fallback(
     image: &DynamicImage,
     executor: &(dyn OcrExecutor + '_),
     available: &[OcrBackend],
+    score: ComplexityScore,
     state: &mut SamplingState,
     llm_model: Option<&str>,
 ) -> (
@@ -464,40 +458,43 @@ async fn execute_with_fallback(
                 }
             }
             Err(_err_msg) => {
-                // Fallback: re-route with this backend excluded
-                let fallback_backends = route_page(
-                    score_page_complexity(image, &ThresholdConfig::default()),
-                    state,
-                    Some(backend),
-                    llm_model,
-                );
+                // Primary failed: re-route with this backend excluded — the
+                // unified fallback path. Uses the page's actual score;
+                // re-scoring with default thresholds could re-tier the page
+                // under tuned thresholds and route the fallback wrongly.
+                if backend_idx == 0 {
+                    let fallback_backends = route_page(score, state, Some(backend), llm_model);
 
-                let mut fallback_ok = false;
-                for fb in &fallback_backends {
-                    backends_tried.push(fb.clone());
-                    if let Ok(mut result) = executor.execute(page_index, fb, image, true).await {
-                        result.was_fallback = true;
-                        if backend_idx == 0 {
-                            primary_result = Some(result);
-                        } else {
-                            secondary_result = Some(result);
+                    let mut fallback_ok = false;
+                    for fb in &fallback_backends {
+                        if backends_tried.contains(fb) {
+                            continue;
                         }
-                        fallback_ok = true;
-                        break;
+                        backends_tried.push(fb.clone());
+                        if let Ok(mut result) = executor.execute(page_index, fb, image, true).await
+                        {
+                            result.was_fallback = true;
+                            primary_result = Some(result);
+                            fallback_ok = true;
+                            break;
+                        }
+                    }
+
+                    if !fallback_ok {
+                        return (
+                            None,
+                            None,
+                            None,
+                            Some(PipelineError::OcrFailed {
+                                page_index,
+                                backends_tried: backends_tried.clone(),
+                            }),
+                        );
                     }
                 }
-
-                if !fallback_ok {
-                    return (
-                        None,
-                        None,
-                        None,
-                        Some(PipelineError::OcrFailed {
-                            page_index,
-                            backends_tried: backends_tried.clone(),
-                        }),
-                    );
-                }
+                // Secondary failed: drop the secondary and keep the primary.
+                // A failed cross-validation pass must not fail the page —
+                // the primary result stands and the CV is skipped.
             }
         }
     }
@@ -674,4 +671,144 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
         std::mem::swap(&mut prev_row, &mut curr_row);
     }
     prev_row[a_len]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2px vertical-stripe image: every interior pixel's Sobel window spans
+    /// a stripe boundary, so edge density is ~1.0 and the page scores Complex
+    /// under default thresholds. (A 1px checkerboard does NOT work — Sobel
+    /// gradients cancel to zero on a perfect high-frequency checkerboard and
+    /// the page scores Simple.)
+    fn complex_scoring_image() -> DynamicImage {
+        let size = 64;
+        let mut buffer = image::RgbaImage::new(size, size);
+        for (x, _y, pixel) in buffer.enumerate_pixels_mut() {
+            let value = if (x / 2) % 2 == 0 { 255 } else { 0 };
+            *pixel = image::Rgba([value, value, value, 255]);
+        }
+        DynamicImage::ImageRgba8(buffer)
+    }
+
+    fn tesseract_result(
+        page_index: usize,
+        text: &str,
+        is_fallback: bool,
+    ) -> Result<OcrResult, OcrError> {
+        Ok(OcrResult {
+            page_index,
+            backend: OcrBackend::Tesseract,
+            text: text.to_string(),
+            confidence: 0.9,
+            duration_ms: 1,
+            was_fallback: is_fallback,
+        })
+    }
+
+    /// Executor simulating a dead-but-responsive LLM endpoint: `LlmOcr`
+    /// returns `EmptyOcrOutput` (the post-classification behavior of
+    /// `LlmOcrExecutor`), Tesseract returns fixed text.
+    struct EmptyLlmExecutor;
+
+    #[async_trait]
+    impl OcrExecutor for EmptyLlmExecutor {
+        async fn execute(
+            &self,
+            page_index: usize,
+            backend: &OcrBackend,
+            _image: &DynamicImage,
+            is_fallback: bool,
+        ) -> Result<OcrResult, OcrError> {
+            match backend {
+                OcrBackend::Tesseract => tesseract_result(page_index, "rescue text", is_fallback),
+                OcrBackend::LlmOcr(model) => Err(OcrError::EmptyOcrOutput {
+                    model: model.clone(),
+                    input_bytes: 1024,
+                }),
+            }
+        }
+    }
+
+    /// A Complex page whose LLM backend returns empty output must degrade
+    /// to Tesseract through the unified fallback path — not hard-fail and not
+    /// a silent empty success. This pins the routing degradation ladder end
+    /// to end (the former Tesseract anomaly detector is removed; the normal
+    /// error path now covers its only reachable case).
+    #[tokio::test]
+    async fn complex_page_with_empty_llm_output_degrades_to_tesseract() {
+        let executor: Arc<dyn OcrExecutor> = Arc::new(EmptyLlmExecutor);
+        let outcome = run_pipeline(
+            [complex_scoring_image()],
+            1,
+            executor,
+            &ThresholdConfig::default(),
+            Some("mock-model"),
+            None,
+        )
+        .await;
+
+        assert!(outcome.errors.is_empty(), "errors: {:?}", outcome.errors);
+        assert_eq!(outcome.results.len(), 1);
+        let result = &outcome.results[0];
+        assert_eq!(result.backend, OcrBackend::Tesseract);
+        assert!(
+            result.was_fallback,
+            "degraded result must be flagged as fallback"
+        );
+        assert_eq!(result.text, "rescue text");
+    }
+
+    /// Executor whose LLM backend is unavailable (circuit breaker open):
+    /// `is_available` reports false for `LlmOcr`, Tesseract returns fixed text.
+    struct BreakerOpenExecutor;
+
+    #[async_trait]
+    impl OcrExecutor for BreakerOpenExecutor {
+        fn is_available(&self, backend: &OcrBackend) -> bool {
+            *backend == OcrBackend::Tesseract
+        }
+
+        async fn execute(
+            &self,
+            page_index: usize,
+            backend: &OcrBackend,
+            _image: &DynamicImage,
+            is_fallback: bool,
+        ) -> Result<OcrResult, OcrError> {
+            match backend {
+                OcrBackend::Tesseract => {
+                    tesseract_result(page_index, "breaker-open rescue text", is_fallback)
+                }
+                OcrBackend::LlmOcr(model) => Err(OcrError::BackendFailed {
+                    backend: model.clone(),
+                    message: "unavailable".to_string(),
+                }),
+            }
+        }
+    }
+
+    /// A Complex page with the LLM circuit breaker open must degrade to
+    /// Tesseract via the availability re-route — not hard-fail with an empty
+    /// `backends_tried` list.
+    #[tokio::test]
+    async fn complex_page_with_llm_breaker_open_degrades_to_tesseract() {
+        let executor: Arc<dyn OcrExecutor> = Arc::new(BreakerOpenExecutor);
+        let outcome = run_pipeline(
+            [complex_scoring_image()],
+            1,
+            executor,
+            &ThresholdConfig::default(),
+            Some("mock-model"),
+            None,
+        )
+        .await;
+
+        assert!(outcome.errors.is_empty(), "errors: {:?}", outcome.errors);
+        assert_eq!(outcome.results.len(), 1);
+        let result = &outcome.results[0];
+        assert_eq!(result.backend, OcrBackend::Tesseract);
+        assert_eq!(result.text, "breaker-open rescue text");
+    }
 }

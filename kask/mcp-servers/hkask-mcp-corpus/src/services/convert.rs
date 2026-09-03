@@ -1614,6 +1614,42 @@ mod ocr_guards {
         assert_eq!(text, "real text");
     }
 
+    /// The pipeline executor must enforce the same empty-output contract as
+    /// `do_ocr`: an HTTP 200 with empty content is a typed `EmptyOcrOutput`
+    /// failure, and consecutive empty outputs open the circuit breaker so a
+    /// dead-but-responsive endpoint is quarantined instead of resetting the
+    /// breaker as a success.
+    #[tokio::test]
+    async fn llm_executor_empty_output_is_a_typed_error_and_trips_the_breaker() {
+        let port: Arc<dyn InferencePort> = Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        });
+        let executor = LlmOcrExecutor::new(Arc::clone(&port));
+        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let backend = OcrBackend::LlmOcr("mock-model".to_string());
+
+        let error = executor
+            .execute(0, &backend, &image, false)
+            .await
+            .expect_err("empty vision output must be a typed error from the executor");
+        assert!(
+            matches!(error, OcrError::EmptyOcrOutput { .. }),
+            "expected EmptyOcrOutput, got: {error}"
+        );
+
+        // Five consecutive empty outputs open the breaker — the executor must
+        // then report the LLM backend unavailable so Complex pages degrade to
+        // Tesseract without burning endpoint calls.
+        for _ in 0..4 {
+            let result = executor.execute(0, &backend, &image, false).await;
+            assert!(result.is_err(), "empty output must stay an error");
+        }
+        assert!(
+            !executor.is_available(&backend),
+            "circuit breaker must open after 5 consecutive empty outputs"
+        );
+    }
+
     #[tokio::test]
     async fn ocr_via_pipeline_rejects_undecodable_formats() {
         let service = test_service(Arc::new(VisionMockPort {

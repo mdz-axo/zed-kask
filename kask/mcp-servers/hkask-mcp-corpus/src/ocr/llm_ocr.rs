@@ -204,9 +204,26 @@ impl OcrExecutor for LlmOcrExecutor {
         let result = vision_ocr_bytes(&*self.router, &img_bytes, &model).await;
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
-        // breaker reacts to rate-limit, timeout, and connection errors; the warn
-        // fires only for rate-limit backpressure (GAP-4 Regulation variety).
+        // breaker reacts to rate-limit, timeout, connection errors, AND empty
+        // output — a dead-but-responsive endpoint (HTTP 200 with empty content)
+        // must be quarantined like a transport failure, not reset the breaker
+        // as a success. The rate-limit warn fires only for backpressure
+        // (GAP-4 Regulation variety).
         match &result {
+            Ok(text) if text.trim().is_empty() => {
+                self.breaker.record_failure();
+                tracing::warn!(
+                    target: "reg.pipeline.ocr.silent_failure",
+                    page_index = page_index,
+                    llm_model = %model,
+                    input_bytes = img_bytes.len(),
+                    "OCR model returned empty output — treating as failure, degrading to fallback backend"
+                );
+                return Err(OcrError::EmptyOcrOutput {
+                    model: model.clone(),
+                    input_bytes: img_bytes.len(),
+                });
+            }
             Ok(_) => self.breaker.record_success(),
             Err(OcrError::InferenceFailed(err_str)) => {
                 let is_rate_limit = err_str.contains("429")
