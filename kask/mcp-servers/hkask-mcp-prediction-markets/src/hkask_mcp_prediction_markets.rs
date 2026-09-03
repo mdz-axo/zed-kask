@@ -46,10 +46,11 @@ pub mod volatility;
 mod requests;
 pub use requests::{
     MarketCalibrationRequest, MarketCheckResolutionsRequest, MarketCmpContextSuggestRequest,
-    MarketCmpIndexRequest, MarketCmpIndexStoreRequest, MarketCmpPortfolioStoreRequest,
-    MarketCmpRequest, MarketHistoryRequest, MarketLadderRequest, MarketLookupRequest,
-    MarketMatchRequest, MarketOntologyMapRequest, MarketRecordResolutionRequest,
-    MarketResidualRequest, MarketSubscribeRequest, MarketVolatilityRequest, StatusRequest,
+    MarketCmpIndexRequest, MarketCmpIndexStoreRequest, MarketCmpIndicesRequest,
+    MarketCmpPortfolioStoreRequest, MarketCmpRequest, MarketHistoryRequest, MarketLadderRequest,
+    MarketLookupRequest, MarketMatchRequest, MarketOntologyMapRequest,
+    MarketRecordResolutionRequest, MarketResidualRequest, MarketSubscribeRequest,
+    MarketVolatilityRequest, StatusRequest,
 };
 
 // ── Server struct ──────────────────────────────────────────────────────────
@@ -1261,6 +1262,215 @@ impl PredictionMarketsServer {
                     .await
             },
         )
+        .await
+    }
+
+    /// Build provenance-carrying CMP indices for the scenarios seam.
+    #[tool(
+        description = "Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) for a registered base-event series from live open markets on Kalshi and/or Polymarket. This is the producer for scenario_from_cmp_indices (hkask-mcp-scenarios): pass the returned indices array verbatim as its cmp_indices input to compose an EventTree for coherence testing. Per-venue indices are never pooled; buckets without an eligible maturity bracket are withheld and surfaced in withheld_buckets with rejection reasons — never fabricated. All economic-context fields are optional; when omitted, the curated default for the classified family applies (see market_cmp_context_suggest)."
+    )]
+    pub async fn market_cmp_indices(
+        &self,
+        Parameters(MarketCmpIndicesRequest {
+            series,
+            venue,
+            limit,
+            reference,
+            volatility,
+            predicted_level,
+            direction_up,
+        }): Parameters<MarketCmpIndicesRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "market_cmp_indices", async {
+            self.record_call("market_cmp_indices");
+            if !self.base_events.iter().any(|(_, s)| s == &series) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                    series
+                )));
+            }
+            // Resolve the family from the series (Kalshi series-prefix
+            // classification). Refuse when unclassifiable — never fabricate
+            // a family or a materiality setting.
+            let family = semantic_mapping::classify_base_object_from_catalog("kalshi", &series, "")
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "series '{}' does not resolve to a base-event family — cannot build CMP indices",
+                        series
+                    ))
+                })?;
+            // Curated default context for the family, with caller overrides.
+            // RealGdpGrowth has no BaseEvent materiality setting; the builder
+            // withholds all its buckets with an explicit reason.
+            let default_ctx = cmp_index_builder::base_event_for(family)
+                .map(|be| be.default_economic_context())
+                .unwrap_or_else(|| base_event::EconomicContext {
+                    reference: 0.0,
+                    volatility: None,
+                    predicted_level: 0.0,
+                    direction_up: false,
+                    rationale: "no BaseEvent materiality setting for this family — \
+                                all buckets will be withheld"
+                        .into(),
+                });
+            let context = base_event::EconomicContext {
+                reference: reference.unwrap_or(default_ctx.reference),
+                volatility: volatility.or(default_ctx.volatility),
+                predicted_level: predicted_level.unwrap_or(default_ctx.predicted_level),
+                direction_up: direction_up.unwrap_or(default_ctx.direction_up),
+                rationale: default_ctx.rationale,
+            };
+
+            let venue_filter = venue.as_deref().unwrap_or("both");
+            if !matches!(venue_filter, "kalshi" | "polymarket" | "both") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "venue must be 'kalshi', 'polymarket', or 'both', got '{venue_filter}'"
+                )));
+            }
+            let limit = limit.unwrap_or(200).min(500);
+            let now = chrono::Utc::now();
+            let config = cmp_portfolio::CmpConfig::default();
+            let mut indices: Vec<serde_json::Value> = Vec::new();
+            let mut venue_reports: Vec<serde_json::Value> = Vec::new();
+            let mut warnings: Vec<String> = Vec::new();
+
+            if matches!(venue_filter, "kalshi" | "both") {
+                match provider_kalshi::fetch_markets(&self.http, Some(&series), limit).await {
+                    Ok(markets) => {
+                        let lines: Vec<String> = markets
+                            .iter()
+                            .filter_map(|m| {
+                                let record = cmp_index_builder::KalshiCatalogRecord {
+                                    source: "kalshi".into(),
+                                    event_ticker: m.event_ticker.clone(),
+                                    base_object: String::new(),
+                                    market_ticker: m.ticker.clone(),
+                                    title: m.title.clone(),
+                                    status: m.status.clone(),
+                                    close_time: m.close_time.clone(),
+                                    expiration_time: m.expiration_time.clone(),
+                                    yes_bid: m.yes_bid_dollars.clone(),
+                                    yes_ask: m.yes_ask_dollars.clone(),
+                                    volume_fp: m.volume_fp.clone(),
+                                    liquidity_dollars: m.liquidity_dollars.clone(),
+                                    result: m.result.clone(),
+                                    rules_primary: m.rules_primary.clone(),
+                                };
+                                serde_json::to_string(&record).ok()
+                            })
+                            .collect();
+                        match cmp_index_builder::build_cmp_indices_from_lines(
+                            &lines,
+                            family,
+                            cmp_index_builder::Venue::Kalshi,
+                            &context,
+                            &config,
+                            &now,
+                        ) {
+                            Ok(set) => {
+                                let n = set.indices.len();
+                                for index in &set.indices {
+                                    match serde_json::to_value(index) {
+                                        Ok(v) => indices.push(v),
+                                        Err(e) => warnings.push(format!(
+                                            "kalshi index serialization failed: {e}"
+                                        )),
+                                    }
+                                }
+                                venue_reports.push(serde_json::json!({
+                                    "venue": "kalshi",
+                                    "indices": n,
+                                    "withheld_buckets": set.withheld_buckets,
+                                    "n_records_read": set.n_records_read,
+                                    "n_eligible": set.n_eligible,
+                                    "rejection_sample": set.rejection_sample,
+                                }));
+                            }
+                            Err(e) => warnings.push(format!("kalshi index construction: {e}")),
+                        }
+                    }
+                    Err(e) => warnings.push(format!("kalshi fetch failed: {e}")),
+                }
+            }
+
+            if matches!(venue_filter, "polymarket" | "both") {
+                // Gamma has no series-scoped fetch; the per-record semantic
+                // classification inside the builder rejects non-family
+                // markets with surfaced reasons (never silently dropped).
+                match provider_polymarket::fetch_markets(&self.http, limit, false).await {
+                    Ok(markets) => {
+                        let lines: Vec<String> = markets
+                            .iter()
+                            .filter_map(|m| {
+                                let record = cmp_index_builder::GammaCatalogRecord {
+                                    source: "gamma".into(),
+                                    event_id: m.id.clone(),
+                                    base_object: String::new(),
+                                    market_id: m.id.clone(),
+                                    question: m.question.clone(),
+                                    condition_id: m.condition_id.clone(),
+                                    end_date: m.end_date.clone(),
+                                    closed: m.closed,
+                                    volume_num: m.volume_num,
+                                    best_bid: m.best_bid,
+                                    best_ask: m.best_ask,
+                                    last_trade_price: m.last_trade_price,
+                                    spread: m.spread,
+                                    uma_resolution_status: m.uma_resolution_status.clone(),
+                                };
+                                serde_json::to_string(&record).ok()
+                            })
+                            .collect();
+                        match cmp_index_builder::build_cmp_indices_from_lines(
+                            &lines,
+                            family,
+                            cmp_index_builder::Venue::Polymarket,
+                            &context,
+                            &config,
+                            &now,
+                        ) {
+                            Ok(set) => {
+                                let n = set.indices.len();
+                                for index in &set.indices {
+                                    match serde_json::to_value(index) {
+                                        Ok(v) => indices.push(v),
+                                        Err(e) => warnings.push(format!(
+                                            "polymarket index serialization failed: {e}"
+                                        )),
+                                    }
+                                }
+                                venue_reports.push(serde_json::json!({
+                                    "venue": "polymarket",
+                                    "indices": n,
+                                    "withheld_buckets": set.withheld_buckets,
+                                    "n_records_read": set.n_records_read,
+                                    "n_eligible": set.n_eligible,
+                                    "rejection_sample": set.rejection_sample,
+                                }));
+                            }
+                            Err(e) => warnings.push(format!("polymarket index construction: {e}")),
+                        }
+                    }
+                    Err(e) => warnings.push(format!("polymarket fetch failed: {e}")),
+                }
+            }
+
+            serde_json::to_value(serde_json::json!({
+                "series": series,
+                "family": family,
+                "observation_date": now.format("%Y-%m-%d").to_string(),
+                "indices": indices,
+                "indices_count": venue_reports.iter()
+                    .filter_map(|r| r.get("indices").and_then(|n| n.as_u64()))
+                    .sum::<u64>(),
+                "venues": venue_reports,
+                "warnings": warnings,
+                "note": "Pass indices to scenario_from_cmp_indices (hkask-mcp-scenarios) as cmp_indices to compose an EventTree; optionally persist curves with market_cmp_index_store.",
+            }))
+            .map_err(|e| {
+                McpToolError::internal(format!("cmp indices serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+            })
+        })
         .await
     }
 

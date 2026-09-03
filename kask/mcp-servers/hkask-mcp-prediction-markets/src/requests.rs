@@ -123,6 +123,31 @@ pub struct MarketCmpPortfolioStoreRequest {
     pub date: Option<String>,
 }
 
+/// Request for market_cmp_indices: build provenance-carrying CMP indices
+/// (ProvenancedCmpIndex objects) from live open markets — the producer for
+/// scenario_from_cmp_indices (hkask-mcp-scenarios).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpIndicesRequest {
+    /// Base-event series ticker (must be registered).
+    pub series: String,
+    /// Venue filter: "kalshi", "polymarket", or "both" (default).
+    pub venue: Option<String>,
+    /// Max markets to fetch per provider (default 200, capped at 500).
+    pub limit: Option<u32>,
+    /// The current level of the underlying factor. When omitted, the curated
+    /// default for the classified family applies.
+    pub reference: Option<f64>,
+    /// Trailing volatility of the underlying in the family's type units.
+    /// When omitted, the curated default applies. None disables
+    /// materiality-gated indices.
+    pub volatility: Option<f64>,
+    /// The predicted level (strike) contracts are structured around. When
+    /// omitted, defaults to the reference → Stable orientation.
+    pub predicted_level: Option<f64>,
+    /// Whether the factor ends above (true) or below (false) the strike.
+    pub direction_up: Option<bool>,
+}
+
 /// Request for market_cmp_context_suggest: propose a curated economic
 /// context (reference, volatility, predicted level, direction) for a
 /// base-event family, with reasoning. Read-only aid — no ledger debit, no

@@ -160,7 +160,7 @@ pub struct ProvenancedCmpIndexSet {
 // volume)` interface for the eligibility pipeline.
 
 /// A Kalshi catalog record (on-disk JSONL schema from `fetch_contracts.rs`).
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KalshiCatalogRecord {
     pub source: String,
     pub event_ticker: String,
@@ -208,7 +208,7 @@ impl KalshiCatalogRecord {
 }
 
 /// A Gamma (Polymarket) catalog record (on-disk JSONL schema).
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GammaCatalogRecord {
     pub source: String,
     pub event_id: String,

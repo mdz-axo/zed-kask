@@ -628,7 +628,7 @@ impl ScenariosServer {
     /// Optional dependency edges between CMP indices (e.g. "oil price increase
     /// → inflation increase") enable the H3 joint coherence test.
     #[tool(
-        description = "Compose CMP (Constant-Maturity Prediction) indices into a validated EventTree. Each CMP index becomes a root event with its index probability as the prior. Optional dependency edges between CMP indices (e.g. oil→inflation) enable joint probability computation for coherence testing. The tree cites the CMP index identity (family, tenor, orientation, venue) in the provenance — not a decaying contract. Input: an array of ProvenancedCmpIndex objects (from build_cmp_indices), observation date, optional dependency specs."
+        description = "Compose CMP (Constant-Maturity Prediction) indices into a validated EventTree. Each CMP index becomes a root event with its index probability as the prior. Optional dependency edges between CMP indices (e.g. oil→inflation) enable joint probability computation for coherence testing. The tree cites the CMP index identity (family, tenor, orientation, venue) in the provenance — not a decaying contract. Input: an array of ProvenancedCmpIndex objects (from market_cmp_indices on hkask-mcp-prediction-markets), observation date, optional dependency specs. The composed tree is cached for contract_price_coherence's tree_implied default."
     )]
     pub async fn scenario_from_cmp_indices(
         &self,
@@ -662,6 +662,12 @@ impl ScenariosServer {
                 superforecast::compose_cmp_tree_with_deps(&indices, observation_date, &deps)
             }
             .map_err(map_scenario_error)?;
+
+            // Cache the composed tree so contract_price_coherence's
+            // tree_implied default (documented to read the cached joint
+            // probability) works after this tool — pre-fix only
+            // scenario_quantify wrote the cache.
+            *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(tree.clone());
 
             let nodes = tree_nodes_json(&tree, true);
 
@@ -1349,6 +1355,13 @@ impl ScenariosServer {
         execute_tool(self, "scenario_propagate", async {
             let result = superforecast::propagate_prior_update(&req.events, &req.event_id, req.new_prior)
                 .map_err(map_scenario_error)?;
+
+            // Cache the propagated tree so contract_price_coherence's
+            // tree_implied default (documented to read the cached joint
+            // probability) reflects the post-update tree — pre-fix only
+            // scenario_quantify wrote the cache.
+            *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(result.tree.clone());
 
             let nodes: Vec<serde_json::Value> = result
                 .tree

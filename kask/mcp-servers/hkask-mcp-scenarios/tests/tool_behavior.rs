@@ -530,3 +530,66 @@ async fn scenario_calibrate_withholds_isotonic_without_resolved_pairs() {
         "the note must name the reason, got: {note}"
     );
 }
+
+/// The CMP seam end-to-end: `scenario_from_cmp_indices` composes
+/// ProvenancedCmpIndex objects (produced by market_cmp_indices on
+/// hkask-mcp-prediction-markets) into an EventTree AND caches it, so
+/// `contract_price_coherence`'s `tree_implied` default resolves. Pre-fix,
+/// from_cmp_indices never wrote the cache and coherence failed with
+/// failed_precondition despite its documented default.
+#[tokio::test]
+async fn from_cmp_indices_caches_tree_for_coherence_default() {
+    use hkask_mcp_scenarios::requests::CmpBridgeRequest;
+
+    let server = make_server();
+
+    // One ProvenancedCmpIndex in its serialized shape (family, venue, and
+    // the flattened CmpIndex: bucket, orientation, solved portfolio).
+    let cmp_indices = serde_json::json!([{
+        "family": "policy_interest_rate",
+        "venue": "kalshi",
+        "bucket": "one_month",
+        "orientation": "increase",
+        "portfolio": {
+            "constituents": [],
+            "weighted_maturity_days": 30.0,
+            "maturity_error_days": 0.5,
+            "index_probability": 0.55,
+            "method": "interpolated",
+        }
+    }]);
+    let request = CmpBridgeRequest {
+        cmp_indices: hkask_types::AnyJsonValue(cmp_indices),
+        observation_date: "2026-09-03".to_string(),
+        dependency_specs: None,
+    };
+
+    let output = server
+        .scenario_from_cmp_indices(Parameters(request))
+        .await
+        .expect("composition ok");
+    let parsed = parse(&output);
+    let joint = parsed["tree"]["joint_probability"]
+        .as_f64()
+        .expect("joint probability is a number");
+    assert!(
+        (joint - 0.55).abs() < 1e-9,
+        "one root at 0.55 → joint 0.55, got {joint}"
+    );
+
+    // The cached tree now feeds contract_price_coherence's default — no
+    // explicit tree_implied, no failed_precondition.
+    let coherence = server
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.70,
+            cost_band: 0.02,
+            tree_implied: None,
+        }))
+        .await
+        .expect("coherence must resolve the cached tree");
+    let coherence_parsed = parse(&coherence);
+    assert!(
+        coherence_parsed.get("divergence").is_some(),
+        "coherence must compute against the cached joint, got: {coherence_parsed}"
+    );
+}

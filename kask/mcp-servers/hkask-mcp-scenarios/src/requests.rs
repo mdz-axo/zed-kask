@@ -136,7 +136,7 @@ pub(crate) struct MarketsSetBridgeRequest {
 /// One dependency edge for `scenario_from_cmp_indices`. Uses CMP index IDs
 /// (`cmp:{family}:{tenor}:{orientation}`) instead of market IDs.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CmpDependencySpecRequest {
+pub struct CmpDependencySpecRequest {
     /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
     pub child_id: String,
     /// The parent CMP index IDs.
@@ -149,9 +149,9 @@ pub(crate) struct CmpDependencySpecRequest {
 /// Request for `scenario_from_cmp_indices`: compose CMP indices into an
 /// EventTree with optional dependency edges (R1).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CmpBridgeRequest {
+pub struct CmpBridgeRequest {
     /// ProvenancedCmpIndex objects from hkask-mcp-prediction-markets
-    /// (build_cmp_indices output). Typed as [`AnyJsonValue`] because
+    /// (market_cmp_indices output). Typed as [`AnyJsonValue`] because
     /// `ProvenancedCmpIndex` is defined in the prediction-markets crate and
     /// does not derive `JsonSchema`.
     pub cmp_indices: AnyJsonValue,
