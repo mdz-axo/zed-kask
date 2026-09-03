@@ -348,6 +348,28 @@ pub(crate) fn extract_wallet_balance(output: &str) -> Option<i64> {
         .and_then(|w| w.get("balance").and_then(|b| b.as_i64()))
 }
 
+/// Extract the honest-drop note from a `swarm_create_agent` response (the
+/// `unsupported_fields` key the server adds when the caller supplied fields
+/// the ABW API cannot store on a non-curated agent — `skills`,
+/// `sample_queries`, `dependencies`). Returns `None` when nothing was
+/// dropped, so the author status stays clean for fully-stored creates and
+/// for `swarm_create_local_agent` (which emits no such key).
+pub(crate) fn extract_unsupported_fields_note(output: &str) -> Option<String> {
+    let content = parse_tool_response(output)?;
+    let unsupported = content.get("unsupported_fields")?.as_array()?;
+    if unsupported.is_empty() {
+        return None;
+    }
+    let fields = unsupported
+        .iter()
+        .filter_map(|f| f.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Note: the ABW API cannot store these fields on a non-curated agent; they were dropped: {fields}."
+    ))
+}
+
 /// Extract a swarm's hired agents from a `swarm_get_swarm` response.
 /// ABW's exact roster shape is not part of the verified surface, so this
 /// parses defensively across the plausible envelopes: an `agents` array at
@@ -578,6 +600,24 @@ mod tests {
         // Catalogue-only mode: no wallet key → None, never a fabricated zero.
         let out = r#"{"content":{"count":2,"authenticated":false}}"#;
         assert_eq!(extract_wallet_balance(out), None);
+    }
+
+    // The honest-drop note rides the same content envelope as the wallet
+    // balance — these pin the extraction against the server's actual
+    // `swarm_create_agent` output shape.
+    #[test]
+    fn extract_unsupported_fields_note_lists_dropped_fields() {
+        let out = r#"{"content":{"agent_id":"abc","agent_name":"my_agent","unsupported_fields":["sample_queries"],"note":"the ABW API cannot store these fields on a non-curated agent; they were dropped: sample_queries"}}"#;
+        let note = extract_unsupported_fields_note(out).expect("note must be extracted");
+        assert!(note.contains("sample_queries"));
+    }
+
+    #[test]
+    fn extract_unsupported_fields_note_absent_when_fully_stored() {
+        // No unsupported_fields key (fully-stored create, or a local create
+        // which never emits it) → None, so the author status stays clean.
+        let out = r#"{"content":{"agent_id":"abc","agent_name":"my_agent"}}"#;
+        assert_eq!(extract_unsupported_fields_note(out), None);
     }
 
     #[test]

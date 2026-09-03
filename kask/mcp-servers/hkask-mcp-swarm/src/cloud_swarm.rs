@@ -19,5 +19,5 @@ pub mod helpers;
 // them from `cloud` without reaching into the sub-module.
 pub use helpers::{
     build_agent_update_payload, build_create_agent_card, extract_execute_response,
-    unsupported_create_fields,
+    unsupported_create_fields, valence_payload,
 };

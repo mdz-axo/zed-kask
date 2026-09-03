@@ -578,6 +578,137 @@ mod smoke_tests {
             "agent_cards must be a JSON array"
         );
     }
+    // ── Local-substrate contract tests (evaluator, ledger, credentials) ────
+
+    /// Extract the `{"content": …}` success envelope from a tool output.
+    fn unwrap_content(output: &str) -> Value {
+        let parsed: Value = serde_json::from_str(output).expect("tool output must be valid JSON");
+        parsed
+            .get("content")
+            .cloned()
+            .expect("success envelope must carry a \"content\" field")
+    }
+
+    /// `swarm_evaluate_local` stamps deterministic verdicts through the
+    /// tool seam: contains passes on a present substring, not_contains
+    /// fails on a present substring, and the verdict carries
+    /// provenance: DeterministicEvaluator.
+    #[tokio::test]
+    async fn evaluate_local_stamps_deterministic_verdicts() {
+        use crate::request_types::EvaluateLocalRequest;
+
+        let server = make_server();
+
+        let pass = server
+            .swarm_evaluate_local(Parameters(EvaluateLocalRequest {
+                response: "The build succeeded with 42 tests passing.".to_string(),
+                evaluator: "contains".to_string(),
+                spec: "42 tests".to_string(),
+            }))
+            .await
+            .expect("tool ok");
+        let pass_content = unwrap_content(&pass);
+        assert_eq!(
+            pass_content["pass"], true,
+            "contains on a present substring must pass, got: {pass_content}"
+        );
+        assert_eq!(
+            pass_content["provenance"], "deterministic_evaluator",
+            "the verdict must carry deterministic_evaluator provenance, got: {pass_content}"
+        );
+
+        let fail = server
+            .swarm_evaluate_local(Parameters(EvaluateLocalRequest {
+                response: "The build succeeded with 42 tests passing.".to_string(),
+                evaluator: "not_contains".to_string(),
+                spec: "42 tests".to_string(),
+            }))
+            .await
+            .expect("tool ok");
+        let fail_content = unwrap_content(&fail);
+        assert_eq!(
+            fail_content["pass"], false,
+            "not_contains on a present substring must fail, got: {fail_content}"
+        );
+    }
+
+    /// The local ledger round-trip through the tool seam: fund → balance
+    /// reflects the deposit → history lists it. The ledger records spend
+    /// rather than gating it, so an unfunded ledger reads 0 (never negative
+    /// before spend) and funding is always accepted.
+    #[tokio::test]
+    async fn fund_balance_history_round_trip() {
+        use crate::request_types::{BalanceLocalRequest, FundLocalRequest};
+
+        let server = make_server();
+
+        let before = server
+            .swarm_balance_local(Parameters(BalanceLocalRequest {}))
+            .await
+            .expect("balance ok");
+        let before_content = unwrap_content(&before);
+        let starting_balance = before_content["balance"].as_i64().unwrap_or(0);
+
+        let fund = server
+            .swarm_fund_local(Parameters(FundLocalRequest { credits: 250 }))
+            .await
+            .expect("fund ok");
+        let fund_content = unwrap_content(&fund);
+        assert_eq!(
+            fund_content["balance"].as_i64(),
+            Some(starting_balance + 250),
+            "fund must return the new balance, got: {fund_content}"
+        );
+
+        let after = server
+            .swarm_balance_local(Parameters(BalanceLocalRequest {}))
+            .await
+            .expect("balance ok");
+        assert_eq!(
+            unwrap_content(&after)["balance"].as_i64(),
+            Some(starting_balance + 250),
+            "balance must reflect the deposit"
+        );
+
+        let history = server
+            .swarm_local_history(Parameters(crate::request_types::LocalHistoryRequest {
+                limit: None,
+            }))
+            .await
+            .expect("history ok");
+        let history_content = unwrap_content(&history);
+        let entries = history_content["entries"]
+            .as_array()
+            .or_else(|| history_content["transactions"].as_array())
+            .unwrap_or_else(|| panic!("history must list entries, got: {history_content}"));
+        assert!(
+            entries.iter().any(|e| e["kind"].as_str() == Some("fund")),
+            "the fund entry must appear in history, got: {entries:?}"
+        );
+    }
+
+    /// A cloud (ABW) tool without an API key must fail with
+    /// permission_denied NAMING the env var — the broken-feedback-loop rule:
+    /// the operator must be able to distinguish "not configured" from
+    /// "configured but broken".
+    #[tokio::test]
+    async fn cloud_tool_without_key_is_permission_denied_naming_env_var() {
+        use crate::request_types::GetSwarmRequest;
+
+        let server = make_server();
+        let error = server
+            .swarm_get_swarm(Parameters(GetSwarmRequest { workspace_id: None }))
+            .await
+            .expect_err("a cloud tool without a key must fail");
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
+            "the error kind must be permission_denied, got: {error:?}"
+        );
+        assert!(
+            error.message.contains("HKASK_ABW_API_KEY"),
+            "the error must name the env var, got: {error}"
+        );
+    }
 }
 
 // Pins the registered tool-surface count end-to-end against the live

@@ -42,10 +42,16 @@ impl SwarmClient {
     }
 
     pub(crate) fn require_auth(&self) -> Result<&str, SwarmError> {
-        self.config
-            .api_key
-            .as_deref()
-            .ok_or_else(|| SwarmError::Auth("no API key configured".to_string()))
+        self.config.api_key.as_deref().ok_or_else(|| {
+            // The env var must be named in the message (.rules: a missing
+            // credential is permission_denied naming the env var, so the
+            // operator can distinguish "not configured" from "configured
+            // but broken").
+            SwarmError::Auth(
+                "no ABW API key configured — set HKASK_ABW_API_KEY (zed keychain or env)"
+                    .to_string(),
+            )
+        })
     }
 
     /// Send a request, attaching the bearer token when present, and map the

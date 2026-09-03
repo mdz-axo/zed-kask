@@ -329,6 +329,36 @@ pub struct CreateAgentRequest {
     pub capability_gates: Option<Vec<CapabilityGate>>,
 }
 
+/// Update an existing ABW agent — `PUT /api/agents/:id` (fermi
+/// `update_agent_handler` / `AgentUpdate`). Partial-update semantics: only
+/// supplied fields are sent; omitted fields are unchanged on the ABW card.
+/// fermi's update rejects lifecycle fields (`status`, `visibility` — those
+/// move through publish/archive) and has no surface for `agent_type` or
+/// `sample_queries`, so none of those are accepted here.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateAgentRequest {
+    /// The ABW agent name (slug) to update.
+    pub agent_name: String,
+    /// One-sentence description for the catalogue.
+    pub description: Option<String>,
+    /// The agent's system prompt (its instructions).
+    pub system_prompt: Option<String>,
+    /// Tags for catalogue discovery.
+    pub tags: Option<Vec<String>>,
+    /// Model id. When supplied, replaces the card's model.
+    pub model: Option<String>,
+    /// Temperature (0.1–0.3 factual, 0.5–0.8 creative).
+    pub temperature: Option<f64>,
+    /// Declared input types (fermi `declares_accepts` — composition planning
+    /// routes on these).
+    pub accepts: Option<Vec<String>>,
+    /// Declared output types (fermi `declares_produces` — downstream agents
+    /// match on these).
+    pub produces: Option<Vec<String>>,
+    /// Valence / personality parameters (fermi `AgentValence`).
+    pub valence: Option<ValenceInput>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateSwarmRequest {
     /// Workspace (swarm) name.

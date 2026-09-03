@@ -23,7 +23,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 // any internal callers can reach them at the crate root.
 pub use crate::cloud_swarm::{
     build_agent_update_payload, build_create_agent_card, extract_execute_response,
-    unsupported_create_fields,
+    unsupported_create_fields, valence_payload,
 };
 
 /// Map one ABW catalogue agent (fermi `build_agent_json`) into the trimmed
@@ -306,6 +306,79 @@ impl SwarmServer {
             Ok(self
                 .client
                 .with_wallet(sanitize_workspace_payload(agent))
+                .await)
+        })
+        .await
+    }
+
+    /// Update an existing ABW agent — `PUT /api/agents/:id` (fermi
+    /// `update_agent_handler`). Partial update: only supplied fields are
+    /// sent; omitted fields are unchanged on the ABW card. fermi's update
+    /// rejects lifecycle fields (`status`, `visibility`) and has no surface
+    /// for `agent_type` or `sample_queries`.
+    #[tool(
+        description = "Update an existing ABW agent (PUT /api/agents/:id). Partial update — only supplied fields change; omitted fields are left as-is. Requires API key."
+    )]
+    pub(crate) async fn swarm_update_agent(
+        &self,
+        parameters: Parameters<UpdateAgentRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_update_agent", async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let mut payload = serde_json::json!({});
+            let obj = payload.as_object_mut().expect("just constructed object");
+            if let Some(v) = req.description {
+                obj.insert("description".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.system_prompt {
+                obj.insert("system_prompt".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.tags {
+                obj.insert("tags".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.model {
+                obj.insert("model".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.temperature {
+                obj.insert("temperature".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.accepts {
+                obj.insert("accepts".into(), serde_json::json!(v));
+            }
+            if let Some(v) = req.produces {
+                obj.insert("produces".into(), serde_json::json!(v));
+            }
+            if let Some(valence) = &req.valence {
+                obj.insert("valence".into(), valence_payload(valence));
+            }
+            if obj.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "no fields to update — supply at least one of description, \
+                     system_prompt, tags, model, temperature, accepts, produces, valence"
+                        .to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .request(
+                    reqwest::Method::PUT,
+                    &format!("/agents/{}", url_encode_segment(&req.agent_name)),
+                    &[],
+                    Some(&payload),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
                 .await)
         })
         .await

@@ -13,8 +13,9 @@
 //! - `save_agent`: persists edits. Local agents use
 //!   `swarm_reconfigure_local_agent` (updates `system_prompt`/`model`/
 //!   `mcp_tools`/`skills`, preserves `cloud_swarm_id` and the rest of the card).
-//!   Cloud agents have no update tool — the form renders read-only with a
-//!   note pointing the operator to "Copy to Local" to edit.
+//!   Cloud agents use `swarm_update_agent` (fermi's `PUT /api/agents/:id`) —
+//!   every form field is sent, so the pre-loaded form is the source of truth.
+//!   A synced card edits its local copy; the cloud card moves via push.
 //! - `delete_edited_agent`: deletes the agent loaded into the form —
 //!   `swarm_remove_local` for local/synced (severs the local card only),
 //!   `swarm_delete_agent` for cloud (irreversible ABW delete).
@@ -337,13 +338,6 @@ impl SwarmPanel {
                         Ok(detail) => {
                             // Store for `render` to apply (it has `&mut Window`).
                             this.pending_author_load = Some(detail);
-                            if !is_local {
-                                this.author.status = Some(
-                                    "Viewing ABW agent. Edits cannot be saved \
-                                     (no ABW update tool). Copy to Local to edit."
-                                        .into(),
-                                );
-                            }
                         }
                         Err(err) => {
                             this.author.editing_id = None;
@@ -507,15 +501,6 @@ impl SwarmPanel {
             return;
         };
         let is_local = self.author.create_target == super::CreateTarget::Local;
-        if !is_local {
-            self.author.status = Some(
-                "ABW agents cannot be updated from this panel. Copy to Local \
-                 to edit."
-                    .into(),
-            );
-            cx.notify();
-            return;
-        }
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.author.status = Some("Tool invoker not wired.".into());
             cx.notify();
@@ -530,20 +515,56 @@ impl SwarmPanel {
         self.author.busy = true;
         self.author.status = None;
         cx.notify();
+        // Cloud edits save every form field via `swarm_update_agent`
+        // (fermi's `PUT /api/agents/:id` — the form was pre-loaded with the
+        // card's current values, so the form is the source of truth).
+        // Local/synced edits keep the prompt-only `swarm_reconfigure_local_agent`
+        // path (a synced card edits its local copy; the cloud card moves via
+        // push). Gather before spawn — the editors need `cx`.
+        let cloud_fields = if is_local {
+            None
+        } else {
+            Some((
+                self.author.description.read(cx).text(cx),
+                Self::comma_list(&self.author.tags.read(cx).text(cx)),
+                Self::comma_list(&self.author.accepts.read(cx).text(cx)),
+                Self::comma_list(&self.author.produces.read(cx).text(cx)),
+                self.gather_valence(cx),
+            ))
+        };
         cx.spawn({
             let invoker = invoker.clone();
             let agent_name = editing_id.clone();
             async move |this, cx| {
-                let result = invoker
-                    .invoke_tool(
-                        crate::SWARM_SERVER,
-                        "swarm_reconfigure_local_agent",
-                        json!({
-                            "agent_name": agent_name,
-                            "system_prompt": system_prompt.trim(),
-                        }),
-                    )
-                    .await;
+                let result =
+                    if let Some((description, tags, accepts, produces, valence)) = cloud_fields {
+                        invoker
+                            .invoke_tool(
+                                crate::SWARM_SERVER,
+                                "swarm_update_agent",
+                                json!({
+                                    "agent_name": agent_name,
+                                    "description": description.trim(),
+                                    "system_prompt": system_prompt.trim(),
+                                    "tags": tags,
+                                    "accepts": accepts,
+                                    "produces": produces,
+                                    "valence": valence,
+                                }),
+                            )
+                            .await
+                    } else {
+                        invoker
+                            .invoke_tool(
+                                crate::SWARM_SERVER,
+                                "swarm_reconfigure_local_agent",
+                                json!({
+                                    "agent_name": agent_name,
+                                    "system_prompt": system_prompt.trim(),
+                                }),
+                            )
+                            .await
+                    };
                 this.update(cx, |this, cx| {
                     this.author.busy = false;
                     match result {

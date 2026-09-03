@@ -160,7 +160,7 @@ fn steer_system_prompt(
          `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
          `swarm_authorize_session`, `swarm_hire`, `swarm_delegate`, \
          `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_fire`, \
-         `swarm_create_agent`, `swarm_create_swarm`, \
+         `swarm_create_agent`, `swarm_update_agent`, `swarm_create_swarm`, \
          `swarm_generate_prompt`, `swarm_generate_ontology`, \
          `swarm_fork_agent`, `swarm_run_status`, \
          `swarm_search_knowledge`, `swarm_publish_checks`, \
@@ -2865,10 +2865,11 @@ mod tests {
         assert_eq!(KANBAN_SERVER, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
-        // the const is caught.
+        // the const is caught. 26 after d0af01a3a6 folded the three kata
+        // prompt tools into one `kanban_task_kata_prompt`.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            28,
+            26,
             "tool count changed — update KANBAN_TOOLS to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );

@@ -16,7 +16,7 @@ use ui::{
 use crate::CreateTarget;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::parse::extract_wallet_balance;
+use crate::parse::{extract_unsupported_fields_note, extract_wallet_balance};
 use crate::status_is_warning;
 
 /// State for the agent-authoring surface.
@@ -764,6 +764,42 @@ impl SwarmPanel {
         self.author.visibility = "private".to_string();
     }
 
+    /// Split a comma-separated form field into trimmed, non-empty entries.
+    /// Shared by the create and update paths so both send identically-parsed
+    /// lists (tags, accepts, produces).
+    pub(crate) fn comma_list(raw: &str) -> Vec<String> {
+        raw.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Gather the four valence editors into the valence JSON object, or
+    /// `None` when every field is empty. Arousal and valence are optional
+    /// floats; unparseable text parses to `None` (the server fills neutral
+    /// defaults). Shared by the create and update paths.
+    pub(crate) fn gather_valence(&self, cx: &mut Context<Self>) -> Option<serde_json::Value> {
+        let arousal_raw = self.author.valence_arousal.read(cx).text(cx);
+        let valence_raw = self.author.valence_valence.read(cx).text(cx);
+        let primary_affect = self.author.valence_primary_affect.read(cx).text(cx);
+        let personality_traits =
+            comma_list(&self.author.valence_personality_traits.read(cx).text(cx));
+        if arousal_raw.trim().is_empty()
+            && valence_raw.trim().is_empty()
+            && primary_affect.trim().is_empty()
+            && personality_traits.is_empty()
+        {
+            None
+        } else {
+            Some(json!({
+                "arousal": arousal_raw.trim().parse::<f64>().ok(),
+                "valence": valence_raw.trim().parse::<f64>().ok(),
+                "primary_affect": if primary_affect.trim().is_empty() { None } else { Some(primary_affect.trim()) },
+                "personality_traits": personality_traits,
+            }))
+        }
+    }
+
     /// Create a new agent from the authoring form. Mode-aware: in Local mode
     /// the agent is created on the local substrate via `swarm_create_local_agent`
     /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
@@ -834,12 +870,7 @@ impl SwarmPanel {
             cx.notify();
             return;
         }
-        let tags_raw = self.author.tags.read(cx).text(cx);
-        let tags: Vec<String> = tags_raw
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let tags = comma_list(&self.author.tags.read(cx).text(cx));
         // fermi contract fields: sample queries (one per line — they contain
         // commas) and the accepts/produces composition ports (CSV).
         let sample_queries: Vec<String> = self
@@ -851,50 +882,10 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let accepts: Vec<String> = self
-            .author
-            .accepts
-            .read(cx)
-            .text(cx)
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let produces: Vec<String> = self
-            .author
-            .produces
-            .read(cx)
-            .text(cx)
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let accepts = comma_list(&self.author.accepts.read(cx).text(cx));
+        let produces = comma_list(&self.author.produces.read(cx).text(cx));
         let visibility = self.author.visibility.clone();
-        // Parse valence fields. Arousal and valence are optional floats.
-        let arousal_raw = self.author.valence_arousal.read(cx).text(cx);
-        let valence_raw = self.author.valence_valence.read(cx).text(cx);
-        let primary_affect = self.author.valence_primary_affect.read(cx).text(cx);
-        let traits_raw = self.author.valence_personality_traits.read(cx).text(cx);
-        let personality_traits: Vec<String> = traits_raw
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        // Build the valence object only if at least one field is non-empty.
-        let valence = if arousal_raw.trim().is_empty()
-            && valence_raw.trim().is_empty()
-            && primary_affect.trim().is_empty()
-            && personality_traits.is_empty()
-        {
-            None
-        } else {
-            Some(json!({
-                "arousal": arousal_raw.trim().parse::<f64>().ok(),
-                "valence": valence_raw.trim().parse::<f64>().ok(),
-                "primary_affect": if primary_affect.trim().is_empty() { None } else { Some(primary_affect.trim()) },
-                "personality_traits": personality_traits,
-            }))
-        };
+        let valence = self.gather_valence(cx);
         self.author.busy = true;
         self.author.status = None;
         cx.notify();
@@ -946,8 +937,15 @@ impl SwarmPanel {
                         if let Some(b) = extract_wallet_balance(&output) {
                             this.spend.wallet_balance = Some(b);
                         }
-                        this.author.status =
-                            Some(format!("Agent '{}' created.", name.trim()).into());
+                        // Surface the server's honest-drop note (cloud create
+                        // with fields the ABW API cannot store) instead of a
+                        // bare "created" that hides the loss.
+                        let mut status = format!("Agent '{}' created.", name.trim());
+                        if let Some(note) = extract_unsupported_fields_note(&output) {
+                            status.push(' ');
+                            status.push_str(&note);
+                        }
+                        this.author.status = Some(status.into());
                         // Refresh so the new agent appears in browse.
                         this.fetch_all(cx);
                     }

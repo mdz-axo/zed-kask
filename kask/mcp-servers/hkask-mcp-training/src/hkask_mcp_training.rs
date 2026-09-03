@@ -701,4 +701,151 @@ mod smoke {
             "the error must carry a message naming the unconfigured host, got: {error:?}"
         );
     }
+
+    // ── Math-contract gate coverage (G-M3/G-M4/G-D1 through the tool seam) ──
+
+    /// The default config (r=16, alpha=32, bias=none) passes every static
+    /// gate: verdict "pass", zero findings, no refusals.
+    #[tokio::test]
+    async fn validate_config_passes_default_config() {
+        let server = make_server();
+        let output = server
+            .training_validate_config(Parameters(TrainValidateConfigRequest {
+                params: TrainingParams::default(),
+                dataset_path: None,
+                base_model: None,
+            }))
+            .await
+            .expect("tool ok");
+        let content = unwrap_content(&output);
+        assert_eq!(
+            content["verdict"], "pass",
+            "the default config must pass every static gate, got: {content}"
+        );
+        assert_eq!(
+            content["finding_count"], 0,
+            "the default config must produce zero findings, got: {content}"
+        );
+        assert_eq!(
+            content["has_refusals"], false,
+            "the default config must have no refusals, got: {content}"
+        );
+    }
+
+    /// G-M3 refuses r=0 (division by zero in the α/r scaling) — the verdict
+    /// is "fail" and the refusal names the gate and the remediation.
+    #[tokio::test]
+    async fn validate_config_refuses_zero_rank() {
+        let server = make_server();
+        let mut params = TrainingParams::default();
+        params.lora.r = 0;
+        let output = server
+            .training_validate_config(Parameters(TrainValidateConfigRequest {
+                params,
+                dataset_path: None,
+                base_model: None,
+            }))
+            .await
+            .expect("tool ok");
+        let content = unwrap_content(&output);
+        assert_eq!(
+            content["verdict"], "fail",
+            "r=0 must refuse (G-M3 division by zero), got: {content}"
+        );
+        assert_eq!(content["has_refusals"], true);
+        let findings = content["findings"]
+            .as_array()
+            .expect("findings array");
+        let gm3 = findings
+            .iter()
+            .find(|f| f["gate_id"] == "G-M3")
+            .unwrap_or_else(|| panic!("a G-M3 finding must be present, got: {findings:?}"));
+        assert_eq!(gm3["severity"], "refuse");
+        assert!(
+            gm3["remediation"].as_str().is_some_and(|r| !r.is_empty()),
+            "the refusal must carry a remediation, got: {gm3}"
+        );
+    }
+
+    /// G-M4 refuses r > 256 (not low-rank — LoRA provides no benefit) and
+    /// G-M3 warns on r > 64 without rsLoRA: the verdict is "fail" with both
+    /// findings present.
+    #[tokio::test]
+    async fn validate_config_refuses_absurd_rank_and_warns_rslora() {
+        let server = make_server();
+        let mut params = TrainingParams::default();
+        params.lora.r = 300;
+        let output = server
+            .training_validate_config(Parameters(TrainValidateConfigRequest {
+                params,
+                dataset_path: None,
+                base_model: None,
+            }))
+            .await
+            .expect("tool ok");
+        let content = unwrap_content(&output);
+        assert_eq!(
+            content["verdict"], "fail",
+            "r=300 must refuse (G-M4 not low-rank), got: {content}"
+        );
+        let gate_ids: Vec<&str> = content["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .filter_map(|f| f["gate_id"].as_str())
+            .collect();
+        assert!(
+            gate_ids.contains(&"G-M4"),
+            "G-M4 must fire on r=300, got: {gate_ids:?}"
+        );
+        assert!(
+            gate_ids.contains(&"G-M3"),
+            "G-M3 must warn on r>64 without rsLoRA, got: {gate_ids:?}"
+        );
+    }
+
+    /// G-D1 warns on a small dataset (<1000 examples) and the tool profiles
+    /// the dataset: the finding names the sample count and the dataset
+    /// section carries the detected format.
+    #[tokio::test]
+    async fn validate_config_gd1_warns_on_small_dataset() {
+        let server = make_server();
+        // A 3-line ChatML dataset under the crate root (contain_for_read
+        // accepts CWD-relative paths; target/ is the conventional scratch).
+        let dir = std::path::Path::new("target/test-datasets");
+        std::fs::create_dir_all(dir).expect("create scratch dir");
+        let path = dir.join("small-chatml.jsonl");
+        let line = r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#;
+        std::fs::write(&path, format!("{line}\n{line}\n{line}\n")).expect("write dataset");
+        let output = server
+            .training_validate_config(Parameters(TrainValidateConfigRequest {
+                params: TrainingParams::default(),
+                dataset_path: Some(path.to_string_lossy().to_string()),
+                base_model: None,
+            }))
+            .await
+            .expect("tool ok");
+        let content = unwrap_content(&output);
+        let findings = content["findings"].as_array().expect("findings");
+        let gd1 = findings
+            .iter()
+            .find(|f| f["gate_id"] == "G-D1")
+            .unwrap_or_else(|| panic!("G-D1 must fire on a 3-example dataset, got: {findings:?}"));
+        assert_eq!(gd1["severity"], "warn");
+        assert!(
+            gd1["message"].as_str().is_some_and(|m| m.contains("3")),
+            "the G-D1 message must name the sample count, got: {gd1}"
+        );
+        // The dataset section profiles what was read.
+        let dataset_section = content
+            .get("dataset_format")
+            .or_else(|| content.get("dataset"))
+            .unwrap_or_else(|| panic!("a dataset profile must be present, got: {content}"));
+        assert!(
+            dataset_section.get("detected_format").is_some()
+                || dataset_section.get("format").is_some(),
+            "the profile must name the detected format, got: {dataset_section}"
+        );
+    }
 }
+

@@ -73,6 +73,21 @@ pub fn build_create_agent_card(
 /// servers"; `Some([...])` is authoritative replacement. Secrets are
 /// referenced by `auth.secret_key` (agent owner's scoped secret store) —
 /// never inlined in the card.
+/// Map a `ValenceInput` to fermi's `AgentValence` object. fermi's struct
+/// requires all four fields; fill neutral defaults for what the caller
+/// omitted so fermi's card resolution never sees a partial object.
+pub fn valence_payload(valence: &crate::request_types::ValenceInput) -> serde_json::Value {
+    serde_json::json!({
+        "primary_affect": valence
+            .primary_affect
+            .clone()
+            .unwrap_or_else(|| "neutral".to_string()),
+        "arousal": valence.arousal.unwrap_or(0.5),
+        "valence": valence.valence.unwrap_or(0.5),
+        "personality_traits": valence.personality_traits.clone().unwrap_or_default(),
+    })
+}
+
 pub fn build_agent_update_payload(req: &CreateAgentRequest) -> serde_json::Value {
     let mut payload = serde_json::json!({});
     let obj = payload.as_object_mut().expect("just constructed object");
@@ -83,21 +98,7 @@ pub fn build_agent_update_payload(req: &CreateAgentRequest) -> serde_json::Value
         );
     }
     if let Some(valence) = &req.valence {
-        // fermi's `AgentValence` requires all four fields; fill neutral
-        // defaults for what the caller omitted so fermi's card resolution
-        // never sees a partial object.
-        obj.insert(
-            "valence".to_string(),
-            serde_json::json!({
-                "primary_affect": valence
-                    .primary_affect
-                    .clone()
-                    .unwrap_or_else(|| "neutral".to_string()),
-                "arousal": valence.arousal.unwrap_or(0.5),
-                "valence": valence.valence.unwrap_or(0.5),
-                "personality_traits": valence.personality_traits.clone().unwrap_or_default(),
-            }),
-        );
+        obj.insert("valence".to_string(), valence_payload(valence));
     }
     if let Some(ladder) = &req.model_ladder {
         // fermi ADR-011: per-tier model resolution. `ModelLadderRung`
