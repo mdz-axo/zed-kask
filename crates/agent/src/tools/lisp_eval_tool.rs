@@ -514,4 +514,135 @@ mod tests {
             "filter is not a builtin — the old therapy forms were broken"
         );
     }
+
+    #[test]
+    fn test_canonical_superforecasting_forms() {
+        // superforecasting SKILL.md stage 4 (Bayes) and stage 5 (MCDA-weighted
+        // average) — pinned so the pipeline's probability arithmetic is
+        // deterministic, not model-computed.
+        let bayes = r#"(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))"#;
+        let posterior = hkask_lisp::eval_sandboxed_with_budget(
+            bayes,
+            &json!({"prior": 0.4, "likelihood_ratio": 3}),
+            100_000,
+            64,
+        )
+        .expect("Bayes form must evaluate");
+        let posterior = posterior.as_f64().expect("posterior is numeric");
+        assert!(
+            (posterior - 0.6666666666666666).abs() < 1e-9,
+            "got {posterior}"
+        );
+
+        let mcda = r#"(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"#;
+        let weighted = hkask_lisp::eval_sandboxed_with_budget(
+            mcda,
+            &json!({"m1": 0.3, "c1": 2, "m2": 0.5, "c2": 1, "m3": 0.7, "c3": 1}),
+            100_000,
+            64,
+        )
+        .expect("MCDA form must evaluate");
+        let weighted = weighted.as_f64().expect("weighted average is numeric");
+        assert!((weighted - 0.45).abs() < 1e-9, "got {weighted}");
+    }
+
+    #[test]
+    fn test_canonical_flash_forms() {
+        // company-research-flash SKILL.md — alpha score, pt_12m blend,
+        // rr/rating/DROP gate, and the ENTER gate dispatch.
+        let alpha = hkask_lisp::eval_sandboxed_with_budget(
+            r#"(+ (* coverage_gap 0.30) (* market_cap_fit 0.20) (* sector_relevance 0.25) (* valuation_anomaly 0.25))"#,
+            &json!({"coverage_gap": 0.8, "market_cap_fit": 0.6, "sector_relevance": 0.9, "valuation_anomaly": 0.7}),
+            100_000,
+            64,
+        )
+        .expect("alpha form must evaluate");
+        let alpha = alpha.as_f64().expect("alpha is numeric");
+        assert!((alpha - 0.76).abs() < 1e-9, "got {alpha}");
+
+        let blend = hkask_lisp::eval_sandboxed_with_budget(
+            r#"(/ (+ (* dcf w_dcf) (* comps w_comps) (* scenario_pt w_siv)) (+ w_dcf w_comps w_siv))"#,
+            &json!({"dcf": 110, "comps": 105, "scenario_pt": 115, "w_dcf": 0.5, "w_comps": 0.3, "w_siv": 0.2}),
+            100_000,
+            64,
+        )
+        .expect("blend form must evaluate");
+        let blend = blend.as_f64().expect("blend is numeric");
+        assert!((blend - 109.5).abs() < 1e-9, "got {blend}");
+
+        let rating = hkask_lisp::eval_sandboxed_with_budget(
+            r#"(let ((rr (/ (- pt_12m market_price) (- market_price bear_case_pt)))) (cond ((>= rr 2) 'BUY) ((>= rr 1) 'HOLD) (t 'UNDERPERFORM)))"#,
+            &json!({"pt_12m": 120, "market_price": 100, "bear_case_pt": 80}),
+            100_000,
+            64,
+        )
+        .expect("rating form must evaluate");
+        assert_eq!(rating, json!("HOLD"));
+
+        let drop_gate = hkask_lisp::eval_sandboxed_with_budget(
+            r#"(if (and (< rr 2) (eq rating "UNDERPERFORM")) 'DROP 'PROCEED)"#,
+            &json!({"rr": 0.8, "rating": "UNDERPERFORM"}),
+            100_000,
+            64,
+        )
+        .expect("DROP gate form must evaluate");
+        assert_eq!(drop_gate, json!("DROP"));
+
+        let enter = hkask_lisp::eval_sandboxed_with_budget(
+            r#"(let ((n (+ (if edge 1 0) (if new 1 0) (if timely 1 0) (if examples 1 0) (if revealing 1 0)))) (cond ((= n 5) 'PUBLISH) ((= n 4) 'ALERT) (t 'DROP)))"#,
+            &json!({"edge": true, "new": true, "timely": true, "examples": true, "revealing": true}),
+            100_000,
+            64,
+        )
+        .expect("ENTER gate form must evaluate");
+        assert_eq!(enter, json!("PUBLISH"));
+    }
+
+    #[test]
+    fn test_superforecasting_skill_md_pins_forms() {
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/superforecasting/SKILL.md"
+        ))
+        .expect("superforecasting SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains(
+                "(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))"
+            ),
+            "Bayes form must stay pinned in superforecasting SKILL.md"
+        );
+        assert!(
+            skill_md.contains("(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"),
+            "MCDA weighted-average form must stay pinned in superforecasting SKILL.md"
+        );
+        assert!(
+            !skill_md.contains("combine_tree_probabilities"),
+            "combine_tree_probabilities exists nowhere — the phantom tool reference was removed"
+        );
+    }
+
+    #[test]
+    fn test_flash_skill_md_pins_forms() {
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/company-research-flash/SKILL.md"
+        ))
+        .expect("company-research-flash SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains("(* coverage_gap 0.30)"),
+            "alpha-score form must stay pinned in flash SKILL.md"
+        );
+        assert!(
+            skill_md.contains("(/ (- pt_12m market_price) (- market_price bear_case_pt))"),
+            "rr form must stay pinned in flash SKILL.md"
+        );
+        assert!(
+            skill_md.contains("((= n 5) 'PUBLISH)"),
+            "ENTER gate form must stay pinned in flash SKILL.md"
+        );
+        assert!(
+            !skill_md.contains("reports/company-research/"),
+            "the stale reports-path constraint was removed"
+        );
+    }
 }

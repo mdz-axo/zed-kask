@@ -185,7 +185,7 @@ status: VERIFIED (v8 — 2026-08-28: the duplicate portfolio surface (portfolio_
 | `key_metrics` | Key financial metrics (default limit 5) | FMP primary; EODHD approximated for missing fields |
 | `historical_price` | Historical price data | FMP primary; EODHD fallback |
 | `symbol_search` | Symbol search | FMP and EODHD search endpoints |
-| `resolve_symbol` | Resolve company name and/or ticker (optional exchange/country disambiguators) to the primary exchange symbol | EODHD multi-signal ranking (exact ticker > name overlap > exchange/country > primary listing) |
+| `resolve_symbol` | Resolve company name and/or ticker (optional exchange/country disambiguators) to the primary exchange symbol | EODHD search; narrows to given exchange/country, then prefers exact ticker > name match > primary listing |
 
 ### Analysis and research (5)
 

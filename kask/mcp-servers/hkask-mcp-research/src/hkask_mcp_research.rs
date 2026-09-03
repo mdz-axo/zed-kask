@@ -1449,7 +1449,7 @@ impl ResearchServer {
     // ═══════════════════ Evidence evaluation ═══════════════════
 
     #[tool(
-        description = "Evaluate retrieved evidence against a research question. Scores each artifact on recency, source credibility, corroboration, and counter-evidence. Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
+        description = "Evaluate retrieved evidence against a research question. Scores each artifact deterministically on recency (published-date age), corroboration (distinct source domains), and presence signals (published date, content). Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
     )]
     pub async fn evaluate_evidence(
         &self,
@@ -1469,47 +1469,32 @@ impl ResearchServer {
             }
 
             // Deterministic signal computation (not LLM relay — G3 contract).
-            // Corroboration: count artifacts sharing the same source domain.
-            let mut source_counts: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::new();
-            for a in &artifacts {
-                if let Some(src) = &a.source {
-                    *source_counts.entry(src.as_str()).or_default() += 1;
-                }
-            }
+            // Scoring lives in `score_evidence_set` (pure, unit-tested).
+            let scored = score_evidence_set(&artifacts);
 
             let evaluations: Vec<serde_json::Value> = artifacts
                 .iter()
-                .map(|a| {
-                    let corroboration = a
-                        .source
-                        .as_deref()
-                        .and_then(|s| source_counts.get(s))
-                        .copied()
-                        .unwrap_or(1);
-                    // Recency: presence of a published date is a positive signal.
-                    let has_date = a.published.is_some();
-                    // Confidence: deterministic composite — corroboration +
-                    // recency + has_content. Not an LLM score.
-                    let has_content = a.content.is_some();
-                    let confidence = (corroboration as f64 * 0.3)
-                        + (if has_date { 0.2 } else { 0.0 })
-                        + (if has_content { 0.2 } else { 0.0 })
-                        + 0.3; // base confidence
-                    let confidence = confidence.min(1.0);
-
+                .zip(scored.artifacts.iter())
+                .map(|(a, s)| {
                     serde_json::json!({
                         "url": a.url,
                         "title": a.title,
-                        "confidence": (confidence * 100.0).round() / 100.0,
-                        "corroboration_count": corroboration,
-                        "has_published_date": has_date,
-                        "has_content": has_content,
-                        "SEPIO:0000167": format!("{:.2}", confidence),
-                        "SEPIO:0000440": if corroboration > 1 {
+                        "confidence": (s.confidence * 100.0).round() / 100.0,
+                        "corroboration_count": s.corroboration_count,
+                        "distinct_source_domains": scored.distinct_domains,
+                        "has_published_date": s.has_published_date,
+                        "published_age_days": s.published_age_days,
+                        "has_content": s.has_content,
+                        "SEPIO:0000167": format!("{:.2}", s.confidence),
+                        "SEPIO:0000440": if scored.distinct_domains > 1 {
                             serde_json::Value::String(format!(
-                                "{} independent sources on same domain",
-                                corroboration
+                                "{} distinct source domains corroborate the evidence base",
+                                scored.distinct_domains
+                            ))
+                        } else if scored.sourced_count > 1 {
+                            serde_json::Value::String(format!(
+                                "{} artifacts share one source domain — duplication, not independent corroboration",
+                                scored.sourced_count
                             ))
                         } else {
                             serde_json::Value::Null
@@ -1815,4 +1800,196 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
             "Passphrase for SQLCipher encryption (required if HKASK_RSS_DB is set)",
         ),
     ]
+}
+
+// ── Evidence scoring (evaluate_evidence — pure, unit-tested) ────────────────
+
+/// Per-artifact deterministic evidence scores.
+struct ScoredArtifact {
+    confidence: f64,
+    /// Distinct source domains in the evidence set (0 for an unsourced
+    /// artifact — no source, no corroboration).
+    corroboration_count: usize,
+    published_age_days: Option<i64>,
+    has_published_date: bool,
+    has_content: bool,
+}
+
+/// Set-level scores for one `evaluate_evidence` call.
+struct EvidenceSetScores {
+    artifacts: Vec<ScoredArtifact>,
+    /// Distinct source domains across the set — the honest corroboration
+    /// signal. Same-domain duplicates do not raise it.
+    distinct_domains: usize,
+    /// Artifacts that carry a source at all.
+    sourced_count: usize,
+}
+
+/// Score an evidence set deterministically (not an LLM relay — G3 contract).
+///
+/// Corroboration is the number of DISTINCT source domains in the set. The
+/// former per-domain artifact count treated same-domain duplicates as
+/// corroboration: N copies of one press release scored maximum confidence,
+/// labeled "N independent sources on same domain" (observed live — two
+/// duplicates both scored 1.0). Recency is real: a parseable published date
+/// within 365 days earns the full 0.2 term, an older date 0.1 (a verifiable
+/// date still beats none), anything else 0. The composite cannot saturate on
+/// a single artifact: one fresh complete single-domain artifact scores 0.8.
+fn score_evidence_set(artifacts: &[crate::research::types::EvaluateArtifact]) -> EvidenceSetScores {
+    let distinct_domains: usize = artifacts
+        .iter()
+        .filter_map(|a| a.source.as_deref())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let sourced_count: usize = artifacts.iter().filter(|a| a.source.is_some()).count();
+
+    let scored = artifacts
+        .iter()
+        .map(|a| {
+            let corroboration_count = if a.source.is_some() {
+                distinct_domains
+            } else {
+                0
+            };
+            let corroboration_term = (corroboration_count.min(3) as f64 / 3.0) * 0.3;
+            let (recency_term, published_age_days) = recency_term(a.published.as_deref());
+            let has_content = a.content.is_some();
+            let confidence =
+                (0.3 + corroboration_term + recency_term + if has_content { 0.2 } else { 0.0 })
+                    .min(1.0);
+            ScoredArtifact {
+                confidence,
+                corroboration_count,
+                published_age_days,
+                has_published_date: a.published.is_some(),
+                has_content,
+            }
+        })
+        .collect();
+
+    EvidenceSetScores {
+        artifacts: scored,
+        distinct_domains,
+        sourced_count,
+    }
+}
+
+/// Recency term from an optional published date. Fresh (≤365 days) earns
+/// 0.2; older earns 0.1; missing or unparseable earns 0. Returns the term
+/// and the parsed age in days (None when unparseable).
+fn recency_term(published: Option<&str>) -> (f64, Option<i64>) {
+    let Some(published) = published else {
+        return (0.0, None);
+    };
+    match parse_age_days(published) {
+        Some(age) if age <= 365 => (0.2, Some(age)),
+        Some(age) => (0.1, Some(age)),
+        None => (0.0, None),
+    }
+}
+
+/// Age in days of a published-date string (RFC 3339 or `YYYY-MM-DD`),
+/// relative to now. None when neither format parses — an unparseable date
+/// carries no recency signal.
+fn parse_age_days(published: &str) -> Option<i64> {
+    let now = chrono::Utc::now();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(published) {
+        return Some((now - dt.with_timezone(&chrono::Utc)).num_days());
+    }
+    let date = chrono::NaiveDate::parse_from_str(published, "%Y-%m-%d").ok()?;
+    Some((now.date_naive() - date).num_days())
+}
+
+#[cfg(test)]
+mod evaluate_evidence_scoring_tests {
+    use super::score_evidence_set;
+    use crate::research::types::EvaluateArtifact;
+
+    fn artifact(
+        source: Option<&str>,
+        published: Option<&str>,
+        content: Option<&str>,
+    ) -> EvaluateArtifact {
+        EvaluateArtifact {
+            url: "https://example.com/a".to_string(),
+            title: Some("title".to_string()),
+            source: source.map(str::to_string),
+            published: published.map(str::to_string),
+            content: content.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn same_domain_duplicates_are_not_independent_corroboration() {
+        // The review's live probe against the old scorer: two same-domain
+        // duplicates both scored confidence 1.0 (0.6 duplication-inflated
+        // corroboration + 0.2 content + 0.3 base, capped), labeled "2
+        // independent sources on same domain". Distinct-domain corroboration
+        // scores 0.6 for this fixture (base 0.3 + one domain 0.1 + content
+        // 0.2, no date) — duplication no longer inflates confidence.
+        let arts = vec![
+            artifact(Some("same.example"), None, Some("body")),
+            artifact(Some("same.example"), None, Some("body")),
+        ];
+        let scored = score_evidence_set(&arts);
+        assert_eq!(scored.distinct_domains, 1);
+        assert_eq!(scored.sourced_count, 2);
+        assert_eq!(scored.artifacts[0].corroboration_count, 1);
+        assert!((scored.artifacts[0].confidence - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn single_fresh_complete_artifact_does_not_saturate() {
+        // Old scorer: any dated+content artifact scored 1.0 regardless of
+        // corroboration. New: one fresh single-domain artifact = 0.8.
+        let fresh_today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let arts = vec![artifact(
+            Some("solo.example"),
+            Some(&fresh_today),
+            Some("body"),
+        )];
+        let scored = score_evidence_set(&arts);
+        assert!((scored.artifacts[0].confidence - 0.8).abs() < 1e-9);
+        assert_eq!(scored.artifacts[0].published_age_days, Some(0));
+    }
+
+    #[test]
+    fn stale_dated_artifact_scores_below_fresh() {
+        // Real recency: a 2010 date earns half the recency term, not the
+        // full 0.2 the old presence-check paid for any date.
+        let fresh_today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let fresh = score_evidence_set(&[artifact(Some("a.example"), Some(&fresh_today), None)]);
+        let stale = score_evidence_set(&[artifact(Some("a.example"), Some("2010-01-01"), None)]);
+        assert!(
+            stale.artifacts[0].confidence < fresh.artifacts[0].confidence,
+            "stale {} must score below fresh {}",
+            stale.artifacts[0].confidence,
+            fresh.artifacts[0].confidence
+        );
+        // 0.3 base + 0.1 one domain + 0.1 stale recency
+        assert!((stale.artifacts[0].confidence - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn undated_unsourced_artifact_scores_base_only() {
+        // Nothing known: base 0.3, corroboration 0 — the old scorer paid 0.6
+        // (a phantom corroboration count of 1 for an artifact with no source).
+        let scored = score_evidence_set(&[artifact(None, None, None)]);
+        assert_eq!(scored.artifacts[0].corroboration_count, 0);
+        assert!((scored.artifacts[0].confidence - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn three_distinct_domains_earn_the_full_corroboration_term() {
+        let arts = vec![
+            artifact(Some("a.example"), None, Some("body")),
+            artifact(Some("b.example"), None, Some("body")),
+            artifact(Some("c.example"), None, Some("body")),
+        ];
+        let scored = score_evidence_set(&arts);
+        assert_eq!(scored.distinct_domains, 3);
+        assert_eq!(scored.artifacts[0].corroboration_count, 3);
+        // 0.3 base + 0.3 corroboration + 0.2 content (no date)
+        assert!((scored.artifacts[0].confidence - 0.8).abs() < 1e-9);
+    }
 }

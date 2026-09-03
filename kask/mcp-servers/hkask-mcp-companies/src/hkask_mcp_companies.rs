@@ -591,9 +591,9 @@ mod tool_behavior_tests {
         }
     }
 
-    /// `resolve_symbol` needs at least one of company name / ticker —
-    /// an exchange or country alone cannot identify a listing. Validated
-    /// before any request leaves.
+    /// `resolve_symbol` needs at least one of company name / ticker — an
+    /// empty request cannot identify a listing. Validated before any
+    /// request leaves.
     #[tokio::test]
     async fn resolve_symbol_requires_name_or_ticker() {
         let server = make_server();
@@ -601,11 +601,11 @@ mod tool_behavior_tests {
             .resolve_symbol(Parameters(ResolveSymbolRequest {
                 company_name: None,
                 ticker: None,
-                exchange: Some("NASDAQ".to_string()),
+                exchange: None,
                 country: None,
             }))
             .await
-            .expect_err("no name/ticker must yield a typed error, not a panic");
+            .expect_err("empty request must yield a typed error, not a panic");
         assert!(
             matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
             "missing name/ticker must be InvalidArgument, got: {:?}",

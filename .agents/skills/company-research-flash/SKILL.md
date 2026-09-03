@@ -19,7 +19,9 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 ### scout-alpha-score
 
-1. Compute the alpha score (coverage gap × 0.30 + market cap fit × 0.20 + sector relevance × 0.25 + valuation anomaly × 0.25, + EM GDP / Bessembinder / low-coverage bonuses up to +25).
+1. Score each component 0–1, then compute the alpha score via `lisp_eval` — fixed weights; add the EM GDP / Bessembinder / low-coverage bonuses (up to +25) to the weighted base:
+   - form: "(+ (* coverage_gap 0.30) (* market_cap_fit 0.20) (* sector_relevance 0.25) (* valuation_anomaly 0.25))"
+   - env: `{ "coverage_gap": <0–1>, "market_cap_fit": <0–1>, "sector_relevance": <0–1>, "valuation_anomaly": <0–1> }`
 2. Apply the 11-criterion excellence universe (S1–S11) if `in_excellence_universe` is true.
 3. Emit decision (MUST_COVER / REVIEW_ZONE / DROP — DROP is terminal), alpha_score, horizon_tag, downstream_mode.
 
@@ -59,15 +61,23 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 ### valuation-8step
 
 1. Synthesize over four MCP tool outputs (dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation).
-2. Produce pt_12m as a weighted blend of the tool outputs.
-3. Compute rr_ratio and rating (BUY/HOLD/UNDERPERFORM).
+2. Produce pt_12m as a weighted blend of the tool outputs via `lisp_eval` — one term per tool output, weights chosen by judgment and stated in the rationale, normalized by the weight sum:
+   - form: "(/ (+ (* dcf w_dcf) (* comps w_comps) (* scenario_pt w_siv)) (+ w_dcf w_comps w_siv))"
+   - env: `{ "dcf": <DCF fair value>, "comps": <comparables fair value>, "scenario_pt": <scenario-weighted PT>, "w_dcf": <weight>, "w_comps": <weight>, "w_siv": <weight> }`
+3. Compute rr_ratio, rating, and the DROP gate via `lisp_eval` (rr = upside to PT / downside to bear-case PT):
+   - rr form: "(/ (- pt_12m market_price) (- market_price bear_case_pt))"
+   - rating form: "(let ((rr (/ (- pt_12m market_price) (- market_price bear_case_pt)))) (cond ((>= rr 2) 'BUY) ((>= rr 1) 'HOLD) (t 'UNDERPERFORM)))"
+   - DROP gate form: "(if (and (< rr 2) (eq rating \"UNDERPERFORM\")) 'DROP 'PROCEED)"
+   - env: `{ "pt_12m": <blended target>, "market_price": <current price>, "bear_case_pt": <bear-case target>, "rating": <the emitted rating string> }`
 4. Compute FaVeS (variant expectations score — where your thesis differs from the market).
 5. Emit data_gaps for any failed MCP tool with LLM-derived fallback estimate + confidence penalty (L1/L2 fallback hierarchy).
 6. RR < 2:1 + UNDERPERFORM = DROP terminal gate.
 
 ### communication-enter
 
-1. Score the ENTER gate (Edge / New / Timely / Examples / Revealing — 5/5 = PUBLISH, 4/5 = ALERT, ≤3/5 = DROP).
+1. Score the ENTER gate (Edge / New / Timely / Examples / Revealing — each true/false), then dispatch via `lisp_eval`:
+   - form: "(let ((n (+ (if edge 1 0) (if new 1 0) (if timely 1 0) (if examples 1 0) (if revealing 1 0)))) (cond ((= n 5) 'PUBLISH) ((= n 4) 'ALERT) (t 'DROP)))"
+   - env: `{ "edge": <bool>, "new": <bool>, "timely": <bool>, "examples": <bool>, "revealing": <bool> }`
 2. Draft the CASCADE-format research note (Conclusion → Action → Scenarios → Catalysts → Data, 300–500 words).
 3. Compute final_confidence (blend of VALUATION confidence, FORENSIC severity, FaVeS).
 4. Confidence < 0.50 = NO_PUBLISH. publication_possible = false is a terminal DROP (KATA and LENS skip).
@@ -153,4 +163,4 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.
 - No `unwrap_or(0)` on regulation signals. Missing LENS verdict surfaces as 1.0 (worst case), not silently converged.
 - The THESIS quality gate in the deep pipeline uses `goal-analysis/judge` (semantic evaluation), not self-assessment — to avoid the LLM-improves-against-LLM-scored-target trap.
-- Reports are written as markdown files to `reports/company-research/` via the built-in `write_file` tool.
+- Reports are written as markdown files to `~/Documents/zk-data/companies-mcp/reports/` via the built-in `write_file` tool (see persist-report — never the source tree or the hidden internal data dir).

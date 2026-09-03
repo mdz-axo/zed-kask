@@ -53,15 +53,20 @@ The former single inside-view step is split into three steps. Generation and cou
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the forecasting question, `domain` = "forecasting", `context` = the sub-questions and outside-view output. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The `combine_tree_probabilities` call (next step) walks the tree via `hkask_forecast::marginalize` and produces `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the `lisp_eval` call owns that.
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
+
+> **MCP tool step (after stage 3, call `scenario_quantify` directly — no template):** map the `sub_question_tree` nodes into ScenarioEvent objects (id, name, question, deadline, time_horizon, scenario_type, subject, probability, depends_on with parent_event_ids + conditionals, sub_questions, update_count) and call `scenario_quantify`. The outcome node's `marginal_probability` is `tree_combined_probability`, stage 4's prior. The server's sequence advisory expects `scenario_build` first — the advisory warn is expected noise when superforecasting brings its own tree.
 
 ### stage_4_evidence_update
 
 1. Incorporate new evidence and update probabilities using likelihood ratios and Bayesian reasoning.
 2. Assess the strength (weak/moderate/strong) and direction (supports/contradicts/neutral) of each piece of evidence.
 3. Calculate or estimate the likelihood ratio (P(E|H) / P(E|~H)) for each evidence item.
-4. Make many small updates most of the time, and occasional large updates when evidence is very strong.
-5. Update the prior probability to the posterior probability based on the accumulated evidence.
+4. Compute each update via `lisp_eval` — the posterior of one update is the prior of the next:
+   - form: "(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))"
+   - env: `{ "prior": <current prior>, "likelihood_ratio": <P(E|H) / P(E|~H)> }`
+5. Make many small updates most of the time, and occasional large updates when evidence is very strong.
+6. Update the prior probability to the posterior probability based on the accumulated evidence.
 
 ### stage_5_synthesis
 
@@ -70,16 +75,19 @@ The former single inside-view step is split into three steps. Generation and cou
 3. Steelman the strongest opposing arguments, making them as persuasive as possible.
 4. Generate 3-5 distinct causal models, each with an implied probability.
 5. Apply MCDA-style weighted aggregation: score each model against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria. Compute composite scores and detect compensation masking.
-6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities.
+6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum:
+   - form: "(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"
+   - env: `{ "m1": <model 1 probability>, "c1": <model 1 composite score>, "m2": ..., "c2": ..., "m3": ..., "c3": ... }`
 7. Aggregate the judgments of different models, noting where they agree and diverge.
 
 ### stage_6_calibration
 
 1. Assign a precise, well-calibrated probability to the forecasted outcome using the full 0-100% scale.
-2. Avoid hedge words and use specific percentages matched to evidence quality.
-3. Assess confidence level (low, medium, high) based on evidence quality, model agreement, and reference class stability.
-4. Justify the specific probability and precision against the pipeline's evidence trail.
-5. Define a defensible range of probabilities that would also be reasonable.
+2. Anchor the assignment on `scenario_calibrate` (hkask-mcp-scenarios): call it with the question and the stage-1 sub-questions (each with estimate + confidence) — the server computes the calibrated probability via Tetlock's methodology. Depart from its output only with explicit justification.
+3. Avoid hedge words and use specific percentages matched to evidence quality.
+4. Assess confidence level (low, medium, high) based on evidence quality, model agreement, and reference class stability.
+5. Justify the specific probability and precision against the pipeline's evidence trail.
+6. Define a defensible range of probabilities that would also be reasonable.
 
 ### stage_7_record
 

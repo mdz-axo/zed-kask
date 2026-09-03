@@ -143,7 +143,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Resolve a company name and/or ticker to its primary exchange symbol. Pass the company name from the prompt (e.g. 'Capital One Financial Corp') and the ticker if the prompt gives one (e.g. 'COF'); optionally pass the exchange (e.g. 'NASDAQ', 'LSE', 'Toronto') or the country of domicile (e.g. 'US', 'Canada') to disambiguate the same ticker listed on several exchanges. Ranks EODHD common-stock candidates by exact ticker match, company-name token overlap, exchange/country match, and primary-listing status. Returns the symbol in {CODE}.{EXCHANGE} format, the company name, and whether it's a US listing (FMP primary) or international (EODHD primary). Use this before calling company_profile, income_statement, etc. when you only have the company name. A ticker that already includes an exchange suffix (e.g. VOD.LSE) is returned as-is."
+        description = "Resolve a company name and/or ticker to its primary exchange symbol. Pass the company name from the prompt (e.g. 'Capital One Financial Corp') and the ticker if the prompt gives one (e.g. 'COF'); optionally pass the exchange (e.g. 'NASDAQ', 'LSE', 'Toronto') or the country of domicile (e.g. 'US', 'Canada') to disambiguate the same ticker listed on several exchanges. An explicit exchange or country narrows the candidates; then the first exact ticker match, company-name match, or primary listing wins. Returns the symbol in {CODE}.{EXCHANGE} format, the company name, and whether it's a US listing (FMP primary) or international (EODHD primary). Use this before calling company_profile, income_statement, etc. when you only have the company name. A ticker that already includes an exchange suffix (e.g. VOD.LSE) is returned as-is."
     )]
     pub async fn resolve_symbol(
         &self,
@@ -185,9 +185,9 @@ impl CompaniesServer {
                 "companyName": resolved.company_name,
                 "isUS": resolved.is_us,
                 "primaryProvider": if resolved.is_us { "FMP" } else { "EODHD" },
-                "framework": "Multi-signal EODHD symbol resolution: ranks common-stock \
-                               candidates by exact ticker match, company-name token overlap, \
-                               exchange/country match, and primary-listing status."
+                "framework": "Multi-signal EODHD symbol resolution: narrows to the \
+                               given exchange/country, then prefers exact ticker match, \
+                               company-name match, primary listing."
             }))
         })
         .await
