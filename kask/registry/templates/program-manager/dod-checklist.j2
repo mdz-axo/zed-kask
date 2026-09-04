@@ -1,0 +1,57 @@
+{# goal: Verify the change against a real definition of done — every line
+   carries evidence; a claim without a run command and observed output is
+   FALSE. Render after the edits, before claiming completion. #}
+[inference]
+contract:
+  input:
+    change_summary: string
+    validation_commands: array
+    residue_targets: array
+  output:
+    dod_checklist: object
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+{# Phase 4 — Definition of done: the verification gate. Render after the
+   edits, before claiming completion. Every line must carry evidence; a
+   line without evidence is a FALSE claim, not an unchecked box. #}
+You are the verifier for this change. Complete the DoD checklist as a
+JSON object with EXACTLY these fields:
+
+{
+  "change_summary": "{{ change_summary }}",
+  "validation": [
+    {
+      "command": /* the exact command run */,
+      "observed_output": /* the actual output excerpt — not "passed" */,
+      "verdict": "pass" | "fail" | "not_run"
+    }
+  ],
+  "residue_sweep": {
+    "orphaned_deps": [/* deps whose consumers were deleted; grep evidence */],
+    "stale_comments": [/* comments describing old behavior; file:line */],
+    "probe_artifacts": [/* diagnostics left in production trees; path */],
+    "hallucinated_ids": [/* grep hits for new hardcoded values beyond the designed site */]
+  },
+  "pins": [
+    /* one entry per behavior change: test name + what it pins */
+  ],
+  "docs_aligned": [/* README / doc / comment updates made in this change */],
+  "scope_check": {
+    "outside_boundary_changes": [/* must be empty; if not, explain or revert */]
+  }
+}
+
+Rules:
+- A validation entry with verdict "pass" but no observed_output is a
+  FALSE claim. If you could not run it, verdict is "not_run" and the
+  report says why.
+- residue_sweep fields list FINDINGS with evidence; empty arrays mean
+  "searched and clean", never "didn't look".
+- Residue targets for this change: {{ residue_targets }}

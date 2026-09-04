@@ -1,38 +1,55 @@
-{# Delivery rubric — the program-manager closure ledger.
-   Phase 4 renders this with the session's findings inventory. The output
-   is the closure table every report must carry: each finding, its closure
-   state, and its evidence. The lisp_eval convergence check then scores it
-   (zero reported-abandoned, zero unowned) before the report is delivered.
+{# goal: Render the closure ledger — every open item with its closure state
+   and owner — so that no finding is reported-and-abandoned. The lisp_eval
+   scoring in SKILL.md Phase 5 consumes the same flat-list convention.
+   Phase 5 renders this after the open-items list is built.
    Variables:
-     findings — array of objects: { id, title, evidence, state, owner }
+     findings — array of flat lists: ["<id>", "<title>", "<state>", "owner:<owner>"]
        state ∈ { fixed-verified, delegated-tracked, operator-decision,
-                  reported-abandoned }
-       owner — who holds the next action ("self", "sub-agent:<label>",
-               "operator", or "" for unowned) #}
-# Delivery rubric — {{ findings|length }} findings
+                 reported-abandoned }
+       owner ∈ { self, sub-agent:<label>, operator, none } #}
+[inference]
+contract:
+  input:
+    findings: array
+  output:
+    ledger_table: string
+    abandoned_count: number
+    unowned_count: number
+    verdict: string
+visibility: Public
 
-| # | Finding | Evidence | Closure state | Owner |
-|---|---------|----------|---------------|-------|
+---
+
+You are the program manager closing out this delivery. Render the
+closure ledger from the findings inventory below, then score it.
+
+Findings inventory (each entry: id, title, state, owner):
 {% for finding in findings %}
-| {{ finding.id }} | {{ finding.title }} | {{ finding.evidence }} | {{ finding.state }} | {{ finding.owner }} |
+- {{ finding[0] }} | {{ finding[1] }} | {{ finding[2] }} | {{ finding[3] }}
 {% endfor %}
 
-## Rubric score
+Produce the ledger as a markdown table:
 
-- reported-abandoned: {{ findings | selectattr("state", "equalto", "reported-abandoned") | list | length }}
-- unowned: {{ findings | rejectattr("owner") | list | length }}
-
-A rubric is green only when both counts are zero. Any reported-abandoned
-finding is a role failure — return to Phase 1 and give it a closure path.
-Any unowned finding is an open defect in the delivery process itself.
-
-## Operator-decision items
-
-{% for finding in findings if finding.state == "operator-decision" %}
-### {{ finding.id }} — {{ finding.title }}
-- What it was designed to do: {{ finding.design_intent | default("see evidence") }}
-- Evidence it is unwired/broken: {{ finding.evidence }}
-- Recommendation: {{ finding.recommendation | default("wire-or-remove decision needed") }}
-{% else %}
-None this session.
+| # | Item | Closure state | Owner |
+|---|------|---------------|-------|
+{% for finding in findings %}
+| {{ finding[0] }} | {{ finding[1] }} | {{ finding[2] }} | {{ finding[3] }} |
 {% endfor %}
+
+Then compute the rubric score as a JSON object with EXACTLY these
+fields:
+
+{
+  "abandoned_count": /* count of findings whose state is "reported-abandoned" */,
+  "unowned_count": /* count of findings whose owner is "owner:none" */,
+  "verdict": "green" | "red"
+}
+
+Rules:
+- verdict is "green" only when abandoned_count and unowned_count are
+  both zero; otherwise "red".
+- A "red" verdict is not a failure to hide — it is the signal to return
+  to Phase 1 and give every red item a closure path before reporting.
+- An empty findings array means "no open items exist" — verdict green,
+  and the report must say so explicitly rather than showing an empty
+  table silently.

@@ -1,0 +1,58 @@
+{# goal: Produce the design record that gates coding — requirement, spec
+   provenance, invariants, surgical boundary, and the lazy-version
+   pre-mortem that names the hack execution must refuse. Render before
+   the first edit. #}
+[inference]
+contract:
+  input:
+    requirement: string
+    spec_provenance: string
+    design_pattern: string
+    invariants: array
+    touch_boundary: array
+    lazy_version: string
+  output:
+    design_record: object
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+{# Phase 2 — Design review: the pre-code gate. Render before the first edit.
+   The agent fills each field from Phase 0/1 results; the lazy-version
+   pre-mortem is the field that refuses the hack before it is written. #}
+You are acting as the architect for this change. Produce the design
+record as a JSON object with EXACTLY these fields:
+
+{
+  "requirement": "{{ requirement }}",
+  "spec_provenance": "{{ spec_provenance }}",
+  "design_pattern": "{{ design_pattern }}",
+  "invariants": [{{ invariants }}],
+  "touch_boundary": {
+    "files_to_touch": [/* surgical list; nothing else */],
+    "files_explicitly_not_touched": [/* neighboring scopes, other streams' write scopes */]
+  },
+  "experience_changing_choices": [
+    /* choices that change what the operator sees — surfaced as decisions,
+       never embedded silently */
+  ],
+  "lazy_version_premortem": "{{ lazy_version }}"
+}
+
+Rules for filling it:
+- spec_provenance names WHERE the spec was recovered from (commit hash,
+  doc path, or "operator provided <date>") — "the current code" is not
+  provenance, it is the post-corruption state.
+- invariants are the named constraints from the architecture docs that
+  this edit must not violate.
+- lazy_version_premortem answers: what would the shortcut version of
+  this change be, and what hack would it bake in? Name it concretely
+  (the hardcoded id, the silent fallback, the copied block) so execution
+  can refuse exactly that.
+- If a hardcoded value is proposed anywhere, its provenance must be an
+  existing constant/setting or an explicit operator instruction.

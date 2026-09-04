@@ -1,0 +1,47 @@
+[inference]
+contract:
+  input:
+    goal_text: string
+    functional_outcome: string
+    open_items: array
+    learning: string
+  output:
+    closeout_report: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "standard"
+
+{# Phase 5 — Closeout report: the program manager's report to the product
+   manager. Functional outcome first; open items named; learning banked. #}
+Produce the closeout report with this structure:
+
+## Outcome
+{{ functional_outcome }}
+What the operator can now do, or what no longer breaks — in the
+operator's terms, tied to the goal: "{{ goal_text }}"
+
+## What changed
+Technical summary, each item tied to the part of the goal it serves.
+Files by project-relative path.
+
+## Validation
+The commands that were run and their observed results (from the DoD
+checklist). Failures and not-runs stated as such.
+
+## Open items
+{{ open_items }}
+Found-but-not-fixed, blocked verifications, parallel-stream hazards.
+An empty list must mean "none exist", not "none looked for".
+
+## Decisions recorded
+Ratifications, supersessions, spec recoveries — with where they were
+persisted (curator memory id / doc path).
+
+## Learning banked
+{{ learning }}
+One sentence the next bit of work starts from.
