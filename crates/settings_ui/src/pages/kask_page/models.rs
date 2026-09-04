@@ -20,11 +20,18 @@ pub(crate) fn render_models_page(
     let classifier_model = models.classifier_model;
     let ocr_model = models.ocr_model;
     let rerank_model = models.rerank_model;
+    // The code defaults (what applies when a field is left empty) — rendered
+    // from the `Default` impls so the help text can never drift from the
+    // actual defaults (operator ruling 2026-09-04: defaults in code,
+    // settings override).
+    let code_defaults = kask_bridge::KaskModelsSettings::default();
+    let embedding_code_default = kask_bridge::KaskSettings::default().corpus.embedding_model;
+    let placeholder = "Provider/model-id (leave empty to use the code default)";
 
     let default_model_input = kask_string_input(
         "kask-models-default",
         "Default Inference Model",
-        "Provider/model-id (required — no hidden default)",
+        placeholder,
         default_model,
         "models",
         "default_model",
@@ -32,7 +39,7 @@ pub(crate) fn render_models_page(
     let embedding_model_input = kask_string_input(
         "kask-models-embedding",
         "Embedding Model",
-        "Provider/model-id (required — no hidden default)",
+        placeholder,
         embedding_model,
         "models",
         "embedding_model",
@@ -40,7 +47,7 @@ pub(crate) fn render_models_page(
     let classifier_model_input = kask_string_input(
         "kask-models-classifier",
         "Classifier Model",
-        "Provider/model-id (required — no hidden default)",
+        placeholder,
         classifier_model,
         "models",
         "classifier_model",
@@ -48,7 +55,7 @@ pub(crate) fn render_models_page(
     let ocr_model_input = kask_string_input(
         "kask-models-ocr",
         "OCR Model",
-        "Provider/model-id (required — no hidden default)",
+        placeholder,
         ocr_model,
         "models",
         "ocr_model",
@@ -56,7 +63,7 @@ pub(crate) fn render_models_page(
     let rerank_model_input = kask_string_input(
         "kask-models-rerank",
         "Rerank Model",
-        "Provider/model-id (required — no hidden default)",
+        placeholder,
         rerank_model,
         "models",
         "rerank_model",
@@ -76,12 +83,13 @@ pub(crate) fn render_models_page(
                 .gap_1()
                 .child(SettingsSectionHeader::new("Models"))
                 .child(
-                    Label::new(
+                    Label::new(format!(
                         "Kask-wide model configuration. These provider-prefixed model \
-                         names (e.g. \"openrouter/z-ai/glm-5.2\") override the kask \
+                         names (e.g. \"{}\") override the kask \
                          defaults for inference, embedding, classification, OCR, and \
                          rerank.",
-                    )
+                        code_defaults.default_model
+                    ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 ),
@@ -92,11 +100,12 @@ pub(crate) fn render_models_page(
                 .gap_1()
                 .child(Label::new("Default Inference Model"))
                 .child(
-                    Label::new(
+                    Label::new(format!(
                         "Provider-prefixed model for the Curator, skill execution, and \
                          kask panel inference. Leave empty to use the kask default \
-                         (openrouter/z-ai/glm-5.2).",
-                    )
+                         ({}).",
+                        code_defaults.default_model
+                    ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
@@ -108,11 +117,12 @@ pub(crate) fn render_models_page(
                 .gap_1()
                 .child(Label::new("Embedding Model"))
                 .child(
-                    Label::new(
+                    Label::new(format!(
                         "Provider-prefixed model for corpus indexing and memory semantic \
                          recall. Leave empty to fall back to the corpus MCP server's \
-                         embedding_model setting, then to the kask default.",
-                    )
+                         embedding_model setting, then to the kask default ({}).",
+                        embedding_code_default
+                    ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
@@ -124,10 +134,11 @@ pub(crate) fn render_models_page(
                 .gap_1()
                 .child(Label::new("Classifier Model"))
                 .child(
-                    Label::new(
+                    Label::new(format!(
                         "Provider-prefixed model for guard/regulation classification \
-                         tasks. Leave empty to use the kask default.",
-                    )
+                         tasks. Leave empty to use the kask default ({}).",
+                        code_defaults.classifier_model
+                    ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
@@ -139,10 +150,11 @@ pub(crate) fn render_models_page(
                 .gap_1()
                 .child(Label::new("OCR Model"))
                 .child(
-                    Label::new(
+                    Label::new(format!(
                         "Provider-prefixed model for scanned document OCR. \
-                         Leave empty to use the kask default (RunPod/kask-ocr).",
-                    )
+                         Leave empty to use the kask default ({}).",
+                        code_defaults.ocr_model
+                    ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
@@ -156,8 +168,8 @@ pub(crate) fn render_models_page(
                 .child(
                     Label::new(
                         "Provider-prefixed model for the research server's deep-search \
-                         rerank stage (per-candidate relevance scoring). Leave empty to \
-                         use the kask default (OpenRouter/qwen/qwen3-reranker-8b).",
+                         rerank stage (per-candidate relevance scoring). No code default \
+                         exists — the stage requires this setting.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

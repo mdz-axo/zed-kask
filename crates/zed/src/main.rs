@@ -2973,8 +2973,9 @@ async fn try_wire_edit_prediction_port(
 
     cx.update(|cx| {
         let tokio_handle = gpui_tokio::Tokio::handle(cx);
-        // The visible chain only (the operator's no-hidden-models spec):
-        // `kask.models.default_model` when set, else the zed default.
+        // `kask.models.default_model` — which carries the code default
+        // (operator ruling 2026-09-04: defaults in code, settings override)
+        // — else the zed default.
         let kask_default_model = kask_bridge::KaskSettings::get_global(cx)
             .models
             .default_model
@@ -3053,13 +3054,12 @@ fn wire_kask_inference_stack(
     };
     let async_cx = cx.to_async();
     let inference_model: Arc<dyn language_model::LanguageModel> = {
-        // The visible chain only (the operator's spec: no hidden code
-        // constant may be the effective inference model):
-        // 1. `kask.models.default_model` when the user set it,
-        // 2. else the zed default — the user's active default, visible in
-        //    Settings → AI. The prior code routed an unset setting through
-        //    the DEFAULT_FALLBACK_MODEL constant first, so a hidden model
-        //    won whenever it happened to be resolvable.
+        // `kask.models.default_model` — its `Default` carries the code
+        // default (operator ruling 2026-09-04: defaults in code so the
+        // code works; the settings UI overrides). When the default model
+        // cannot be resolved from the registry (provider not configured),
+        // fall back to the zed default — the user's active default,
+        // visible in Settings → AI.
         let kask_default = kask_settings.models.default_model.trim();
         if kask_default.is_empty() {
             configured.model.clone()

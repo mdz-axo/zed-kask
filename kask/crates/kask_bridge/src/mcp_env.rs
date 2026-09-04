@@ -750,10 +750,9 @@ mod tests {
         );
     }
 
-    // The `embedding_model` field has a non-empty `Default`
-    // (empty), so the comparison must be
-    // against `Default`, not `is_empty()`. A user override must be emitted;
-    // the default must not.
+    // `models.embedding_model` defaults empty (the embedding default lives
+    // in the corpus layer so it cannot shadow corpus overrides), so a
+    // non-default `corpus.embedding_model` must be emitted.
     #[test]
     fn mcp_env_emits_embedding_model_when_overridden() {
         let mut settings = KaskSettings::default();

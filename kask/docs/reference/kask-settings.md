@@ -240,27 +240,32 @@ dependency.
 
 ## Models (`KaskModelsSettings`)
 
-Kask-wide model configuration (`settings.rs:572`). Fields default to empty
-strings; **empty = not configured** — there are no hidden code-constant
-fallbacks (the operator's no-hidden-models spec). Consumers resolve the
-injected env var and fail visibly, naming the setting to
-set.[^ousterhout-models-settings]
+Kask-wide model configuration (`settings.rs`). Every model field carries a
+**code default** (operator ruling 2026-09-04, superseding the former
+no-hidden-models spec): the system works out of the box, and the settings
+UI / settings.json overrides the defaults. The default values are the
+operator's configured models, verbatim.[^ousterhout-models-settings]
 
 | Field | Type | Default | Resolution |
 |-------|------|---------|------------|
-| `default_model` | `String` | `""` | Injected as `HKASK_DEFAULT_MODEL` when set (`mcp_env.rs:435`) |
-| `embedding_model` | `String` | `""` | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty (`settings.rs:647`); injected as `HKASK_EMBEDDING_MODEL` |
-| `classifier_model` | `String` | `""` | Injected as `HKASK_CLASSIFIER_MODEL` when set (`mcp_env.rs:444`) |
+| `default_model` | `String` | `"OpenRouter/z-ai/glm-5.3"` | Injected as `HKASK_DEFAULT_MODEL` (`mcp_env.rs`); the zed-side inference stack resolves it from the registry, falling back to the zed default when the provider is not configured |
+| `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"ollama/qwen3-embedding:0.6b"`) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
+| `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
+| `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
+| `rerank_model` | `String` | `""` | No configured default — the research server's rerank stage fails visibly naming the setting until one is named |
 
 `hkask_inference::model_constants` defines **env-var accessors only** —
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
-each returning `Option<String>` (`None` = not configured; callers fail
-visibly naming the env var). The former `DEFAULT_*_MODEL` constants
+each returning `Option<String>` (`None` = env var not injected; the settings
+layers carry the code defaults and inject these env vars for MCP server
+children). The former `DEFAULT_*_MODEL` constants
 (`DEFAULT_INFERENCE_MODEL`, `DEFAULT_FALLBACK_MODEL`,
 `DEFAULT_EMBEDDING_MODEL`, `DEFAULT_CLASSIFIER_MODEL`, `DEFAULT_OCR_MODEL`,
-`DEFAULT_AGENT_MODEL`) are deleted. Vision, TTS, STT, video, and image-gen
-models are env-var-configured per media server (`HKASK_MEDIA_*_MODEL`), not
-compile-time constants.
+`DEFAULT_AGENT_MODEL`) are deleted — the defaults now live in the settings
+`Default` impls (`kask_bridge/src/settings.rs`,
+`hkask-services-core/src/standalone_settings.rs`), overridable via the
+settings UI. Vision, TTS, STT, video, and image-gen models are
+env-var-configured per media server (`HKASK_MEDIA_*_MODEL`).
 
 ## Keychain Architecture
 

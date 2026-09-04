@@ -80,19 +80,24 @@ pub struct HkaskSettings {
 pub(crate) const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
-    // Empty = not configured (the operator's no-hidden-models spec): no
-    // code-constant fallback — consumers fail visibly naming the setting.
-    String::new()
+    // Code default (operator ruling 2026-09-04, superseding the
+    // no-hidden-models spec): the operator's configured models are the
+    // defaults so the code works out of the box; settings.json / env vars
+    // override them.
+    "ollama/qwen3-embedding:0.6b".to_string()
 }
 
 fn default_classifier_model() -> String {
-    // Empty = not configured — consumers fail visibly naming the setting.
-    String::new()
+    // glm-5.2, not glm-5.3-flash: the classifier must be a non-thinking
+    // model (or one where thinking is disable-able via
+    // `reasoning_effort: "none"`) — classification and tagging need
+    // output tokens, not reasoning tokens. glm-5.3-flash is a thinking
+    // model that cannot disable it (operator ruling 2026-09-04).
+    "OpenRouter/z-ai/glm-5.2".to_string()
 }
 
 fn default_ocr_model() -> String {
-    // Empty = not configured — consumers fail visibly naming the setting.
-    String::new()
+    "ollama/glm-ocr:latest".to_string()
 }
 
 fn default_chunk_max_tokens() -> usize {
@@ -303,11 +308,11 @@ mod tests {
         let settings =
             HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
         assert_eq!(settings.ocr_model, "RunPod/kask-ocr-v2");
-        // Absent fields fall back to Default (empty = not configured —
-        // consumers fail visibly naming the setting; never a hidden
-        // constant).
-        assert_eq!(settings.embedding_model, "");
-        assert_eq!(settings.classifier_model, "");
+        // Absent fields fall back to the code defaults (operator ruling
+        // 2026-09-04: defaults in code so the code works; settings
+        // override).
+        assert_eq!(settings.embedding_model, "ollama/qwen3-embedding:0.6b");
+        assert_eq!(settings.classifier_model, "OpenRouter/z-ai/glm-5.2");
     }
 
     /// A file with no `kask` section at all (pure zed settings) yields pure

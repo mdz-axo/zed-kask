@@ -1,8 +1,15 @@
-//! Model name resolution — env-configurable with compile-time defaults.
+//! Model name resolution — env-configurable with code defaults.
 //!
 //! Every model used in the system has a corresponding env var for override.
-//! The constants here are DEFAULT values; env vars take precedence.
-//! This eliminates the need to recompile when models are superseded.
+//! The accessors here read the ENV LAYER only: `HKASK_*` → `None` when unset.
+//! They are not the whole chain — the settings layers carry the code defaults
+//! (operator ruling 2026-09-04, superseding the former no-hidden-models
+//! spec): `KaskModelsSettings::default()` / `HkaskSettings::default()` hold
+//! the default model names, settings.json / the settings UI override them,
+//! and `mcp_env()` injects the resolved values into MCP server children as
+//! these env vars. A `None` from these accessors therefore means "env not
+//! injected" — in practice only reachable for direct CLI callers that
+//! bypass the settings chain.
 //!
 //! Naming convention:
 //! - `HKASK_CLASSIFIER_MODEL` — primary classifier model
@@ -11,40 +18,37 @@
 //! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
 //! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
 
-// ── Resolved model accessors (env var → Option; None = not configured) ────
-//
-// The operator's no-hidden-models spec: these accessors have NO constant
-// fallback. `None` means "not configured" — callers fail visibly (a typed
-// error naming the setting to set), never a silent hidden default. The env
-// vars are injected from the visible kask settings
-// (`kask.models.classifier_model`, etc.).
-
-/// Resolve the classifier model: `HKASK_CLASSIFIER_MODEL` → `None` when
-/// unset (callers fail visibly).
+/// Read the classifier model from the env layer: `HKASK_CLASSIFIER_MODEL`
+/// → `None` when unset. The settings chain (which carries the code
+/// default) injects this env var for MCP server children.
 pub fn classifier_model() -> Option<String> {
     std::env::var("HKASK_CLASSIFIER_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the embedding model: `HKASK_EMBEDDING_MODEL` → `None` when
-/// unset (callers fail visibly).
+/// Read the embedding model from the env layer: `HKASK_EMBEDDING_MODEL`
+/// → `None` when unset. The settings chain (which carries the code
+/// default) injects this env var for MCP server children.
 pub fn embedding_model() -> Option<String> {
     std::env::var("HKASK_EMBEDDING_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the OCR model: `HKASK_OCR_MODEL` → `None` when unset (callers
-/// fail visibly).
+/// Read the OCR model from the env layer: `HKASK_OCR_MODEL` → `None`
+/// when unset. The settings chain (which carries the code default)
+/// injects this env var for MCP server children.
 pub fn ocr_model() -> Option<String> {
     std::env::var("HKASK_OCR_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the rerank model: `HKASK_RERANK_MODEL` → `None` when unset
-/// (callers fail visibly).
+/// Read the rerank model from the env layer: `HKASK_RERANK_MODEL` →
+/// `None` when unset. No code default exists for rerank (no configured
+/// model to draw from) — callers surface a typed error naming the
+/// setting.
 pub fn rerank_model() -> Option<String> {
     std::env::var("HKASK_RERANK_MODEL")
         .ok()

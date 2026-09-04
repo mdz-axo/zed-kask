@@ -370,9 +370,11 @@ impl Default for KaskCorpusSettings {
 }
 
 fn default_embedding_model() -> String {
-    // Empty = not configured (the operator's no-hidden-models spec): no
-    // code-constant fallback — consumers fail visibly naming the setting.
-    String::new()
+    // Code default (operator ruling 2026-09-04): the corpus embedding model
+    // defaults to the operator's configured model so semantic recall works
+    // out of the box; `kask.corpus.embedding_model` / `kask.models.embedding_model`
+    // override it.
+    "ollama/qwen3-embedding:0.6b".to_string()
 }
 
 /// Prediction-markets data-service configuration.
@@ -568,9 +570,9 @@ pub struct KaskMediaSettings {
 // 5. The consuming MCP server — reads the env var
 // 6. `crates/settings_ui/src/pages/kask_page/models.rs` — the settings UI page
 // The standalone (non-zed) layer is `hkask-services-core/src/standalone_settings.rs`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskModelsSettings {
-    /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
+    /// Default inference model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.3"`).
     /// When set, overrides the kask default for Curator, skill execution, and
     /// kask panel inference.
     pub default_model: String,
@@ -587,26 +589,58 @@ pub struct KaskModelsSettings {
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, the corpus server falls back to the kask default
     /// (env `HKASK_OCR_MODEL` → `HkaskSettings::ocr_model` →
-    /// `DEFAULT_OCR_MODEL` — resolved in hkask-mcp-corpus, not here).
+    /// resolved in hkask-mcp-corpus, not here).
     pub ocr_model: String,
 
     /// Rerank model for the research server's deep-search rerank stage
-    /// (provider-prefixed). When empty, the research server falls back to
-    /// the kask default (env `HKASK_RERANK_MODEL` → `DEFAULT_RERANK_MODEL` —
-    /// resolved per call in `hkask_inference::model_constants::rerank_model`).
+    /// (provider-prefixed). When empty, the research server falls back
+    /// to the kask default (env `HKASK_RERANK_MODEL` — resolved per call
+    /// in `hkask_inference::model_constants::rerank_model`).
     pub rerank_model: String,
 }
 
+// Code defaults (operator ruling 2026-09-04, superseding the
+// no-hidden-models spec): every model has a code default so the system
+// works out of the box; the settings UI / settings.json overrides them.
+// The values are the operator's configured models, verbatim.
+//
+// `embedding_model` is the one exception: it stays empty HERE because its
+// precedence chain is two-layer (`models.embedding_model` →
+// `corpus.embedding_model` → default). A non-empty default at the models
+// layer would shadow every `corpus.embedding_model` override — the
+// From<Content> impl fills absent fields with these defaults, so
+// "absent" and "explicitly set" are indistinguishable one layer down.
+// The embedding default lives in `KaskCorpusSettings::default()`
+// (`default_embedding_model`), the chain's final hop.
+impl Default for KaskModelsSettings {
+    fn default() -> Self {
+        Self {
+            default_model: "OpenRouter/z-ai/glm-5.3".to_string(),
+            embedding_model: String::new(),
+            // glm-5.2, not the operator's glm-5.3-flash: the classifier must
+            // be a non-thinking model (or one where thinking is disable-able
+            // via `reasoning_effort: "none"`) — classification and tagging
+            // need output tokens, not reasoning tokens. glm-5.3-flash is a
+            // thinking model that cannot disable it (operator ruling
+            // 2026-09-04).
+            classifier_model: "OpenRouter/z-ai/glm-5.2".to_string(),
+            ocr_model: "ollama/glm-ocr:latest".to_string(),
+            // No configured rerank model to default from — the research
+            // server's rerank stage fails visibly naming the setting until
+            // one is named.
+            rerank_model: String::new(),
+        }
+    }
+}
+
 impl KaskModelsSettings {
-    // NOTE (operator spec, 2026-09-04): there is deliberately NO
-    // `effective_default_model()` here. The default inference model has NO
-    // code-constant fallback — an empty `default_model` means "use the
-    // zed default" (the user's active default, visible in Settings → AI;
-    // wired in zed's composition root) or, on the direct path, a typed
-    // `NotConfigured` error naming this setting. A hidden constant must
-    // never be the effective inference model. The per-subsystem
-    // `effective_*` methods below (embedding/classifier/...) retain their
-    // documented constant fallbacks pending the no-hidden-models audit.
+    // NOTE (superseded 2026-09-04): the former no-hidden-models spec —
+    // empty defaults, callers fail visibly — is replaced by code defaults
+    // in the `Default` impl above (operator ruling: defaults in code so the
+    // code works; the settings UI overrides). The per-subsystem
+    // `effective_*` methods below resolve settings → default; an empty
+    // effective value is now only possible for `rerank_model`, which has
+    // no configured default to draw from.
 }
 
 /// Resolve a storage-root setting with the single priority chain shared by
@@ -633,9 +667,10 @@ impl Settings for KaskSettings {
 impl KaskSettings {
     /// Effective embedding model, resolving the documented precedence:
     /// `models.embedding_model` (if non-empty) → `corpus.embedding_model`
-    /// (if set) → EMPTY (not configured). Empty means embedding-dependent
-    /// calls fail visibly naming the setting — never a hidden constant
-    /// (the operator's no-hidden-models spec).
+    /// (if non-empty — its `Default` carries the code default, operator
+    /// ruling 2026-09-04) → empty. Empty is reachable only when the user
+    /// explicitly empties both fields — embedding calls then fail visibly
+    /// naming the setting.
     ///
     /// This is the single source of truth for the `HKASK_EMBEDDING_MODEL`
     /// env emission. Previously two separate `env.insert` blocks in
@@ -1190,15 +1225,18 @@ mod tests {
     }
 
     // When `models.embedding_model` is empty, the effective value falls back
-    // to the corpus setting (if non-default), then to the constant. Lives in
-    // `settings.rs` (not `mcp_env.rs`) because it pins `effective_embedding_model`,
-    // a method on `KaskSettings` defined here.
+    // to the corpus setting — whose `Default` carries the code default
+    // (operator ruling 2026-09-04). Lives in `settings.rs` (not
+    // `mcp_env.rs`) because it pins `effective_embedding_model`, a method on
+    // `KaskSettings` defined here.
     #[test]
     fn effective_embedding_model_falls_back_to_corpus_when_models_empty() {
         let mut settings = KaskSettings::default();
-        // Nothing configured → EMPTY (not configured), never a hidden
-        // constant — embedding calls fail visibly naming the setting.
-        assert_eq!(settings.effective_embedding_model(), "");
+        // Nothing configured → the corpus-layer code default.
+        assert_eq!(
+            settings.effective_embedding_model(),
+            "ollama/qwen3-embedding:0.6b"
+        );
         settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
         assert_eq!(
             settings.effective_embedding_model(),

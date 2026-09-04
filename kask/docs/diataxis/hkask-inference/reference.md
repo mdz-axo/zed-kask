@@ -104,17 +104,13 @@ There is no `ProviderConfig::is_configured` method in the current tree.
 
 | Symbol | Location |
 |--------|----------|
-| `DEFAULT_CLASSIFIER_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:24` |
-| `DEFAULT_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:35` |
-| `DEFAULT_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:44` |
-| `DEFAULT_FALLBACK_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:49` |
-| `DEFAULT_AGENT_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:53` |
-| `DEFAULT_TTS_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:56` |
-| `DEFAULT_STT_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:59` |
-| `DEFAULT_VISION_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:62` |
-| `DEFAULT_IMAGE_GEN_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:65` |
-| `DEFAULT_VIDEO_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:68` |
-| `classifier_model()` / `embedding_model()` / `ocr_model()` / `resolve()` | `kask/crates/hkask-inference/src/model_constants.rs:73`, `:78`, `:83`, `:88` |
+| `classifier_model()` / `embedding_model()` / `ocr_model()` / `rerank_model()` | `kask/crates/hkask-inference/src/model_constants.rs` (env-layer accessors; `None` = env var not injected) |
+
+The former `DEFAULT_*_MODEL` constants are deleted. The code defaults live
+in the settings `Default` impls (operator ruling 2026-09-04):
+`kask_bridge/src/settings.rs` (`KaskModelsSettings::default`, plus
+`KaskCorpusSettings::default` for the embedding model) and
+`hkask-services-core/src/standalone_settings.rs` (`HkaskSettings::default`).
 
 ### `media_router.rs`, `media_providers.rs`, `provider.rs`, `scoring.rs`, `batch.rs`, `openai_compat.rs`
 
@@ -351,28 +347,27 @@ forces either. `submit_batch` (`batch.rs:159`) waits up to `MAX_BATCH_WAIT`
 dropped. The zed side holds the API keys; the MCP server never sees them
 (`call_generate_batch` doc, `inference_ipc_client.rs:443-447`).
 
-## Model constants
+## Model defaults
 
-| Constant | Value | Env override |
-|----------|-------|--------------|
-| `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_CLASSIFIER_MODEL` |
-| `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
-| `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
-| `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |
-| `DEFAULT_AGENT_MODEL` | `qwen/qwen3-235b-a22b-thinking-2507` | — |
-| `DEFAULT_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | — |
-| `DEFAULT_STT_MODEL` | `DeepInfra/openai/whisper-large-v3` | — |
-| `DEFAULT_AUDIO_CHAT_MODEL` | `OpenRouter/mistralai/voxtral-small-24b-2507` | `HKASK_MEDIA_AUDIO_CHAT_MODEL` |
-| `DEFAULT_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | — |
-| `DEFAULT_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | — |
-| `DEFAULT_VIDEO_MODEL` | `DeepInfra/Wan-AI/Wan2.2-T2V-A14B` | — |
+Every model has a **code default** (operator ruling 2026-09-04, superseding
+the former no-hidden-models spec): the system works out of the box, and the
+settings UI / settings.json / env vars override. The defaults live in the
+settings `Default` impls — the operator's configured models, verbatim:
 
-Accessors `classifier_model()` (`model_constants.rs:73`),
-`embedding_model()` (`:78`), `ocr_model()` (`:83`), and the generic
-`resolve()` (`:88`) implement env-var → default. This module is the
-single source of truth — `hkask-services-core` resolves its defaults
-here (`kask/crates/hkask-services-core/src/settings.rs:65-79`), and
-`kask_bridge` re-exports it (`kask/crates/kask_bridge/src/kask_bridge.rs:42`).
+| Model | Default | Override |
+|-------|---------|----------|
+| Default inference model | `OpenRouter/z-ai/glm-5.3` | `kask.models.default_model` / `HKASK_DEFAULT_MODEL` |
+| Embedding model | `ollama/qwen3-embedding:0.6b` | `kask.models.embedding_model` → `kask.corpus.embedding_model` / `HKASK_EMBEDDING_MODEL` |
+| Classifier model | `OpenRouter/z-ai/glm-5.2` (non-thinking — classifiers need output tokens, not reasoning tokens; glm-5.3-flash cannot disable thinking) | `kask.models.classifier_model` / `HKASK_CLASSIFIER_MODEL` |
+| OCR model | `ollama/glm-ocr:latest` | `kask.models.ocr_model` / `HKASK_OCR_MODEL` |
+| Rerank model | none (fails visibly naming the setting) | `kask.models.rerank_model` / `HKASK_RERANK_MODEL` |
+
+The env-layer accessors `classifier_model()`, `embedding_model()`,
+`ocr_model()`, and `rerank_model()` (`model_constants.rs`) read `HKASK_*`
+only — the settings chain injects those env vars into MCP server children
+with the resolved (default-or-overridden) values. The embedding default
+lives in the corpus settings layer so a models-layer default cannot shadow
+`corpus.embedding_model` overrides.
 
 ## `openai_compat` module
 
