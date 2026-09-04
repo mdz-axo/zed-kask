@@ -3022,26 +3022,37 @@ fn wire_kask_inference_stack(
     };
     let async_cx = cx.to_async();
     let inference_model: Arc<dyn language_model::LanguageModel> = {
-        let kask_default = kask_settings.models.effective_default_model();
-        match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
-            .0
-            .into_values()
-            .next()
-        {
-            Some(model) => {
-                log::info!(
-                    "hKask inference using kask.models.default_model: {}",
-                    kask_default
-                );
-                model
-            }
-            None => {
-                log::warn!(
-                    "kask.models.default_model '{}' could not be resolved \
-                     from LanguageModelRegistry — falling back to zed default",
-                    kask_default
-                );
-                configured.model.clone()
+        // The visible chain only (the operator's spec: no hidden code
+        // constant may be the effective inference model):
+        // 1. `kask.models.default_model` when the user set it,
+        // 2. else the zed default — the user's active default, visible in
+        //    Settings → AI. The prior code routed an unset setting through
+        //    the DEFAULT_FALLBACK_MODEL constant first, so a hidden model
+        //    won whenever it happened to be resolvable.
+        let kask_default = kask_settings.models.default_model.trim();
+        if kask_default.is_empty() {
+            configured.model.clone()
+        } else {
+            match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
+                .0
+                .into_values()
+                .next()
+            {
+                Some(model) => {
+                    log::info!(
+                        "hKask inference using kask.models.default_model: {}",
+                        kask_default
+                    );
+                    model
+                }
+                None => {
+                    log::warn!(
+                        "kask.models.default_model '{}' could not be resolved \
+                         from LanguageModelRegistry — falling back to zed default",
+                        kask_default
+                    );
+                    configured.model.clone()
+                }
             }
         }
     };

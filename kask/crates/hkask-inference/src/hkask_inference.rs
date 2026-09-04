@@ -524,8 +524,12 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 + '_,
         >,
     > {
-        let default_model = model_constants::DEFAULT_FALLBACK_MODEL.to_string();
-        self.generate_with_model(prompt, parameters, Some(&default_model), None)
+        // No hidden default: route through the same visible chain as
+        // `generate_with_model(None)` — the configured default
+        // (`kask.models.default_model` / `HKASK_DEFAULT_MODEL`), else a
+        // typed error. Never a code constant. (Also passes `tools`
+        // through — the prior impl dropped them.)
+        self.generate_with_model(prompt, parameters, None, _tools)
     }
 
     fn generate_vision(
@@ -563,10 +567,32 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 + '_,
         >,
     > {
-        // Resolve the model: strip the provider prefix for the API call.
-        let model_str = model_override
-            .unwrap_or(model_constants::DEFAULT_FALLBACK_MODEL)
-            .to_string();
+        // Resolve the model — the visible chain only (the operator's
+        // spec: no hidden code constant may be the effective inference
+        // model):
+        // 1. the explicit per-call override,
+        // 2. the configured default (`kask.models.default_model`, injected
+        //    as `HKASK_DEFAULT_MODEL`),
+        // 3. unset → a typed error naming the setting (fail-visible — the
+        //    operator is told what to set, never silently run on a hidden
+        //    model).
+        let model_str = match model_override {
+            Some(model) => model.to_string(),
+            None => {
+                let configured = crate::config::InferenceConfig::from_env().default_model;
+                if configured.trim().is_empty() {
+                    return Box::pin(futures_util::future::ready(Err(
+                        hkask_types::InferenceError::NotConfigured(
+                            "no default model configured — set kask.models.default_model \
+                             (injected as HKASK_DEFAULT_MODEL) or pass an explicit model; \
+                             kask never falls back to a hidden code constant"
+                                .to_string(),
+                        ),
+                    )));
+                }
+                configured
+            }
+        };
         let model_id = model_str
             .split_once('/')
             .map(|(_, rest)| rest)

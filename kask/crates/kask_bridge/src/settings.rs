@@ -534,13 +534,15 @@ pub struct KaskMediaSettings {
 /// When a field is empty, kask falls back to its default model selection
 /// (typically the zed `agent.default_model`).
 ///
-// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
-// and `classifier_model` default to empty strings in `Default`. When empty, the
-// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants, which are
-// themselves `const` references to the single source of truth in
-// `hkask_inference::model_constants`. This lets users override individual models
-// in settings.json while keeping the kask built-in defaults as the fallback.
-// Do not duplicate the model ids anywhere else — `model_constants` is canonical.
+// **Default-model policy (operator spec, 2026-09-04):** `default_model` has
+// NO code-constant fallback — empty means "the zed default" (the user's
+// active default, visible in Settings → AI) on the bridge path, or a typed
+// `NotConfigured` error on the direct path. Never a hidden model. The
+// per-subsystem fields (`embedding_model`, `classifier_model`, ...) still
+// fall back to their `DEFAULT_*_MODEL` constants via their `effective_*`
+// methods — pending the no-hidden-models audit; changing e.g. the embedding
+// default invalidates existing vector indexes, so each subsystem needs a
+// ratified decision rather than a blanket swap.
 //
 // **Adding a field here touches six files — the full chain, in order:**
 // 1. `crates/settings_content/src/settings_content.rs` — the `*Content` twin
@@ -583,25 +585,15 @@ pub struct KaskModelsSettings {
 }
 
 impl KaskModelsSettings {
-    /// The kask default inference model.
-    ///
-    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL`.
-    /// Re-exported here so callers within kask_bridge don't need a direct dep on
-    /// hkask-inference for this constant, but the value is not duplicated — it
-    /// is a `const` reference to the canonical definition.
-    pub const DEFAULT_INFERENCE_MODEL: &'static str =
-        hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
-
-    /// Resolve the effective default inference model, falling back to the
-    /// kask default when the setting is empty.
-    #[must_use]
-    pub fn effective_default_model(&self) -> &str {
-        if self.default_model.trim().is_empty() {
-            Self::DEFAULT_INFERENCE_MODEL
-        } else {
-            &self.default_model
-        }
-    }
+    // NOTE (operator spec, 2026-09-04): there is deliberately NO
+    // `effective_default_model()` here. The default inference model has NO
+    // code-constant fallback — an empty `default_model` means "use the
+    // zed default" (the user's active default, visible in Settings → AI;
+    // wired in zed's composition root) or, on the direct path, a typed
+    // `NotConfigured` error naming this setting. A hidden constant must
+    // never be the effective inference model. The per-subsystem
+    // `effective_*` methods below (embedding/classifier/...) retain their
+    // documented constant fallbacks pending the no-hidden-models audit.
 }
 
 /// Resolve a storage-root setting with the single priority chain shared by

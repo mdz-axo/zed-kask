@@ -562,6 +562,73 @@ mod tests {
         assert!(!snapshot.circuit_breaker_open);
     }
 
+    /// A dead-but-erroring endpoint (HTTP 404) must open the circuit breaker
+    /// like a dead-but-responding one (200-empty). The former substring
+    /// filter ("timed out"/"connection") missed HTTP errors entirely — a
+    /// 404ing endpoint was hammered on every page with a doomed call and
+    /// logged nothing (observed 2026-09-04: the kask-ocr endpoint 404s).
+    struct HttpErrorVisionPort;
+
+    impl hkask_types::InferencePort for HttpErrorVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "noop — only generate_vision is under test".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "HTTP 404: The requested path was not found.".into(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn http_error_failures_open_the_breaker() {
+        let executor = LlmOcrExecutor::new(Arc::new(HttpErrorVisionPort));
+        let image = DynamicImage::new_rgb8(8, 8);
+        let backend = OcrBackend::LlmOcr("RunPod/kask-ocr".to_string());
+        for _ in 0..5 {
+            assert!(
+                executor.execute(0, &backend, &image, false).await.is_err(),
+                "each vision call must fail"
+            );
+        }
+        assert!(
+            executor.breaker_open(),
+            "5 consecutive HTTP-error failures must open the breaker"
+        );
+    }
+
     #[test]
     fn breaker_state_transitions_persist_and_no_ops_skip_the_write() {
         let path = temp_health_path("breaker");

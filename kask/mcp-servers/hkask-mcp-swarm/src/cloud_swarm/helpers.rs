@@ -33,12 +33,11 @@ pub fn build_create_agent_card(
     req: &CreateAgentRequest,
     default_agent_model: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut card = serde_json::json!({
         "agent_name": req.agent_name,
         "agent_type": req.agent_type,
         "description": req.description,
         "system_prompt": req.system_prompt,
-        "model": req.model.clone().unwrap_or_else(|| default_agent_model.to_string()),
         "temperature": req.temperature.unwrap_or(0.3),
         // The panel only authors LLM-backed agents; fermi's default is "llm"
         // but the old payload declared it under a nested key fermi ignored.
@@ -58,7 +57,17 @@ pub fn build_create_agent_card(
             .iter()
             .map(|name| serde_json::json!({ "name": name, "description": "" }))
             .collect::<Vec<_>>(),
-    })
+    });
+    // Model — the visible chain only (the operator's no-hidden-models
+    // spec): the caller's explicit model, else the operator's explicit
+    // `kask.swarm.default_agent_model` when set, else OMITTED so fermi
+    // applies its own default. Never a code constant.
+    if let Some(model) = req.model.clone().or_else(|| {
+        (!default_agent_model.trim().is_empty()).then(|| default_agent_model.to_string())
+    }) {
+        card["model"] = serde_json::json!(model);
+    }
+    card
 }
 
 /// Build the follow-up `PUT /api/agents/:id` payload carrying the fields
@@ -271,6 +280,20 @@ mod tests {
         let card = build_create_agent_card(&req, "default-model");
         assert_eq!(card["model"], "default-model");
         assert_eq!(card["temperature"], 0.3);
+    }
+
+    /// The no-hidden-models spec: with no explicit model and no operator
+    /// default set, the create payload OMITS the model entirely — fermi
+    /// applies its own default. Never a code constant.
+    #[test]
+    fn create_card_omits_model_when_nothing_is_set() {
+        let mut req = base_request();
+        req.model = None;
+        let card = build_create_agent_card(&req, "");
+        assert!(
+            card.get("model").is_none(),
+            "model must be omitted, not defaulted"
+        );
     }
 
     /// The PUT-only fields (mcp_servers, valence, model_ladder,

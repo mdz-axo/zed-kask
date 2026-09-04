@@ -150,8 +150,15 @@ impl DiscoveryState {
                     state_for_notify.update(cx, |_, cx| cx.notify());
                 }
                 Err(e) => {
+                    // zed-kask (D48): `{e:#}` (anyhow's alternate format)
+                    // includes the full source chain — connect vs DNS vs TLS
+                    // vs timeout. The top-level Display alone logged "error
+                    // sending request" with no cause, leaving transport
+                    // failures undiagnosable (observed 2026-09-04: DeepInfra
+                    // discovery failure whose root cause could not be
+                    // recovered from the log).
                     log::warn!(
-                        "OpenAI-compatible provider {provider_name}: model discovery from {api_url} failed: {e}"
+                        "OpenAI-compatible provider {provider_name}: model discovery from {api_url} failed: {e:#}"
                     );
                 }
             }
@@ -892,5 +899,20 @@ mod tests {
         disable_response_thinking_for_none_effort(&mut request, &model);
         assert!(!request.thinking_allowed);
         assert_eq!(request.reasoning_effort, None);
+    }
+
+    /// D48 pin: the discovery-failure warn must format the error with
+    /// anyhow's alternate Display (`{e:#}`) so the source chain (connect
+    /// vs DNS vs TLS vs timeout) is logged. The plain `{e}` left transport
+    /// failures undiagnosable — "error sending request" with no cause
+    /// (observed 2026-09-04: the DeepInfra discovery failure).
+    #[test]
+    fn discovery_failure_warn_includes_error_source_chain() {
+        let source = include_str!("open_ai_compatible.rs");
+        let needle = "model discovery from {api_url} failed: {e:#}";
+        assert!(
+            source.contains(needle),
+            "the discovery warn must use {{e:#}} (anyhow source chain), not plain {{e}}"
+        );
     }
 }

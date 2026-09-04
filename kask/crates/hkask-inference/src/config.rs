@@ -9,7 +9,10 @@
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
 //! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (RunPod, OpenRouter, ollama; default: OpenRouter)
-//! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
+//! - `HKASK_DEFAULT_MODEL` — default model (injected from the visible
+//!   `kask.models.default_model` setting; NO code-constant fallback — unset
+//!   is a typed error at the call site, per the operator's no-hidden-models
+//!   spec)
 //!
 //! # API Key Resolution
 //!
@@ -161,7 +164,10 @@ impl Default for InferenceConfig {
             deepinfra_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_api_key: String::new(),
-            default_model: crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string(),
+            // Empty = not configured. The operator's spec: no hidden code
+            // constant may be the effective inference model — unset is a
+            // typed error at the call site, never a silent fallback.
+            default_model: String::new(),
         }
     }
 }
@@ -189,8 +195,7 @@ impl InferenceConfig {
             deepinfra_api_key: di.api_key,
             ollama_base_url: om.base_url,
             ollama_api_key: om.api_key,
-            default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
-                .unwrap_or_else(|| crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string()),
+            default_model: resolve_config_str("HKASK_DEFAULT_MODEL").unwrap_or_default(),
         }
     }
 }

@@ -76,14 +76,15 @@ pub struct SwarmConfig {
     /// Whether Xaman Ek sessions may be initiated without per-call opt-in (S5 policy).
     pub curator_consent_default: bool,
     /// Default model id for newly created ABW (CLOUD) agents when the caller
-    /// omits `model` — an explicit operator choice for their own ABW agents
-    /// (fermi would otherwise default to its own model). Operator-configurable
-    /// via `HKASK_ABW_DEFAULT_AGENT_MODEL` so the default is not a code
-    /// literal that goes stale when the provider renames/deprecates the model
-    /// (KA-05). CLOUD-CREATE ONLY: local agents never consult this — a local
-    /// agent with no explicit per-card model runs on the host session's
-    /// default model, resolved at run time (see
-    /// `LocalAgentCapabilities::model`).
+    /// omits `model` — an explicit operator choice for their own ABW agents.
+    /// Operator-configurable via `HKASK_ABW_DEFAULT_AGENT_MODEL` (KA-05).
+    /// EMPTY (the default) means "not set": cloud create then OMITS the
+    /// model and fermi applies its own default — never a hidden code
+    /// constant (the operator's no-hidden-models spec; the prior default
+    /// was a hardcoded 235B thinking model). CLOUD-CREATE ONLY: local
+    /// agents never consult this — a local agent with no explicit per-card
+    /// model runs on the host session's default model, resolved at run time
+    /// (see `LocalAgentCapabilities::model`).
     pub default_agent_model: String,
     /// Directory containing local agent cards (`<id>/agent_card.json`),
     /// read by `LocalAgentRegistry` in `Local` mode. Default
@@ -157,7 +158,7 @@ impl Default for SwarmConfig {
             api_key: None,
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
-            default_agent_model: hkask_inference::model_constants::DEFAULT_AGENT_MODEL.to_string(),
+            default_agent_model: String::new(),
             local_agents_dir: "mcp/swarm/agents/curated".to_string(),
             local_swarms_dir: "mcp/swarm/swarms".to_string(),
             a2a_http_enabled: false,
