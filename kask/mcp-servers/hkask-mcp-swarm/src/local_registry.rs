@@ -115,6 +115,14 @@ pub struct LocalAgentCard {
     /// sends it back on update (fermi's `AgentUpdate` accepts `version`).
     #[serde(default = "default_card_version")]
     pub version: String,
+    /// The compound agent's declared workflow (fermi
+    /// `workflow_template`). `None` for non-compound agents. Cloned from
+    /// the ABW card; pushed back on update (fermi's `AgentUpdate` accepts
+    /// `workflow_template`). Inspect/validate via
+    /// `swarm_workflow_check_local` — the execution runner is the next
+    /// step on this scaffold.
+    #[serde(default)]
+    pub workflow_template: Option<LocalWorkflowTemplate>,
 }
 
 fn default_card_version() -> String {
@@ -133,6 +141,40 @@ pub struct LocalAgentValence {
     pub primary_affect: Option<String>,
     #[serde(default)]
     pub personality_traits: Vec<String>,
+}
+
+/// A compound agent's declared workflow — the local analog of fermi's
+/// `AgentCard.workflow_template`. Typed (not a raw `Value`) so the workflow
+/// check and the future runner read stages without re-parsing, and so a
+/// cloned card round-trips through JSON losslessly.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LocalWorkflowTemplate {
+    /// Static mermaid diagram of the pipeline (fermi `WorkflowTemplate.mermaid`).
+    #[serde(default)]
+    pub mermaid: String,
+    #[serde(default)]
+    pub stages: Vec<LocalWorkflowStage>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// One stage in a compound agent's declared pipeline. `agent` is the slot's
+/// filling agent id, or `None` for an open/user slot (fermi `WorkflowStage`).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LocalWorkflowStage {
+    pub name: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Port labels this stage accepts (seam-checked against the previous
+    /// stage's `produces`).
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    /// Port labels this stage produces (seam-checked against the next
+    /// stage's `accepts`).
+    #[serde(default)]
+    pub produces: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

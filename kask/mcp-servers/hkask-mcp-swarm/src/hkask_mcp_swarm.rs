@@ -105,6 +105,7 @@ mod sanitize;
 pub mod schema_validate;
 mod spend_gate;
 mod task_board;
+mod workflow;
 
 // ── Canonical tool-name list ─────────────────────────────────────────────
 //
@@ -736,15 +737,15 @@ mod smoke_tests {
 // `pub(crate) async fn swarm_*` signatures): 49 cloud (swarm_update_agent
 // added 2026-09-03, fermi API alignment; swarm_get_local_agent added
 // 2026-09-03, local parity with swarm_get_agent) + 26 local + 3 ledger +
-// 4 knowledge + 3 a2a = 84.
+// 4 knowledge + 3 a2a + 1 workflow = 85.
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_84_registered_tools() {
+    fn tool_surface_is_exactly_85_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 84, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 85, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree — a `name =` override

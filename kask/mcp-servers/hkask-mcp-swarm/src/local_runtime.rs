@@ -682,8 +682,10 @@ impl LocalSwarmRuntime {
     /// balance read in each debit sees the prior debit's write.
     ///
     /// Each delegation's cost is computed from its token usage (same formula
-    /// as `delegate`), capped at `credits_authorized`. The per-dispatch
-    /// ceiling is enforced per delegation.
+    /// as `delegate`), capped at the delegation's optional
+    /// `credits_authorized` — else the per-dispatch ceiling (no funding
+    /// gesture is required). The ceiling is enforced per delegation when a
+    /// cap is supplied.
     pub async fn delegate_batch(
         &self,
         delegations: Vec<(LocalAgentCard, String, Option<u32>)>,
@@ -955,7 +957,9 @@ pub struct LocalDelegateResult {
     pub tokens_used: i64,
     /// Credits recorded for this delegation.
     ///
-    /// **Accounting note:** this is capped at `credits_authorized`, so when actual
+    /// **Accounting note:** this is capped at the effective per-dispatch cap
+    /// (the optional `credits_authorized` when supplied, else the runaway
+    /// ceiling — local delegation needs no funding gesture), so when actual
     /// token spend exceeds the authorized budget it UNDER-states real cost. See
     /// `cost_uncapped` for the uncapped figure; the two differ exactly when the
     /// cap bound the recording.

@@ -212,6 +212,7 @@ mod tests {
             sample_queries: vec!["Price 50g Ashwagandha".to_string()],
             valence: None,
             version: "1.2.0".to_string(),
+            workflow_template: None,
         }
     }
 

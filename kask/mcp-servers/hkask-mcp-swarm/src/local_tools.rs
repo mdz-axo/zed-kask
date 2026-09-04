@@ -712,6 +712,54 @@ impl SwarmServer {
         .await
     }
 
+    /// Validate a local compound agent's declared workflow — the scaffold
+    /// for the run-the-declared-workflow pattern (the execution analog of
+    /// fermi's compound agents). Resolves each stage's slot against the
+    /// local registry (does the declared agent exist? do its actual
+    /// `accepts`/`produces` match the stage's declared ports?) and
+    /// seam-checks consecutive stages (upstream `produces` must overlap
+    /// downstream `accepts` — the `pipeline_strategist` seam rule; empty
+    /// ports are permissive). Advisory: a violation describes what a runner
+    /// would trip over, it blocks nothing.
+    #[tool(
+        description = "Validate a local compound agent's declared workflow_template. Resolves each stage's slot against the local registry and seam-checks consecutive stages (upstream produces must overlap downstream accepts). Advisory — reports what a workflow runner would trip over; blocks nothing. Returns per-stage resolution, seam violations, and a valid flag."
+    )]
+    pub(crate) async fn swarm_workflow_check_local(
+        &self,
+        parameters: Parameters<WorkflowCheckLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_workflow_check_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            let Some(template) = &card.workflow_template else {
+                return Ok(serde_json::json!({
+                    "agent_id": req.agent_name,
+                    "workflow": serde_json::Value::Null,
+                    "note": "agent declares no workflow_template — not a compound agent",
+                }));
+            };
+            let registry = self.local_registry.clone();
+            let report = crate::workflow::check_workflow(&req.agent_name, template, |agent_id| {
+                registry
+                    .get(agent_id)
+                    .map(|card| (card.accepts.clone(), card.produces.clone()))
+            });
+            serde_json::to_value(&report)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize report: {e}")))
+        })
+        .await
+    }
+
     /// Clone an ABW agent to the local registry. Fetches the agent card from
     /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id` to
@@ -919,6 +967,31 @@ impl SwarmServer {
                 .get("model_params")
                 .filter(|v| !v.is_null())
                 .cloned();
+            // The compound agent's declared workflow (fermi
+            // `build_agent_json` carries `workflow_template` top-level).
+            // Parsed into the typed struct so the clone round-trips and the
+            // workflow check can read it; a malformed template is warned
+            // and skipped rather than failing the whole clone.
+            let workflow_template = abw_card
+                .get("workflow_template")
+                .filter(|v| !v.is_null())
+                .and_then(|v| {
+                    serde_json::from_value::<crate::local_registry::LocalWorkflowTemplate>(
+                        v.clone(),
+                    )
+                    .map(Some)
+                    .map_err(|error| {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            agent = %req.agent_name,
+                            %error,
+                            "workflow_template failed to parse — cloned without the \
+                             workflow declaration"
+                        );
+                    })
+                    .ok()
+                })
+                .flatten();
             let import_labels: Vec<String> =
                 accepts.iter().chain(produces.iter()).cloned().collect();
             let local_card = LocalAgentCard {
@@ -947,6 +1020,7 @@ impl SwarmServer {
                 visibility,
                 valence,
                 version,
+                workflow_template,
             };
             // The ABW catalogue's port labels are the card's own
             // taxonomy, not locally-authored free strings. Register them
@@ -1035,6 +1109,13 @@ impl SwarmServer {
             }
             if !local_card.version.trim().is_empty() {
                 update_payload["version"] = serde_json::json!(local_card.version);
+            }
+            // The compound agent's declared workflow — fermi's `AgentUpdate`
+            // accepts `workflow_template`. Omitted when the card declares
+            // none so fermi keeps whatever it has.
+            if let Some(workflow_template) = &local_card.workflow_template {
+                update_payload["workflow_template"] =
+                    serde_json::json!(workflow_template);
             }
             // An empty model would overwrite fermi's default with "" — omit
             // the key so fermi keeps whatever it has (create) or its default.
@@ -1322,6 +1403,10 @@ impl SwarmServer {
                 // fermi's create stamps new agents "1.0.0" — mirror it so a
                 // pushed card and its ABW original agree on version.
                 version: "1.0.0".to_string(),
+                // fermi's create does not accept workflow_template (it
+                // stamps None) — local create mirrors that; the declaration
+                // flows via clone/push/card-edit.
+                workflow_template: None,
             };
             let card_path = self
                 .local_registry
@@ -3232,6 +3317,7 @@ mod tests {
             sample_queries: vec![],
             valence: None,
             version: "1.0.0".to_string(),
+            workflow_template: None,
         }
     }
 
@@ -3308,7 +3394,6 @@ mod tests {
                 .unwrap()
         );
     }
-}
 
     /// Local delegation needs NO funding gesture — `credits_authorized` is
     /// optional. Omitting it must succeed (nothing to fund: the operator's
@@ -3318,6 +3403,8 @@ mod tests {
     #[tokio::test]
     async fn delegation_without_credits_authorized_succeeds() {
         use crate::local_runtime::LocalSwarmRuntime;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicUsize;
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let ledger = Arc::new(hkask_ledger::Ledger::from_driver(driver).unwrap());
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -3339,3 +3426,4 @@ mod tests {
         assert!(result.cost <= 100, "cost must be bounded by the ceiling");
         assert!(!result.response.is_empty());
     }
+}

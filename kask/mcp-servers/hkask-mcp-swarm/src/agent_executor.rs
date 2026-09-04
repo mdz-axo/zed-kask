@@ -777,6 +777,7 @@ mod tests {
             sample_queries: vec![],
             valence: None,
             version: "1.0.0".to_string(),
+            workflow_template: None,
         };
         // No card values → the executor's default preset.
         let defaults = hkask_types::LLMParameters::default();

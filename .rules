@@ -2,6 +2,13 @@
 
 * Before your first `edit_file`/`write_file` in a session, name (in your next message) one architecture doc you read and the invariant from it that constrains your edit. If you can't name one, you haven't oriented — read `kask/docs/architecture/core/magna-carta.md` or the crate's README, then try again. Agents that edit before orienting damage code they don't understand; the task that looks self-evident (a version bump, a rename) is the one with hidden architectural context (workspace inheritance, D-seams, crate ownership) that a grep never surfaces.
 
+# Spec-loss trap (doc-from-code laundering)
+
+* A written spec (commit message, settings knob, design doc) is the operator's contract. A dead-code sweep that deletes a deliberately-designed capability must flag it to the operator — "unwired" is not "unwanted" (the stepped-ramp concurrency spec of `93b9951afe` died this way in `a71f79b263`; the AIMD replacement was ratified as the new spec by PM decision 2026-09-03).
+* Never regenerate a spec/design doc from the current code without diffing against the operator's stated intent — doc-from-code launders deviations into specs (the doc always agrees with the code because the code's author wrote the doc).
+* When the operator says "built to spec," recover the spec first (`git log -S`, commit messages, settings history); a grep of the current tree diagnoses the post-corruption state, not the spec. A reconstruction is a reconstruction until the operator ratifies it — record the ratification in the spec doc (decision, date, what it supersedes) or a future agent will "recover" the old spec from git history and revert the ratified design.
+* Division of labor: the operator is the product manager (requirements, spec authority, ground truth); the agent is the program manager (recovers specs before building, labels reconstructions, gets sign-off before deferring scope). The operator's corrections are context the agent cannot generate — when they say "there was a spec," the next action is finding it.
+
 # Corpus pipeline traps
 
 * `corpus_tag_chunks` `tag_batch_size` default is 10. The `extract_json_from_response` parser in `hkask-types/src/json_extract.rs` must handle JSON arrays (returns full `[{...}, {...}]`, not just the first object inside the array). If the parser only finds the first `{` instead of the first `[` or `{`, batching silently fails — only 1/N chunks per LLM call get real tags. Test: `extract_json_from_response("[{\"a\":1},{\"b\":2}]")` must return the full array, not `{"a":1}`.

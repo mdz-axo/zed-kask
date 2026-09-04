@@ -472,6 +472,17 @@ pub struct GetLocalAgentRequest {
     pub agent_name: String,
 }
 
+/// Validate a local compound agent's declared workflow — the scaffold for
+/// the run-the-declared-workflow pattern. Resolves each stage's slot
+/// against the local registry and seam-checks consecutive stages
+/// (upstream `produces` must overlap downstream `accepts`). Advisory — a
+/// violation describes what a runner would trip over, it blocks nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowCheckLocalRequest {
+    /// The local compound agent whose `workflow_template` to check.
+    pub agent_name: String,
+}
+
 /// Read-only local ledger history query.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LocalHistoryRequest {

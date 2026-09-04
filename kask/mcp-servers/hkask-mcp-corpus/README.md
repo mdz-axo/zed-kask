@@ -86,6 +86,14 @@ and the whole book silently degraded to Tesseract.
   `Err` (including typed `EmptyOcrOutput`) backs it off. Quality-only issues
   (JSON parse failures after a successful call) stay neutral.
 
+> **Decision record (PM, 2026-09-03):** This AIMD design is the ratified spec
+> (operator decision, Option B). It supersedes the stepped-ramp design of
+> `93b9951afe` (start at `concurrency_step`, +step per success, one-step
+> backoff on 429/503 throttles only, `general.concurrency_step` setting) —
+> deleted with the manifest executor in `a71f79b263` and recovered from git
+> history during the 2026-09-03 incident. Do not "restore" the superseded
+> design from history; this section is the contract.
+
 ## Tools (25)
 
 ### Gather (2)

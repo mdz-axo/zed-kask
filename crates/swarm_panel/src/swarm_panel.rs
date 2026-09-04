@@ -175,7 +175,8 @@ fn steer_system_prompt(
          `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
          `swarm_push_to_cloud`, `swarm_search_knowledge_local`, \
          `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, \
-         `swarm_evaluate_local`, `swarm_execute_plan_local`. \
+         `swarm_evaluate_local`, `swarm_execute_plan_local`, \
+         `swarm_workflow_check_local`. \
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger`) with no \
          ABW round-trips. Local delegation needs NO funding and NO consent — it \
