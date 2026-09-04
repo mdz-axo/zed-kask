@@ -19,6 +19,12 @@ pub(crate) struct BuildPromptsRequest {
     pub output: String,
     pub db_path: String,
     pub passphrase: String,
+    /// Entity-ref prefix for the KNN embedding lookup. Defaults to
+    /// "corpus:researcher:" (the pipeline default). Pre-fix this was
+    /// hardcoded — any corpus chunked under a different prefix silently got
+    /// "(none — no embedding context available)" with a normal
+    /// prompts_written count.
+    pub prefix: Option<String>,
     pub context_k: usize,
     pub prompts_per_chunk: usize,
     pub type_distribution: String,
@@ -54,6 +60,7 @@ impl PromptBuilderService {
             output,
             db_path,
             passphrase,
+            prefix,
             context_k,
             prompts_per_chunk,
             type_distribution,
@@ -117,7 +124,7 @@ impl PromptBuilderService {
             .collect();
 
         let emb_map: std::collections::HashMap<String, Vec<f32>> =
-            match store.embeddings_by_prefix("corpus:researcher:") {
+            match store.embeddings_by_prefix(prefix.as_deref().unwrap_or("corpus:researcher:")) {
                 Ok(embs) => {
                     let map: std::collections::HashMap<String, Vec<f32>> = embs
                         .into_iter()

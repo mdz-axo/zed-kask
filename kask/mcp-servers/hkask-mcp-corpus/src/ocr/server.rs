@@ -22,6 +22,12 @@ impl PipelineExecutor {
     pub fn new(llm_ocr: Arc<LlmOcrExecutor>) -> Self {
         Self { llm_ocr }
     }
+
+    /// LLM OCR circuit breaker state at call time — stamped into pipeline
+    /// outcomes for tool-result visibility.
+    pub fn llm_breaker_open(&self) -> bool {
+        self.llm_ocr.breaker_open()
+    }
 }
 
 #[async_trait]

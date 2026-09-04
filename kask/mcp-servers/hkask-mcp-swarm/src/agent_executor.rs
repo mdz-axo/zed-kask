@@ -287,7 +287,7 @@ impl AgentExecutor {
         // Run the tool loop: messages → inference → (tool calls → dispatch →
         // append results) → inference … The round cap bounds cost
         // amplification; the per-dispatch ceiling is the credit gate.
-        let params = hkask_types::LLMParameters::default();
+        let params = sampling_params(agent);
         let model_override = if agent.capabilities.model.is_empty() {
             None
         } else {
@@ -470,6 +470,41 @@ impl AgentExecutor {
             reasoning_steps,
         })
     }
+}
+
+/// Resolve the sampling parameters for one agent run — the local analog of
+/// fermi's card-driven sampling (`agents.temperature` + `agents.model_params`,
+/// merged by `apply_tier_resolution`). Precedence mirrors fermi's:
+/// 1. Start from the executor's default preset (`LLMParameters::default()`).
+/// 2. The card's `temperature` field overrides the default temperature.
+/// 3. The card's `model_params` keys override BOTH — fermi's doc: "Keys
+///    override the legacy `temperature` field and add provider-specific
+///    params".
+///
+/// The merge is done at the JSON level (serialize defaults → overlay
+/// `model_params` keys → deserialize) so a partial `model_params` object
+/// keeps the defaults for keys it does not name, and unknown keys are
+/// ignored by serde rather than failing the run.
+fn sampling_params(agent: &crate::local_registry::LocalAgentCard) -> hkask_types::LLMParameters {
+    let mut params = hkask_types::LLMParameters::default();
+    if let Some(temperature) = agent.capabilities.temperature {
+        params.temperature = temperature as f32;
+    }
+    if let Some(model_params) = agent.capabilities.model_params.as_ref()
+        && let (Some(base), Some(overlay)) =
+            (serde_json::to_value(&params).ok(), model_params.as_object())
+    {
+        let mut merged = base;
+        if let Some(merged_obj) = merged.as_object_mut() {
+            for (key, value) in overlay {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+        if let Ok(resolved) = serde_json::from_value::<hkask_types::LLMParameters>(merged) {
+            params = resolved;
+        }
+    }
+    params
 }
 
 /// Parse a `reasoning/think` tool call's arguments into a `ReasoningStep`.

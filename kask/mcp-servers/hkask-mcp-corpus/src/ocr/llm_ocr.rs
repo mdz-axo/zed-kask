@@ -258,6 +258,15 @@ impl LlmOcrExecutor {
         self.recorder = Some(recorder);
         self
     }
+
+    /// Whether the LLM OCR circuit breaker is currently open (LLM attempts
+    /// paused after consecutive failures). Stamped into pipeline outcomes so
+    /// a run that skipped every LLM page because of an open breaker is
+    /// distinguishable in the tool result from one that never routed to the
+    /// LLM at all.
+    pub fn breaker_open(&self) -> bool {
+        !self.breaker.is_closed()
+    }
 }
 #[async_trait]
 impl OcrExecutor for LlmOcrExecutor {

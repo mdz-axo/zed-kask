@@ -481,4 +481,123 @@ mod smoke {
             "typed error must carry a message, got: {error:?}"
         );
     }
+
+    /// The build_prompts KNN scaffold honors the caller's entity-ref prefix
+    /// (the 2026-09-03 fix): embeddings stored under "corpus:custom:" reach
+    /// the scaffold only when prefix="corpus:custom:" is passed. Pre-fix the
+    /// prefix was hardcoded to "corpus:researcher:", so any corpus chunked
+    /// under a different prefix silently got "(none — no embedding context
+    /// available)" with a normal prompts_written count.
+    #[tokio::test]
+    async fn build_prompts_knn_scaffold_honors_the_prefix_param() {
+        use crate::tools::corpus::BuildPromptsRequest;
+
+        // Under the crate root: the corpus tools contain caller-supplied
+        // paths to the allowed roots (CWD-relative is accepted), unlike /tmp.
+        let dir = std::path::Path::new("target/test-corpus-prefix");
+        std::fs::create_dir_all(dir).expect("create scratch dir");
+        let db_path = dir.join("memory.db");
+        let tagged_path = dir.join("tagged.jsonl");
+        let prompts_path = dir.join("prompts.jsonl");
+
+        // Seed the memory DB: one context passage (doc1) and the chunk's own
+        // embedding (doc2), both under the custom prefix.
+        let dim = crate::embedding_dim();
+        let store = hkask_memory::MemoryStore::open(
+            db_path.to_string_lossy().as_ref(),
+            "test-passphrase",
+            dim,
+        )
+        .expect("open memory DB");
+        let context_text = "The Cinderella curve describes firms with high returns on capital that fade over time.";
+        store
+            .store_embedding("corpus:custom:doc1", &vec![0.9; dim], "test-model", Some(context_text))
+            .expect("seed context embedding");
+        store
+            .store_embedding("corpus:custom:doc2", &vec![0.9; dim], "test-model", Some("A passage about capital returns."))
+            .expect("seed chunk embedding");
+
+        // Two tagged chunks under the same custom prefix and source (the
+        // KNN scaffold is source-scoped over the tagged chunks themselves).
+        let doc1 = serde_json::json!({
+            "entity_ref": "corpus:custom:doc1",
+            "source": "doc.txt",
+            "text": "The Cinderella curve describes firms with high returns on capital that fade over time.",
+            "dimensions": ["what"],
+        });
+        let doc2 = serde_json::json!({
+            "entity_ref": "corpus:custom:doc2",
+            "source": "doc.txt",
+            "text": "A passage about capital returns and their durability.",
+            "dimensions": ["what"],
+        });
+        std::fs::write(&tagged_path, format!("{doc1}\n{doc2}\n")).expect("write tagged jsonl");
+
+        let server = make_server();
+
+        // With the matching prefix, the KNN scaffold carries the context passage.
+        let output = server
+            .corpus_build_prompts(Parameters(BuildPromptsRequest {
+                tagged_jsonl: tagged_path.to_string_lossy().to_string(),
+                output: prompts_path.to_string_lossy().to_string(),
+                db_path: db_path.to_string_lossy().to_string(),
+                passphrase: "test-passphrase".to_string(),
+                prefix: Some("corpus:custom:".to_string()),
+                context_k: 3,
+                prompts_per_chunk: 1,
+                type_distribution: "1".to_string(),
+                max_prompts: 0,
+                ontology_bloom_overrides: None,
+            }))
+            .await
+            .expect("build_prompts ok");
+        let content = unwrap_content(&output);
+        assert!(
+            content["prompts_written"].as_u64().unwrap_or(0) > 0,
+            "at least one prompt must be written, got: {content}"
+        );
+        let prompts_text =
+            std::fs::read_to_string(&prompts_path).expect("prompts file written");
+        assert!(
+            prompts_text.contains("Similarity:"),
+            "the KNN scaffold must carry scored passages when the prefix matches"
+        );
+        assert!(
+            prompts_text.contains("Cinderella"),
+            "the KNN scaffold must carry the context passage when the prefix matches"
+        );
+
+        // With the default prefix (no prefix passed), the custom-prefix
+        // embeddings are invisible — the scaffold degrades, and the
+        // degradation is the caller's to see in the prompt text.
+        let default_prompts = dir.join("prompts-default.jsonl");
+        server
+            .corpus_build_prompts(Parameters(BuildPromptsRequest {
+                tagged_jsonl: tagged_path.to_string_lossy().to_string(),
+                output: default_prompts.to_string_lossy().to_string(),
+                db_path: db_path.to_string_lossy().to_string(),
+                passphrase: "test-passphrase".to_string(),
+                prefix: None,
+                context_k: 3,
+                prompts_per_chunk: 1,
+                type_distribution: "1".to_string(),
+                max_prompts: 0,
+                ontology_bloom_overrides: None,
+            }))
+            .await
+            .expect("build_prompts ok");
+        let default_text =
+            std::fs::read_to_string(&default_prompts).expect("prompts file written");
+        assert!(
+            !default_text.contains("Similarity:"),
+            "the default prefix must not see custom-prefix embeddings in the scaffold"
+        );
+        assert!(
+            default_text.contains("(none — no embedding context available)"),
+            "the default-prefix scaffold must surface the honest no-context note"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
+

@@ -71,13 +71,27 @@ pub(crate) struct PipelineOcrOutcome {
     pub(crate) verification_passed: bool,
     pub(crate) page_count_match: bool,
     pub(crate) empty_pages: Vec<usize>,
+    /// Pages served by a degraded path (routed primary failed or was
+    /// unavailable; a fallback backend produced the text).
+    pub(crate) degraded_pages: Vec<usize>,
     pub(crate) error_count: usize,
+    /// Final-backend distribution across pages (e.g. `{"tesseract": 20,
+    /// "llm-ocr": 1}`) — the signal that separates by-design Simple-tier
+    /// tesseract routing from a dead LLM endpoint.
+    pub(crate) backends: std::collections::HashMap<String, usize>,
+    /// Whether the LLM OCR circuit breaker was open when the outcome was
+    /// assembled — LLM attempts paused, so LLM-routed pages degraded to
+    /// Tesseract without an attempt.
+    pub(crate) llm_breaker_open: bool,
 }
 
 /// Assemble pipeline results into an outcome, erroring when the assembled
 /// text is empty — zero text after a pipeline run is a failure (every page
 /// empty or errored), never a silent success.
-fn assemble_pipeline_outcome(outcome: PipelineOutcome) -> Result<PipelineOcrOutcome, McpToolError> {
+fn assemble_pipeline_outcome(
+    outcome: PipelineOutcome,
+    llm_breaker_open: bool,
+) -> Result<PipelineOcrOutcome, McpToolError> {
     let text = outcome
         .results
         .iter()
@@ -98,7 +112,10 @@ fn assemble_pipeline_outcome(outcome: PipelineOutcome) -> Result<PipelineOcrOutc
         verification_passed: outcome.report.passed,
         page_count_match: outcome.report.page_count_match,
         empty_pages: outcome.report.empty_pages,
+        degraded_pages: outcome.report.degraded_pages,
         error_count: outcome.errors.len(),
+        backends: outcome.backends,
+        llm_breaker_open,
     })
 }
 
@@ -278,7 +295,8 @@ impl<'a> ConvertService<'a> {
         )
         .await;
         self.persist_pipeline_outcome(&outcome).await;
-        assemble_pipeline_outcome(outcome)
+        let llm_breaker_open = self.pipeline_executor.llm_breaker_open();
+        assemble_pipeline_outcome(outcome, llm_breaker_open)
     }
 
     /// Persist pipeline outcome for Regulation observability.
@@ -289,6 +307,7 @@ impl<'a> ConvertService<'a> {
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
+            "degraded_pages": outcome.report.degraded_pages,
             "cross_validations": outcome.cross_validations.len(),
             "backend_distribution": outcome.results.iter()
                 .fold(std::collections::HashMap::new(), |mut acc, r| {
@@ -322,7 +341,8 @@ impl<'a> ConvertService<'a> {
 
         let synthetic_outcome = PipelineOutcome {
             results: vec![],
-            report: VerificationReport::new(true, vec![], 0),
+            report: VerificationReport::new(true, vec![], vec![], 0),
+            backends: std::collections::HashMap::new(),
             cross_validations: acc.clone(),
             errors: vec![],
         };
@@ -499,6 +519,9 @@ impl<'a> ConvertService<'a> {
                     "verification_passed": outcome.report.passed,
                     "page_count_match": outcome.report.page_count_match,
                     "empty_pages": outcome.report.empty_pages,
+                    "degraded_pages": &outcome.report.degraded_pages,
+                    "backends": &outcome.backends,
+                    "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
                     "error_count": outcome.errors.len(),
                 });
                 return Ok(result);
@@ -555,6 +578,9 @@ impl<'a> ConvertService<'a> {
                             "verification_passed": outcome.report.passed,
                             "page_count_match": outcome.report.page_count_match,
                             "empty_pages": outcome.report.empty_pages,
+                            "degraded_pages": &outcome.report.degraded_pages,
+                            "backends": &outcome.backends,
+                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
                             "error_count": outcome.errors.len(),
                         });
                         return Ok(result);
@@ -696,6 +722,9 @@ impl<'a> ConvertService<'a> {
                             "verification_passed": outcome.report.passed,
                             "page_count_match": outcome.report.page_count_match,
                             "empty_pages": outcome.report.empty_pages,
+                            "degraded_pages": &outcome.report.degraded_pages,
+                            "backends": &outcome.backends,
+                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
                             "error_count": outcome.errors.len(),
                         });
                         return Ok(result);
@@ -761,6 +790,9 @@ impl<'a> ConvertService<'a> {
                             "verification_passed": outcome.report.passed,
                             "page_count_match": outcome.report.page_count_match,
                             "empty_pages": outcome.report.empty_pages,
+                            "degraded_pages": &outcome.report.degraded_pages,
+                            "backends": &outcome.backends,
+                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
                             "error_count": outcome.errors.len(),
                             "cross_validations": outcome.cross_validations.len(),
                         });
@@ -1499,9 +1531,11 @@ mod ocr_guards {
                 } else {
                     vec![]
                 },
+                degraded_pages: vec![],
                 error_count: 0,
                 passed: !text.trim().is_empty(),
             },
+            backends: std::collections::HashMap::new(),
             cross_validations: vec![],
             errors: vec![],
         }
@@ -1509,7 +1543,7 @@ mod ocr_guards {
 
     #[test]
     fn assemble_pipeline_outcome_errors_on_zero_text() {
-        let error = assemble_pipeline_outcome(outcome_with_text("   "))
+        let error = assemble_pipeline_outcome(outcome_with_text("   "), false)
             .expect_err("zero-text pipeline output must be an error");
         assert!(
             error.to_string().contains("OCR produced no text"),
@@ -1519,11 +1553,39 @@ mod ocr_guards {
 
     #[test]
     fn assemble_pipeline_outcome_passes_nonempty_text() {
-        let outcome = assemble_pipeline_outcome(outcome_with_text("real page text"))
+        let outcome = assemble_pipeline_outcome(outcome_with_text("real page text"), false)
             .expect("non-empty assembled text passes");
         assert_eq!(outcome.text, "real page text");
         assert_eq!(outcome.pages, 1);
         assert!(outcome.verification_passed);
+        assert!(outcome.degraded_pages.is_empty());
+        assert!(outcome.backends.is_empty());
+        assert!(!outcome.llm_breaker_open);
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_surfaces_degraded_pages_and_backends() {
+        // A run where the routed LLM backend failed and Tesseract served every
+        // page must surface the degradation: degraded_pages populated, the
+        // backend map showing zero llm-ocr results, and the breaker state
+        // passed through — the fields an agent reads to tell a dead LLM
+        // endpoint apart from by-design Simple-tier tesseract routing.
+        let mut outcome = outcome_with_text("degraded page text");
+        outcome.results[0].was_fallback = true;
+        outcome.results[0].backend = OcrBackend::Tesseract;
+        outcome.report.degraded_pages = vec![0];
+        let mut backends = std::collections::HashMap::new();
+        backends.insert("tesseract".to_string(), 1);
+        outcome.backends = backends;
+
+        let assembled = assemble_pipeline_outcome(outcome, true)
+            .expect("degraded-but-nonempty output assembles");
+        assert_eq!(assembled.degraded_pages, vec![0]);
+        assert_eq!(assembled.backends.get("tesseract"), Some(&1));
+        assert!(assembled.llm_breaker_open);
+        // Degradation is visible but does not fail the verdict — the
+        // fallback produced text, which is the designed behavior.
+        assert!(assembled.verification_passed);
     }
 
     #[tokio::test]

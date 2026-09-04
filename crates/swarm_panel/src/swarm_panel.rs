@@ -2218,9 +2218,7 @@ mod tests {
         ));
         assert!(status_is_warning("Tool invoker not wired."));
         assert!(status_is_warning("AI Assist unavailable: timeout"));
-        assert!(status_is_warning(
-            "ABW agents cannot be updated from this panel. Copy to Local to edit."
-        ));
+        assert!(status_is_warning("Update failed: connection reset"));
         assert!(status_is_warning(
             "Name contains characters that will be stripped on the local substrate."
         ));

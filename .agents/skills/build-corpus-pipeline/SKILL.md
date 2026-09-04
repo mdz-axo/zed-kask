@@ -325,6 +325,54 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
      the file: "PDF {{ filename }} requires OCR but OCR is unavailable".
      Never skip the file and continue — a silently skipped source is data
      loss presented as progress.
+
+   **Pre-flight the OCR backends before any bulk run.** A 400-page book
+   burns ~50s per LLM-routed page against a dead endpoint before falling
+   back — probe first with a 2-3 page slice (the result returns in-tool;
+   nothing is written to disk):
+   ```
+   corpus_convert: path=<pdf>, force_ocr=true, target_pages="30-32"
+   ```
+   Read the report fields:
+   - `backends` shows the final backend per page. `llm-ocr` present →
+     the LLM endpoint is healthy; proceed with the bulk run.
+   - All `tesseract` AND `degraded_pages` covering the LLM-routed pages
+     AND `llm_breaker_open: true` → the LLM endpoint is DOWN. HALT the
+     bulk run and report to the operator: fix the endpoint (RunPod
+     console: worker health, GPU, credits) or explicitly accept
+     tesseract-only quality for this corpus. Accepting degraded quality
+     is an operator decision — never a silent one.
+   - All `tesseract` with `degraded_pages: []` → by-design Simple-tier
+     routing (text-only pages go to tesseract because it is faster and
+     equally accurate). The LLM path is unverified by this slice — if
+     the book has Complex pages (figures, dense scans), probe one of
+     those to exercise the LLM path before concluding the endpoint is
+     healthy.
+
+   **Interpret every OCR verification report** (bulk runs included):
+   - `passed=false` with a handful of `empty_pages` → spot-check those
+     pages in the source PDF. Scanned books have blank divider/chapter
+     pages; if the source page is genuinely blank, the failure is benign —
+     record it and proceed. Many empty pages is a real failure — HALT.
+     Do NOT re-run the book or probe the endpoint over a few empty pages.
+   - `degraded_pages` non-empty → the routed primary backend failed on
+     those pages and a fallback produced the text. A small fraction is
+     sensed, by-design degradation — the text stands. If `degraded_pages`
+     covers EVERY LLM-routed page, treat it as endpoint-down (see the
+     pre-flight rules above).
+   - `backends` is the final-backend distribution. An all-tesseract map
+     with empty `degraded_pages` is healthy Simple-tier routing; an
+     all-tesseract map with the LLM-routed pages inside `degraded_pages`
+     is a dead endpoint wearing a passing verdict — the report fields
+     exist precisely so these two states are never confused.
+
+   **Probe hygiene**: never write probe or diagnostic artifacts into
+   corpus directories (`extracted/`, the corpus root, chunk input dirs).
+   Use `target_pages` slices (results return in-tool) or a scratch
+   directory outside the corpus tree, and delete stray artifacts before
+   Stage 2 — a probe file left in `extracted/` becomes a duplicate source
+   that chunks into the corpus twice.
+
    - After OCR, verify the OCR output the same way as any extraction
      (word-count floor in step 5). An OCR result with zero words is a
      failure, not a success.
@@ -368,6 +416,17 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
    - `'fail-quality`: route every failed extraction through OCR
      (`corpus_convert` with `force_ocr: true`), re-run the audit, and do
      not proceed until all pass. Never drop a failed file from the corpus.
+
+7. **Merge OCR outputs into the extraction set.** OCR'd texts land in the
+   OCR output directory (e.g. `corpus/extracted/{{ entity_ref_prefix }}-ocr/`);
+   the low-word garbage extractions they replace still sit in the main
+   extracted directory. Before Stage 2, assemble ONE input set: overwrite
+   each failed extraction with its OCR output (same base filename), so
+   the extracted directory holds exactly `source_count` files — every
+   source represented once, no duplicates, no garbage. Re-run the
+   word-count audit (step 5) over the merged set. A probe file or OCR
+   duplicate left in this directory is a corpus-quality bug — the chunk
+   stage would ingest it as a second source.
 
 ### Stage 2 — Chunk the text
 
@@ -479,6 +538,13 @@ directory:
      it equals the extracted file count at invocation time.
 
 ### Stage 3 — Embed the chunks
+
+**Pre-flight the DB.** Use a FRESH `db_path` for a fresh corpus run — a
+DB from a prior run carries stale embeddings (and may be unopenable
+after passphrase rotation: a mismatch surfaces as an open error, not
+an empty result). Creating a new DB with the current passphrase works
+by construction; verify the tool result reports the expected chunk
+count, not zero.
 
 **This stage embeds ALL chunks.** The `corpus_embed` tool accepts
 `tagged_jsonl` as an optional parameter — embeddings can be generated
@@ -807,6 +873,9 @@ step-up ramp.
 | Empty corpus source folder | `find` returns 0 files | Error: "corpus_source is empty or does not exist" — HALT |
 | No text-extractable files | All files are binary/corrupt | Error: "no readable text files in corpus_source" — HALT |
 | OCR needed but unavailable | `corpus_is_complex` returns true, OCR fails | HALT with a failure report naming the file — never skip silently |
+| LLM OCR endpoint down | Pre-flight slice: all-tesseract `backends`, LLM-routed pages in `degraded_pages`, `llm_breaker_open: true` | HALT bulk OCR; report to operator (fix endpoint or explicitly accept tesseract-only quality). Never let a dead endpoint silently degrade a whole book |
+| OCR `passed=false` with few `empty_pages` | Verification report lists a handful of empty pages | Spot-check those pages in the source PDF — blank divider pages are benign (record and proceed); many empty pages is a real failure (HALT). Do NOT re-run or endpoint-probe over a few blank dividers |
+| Probe artifacts in corpus dirs | Stray `probe`/`ocr-probe` files in `extracted/` or the corpus root | Delete before Stage 2 — they chunk as duplicate sources. Probes belong in-tool (`target_pages` slices) or a scratch dir outside the corpus tree |
 | Empty conversion output | `corpus_convert` produces 0 text files | Error: "no text extracted from any file" — HALT |
 | Low conversion quality | any extraction fails the ≥ 50-word floor | Route failed files through OCR and re-audit — HALT until all pass; a failed extraction is never "not a valid source" |
 | Zero chunks produced | `corpus_chunk` output has 0 lines | Error: "chunking produced no output" — HALT |
@@ -828,7 +897,7 @@ step-up ramp.
 
 The pipeline is complete when ALL of the following hold:
 
-1. `corpus_convert` produced text files for ≥80% of source documents
+1. `corpus_convert` produced text files for 100% of source documents (the Stage 1 hard gate: `extracted_count == source_count`, merged with OCR outputs, zero probe artifacts)
 2. `corpus_chunk` produced >0 chunks AND chunk count is in the expected range
 3. `corpus_embed` embedded 100% of chunks (embedding_count == chunk_count)
 4. (If QA enabled) `corpus_tag_chunks` tagged ≥90% of chunks

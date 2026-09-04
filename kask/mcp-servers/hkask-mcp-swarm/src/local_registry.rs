@@ -109,6 +109,16 @@ pub struct LocalAgentCard {
     /// Valence / personality encoding. Optional — not all local agents need it.
     #[serde(default)]
     pub valence: Option<LocalAgentValence>,
+    /// Semantic version of the card (fermi `agents.version`). Defaults to
+    /// "1.0.0" — mirroring fermi's create, which stamps new agents "1.0.0".
+    /// Cloned cards carry the ABW agent's version; `swarm_push_to_cloud`
+    /// sends it back on update (fermi's `AgentUpdate` accepts `version`).
+    #[serde(default = "default_card_version")]
+    pub version: String,
+}
+
+fn default_card_version() -> String {
+    "1.0.0".to_string()
 }
 
 /// Valence parameters mirroring the ABW `metadata.valence` object, for local
@@ -162,6 +172,19 @@ pub struct LocalAgentCapabilities {
     /// `input_contract: None`.
     #[serde(default)]
     pub input_contract: Option<serde_json::Value>,
+    /// Sampling temperature (fermi `agents.temperature`, 0.0–1.0). `None`
+    /// means the executor's default preset applies — same semantics as
+    /// fermi's `default_temperature` (0.3) for cards that omit it.
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    /// Provider-agnostic sampling overrides (fermi `agents.model_params`):
+    /// keys override the `temperature` field and add provider-specific
+    /// params (top_p, top_k, frequency_penalty, presence_penalty, min_p,
+    /// typical_p, seed, thinking_allowed, adapter). Merged over the
+    /// executor's defaults at dispatch time — same precedence as fermi's
+    /// `apply_tier_resolution` merging rung params over agent-level params.
+    #[serde(default)]
+    pub model_params: Option<serde_json::Value>,
     /// Per-card declared evaluators (the evaluator contract, event-substrate
     /// phase 4). When present, `swarm_delegate_local` runs each against the
     /// delegation response and stamps the verdict onto `task_success` with

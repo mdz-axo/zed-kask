@@ -716,16 +716,17 @@ mod smoke_tests {
 // impl block without `#[tool_router]`, or a sub-router missing from
 // `combined_router()`, silently registers nothing (`cargo check` passes on an
 // unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
-// `pub(crate) async fn swarm_*` signatures): 47 cloud + 25 local + 3 ledger +
-// 4 knowledge + 3 a2a = 82.
+// `pub(crate) async fn swarm_*` signatures): 48 cloud (swarm_update_agent
+// added 2026-09-03, fermi API alignment) + 25 local + 3 ledger +
+// 4 knowledge + 3 a2a = 83.
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_82_registered_tools() {
+    fn tool_surface_is_exactly_83_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 82, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 83, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree — a `name =` override

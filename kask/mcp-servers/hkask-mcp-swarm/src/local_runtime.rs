@@ -515,12 +515,25 @@ impl LocalSwarmRuntime {
         // it does NOT debit the ledger.
         let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
-        Ok(self.debit_and_build(
+        let mut result = self.debit_and_build(
             raw,
             &agent.agent_id,
             credits_authorized,
             started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        ))
+        );
+        // Contract checks (the local analog of fermi's verification gates):
+        // advisory verdicts stamped here, in the shared execution path, so
+        // every delegation surface (delegate, fanout, a2a, pipeline, the
+        // eval harness) reports them uniformly — not per-tool.
+        let (input_contract_check, output_contract_check) = contract_checks(
+            agent.capabilities.input_contract.as_ref(),
+            agent.capabilities.output_contract.as_ref(),
+            &task_clean,
+            &result.response,
+        );
+        result.input_contract_check = input_contract_check;
+        result.output_contract_check = output_contract_check;
+        Ok(result)
     }
 
     /// Compute cost, record the spend, and build a `LocalDelegateResult` from
@@ -601,6 +614,8 @@ impl LocalSwarmRuntime {
             bind_matched: None,
             rollout_id: Some(raw.rollout_id),
             reasoning_steps: raw.reasoning_steps,
+            input_contract_check: None,
+            output_contract_check: None,
         }
     }
 
@@ -627,6 +642,22 @@ impl LocalSwarmRuntime {
             .map(|(a, _, _)| a.agent_id.clone())
             .collect();
         let credits: Vec<u32> = delegations.iter().map(|(_, _, c)| *c).collect();
+        // Contract snapshots and cleaned tasks, collected before the cards
+        // are moved into the spawned tasks — phase 2 stamps the contract
+        // checks with them, keeping batch parity with `delegate`'s checks.
+        let contracts: Vec<(Option<serde_json::Value>, Option<serde_json::Value>)> = delegations
+            .iter()
+            .map(|(a, _, _)| {
+                (
+                    a.capabilities.input_contract.clone(),
+                    a.capabilities.output_contract.clone(),
+                )
+            })
+            .collect();
+        let tasks: Vec<String> = delegations
+            .iter()
+            .map(|(_, t, _)| strip_leading_mentions(t))
+            .collect();
         let total = delegations.len();
 
         // Phase 1: run all inference calls concurrently via tokio JoinSet.
@@ -695,9 +726,10 @@ impl LocalSwarmRuntime {
 
         // Phase 2: debit the ledger sequentially (TOCTOU-safe).
         let mut results = Vec::with_capacity(total);
-        for (raw_result, (agent_id, credits_authorized)) in raw_results
+        for (index, (raw_result, (agent_id, credits_authorized))) in raw_results
             .into_iter()
             .zip(agent_ids.iter().zip(credits.iter()))
+            .enumerate()
         {
             let raw = match raw_result {
                 Ok(r) => r,
@@ -706,12 +738,20 @@ impl LocalSwarmRuntime {
                     continue;
                 }
             };
-            results.push(Ok(self.debit_and_build(
-                raw,
-                agent_id,
-                *credits_authorized,
-                0,
-            )));
+            let mut built = self.debit_and_build(raw, agent_id, *credits_authorized, 0);
+            // Contract checks — batch parity with `delegate` (see the note
+            // there). `index` is the delegation's submission index: the
+            // fill-missing pass guarantees one sorted entry per index, so
+            // it aligns with `contracts`/`tasks`.
+            let (input_contract_check, output_contract_check) = contract_checks(
+                contracts[index].0.as_ref(),
+                contracts[index].1.as_ref(),
+                &tasks[index],
+                &built.response,
+            );
+            built.input_contract_check = input_contract_check;
+            built.output_contract_check = output_contract_check;
+            results.push(Ok(built));
         }
         results
     }
@@ -737,6 +777,96 @@ pub fn check_bind(card: &crate::local_registry::LocalAgentCard, _task: &str) -> 
         return Some(true);
     }
     None
+}
+
+/// Compute the input/output contract checks for one delegation — the local
+/// analog of fermi's verification pipeline (`envelope::validate_input` /
+/// `envelope::build`, surfaced as `Gate::InputBinding` / `Gate::OutputSchema`).
+/// Both checks are ADVISORY: an `invalid` verdict is recorded on the result,
+/// never a blocked execution — mirroring fermi's soft validation, where an
+/// invalid input or output is a report, not a refusal.
+///
+/// Verdict vocabulary (fermi gate names, `schema_validate` statuses):
+/// - `valid` — checked and conforming
+/// - `invalid` — the document contradicts the declared schema (violations
+///   carried alongside)
+/// - `unverified_unsupported` — the schema uses keywords the minimal
+///   validator cannot interpret; NOT a pass
+/// - `unverified_no_schema` — the contract object carries no `schema` key
+/// - `unverified_not_json` — the payload is not JSON at all (for a text
+///   response against a structured contract, or a plain-text task against
+///   a structured input contract — advisory, like fermi's InputBinding)
+///
+/// Returns `(input_check, output_check)`; each is `None` when the agent
+/// declares no contract for that side (fermi: `input_contract: None` means
+/// no input validation, same as `output_contract: None`).
+pub fn contract_checks(
+    input_contract: Option<&serde_json::Value>,
+    output_contract: Option<&serde_json::Value>,
+    task: &str,
+    response: &str,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let input_check = input_contract
+        .map(|contract| check_one_side(contract, task))
+        .map(|check| {
+            check_note(
+                check,
+                "the caller's task checked against the agent's input_contract",
+            )
+        });
+    let output_check = output_contract
+        .map(|contract| check_one_side(contract, response))
+        .map(|check| {
+            check_note(
+                check,
+                "the agent's response checked against its output_contract",
+            )
+        });
+    (input_check, output_check)
+}
+
+/// Validate one payload (task or response) against one contract's
+/// `schema` key. The contract shape is fermi's compiled form:
+/// `input_contract: {accepts_schema, title, required, schema}` /
+/// `output_contract: {domain, produces_schema, schema, ...}`.
+fn check_one_side(contract: &serde_json::Value, payload: &str) -> serde_json::Value {
+    let Some(schema) = contract.get("schema") else {
+        return serde_json::json!({ "status": "unverified_no_schema" });
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return serde_json::json!({
+            "status": "unverified_not_json",
+            "note": "payload is not JSON; the contract declares a structured schema",
+        });
+    };
+    let result = crate::schema_validate::validate(schema, &doc);
+    if !result.unsupported.is_empty() {
+        return serde_json::json!({
+            "status": "unverified_unsupported",
+            "unsupported": result.unsupported,
+        });
+    }
+    if result.violations.is_empty() {
+        serde_json::json!({ "status": "valid" })
+    } else {
+        serde_json::json!({
+            "status": "invalid",
+            "violations": result
+                .violations
+                .iter()
+                .map(|v| serde_json::json!({ "path": v.path, "message": v.message }))
+                .collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// Attach the check's descriptive note (which side was checked) to the
+/// verdict object.
+fn check_note(mut check: serde_json::Value, note: &str) -> serde_json::Value {
+    if let Some(obj) = check.as_object_mut() {
+        obj.insert("check".to_string(), serde_json::json!(note));
+    }
+    check
 }
 
 /// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
@@ -823,6 +953,20 @@ pub struct LocalDelegateResult {
     /// phase as a reasoning trace alongside `tool_calls`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_steps: Vec<crate::agent_executor::ReasoningStep>,
+    /// Input-contract check — the local analog of fermi's `Gate::InputBinding`
+    /// / `Gate::InputSchema`: the caller's task validated against the
+    /// agent's declared `input_contract.schema`. `None` = no input contract
+    /// declared (unverified, not a pass). Advisory — never blocks execution,
+    /// mirroring fermi's soft input validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_contract_check: Option<serde_json::Value>,
+    /// Output-contract check — the local analog of fermi's `Gate::OutputSchema`:
+    /// the agent's response validated against its declared
+    /// `output_contract.schema`. `None` = no output contract declared.
+    /// Advisory — an `invalid` verdict is a recorded finding (the agent
+    /// contradicted its own declared type), not a failed delegation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_contract_check: Option<serde_json::Value>,
 }
 
 impl LocalDelegateResult {

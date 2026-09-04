@@ -458,6 +458,15 @@ pub struct PushToCloudSwarmRequest {
     pub agent_name: String,
 }
 
+/// Get a single local agent's full card — the local analog of
+/// `swarm_get_agent` (fermi's `GET /api/agents/:id`).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetLocalAgentRequest {
+    /// The local agent id whose card to fetch
+    /// (`agents/local/curated/<id>/agent_card.json`).
+    pub agent_name: String,
+}
+
 /// Read-only local ledger history query.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LocalHistoryRequest {
@@ -515,6 +524,11 @@ pub struct CreateLocalAgentRequest {
     /// `output_contract`.
     #[serde(default)]
     pub input_contract: Option<AnyJsonValue>,
+    /// Sampling temperature (fermi `agents.temperature`, 0.0–1.0). `None`
+    /// means the executor's default preset applies — same semantics as
+    /// fermi's create, which defaults to 0.3.
+    #[serde(default)]
+    pub temperature: Option<f64>,
     /// Per-card declared evaluators (the evaluator contract). When present,
     /// every `swarm_delegate_local` call to this agent runs them against the
     /// response and stamps a deterministic `task_success` verdict.

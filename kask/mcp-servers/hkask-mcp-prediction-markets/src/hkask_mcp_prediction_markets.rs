@@ -1861,4 +1861,71 @@ mod smoke {
             "volatility must report a 95% interval, got: {content}"
         );
     }
+
+    /// The manual calibration sense arm through the tool seam:
+    /// `market_record_resolution` writes an observation and
+    /// `market_calibration` reads it back non-stale with the right sample
+    /// size — the loop the reliability-tier demotion consumes. A bucket
+    /// with no observations must read stale, never a synthetic Brier 0.
+    #[tokio::test]
+    async fn record_resolution_feeds_calibration_read() {
+        use crate::requests::{MarketCalibrationRequest, MarketRecordResolutionRequest};
+
+        let server = make_server();
+
+        // An unobserved bucket reads stale — the honest "no signal".
+        let stale = server
+            .market_calibration(Parameters(MarketCalibrationRequest {
+                bucket: "politics".to_string(),
+            }))
+            .await
+            .expect("calibration ok");
+        let stale_content = unwrap_content(&stale);
+        assert_eq!(
+            stale_content["stale"], true,
+            "an empty bucket must read stale, got: {stale_content}"
+        );
+        assert!(
+            stale_content["brier"].is_null(),
+            "an empty bucket must carry brier: null, got: {stale_content}"
+        );
+
+        // Record two observations: a confident correct call and a coin flip.
+        for (probability, outcome) in [(0.9, true), (0.5, false)] {
+            server
+                .market_record_resolution(Parameters(MarketRecordResolutionRequest {
+                    bucket: "politics".to_string(),
+                    probability,
+                    outcome,
+                }))
+                .await
+                .expect("record ok");
+        }
+
+        let reading = server
+            .market_calibration(Parameters(MarketCalibrationRequest {
+                bucket: "politics".to_string(),
+            }))
+            .await
+            .expect("calibration ok");
+        let content = unwrap_content(&reading);
+        assert_eq!(
+            content["stale"], false,
+            "two recorded observations must read non-stale, got: {content}"
+        );
+        assert_eq!(
+            content["sample_size"].as_u64(),
+            Some(2),
+            "the sample size must count both observations, got: {content}"
+        );
+        let brier = content["brier"]
+            .as_f64()
+            .expect("a non-stale bucket must carry a measured Brier");
+        // Brier per observation: (0.9-1)^2 = 0.01 and (0.5-0)^2 = 0.25 → mean 0.13.
+        assert!(
+            (brier - 0.13).abs() < 1e-9,
+            "0.9→true and 0.5→false must average Brier 0.13, got {brier}"
+        );
+    }
 }
+

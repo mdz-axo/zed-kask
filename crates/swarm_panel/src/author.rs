@@ -783,7 +783,7 @@ impl SwarmPanel {
         let valence_raw = self.author.valence_valence.read(cx).text(cx);
         let primary_affect = self.author.valence_primary_affect.read(cx).text(cx);
         let personality_traits =
-            comma_list(&self.author.valence_personality_traits.read(cx).text(cx));
+            Self::comma_list(&self.author.valence_personality_traits.read(cx).text(cx));
         if arousal_raw.trim().is_empty()
             && valence_raw.trim().is_empty()
             && primary_affect.trim().is_empty()
@@ -870,7 +870,7 @@ impl SwarmPanel {
             cx.notify();
             return;
         }
-        let tags = comma_list(&self.author.tags.read(cx).text(cx));
+        let tags = Self::comma_list(&self.author.tags.read(cx).text(cx));
         // fermi contract fields: sample queries (one per line — they contain
         // commas) and the accepts/produces composition ports (CSV).
         let sample_queries: Vec<String> = self
@@ -882,8 +882,8 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let accepts = comma_list(&self.author.accepts.read(cx).text(cx));
-        let produces = comma_list(&self.author.produces.read(cx).text(cx));
+        let accepts = Self::comma_list(&self.author.accepts.read(cx).text(cx));
+        let produces = Self::comma_list(&self.author.produces.read(cx).text(cx));
         let visibility = self.author.visibility.clone();
         let valence = self.gather_valence(cx);
         self.author.busy = true;

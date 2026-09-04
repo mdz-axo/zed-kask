@@ -1193,6 +1193,7 @@ impl SwarmServer {
                     skills: req.skills,
                     output_contract: req.output_contract.map(serde_json::Value::from),
                     input_contract: req.input_contract.map(serde_json::Value::from),
+                    temperature: req.temperature,
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },

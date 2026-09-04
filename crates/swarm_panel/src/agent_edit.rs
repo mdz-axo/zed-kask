@@ -492,8 +492,10 @@ impl SwarmPanel {
     ///   `valence` changes are not persisted (the reconfigure tool doesn't
     ///   touch them; re-creating via `swarm_create_local_agent` would drop
     ///   the `cloud_swarm_id` sync link).
-    /// - `Some` + cloud: no-op (no ABW update tool). The form status already
-    ///   explains this when the agent is loaded.
+    /// - `Some` + cloud: `swarm_update_agent` (fermi's `PUT /api/agents/:id`)
+    ///   — every form field is sent, so the pre-loaded form is the source of
+    ///   truth. `visibility` is NOT sent (fermi rejects lifecycle fields on
+    ///   update); `sample_queries` has no ABW API surface.
     /// - `None`: delegates to `create_agent` (the create path).
     pub(crate) fn save_agent(&mut self, cx: &mut Context<Self>) {
         let Some(editing_id) = self.author.editing_id.clone() else {

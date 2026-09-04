@@ -124,7 +124,7 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. For each chunk, retrieves embedding-similar passages (KNN), formats ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the memory DB to build a knowledge graph section. Outputs prompts JSONL consumed by corpus_generate_qa_batch."
+        description = "Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. For each chunk, retrieves embedding-similar passages (KNN) under the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under), formats ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the memory DB to build a knowledge graph section. Outputs prompts JSONL consumed by corpus_generate_qa_batch."
     )]
     pub async fn corpus_build_prompts(
         &self,
@@ -137,6 +137,7 @@ impl CorpusServer {
                     output: req.output,
                     db_path: req.db_path,
                     passphrase: req.passphrase,
+                    prefix: req.prefix,
                     context_k: req.context_k,
                     prompts_per_chunk: req.prompts_per_chunk,
                     type_distribution: req.type_distribution,
@@ -531,6 +532,11 @@ pub(crate) struct BuildPromptsRequest {
     /// Passphrase for the memory DB.
     #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
+    /// Entity-ref prefix for the KNN embedding lookup (default
+    /// "corpus:researcher:"). Pass the prefix you chunked under — any other
+    /// prefix silently yields no embedding context.
+    #[serde(default)]
+    pub prefix: Option<String>,
     /// Number of KNN context passages to retrieve per chunk (default 3).
     #[serde(default = "default_context_k")]
     pub context_k: usize,

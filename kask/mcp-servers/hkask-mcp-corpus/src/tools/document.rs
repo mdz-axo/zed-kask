@@ -156,6 +156,9 @@ impl CorpusServer {
                 "verification_passed": outcome.verification_passed,
                 "page_count_match": outcome.page_count_match,
                 "empty_pages": outcome.empty_pages,
+                "degraded_pages": outcome.degraded_pages,
+                "backends": outcome.backends,
+                "llm_breaker_open": outcome.llm_breaker_open,
                 "error_count": outcome.error_count,
             });
             Ok(result)

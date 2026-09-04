@@ -376,10 +376,19 @@ async fn process_single_page(
         return (None, None, Some(e));
     }
 
-    let primary = match primary {
+    let mut primary = match primary {
         Some(r) => r,
         None => return (None, None, None),
     };
+
+    // A breaker-open re-route executes the fallback backend as the primary
+    // attempt (`is_fallback=false`), so `was_fallback` alone would hide that
+    // degradation. Mark it here: when the final backend was not among the
+    // tier's routed backends, the page was served by a degraded path and the
+    // verification report must count it in `degraded_pages`.
+    if !backends.contains(&primary.backend) {
+        primary.was_fallback = true;
+    }
 
     // Cross-validation for dual-routed pages. Both-empty collusion is no
     // longer possible to observe here: an empty LLM result is a typed
@@ -558,6 +567,7 @@ fn finalize_outcome_inner(
     PipelineOutcome {
         results,
         report,
+        backends: backend_counts,
         cross_validations,
         errors,
     }
@@ -762,6 +772,18 @@ mod tests {
         let result = &outcome.results[0];
         assert_eq!(result.backend, OcrBackend::Tesseract);
         assert_eq!(result.text, "breaker-open rescue text");
+        // The re-route serves the page through a degraded path — the routed
+        // LLM backend was skipped — so the result must carry the fallback
+        // marker and the verification report must count it in degraded_pages.
+        assert!(
+            result.was_fallback,
+            "breaker-open re-route must mark the result as fallback"
+        );
+        assert_eq!(
+            outcome.report.degraded_pages,
+            vec![0],
+            "breaker-open re-route must surface in degraded_pages"
+        );
     }
 
     /// A Moderate dual-routed page whose LLM secondary returns empty output

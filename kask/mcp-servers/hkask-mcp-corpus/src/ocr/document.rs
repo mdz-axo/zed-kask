@@ -108,6 +108,14 @@ pub(crate) struct VerificationReport {
     pub page_count_match: bool,
     /// Indices of pages that produced zero text.
     pub empty_pages: Vec<usize>,
+    /// Indices (0-based) of pages served by a degraded path: the routed
+    /// primary backend failed (empty LLM output) or was unavailable (circuit
+    /// breaker open), so a fallback backend produced the text. Distinct from
+    /// `empty_pages` — a degraded page has text, just from the tier's
+    /// second-choice backend. `passed` does not fail on degradation (it is
+    /// by design and sensed); consumers read this field to tell by-design
+    /// Simple-tier tesseract routing apart from a dead LLM endpoint.
+    pub degraded_pages: Vec<usize>,
     /// Total number of pipeline errors across all pages.
     pub error_count: usize,
     /// Aggregate verification result. Derived from all checks.
@@ -124,10 +132,16 @@ impl VerificationReport {
     }
 
     /// Create a report and compute `passed` inline.
-    pub fn new(page_count_match: bool, empty_pages: Vec<usize>, error_count: usize) -> Self {
+    pub fn new(
+        page_count_match: bool,
+        empty_pages: Vec<usize>,
+        degraded_pages: Vec<usize>,
+        error_count: usize,
+    ) -> Self {
         let mut report = Self {
             page_count_match,
             empty_pages,
+            degraded_pages,
             error_count,
             passed: false,
         };
@@ -148,6 +162,13 @@ pub(crate) struct PipelineOutcome {
     pub results: Vec<OcrResult>,
     /// Verification report computed after assembly.
     pub report: VerificationReport,
+    /// Final-backend distribution across pages (e.g. `{"tesseract": 20,
+    /// "llm-ocr": 1}`). Surfaced to tool results so consumers can see whether
+    /// the LLM backend produced anything at all — an all-tesseract map with
+    /// empty `report.degraded_pages` is by-design Simple-tier routing; one
+    /// with every LLM-routed page degraded is a dead endpoint.
+    #[serde(default)]
+    pub backends: std::collections::HashMap<String, usize>,
     /// Cross-validation data from dual-routed pages (calibration mode).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cross_validations: Vec<CrossValidation>,

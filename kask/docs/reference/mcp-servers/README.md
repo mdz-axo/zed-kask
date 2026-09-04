@@ -28,7 +28,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-11 on-disk MCP servers, **365 registered tools** fleet-wide (verified 2026-09-03, post-consolidation; methods below).
+11 on-disk MCP servers, **366 registered tools** fleet-wide (verified 2026-09-03, post-consolidation; methods below).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -41,7 +41,7 @@ mds_categories: [composition, domain]
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 22 |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 82 |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 83 |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
 ### Count verification methods (per row)
@@ -49,7 +49,7 @@ mds_categories: [composition, domain]
 - **Media = 79** — pinned end-to-end by `tool_surface_is_exactly_79_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:398`). The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images).
 - **Companies = 43** — pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`). The pin also guards absence: the portfolio ledger tools (portfolio_delete, ledger_import, ledger_export, portfolio_comparison, portfolio_returns, transaction_note_append) were removed from companies when the portfolio server took ownership, and any re-introduction fails this test. `company_research_search` was registered after shipping un-routed while two skills called it; `stock_universe` was removed (a market-cap-only `company_screener` prompt covers it).
 - **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` asserting `ScenariosServer::scenario_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`). The 2026-09-03 consolidation folded `scenario_research` into `scenario_build`, `scenario_sensitivity` into `scenario_quantify`, and `scenario_from_markets` into `scenario_from_markets_set`.
-- **Swarm = 82** — the build script generates the canonical tool-name list by scanning `src/*.rs` with the regex `pub\(crate\) async fn (swarm_\w+)\s*\(` (`kask/mcp-servers/hkask-mcp-swarm/build.rs:30-31`); replicating that regex over `src/` yields 82 unique `swarm_*` fns (47 in `cloud_swarm_tools.rs`, 25 in `local_tools.rs`, 3 in `a2a_tools.rs`, 4 in `knowledge_tools.rs`, 3 in `ledger_tools.rs`).
+- **Swarm = 83** — the build script generates the canonical tool-name list by scanning `src/*.rs` with the regex `pub\(crate\) async fn (swarm_\w+)\s*\(` (`kask/mcp-servers/hkask-mcp-swarm/build.rs:30-31`); replicating that regex over `src/` yields 83 unique `swarm_*` fns (48 in `cloud_swarm_tools.rs` — `swarm_update_agent` added 2026-09-03 for fermi API alignment, 25 in `local_tools.rs`, 3 in `a2a_tools.rs`, 4 in `knowledge_tools.rs`, 3 in `ledger_tools.rs`).
 - **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (verified 2026-08-28). This method reproduces the pinned counts exactly for media (67) and scenarios (21), and matches the swarm build.rs regex count (82), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — only media, scenarios, and swarm have mechanical pins against that failure mode.
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
