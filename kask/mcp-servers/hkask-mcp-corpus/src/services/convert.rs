@@ -464,7 +464,8 @@ impl<'a> ConvertService<'a> {
                     "no embedding model configured — set \\
                      kask.models.embedding_model (injected as \\
                      HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-                     hidden code constant".to_string(),
+                     hidden code constant"
+                        .to_string(),
                 )
             })?;
 

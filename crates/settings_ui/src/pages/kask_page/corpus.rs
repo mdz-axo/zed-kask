@@ -116,7 +116,7 @@ pub(crate) fn render_corpus_page(
                 .child(
                     Label::new(
                         "The corpus server provides document corpus management, \
-                         OCR, and QA generation. Configure embedding and OCR settings."
+                         OCR, and QA generation. Configure embedding and OCR settings.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -128,10 +128,12 @@ pub(crate) fn render_corpus_page(
                 .gap_1()
                 .child(Label::new("Embedding Model"))
                 .child(
-                    Label::new("The embedding model. Required — empty means not configured; \
-                         calls that need it fail with a visible error (no hidden default).")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    Label::new(
+                        "The embedding model. Required — empty means not configured; \
+                         calls that need it fail with a visible error (no hidden default).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .child(embedding_model_input),
         )

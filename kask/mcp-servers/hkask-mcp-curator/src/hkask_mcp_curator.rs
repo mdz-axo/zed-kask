@@ -1,9 +1,9 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
 // Test builds allow `unsafe` for the one-shot `env::set_var` in the
 // tool-behavior harness (HKASK_EMBEDDING_MODEL — the semantic paths
 // resolve it as an Option since the model_constants refactor). Production
 // still forbids unsafe outright. Same pattern as hkask-mcp-media,
 // hkask-email, hkask-inference, hkask-keystore.
-#![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
 // `tokio` is in [dependencies] for the bin target's `#[tokio::main]`; the lib
 // itself does not use it, so the unused_crate_dependencies lint fires on the

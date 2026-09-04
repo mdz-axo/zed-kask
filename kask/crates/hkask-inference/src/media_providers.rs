@@ -370,10 +370,10 @@ impl MediaProvider for DeepInfraMediaProvider {
         .or_else(|| std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").ok())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_IMAGE_GEN_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
         })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
@@ -388,10 +388,10 @@ impl MediaProvider for DeepInfraMediaProvider {
         .or_else(|| std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").ok())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_IMAGE_GEN_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
         })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.image_to_image(
@@ -415,32 +415,32 @@ impl MediaProvider for DeepInfraMediaProvider {
                     let text = params.text.clone().unwrap_or_default();
                     let voice = params.voice.clone().unwrap_or_else(|| "Rachel".to_string());
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_TTS_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_TTS_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_TTS_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_speech(&text, &voice, &model).await
                 }
                 MediaOp::Transcribe => {
                     let audio_url = params.audio_url.clone().unwrap_or_default();
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_STT_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_STT_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_STT_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.transcribe(&audio_url, params.language.as_deref(), &model)
                         .await
@@ -448,32 +448,32 @@ impl MediaProvider for DeepInfraMediaProvider {
                 MediaOp::GenerateVideo => {
                     let prompt = params.prompt.clone().unwrap_or_default();
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_VIDEO_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.generate_video(&prompt, params.duration, &model).await
                 }
                 MediaOp::ImageToVideo => {
                     let image_url = params.image_url.clone().unwrap_or_default();
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_VIDEO_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "DeepInfra/");
                     self.image_to_video(
                         &image_url,
@@ -960,10 +960,10 @@ impl MediaProvider for OpenRouterMediaProvider {
         .or_else(|| std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").ok())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_IMAGE_GEN_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
         })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.generate_image(&prompt, params.size.as_deref(), params.count, &model)
@@ -972,16 +972,16 @@ impl MediaProvider for OpenRouterMediaProvider {
                 MediaOp::Transcribe => {
                     let audio_url = params.audio_url.clone().unwrap_or_default();
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_STT_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_STT_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_STT_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.transcribe(&audio_url, params.language.as_deref(), &model)
                         .await
@@ -995,10 +995,10 @@ impl MediaProvider for OpenRouterMediaProvider {
         .or_else(|| std::env::var("HKASK_MEDIA_AUDIO_CHAT_MODEL").ok())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_AUDIO_CHAT_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
         })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.chat_audio(&prompt, &audio_url, &model).await
@@ -1012,10 +1012,10 @@ impl MediaProvider for OpenRouterMediaProvider {
         .or_else(|| std::env::var("HKASK_MEDIA_STRUCTURED_PASS_MODEL").ok())
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_STRUCTURED_PASS_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
         })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.chat_json(&prompt, &schema, &model).await
@@ -1028,32 +1028,32 @@ impl MediaProvider for OpenRouterMediaProvider {
                     // default was closed-weight and absent from the live
                     // video catalog (verified 2026-08-31).
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_VIDEO_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.generate_video(&prompt, params.duration, &model).await
                 }
                 MediaOp::ImageToVideo => {
                     let image_url = params.image_url.clone().unwrap_or_default();
                     let model = params
-        .model
-        .clone()
-        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
-        .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| {
-            InferenceError::NotConfigured(format!(
+                        .model
+                        .clone()
+                        .or_else(|| std::env::var("HKASK_MEDIA_VIDEO_MODEL").ok())
+                        .filter(|model| !model.trim().is_empty())
+                        .ok_or_else(|| {
+                            InferenceError::NotConfigured(
                 "no model configured for this media op — set HKASK_MEDIA_VIDEO_MODEL or pass an \
-                 explicit model; kask never falls back to a hidden code constant"
-            ))
-        })?;
+                 explicit model; kask never falls back to a hidden code constant".to_string()
+                )
+                        })?;
                     let model = strip_prefix(&model, "OpenRouter/");
                     self.image_to_video(
                         &image_url,

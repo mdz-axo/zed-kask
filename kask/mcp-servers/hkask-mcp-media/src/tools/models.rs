@@ -265,8 +265,10 @@ mod tests {
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
         ];
-        let saved: Vec<(String, Option<String>)> =
-            keys.iter().map(|k| (k.to_string(), std::env::var(k).ok())).collect();
+        let saved: Vec<(String, Option<String>)> = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect();
         for key in keys {
             unsafe { std::env::remove_var(key) };
         }
