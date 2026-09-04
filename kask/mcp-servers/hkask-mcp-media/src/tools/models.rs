@@ -198,24 +198,90 @@ mod tests {
         assert_eq!(strip_provider_prefix("no-prefix"), "no-prefix");
     }
 
+    /// Env-mutation lock: the list tests configure the five media model
+    /// env vars (the list shows only CONFIGURED models — the operator's
+    /// no-hidden-models spec), and env is process-global, so the tests
+    /// serialize on this mutex to avoid racing each other.
+    static LIST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn configured_model_list() -> Vec<MediaModelInfo> {
+        let _guard = LIST_ENV_LOCK.lock().unwrap();
+        let vars = [
+            ("HKASK_MEDIA_IMAGE_GEN_MODEL", "DeepInfra/test-image"),
+            ("HKASK_MEDIA_VIDEO_MODEL", "DeepInfra/test-video"),
+            ("HKASK_MEDIA_TTS_MODEL", "DeepInfra/test-tts"),
+            ("HKASK_MEDIA_STT_MODEL", "DeepInfra/test-stt"),
+            ("HKASK_MEDIA_VISION_MODEL", "OpenRouter/test-vision"),
+        ];
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|(key, _)| (key.to_string(), std::env::var(key).ok()))
+            .collect();
+        unsafe { std::env::remove_var("HKASK_MEDIA_TEST_SENTINEL") };
+        for (key, value) in vars {
+            // SAFETY: serialized by LIST_ENV_LOCK; the only tests reading
+            // these vars hold the same lock.
+            unsafe { std::env::set_var(key, value) };
+        }
+        let models = build_model_list();
+        for (key, prior) in saved {
+            match prior {
+                Some(value) => unsafe { std::env::set_var(&key, value) },
+                None => unsafe { std::env::remove_var(&key) },
+            }
+        }
+        models
+    }
+
     #[test]
     fn build_model_list_returns_at_least_five_models() {
-        let models = build_model_list();
+        let models = configured_model_list();
         assert!(
             models.len() >= 5,
-            "expected ≥5 models, got {}",
+            "expected ≥5 configured models, got {}",
             models.len()
         );
     }
 
     #[test]
     fn build_model_list_has_correct_modalities() {
-        let models = build_model_list();
+        let models = configured_model_list();
         let modalities: Vec<&str> = models.iter().map(|m| m.modality.as_str()).collect();
         assert!(modalities.contains(&"image"), "missing image modality");
         assert!(modalities.contains(&"video"), "missing video modality");
         assert!(modalities.contains(&"audio"), "missing audio modality");
         assert!(modalities.contains(&"vision"), "missing vision modality");
+    }
+
+    /// The no-hidden-models spec: with NOTHING configured, the list is
+    /// EMPTY — it never shows a model the user did not choose.
+    #[test]
+    fn build_model_list_is_empty_when_nothing_is_configured() {
+        let _guard = LIST_ENV_LOCK.lock().unwrap();
+        let keys = [
+            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+            "HKASK_MEDIA_VIDEO_MODEL",
+            "HKASK_MEDIA_TTS_MODEL",
+            "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_VISION_MODEL",
+        ];
+        let saved: Vec<(String, Option<String>)> =
+            keys.iter().map(|k| (k.to_string(), std::env::var(k).ok())).collect();
+        for key in keys {
+            unsafe { std::env::remove_var(key) };
+        }
+        let models = build_model_list();
+        for (key, prior) in saved {
+            match prior {
+                Some(value) => unsafe { std::env::set_var(&key, value) },
+                None => unsafe { std::env::remove_var(&key) },
+            }
+        }
+        assert!(
+            models.is_empty(),
+            "unconfigured models must not be listed, got {}",
+            models.len()
+        );
     }
 
     #[test]

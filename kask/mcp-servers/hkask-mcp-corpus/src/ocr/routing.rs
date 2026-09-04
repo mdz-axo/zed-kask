@@ -173,7 +173,10 @@ mod tests {
 
     /// Excluding Tesseract on a Complex page (the degraded rung itself
     /// failing) keeps the LLM preference — the ladder degrades only when the
-    /// excluded backend is the preferred rung.
+    /// excluded backend is the preferred rung. A configured model is
+    /// required to exercise the ladder (with none configured, Complex
+    /// routes to Tesseract — see
+    /// `complex_routes_to_tesseract_without_a_configured_model`).
     #[test]
     fn complex_excluding_tesseract_keeps_llm() {
         let mut state = SamplingState::default();
@@ -181,7 +184,7 @@ mod tests {
             complex_score(),
             &mut state,
             Some(&OcrBackend::Tesseract),
-            None,
+            Some("test-ocr-model"),
         );
         assert_eq!(
             backends,

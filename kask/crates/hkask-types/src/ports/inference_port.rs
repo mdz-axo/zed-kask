@@ -304,7 +304,7 @@ pub trait InferencePort: Send + Sync {
     /// Rerank documents against a query with a dedicated reranker.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `DEFAULT_RERANK_MODEL`); the implementation strips the prefix and
+    /// the configured rerank model); the implementation strips the prefix and
     /// routes to that provider's rerank endpoint. Returns one
     /// `RerankScoreEntry` per scored document — the provider's native
     /// relevance judgment, not a parsed LLM generation.

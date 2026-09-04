@@ -317,10 +317,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
-                    // Fall back to HkaskSettings (which itself falls back to
-                    // DEFAULT_OCR_MODEL = "RunPod/kask-ocr"). Without this,
-                    // the corpus server has no OCR model when the env var is
-                    // unset, and scanned PDFs silently produce empty text.
+                    // Fall back to HkaskSettings (the visible settings
+                    // file). Unset means no LLM-OCR model — complex pages
+                    // route to local Tesseract with a visible warn (never a
+                    // hidden constant; the operator's no-hidden-models spec).
                     let model = hkask_services_core::HkaskSettings::load().ocr_model();
                     if model.is_empty() { None } else { Some(model) }
                 });
@@ -475,10 +475,14 @@ mod smoke {
             .await
             .expect_err("corpus_query without inference must fail, not panic");
         // Without inference, corpus_query must surface a typed error
-        // (not panic). The error carries kind Unavailable on the wire.
+        // (not panic). A missing model CONFIGURATION is an authorization
+        // failure, not a transient outage — PermissionDenied per the
+        // canonical NotConfigured mapping (the `.rules` credential rule:
+        // "not configured" must be distinguishable from "configured but
+        // broken", which is what Unavailable means).
         assert!(
-            matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
-            "error kind must be Unavailable when inference is not configured, got: {:?}",
+            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
+            "error kind must be PermissionDenied when no model is configured, got: {:?}",
             error.kind
         );
         assert!(

@@ -254,7 +254,7 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 //   missing from the response) is named in the tool output's `rerank` field
 //   — never silent.
 // - Model constants (hkask-inference/model_constants.rs):
-//   `DEFAULT_RERANK_MODEL` is the single source of truth; the settings chain
+//   the visible settings chain is the single source of truth
 //   (settings_content → KaskModelsSettings → emit_models_env → this env var)
 //   overrides it, and the research server's config_env allowlist passes it
 //   through under governed launch.
