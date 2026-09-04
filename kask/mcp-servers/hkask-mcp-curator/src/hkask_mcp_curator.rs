@@ -1028,7 +1028,11 @@ impl CuratorServer {
     /// when an MCP tool call fails or produces unexpected output. The report
     /// is stored as an h_mem in the curator's memory store with
     /// entity `skill_use_issue:<skill_name>` so it is queryable via
-    /// `curator_memory_recall` and `curator_semantic_search`.
+    /// `curator_memory_recall` and `curator_semantic_search` — stored at the
+    /// 0.5 confidence floor (not the `HMem::new` 1.0 default: unverified
+    /// observations must not outrank verified facts in recall ranking) and
+    /// with the report text embedded under the entity so semantic search
+    /// finds it by meaning.
     ///
     /// This is the skill-reported input channel of the co-evolution loop:
     /// skills report MCP tool issues → the Curator analyzes patterns →
@@ -1064,13 +1068,36 @@ impl CuratorServer {
                 &format!("tool_failure:{}", req.tool_name),
                 report_value,
                 self.webid,
-            );
+            )
+            // The 0.5 floor — NOT the `HMem::new` 1.0 default. Issue reports
+            // are unverified observations; at 1.0 they outranked verified
+            // facts in recall ranking (confidence is a ranking multiplier).
+            .with_confidence(hkask_types::Confidence::new(0.5));
 
             memory
                 .store(h_mem)
                 .map_err(|e| map_memory_store_error(e, "Failed to store skill-use issue report"))?;
 
             RegulationSpan::Curation.emit("skill_use_issue_reported");
+
+            // Semantic recallability — the entity_ref invariant: embed the
+            // report text under the entity so `curator_semantic_search`
+            // finds it by meaning (the contract the doc comment above
+            // advertises). Non-fatal; the degradation is surfaced below.
+            let embed_text = format!(
+                "skill-use issue: {skill} / {tool} (step {step}): {error}",
+                skill = req.skill_name,
+                tool = req.tool_name,
+                step = req.step_ordinal,
+                error = req.error,
+            );
+            let embedded = embed_for_semantic_recall(
+                self.inference_port.as_ref(),
+                memory,
+                &entity,
+                &embed_text,
+            )
+            .await;
 
             Ok(json!({
                 "reported": true,
@@ -1079,7 +1106,8 @@ impl CuratorServer {
                 "tool_name": req.tool_name,
                 "step_ordinal": req.step_ordinal,
                 "failure_type": req.failure_type,
-                "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' to retrieve accumulated reports."
+                "semantic_recall": if embedded { "embedded" } else { DEGRADED_EMBEDDING_NOTE },
+                "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' or curator_semantic_search to retrieve accumulated reports."
             }))
         })
         .await
@@ -1102,6 +1130,11 @@ impl CuratorServer {
     /// The memory starts at confidence 0.5 (the floor — NOT the model's
     /// self-assessed confidence). Confidence is calibrated by subsequent
     /// Brier-scored outcomes, not by self-assessment.
+    ///
+    /// The value's text is embedded under the entity (the entity_ref
+    /// invariant) so `curator_semantic_search` finds the memory by meaning,
+    /// not just by exact entity name. Embedding failure is non-fatal and
+    /// surfaced in the output.
     ///
     /// Evidence-grounding: the `evidence_h_mem_id` field must cite a
     /// specific h_mem ID that supports this memory. The tool
@@ -1151,6 +1184,7 @@ impl CuratorServer {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
                 }
             }
+            let embed_text = memory_embed_text(&req.entity, &req.attribute, &value);
             let h_mem = hkask_storage::HMem::new(
                 &req.entity,
                 &req.attribute,
@@ -1161,11 +1195,24 @@ impl CuratorServer {
 
             memory
                 .store(h_mem)
-                .map_err(|e| {
-                    map_memory_store_error(e, "Failed to store curator memory")
-                })?;
+                .map_err(|e| map_memory_store_error(e, "Failed to store curator memory"))?;
 
             RegulationSpan::Curation.emit("memory_inserted");
+
+            // Semantic recallability — the entity_ref invariant. Without
+            // this, every agent-inserted memory (operator rulings, verified
+            // code status — the knowledge layer) is invisible to
+            // `curator_semantic_search` and the semantic leg of
+            // `curator_consult`: recallable only by exact entity name, and
+            // a semantic search that found nothing was read as "no memory
+            // exists". Non-fatal; the degradation is surfaced below.
+            let embedded = embed_for_semantic_recall(
+                self.inference_port.as_ref(),
+                memory,
+                &req.entity,
+                &embed_text,
+            )
+            .await;
 
             Ok(json!({
                 "inserted": true,
@@ -1173,7 +1220,8 @@ impl CuratorServer {
                 "attribute": req.attribute,
                 "confidence": 0.5,
                 "evidence_h_mem_id": req.evidence_h_mem_id,
-                "guidance": "Memory stored at confidence 0.5. Use memory_update to adjust confidence after outcome observation. Use curator_memory_recall with this entity to retrieve."
+                "semantic_recall": if embedded { "embedded" } else { DEGRADED_EMBEDDING_NOTE },
+                "guidance": "Memory stored at confidence 0.5 with a semantic embedding. Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
             }))
         })
         .await
@@ -1274,16 +1322,21 @@ impl CuratorServer {
                     ))
                 })?;
 
-            // Verify the target exists.
-            let target = memory
-                .query_deduped_untouched(&target_id.to_string())
-                .map_err(|e| map_memory_store_error(e, "Failed to fetch target h_mem"))?;
-            if target.is_empty() {
-                return Err(McpToolError::not_found(format!(
-                    "Target h_mem '{id}' not found",
-                    id = req.target_h_mem_id
-                )));
-            }
+            // Verify the target exists — by ID, not by entity ref. The
+            // previous entity-keyed lookup (`query_deduped_untouched` with
+            // the bare UUID) could never match — no entity is a bare UUID —
+            // so every resolution attempt returned not_found and the tool
+            // never resolved anything (the same bug class memory_insert's
+            // evidence check was fixed for).
+            let target_h_mem = memory
+                .get_by_id(&target_id)
+                .map_err(|e| map_memory_store_error(e, "Failed to fetch target h_mem"))?
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "Target h_mem '{id}' not found",
+                        id = req.target_h_mem_id
+                    ))
+                })?;
 
             match req.strategy.as_str() {
                 "expire" => {
@@ -1304,9 +1357,6 @@ impl CuratorServer {
                         McpToolError::invalid_argument(
                             "new_confidence is required for 'update_confidence' strategy",
                         )
-                    })?;
-                    let target_h_mem = target.into_iter().next().ok_or_else(|| {
-                        McpToolError::not_found("Target h_mem disappeared between fetch and update")
                     })?;
                     let confidence = hkask_types::Confidence::new(new_confidence);
                     memory
@@ -1432,6 +1482,116 @@ impl CuratorServer {
     }
 
     /// Extract candidate semantic memories from a thread's turn history.
+    /// Backfill semantic embeddings for knowledge-layer h_mems whose
+    /// entities have none. Deterministic and embeddings-table-only — no
+    /// h_mem is created, modified, or expired. Turn-storage entities
+    /// (`chat:thread:` / `curator:thread:`) are excluded by design: their
+    /// embeddings live under the shared copy written at ingest, and
+    /// backfilling the perspective originals would duplicate the semantic
+    /// surface. Distillation watermarks (`curator:distilled:`) are excluded
+    /// as process markers with no recallable meaning.
+    ///
+    /// Exists because the insert paths gained the embedding contract
+    /// 2026-09-04 — h_mems inserted before that (operator rulings, verified
+    /// code status, skill-use reports) are invisible to
+    /// `curator_semantic_search` until backfilled.
+    #[tool(
+        description = "Backfill semantic embeddings for knowledge-layer h_mems whose entities have none (structured memories, skill-use reports, goal records). Deterministic, embeddings-table-only — no h_mem mutation. Excludes turn entities and distillation watermarks by design. dry_run lists candidates without embedding."
+    )]
+    pub async fn curator_memory_backfill_embeddings(
+        &self,
+        Parameters(req): Parameters<BackfillEmbeddingsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "curator_memory_backfill_embeddings", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            // Every active h_mem (empty prefix matches all entities; the
+            // underlying query filters valid_to IS NULL).
+            let active = memory
+                .h_mems_by_entity_prefix("")
+                .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
+
+            // Entities that already carry at least one embedding.
+            let embedded_entities: std::collections::HashSet<String> = memory
+                .embedding_store()
+                .query_by_prefix("")
+                .map_err(|e| {
+                    map_memory_store_error(
+                        hkask_memory::MemoryStoreError::Embedding(e),
+                        "Failed to list embedded entities",
+                    )
+                })?
+                .into_iter()
+                .collect();
+
+            let is_excluded = |entity: &str| {
+                entity.starts_with(thread_turns::PERSPECTIVE_TURN_PREFIX)
+                    || entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
+                    || entity.starts_with(distillation::WATERMARK_PREFIX)
+            };
+
+            // Knowledge-layer candidates: active, not excluded, entity has
+            // no embedding. One embedding per h_mem — the turn pattern: each
+            // content unit under the entity gets its own vector, and the
+            // entity-level check keeps the pass idempotent.
+            let candidates: Vec<&hkask_storage::HMem> = active
+                .iter()
+                .filter(|h| !is_excluded(&h.entity) && !embedded_entities.contains(&h.entity))
+                .collect();
+
+            if req.dry_run.unwrap_or(false) {
+                return Ok(json!({
+                    "dry_run": true,
+                    "candidate_count": candidates.len(),
+                    "candidates": candidates.iter().map(|h| json!({
+                        "h_mem_id": h.id.to_string(),
+                        "entity": h.entity,
+                        "attribute": h.attribute,
+                    })).collect::<Vec<_>>(),
+                    "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
+                }));
+            }
+
+            let candidate_count = candidates.len();
+            let mut results = Vec::with_capacity(candidate_count);
+            let mut embedded_count = 0usize;
+            let mut failed_count = 0usize;
+            for h_mem in candidates {
+                let embed_text = memory_embed_text(&h_mem.entity, &h_mem.attribute, &h_mem.value);
+                let embedded = embed_for_semantic_recall(
+                    self.inference_port.as_ref(),
+                    memory,
+                    &h_mem.entity,
+                    &embed_text,
+                )
+                .await;
+                if embedded {
+                    embedded_count += 1;
+                } else {
+                    failed_count += 1;
+                }
+                results.push(json!({
+                    "h_mem_id": h_mem.id.to_string(),
+                    "entity": h_mem.entity,
+                    "attribute": h_mem.attribute,
+                    "embedded": embedded,
+                }));
+            }
+
+            RegulationSpan::Curation.emit("memory_embeddings_backfilled");
+
+            Ok(json!({
+                "candidate_count": candidate_count,
+                "backfilled": embedded_count,
+                "failed": failed_count,
+                "results": results,
+                "guidance": "Embeddings backfilled under each candidate's entity (the entity_ref invariant). Failed candidates are surfaced per-entity with a warn logged — a re-run targets only entities still lacking embeddings, so the pass is idempotent."
+            }))
+        })
+        .await
+    }
+
     /// Queries the thread's turn h_mems across both storage prefixes —
     /// `chat:thread:<thread_id>` (curator-perspective originals) and
     /// `curator:thread:<thread_id>` (shared copies of every turn) — via
@@ -1498,6 +1658,77 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
     }
 }
 
+/// Output note surfaced by the insert paths when the semantic embedding
+/// could not be stored — the degradation must be visible in the tool
+/// result, never a silent success.
+pub(crate) const DEGRADED_EMBEDDING_NOTE: &str = "degraded (embedding unavailable — warn logged)";
+
+/// The embed-text composition for inserted memories: entity + attribute +
+/// value. A bare value like "qwen3" embeds to a semantically thin vector;
+/// "zed-kask default_agent_model: qwen3" matches the natural-language
+/// questions recall actually receives. Shared by `memory_insert` and the
+/// embedding backfill tool.
+pub(crate) fn memory_embed_text(
+    entity: &str,
+    attribute: &str,
+    value: &serde_json::Value,
+) -> String {
+    let value_text = match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    format!("{entity} {attribute}: {value_text}")
+}
+
+/// Embed `text` under `entity` so semantic recall finds the h_mem just
+/// stored — the entity_ref invariant (memory-system-specification.md §3).
+/// Non-fatal on failure, matching the ingest path's degradation contract
+/// (write-side invariant 3): the h_mem is already durable in SQL; only
+/// semantic recall degrades, with a warn naming the cause. Returns whether
+/// the embedding landed, so callers can surface the degradation.
+///
+/// The one insert-path embedding contract, shared by `memory_insert`,
+/// `curator_report_skill_use_issue`, and the distillation pass's
+/// `insert_lesson`. Consolidated 2026-09-04: `memory_insert` and the
+/// skill-use path stored h_mems without embeddings, leaving the entire
+/// agent-inserted knowledge layer invisible to `curator_semantic_search`.
+pub(crate) async fn embed_for_semantic_recall(
+    inference_port: &dyn hkask_types::InferencePort,
+    memory: &hkask_memory::MemoryStore,
+    entity: &str,
+    text: &str,
+) -> bool {
+    let owned_text = text.to_string();
+    let embedding_model = hkask_inference::model_constants::embedding_model();
+    match inference_port
+        .embed(&embedding_model, std::slice::from_ref(&owned_text))
+        .await
+    {
+        Ok(vectors) if !vectors.is_empty() && !vectors[0].is_empty() => {
+            match memory.store_embedding(entity, &vectors[0], &embedding_model, Some(text)) {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator",
+                        %error,
+                        entity,
+                        "Failed to store embedding — semantic recall degraded for this memory"
+                    );
+                    false
+                }
+            }
+        }
+        _ => {
+            tracing::warn!(
+                target: "hkask.mcp.curator",
+                entity,
+                "Embedding unavailable — semantic recall degraded for this memory"
+            );
+            false
+        }
+    }
+}
+
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Construct the inference port before entering the sync server-
     // construction closure. `resolve_inference_port` is async (it constructs
@@ -1505,7 +1736,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // each `embed()` call, which re-tries `InferenceIpcClient::from_env()`);
     // the closure passed to `run_server` is sync, so the await must happen
     // here. Used by `curator_semantic_search` and `curator_consult` to embed
-    // recall queries.
+    // recall queries, by the insert paths (`memory_insert`,
+    // `curator_report_skill_use_issue`) to embed stored memories, and by
+    // the distillation timer to embed lessons.
     let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         SERVER_NAME,

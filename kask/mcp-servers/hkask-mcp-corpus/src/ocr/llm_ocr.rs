@@ -343,12 +343,17 @@ impl OcrExecutor for LlmOcrExecutor {
 
         let start = Instant::now();
 
-        // Encode image as base64 JPEG (smaller than PNG, fits 128K token limit)
+        // Encode as PNG: `LanguageModelImage`'s contract is base64 PNG and
+        // `to_base64_url` hardcodes the `data:image/png` MIME. JPEG bytes under
+        // a PNG MIME are dropped by strict decoders (the RunPod OLMOCR-2 proxy
+        // returned empty output for exactly this reason; ollama happens to
+        // sniff the real format). Binarized 72-DPI pages compress well as PNG,
+        // so the size cost vs JPEG is modest (~1.4x on measured pages).
         let mut img_bytes: Vec<u8> = Vec::new();
         image
             .write_to(
                 &mut std::io::Cursor::new(&mut img_bytes),
-                image::ImageFormat::Jpeg,
+                image::ImageFormat::Png,
             )
             .map_err(|e| OcrError::BackendFailed {
                 backend: "llm_ocr".into(),
@@ -405,6 +410,18 @@ impl OcrExecutor for LlmOcrExecutor {
                 });
             }
             Err(OcrError::InferenceFailed(err_str)) => {
+                // Every inference failure is visible with its root cause —
+                // the string carries the HTTP status, DNS, TLS, or timeout
+                // detail. Swallowing it made a dead endpoint (observed: the
+                // kask-ocr 404s) indistinguishable from a healthy one while
+                // every page silently fell to Tesseract.
+                tracing::warn!(
+                    target: "reg.pipeline.ocr.inference_failure",
+                    page_index = page_index,
+                    llm_model = %model,
+                    error = %err_str,
+                    "OCR inference call failed — degrading to fallback backend"
+                );
                 let is_rate_limit = err_str.contains("429")
                     || err_str.contains("rate limit")
                     || err_str.contains("Rate limit");
@@ -416,15 +433,28 @@ impl OcrExecutor for LlmOcrExecutor {
                         "OCR inference rate-limited — circuit breaker tracking"
                     );
                 }
-                if is_rate_limit || err_str.contains("timed out") || err_str.contains("connection")
-                {
-                    self.breaker.record_failure();
-                }
+                // A dead-but-erroring endpoint (404/5xx) is the same class
+                // as a dead-but-responding one (200-empty): every inference
+                // failure counts against the breaker so a permanently
+                // failing endpoint is quarantined instead of taxing every
+                // page with a doomed call. The former substring filter
+                // ("timed out"/"connection") missed HTTP errors entirely.
+                self.breaker.record_failure();
                 if let Some(ref recorder) = self.recorder {
                     recorder.record_breaker_state(!self.breaker.is_closed());
                 }
             }
-            Err(_) => {}
+            // No silent swallows: pre-call failures (wrong backend, JPEG
+            // encoding) surface with their cause too.
+            Err(other) => {
+                tracing::warn!(
+                    target: "reg.pipeline.ocr.inference_failure",
+                    page_index = page_index,
+                    llm_model = %model,
+                    error = %other,
+                    "OCR LLM executor failed before the vision call — degrading to fallback backend"
+                );
+            }
         }
 
         let text = result?;

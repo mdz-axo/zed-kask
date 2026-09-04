@@ -6,7 +6,7 @@ You are scanning the {{ target_type }} memory database "{{ target }}" for therap
 
 ## Scan instructions
 
-Query the memory database and collect findings in four categories:
+Query the memory database and collect findings in five categories:
 
 ### 1. Contradictions
 
@@ -44,6 +44,19 @@ Look for clusters of episodic memories that share a common pattern or lesson:
 - Accumulated experience that could inform a rule or template.
 - Episodic detail superseded by an existing skill or rule (purge candidates).
 
+### 5. System wiring defects
+
+Systematic patterns in the data are wiring symptoms — the memory system's own code is suspect, not just the memories:
+- Confidence-floor escapes: rows above 0.5 → the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers.
+- Embedding-invisible memories: knowledge-layer entities (structured memories, skill-use reports) with no row in the embeddings table → semantic search cannot see them, and absence gets read as "no memory exists." Verify insert paths call the shared embedding contract.
+- Key-scheme drift: the same knowledge under multiple entity/attribute keys.
+- Isolated knowledge: structured entities absent from memory_links.
+- Unbounded episodic growth: row-count trend, episodic-to-structured ratio, max value size.
+
+Prefer a complete read-only SQL audit (sqlcipher, mode=ro) over sampling via recall tools — sampling misses systemic patterns and cannot see embedding-less entities at all.
+
+Each wiring finding records the data symptom, the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed before or alongside memory hygiene — a writer bug re-corrupts cleaned rows.
+
 ## Output format
 
 Produce a JSON object:
@@ -58,8 +71,9 @@ Produce a JSON object:
       "h_mem_id": "<h_mem ID>",
       "entity": "<entity>",
       "attribute": "<attribute>",
-      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate",
+      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate|system_defect",
       "description": "<what the issue is>",
+      "root_cause": "<for system_defect findings: file:line of the writing path>",
       "contradicting_h_mem_ids": ["<ID>", "<ID>"],
       "source_h_mem_ids": ["<ID>", "<ID>"],
       "evidence": "<values/confidence/connectedness data>"

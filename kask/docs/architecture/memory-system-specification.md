@@ -713,8 +713,8 @@ alone. Two reasons, both grounded in the calibration literature[^tetlock]:
 
 The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`)
 exposes the memory surface. Read tools (available to all threads):
-`curator_semantic_search` (`:485`), `curator_memory_recall` (`:560`),
-`curator_consult` (`:692`). Write tools (available to all threads since
+`curator_semantic_search` (`:557`), `curator_memory_recall` (`:632`),
+`curator_consult` (`:764`). Write tools (available to all threads since
 2026-09-01, when the curator-thread gate was removed by operator
 decision — models cannot reliably emit calls to tools absent from their
 visible list; the write invariants — evidence citation, 0.5 confidence
@@ -722,22 +722,29 @@ floor — live in the curator server, pinned by
 `test_curator_memory_edit_tools_available_to_non_curator_threads` in
 `crates/agent/src/tests/mod.rs`):
 
-- **`memory_insert`** (`:1037`) — evidence-grounded insert; confidence
-  starts at 0.5, calibrated by outcomes, not self-assessment
-  (`:1037-1041`).
-- **`memory_update`** (`:1108`) — Bayesian combine (log-odds pooling),
-  never replace (`:1108-1112`).
-- **`memory_resolve_contradiction`** (`:1175`) — the three Festinger
+- **`memory_insert`** (`:1145`) — evidence-grounded insert; confidence
+  starts at 0.5, calibrated by outcomes, not self-assessment; the value's
+  text is embedded under the entity (the entity_ref invariant) so semantic
+  recall finds it by meaning — embedding failure is non-fatal and surfaced
+  in the output, via the shared insert-path contract
+  `embed_for_semantic_recall` (`:1578`).
+- **`memory_update`** (`:1249`) — Bayesian combine (log-odds pooling),
+  never replace (`:1249-1253`).
+- **`memory_resolve_contradiction`** (`:1319`) — the three Festinger
   dissonance-resolution strategies: `expire` (soft-delete),
   `update_confidence` (reduce importance), `delete` (remove dissonant)
-  (`:1175-1179`).
-- **`curator_memory_prune`** (`:1280`) — deterministic bulk hygiene:
+  (`:1319-1323`).
+- **`curator_memory_prune`** (`:1424`) — deterministic bulk hygiene:
   delete curator h_mems older than `max_age_days`, optionally sparing
   those recalled within a recent window.
-- **`curator_memory_dedup`** (`:1319`) — deterministic bulk hygiene:
+- **`curator_memory_dedup`** (`:1463`) — deterministic bulk hygiene:
   condense duplicate h_mems.
-- **`curator_memory_extract`** (`:1360`) — on-demand reification-candidate
-  extraction; inserts nothing automatically (`:1360-1364`).
+- **`curator_memory_extract`** (`:1507`) — on-demand reification-candidate
+  extraction; inserts nothing automatically (`:1507-1511`).
+- **`curator_report_skill_use_issue`** (`:1045`) — skill-reported tool
+  issues stored at the 0.5 floor under `skill_use_issue:<skill_name>`,
+  with the report text embedded under the entity (the same shared
+  contract) so the reports are semantically recallable.
 
 ```mermaid
 graph TD
@@ -792,8 +799,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-THERAPY-TOOLS
-verified_date: 2026-08-28
-verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:485 (curator_semantic_search), :560 (curator_memory_recall), :692 (curator_consult), :1037 (memory_insert), :1108 (memory_update), :1175 (memory_resolve_contradiction), :1280 (curator_memory_prune), :1319 (curator_memory_dedup), :1360 (curator_memory_extract); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/thread.rs:4903-4907 (edit-tool restriction)
+verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:557 (curator_semantic_search), :632 (curator_memory_recall), :764 (curator_consult), :1045 (curator_report_skill_use_issue), :1145 (memory_insert), :1249 (memory_update), :1319 (memory_resolve_contradiction), :1424 (curator_memory_prune), :1463 (curator_memory_dedup), :1507 (curator_memory_extract), :1578 (embed_for_semantic_recall); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/tests/mod.rs:5488 (edit-tools-available pin — the curator-thread gate itself was removed 2026-09-01)
+verified_date: 2026-09-04
 status: VERIFIED
 -->
 

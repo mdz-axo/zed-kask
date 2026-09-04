@@ -1844,13 +1844,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     });
                 // Local agent registry — same dir resolution as hkask-mcp-swarm
                 // (relative paths resolve under the hKask data dir, not CWD).
-                // Resolved BEFORE the runtime so the per-agent stats store
-                // (shared with hkask-mcp-swarm's recording/surfacing) loads
-                // from the same dir.
+                // The FALLBACK default must match the swarm server's
+                // (`mcp/swarm/agents/curated`) so a standalone kanban run
+                // reads the same registry the swarm server reads — zed
+                // always injects `HKASK_LOCAL_AGENTS_DIR`, but the two
+                // servers must not silently diverge when it is absent.
                 let local_agents_dir = std::env::var("HKASK_LOCAL_AGENTS_DIR")
                     .ok()
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "agents/local/curated".to_string());
+                    .unwrap_or_else(|| "mcp/swarm/agents/curated".to_string());
                 let local_agents_dir =
                     if std::path::Path::new(&local_agents_dir).is_absolute() {
                         local_agents_dir

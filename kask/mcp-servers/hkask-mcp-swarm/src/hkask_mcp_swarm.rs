@@ -494,7 +494,7 @@ mod smoke_tests {
     use crate::local_registry::LocalAgentRegistry;
     use crate::local_runtime::{LazyEventStore, LazyLocalSwarmRuntime};
     use crate::local_swarms::LocalSwarmRegistry;
-    use crate::request_types::{A2aCardRequest, ListLocalSwarmsRequest};
+    use crate::request_types::{A2aCardRequest, CreateLocalAgentRequest, ListLocalSwarmsRequest};
     use hkask_types::WebID;
 
     /// Build a `SwarmServer` backed by throwaway paths under the test scratch
@@ -725,6 +725,92 @@ mod smoke_tests {
         assert!(
             error.message.contains("HKASK_ABW_API_KEY"),
             "the error must name the env var, got: {error}"
+        );
+    }
+    /// The operator's spec, pinned end-to-end: creating a local agent WITHOUT
+    /// a model must leave the card's model EMPTY — "host session default,
+    /// resolved at run time". No config default may be stamped into the card
+    /// (a frozen stamp silently diverges from the session model the operator
+    /// chose, and a hardcoded fallback model is exactly the inferior-model
+    /// lock-up the spec forbids).
+    #[tokio::test]
+    async fn create_local_agent_without_model_writes_empty_card_model() {
+        let base = std::env::var("CARGO_TARGET_TMPDIR")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+        let scratch = std::path::Path::new(&base).join("hkask_mcp_swarm_create_model");
+        let agents_dir = scratch.join("agents").to_string_lossy().to_string();
+        let config = SwarmConfig {
+            local_agents_dir: agents_dir.clone(),
+            ..SwarmConfig::default()
+        };
+        let client = Arc::new(SwarmClient::new(reqwest::Client::new(), config));
+        let consent = Arc::new(ConsentStore::default());
+        let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir.clone()));
+        let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(
+            &scratch.join("stats").to_string_lossy(),
+        ));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
+            scratch.join("ledger.db").to_string_lossy().to_string(),
+            agent_stats.clone(),
+        ));
+        let local_swarms = Arc::new(LocalSwarmRegistry::new(
+            scratch.join("swarms").to_string_lossy().to_string(),
+        ));
+        let local_memory = Arc::new(LazyLocalMemory::lazy(
+            scratch.join("memory.db").to_string_lossy().to_string(),
+            "test-passphrase".to_string(),
+            1024,
+        ));
+        let event_store = Arc::new(LazyEventStore::lazy(
+            scratch.join("events.db").to_string_lossy().to_string(),
+        ));
+        let server = SwarmServer::new(
+            WebID::new(),
+            client,
+            consent,
+            local_registry,
+            local_runtime,
+            local_swarms,
+            local_memory,
+            agent_stats,
+            event_store,
+        );
+
+        server
+            .swarm_create_local_agent(Parameters(CreateLocalAgentRequest {
+                agent_id: "no_model_agent".to_string(),
+                agent_type: "research".to_string(),
+                description: "probe".to_string(),
+                system_prompt: "You probe.".to_string(),
+                model: String::new(),
+                accepts: vec![],
+                produces: vec![],
+                mcp_tools: vec![],
+                skills: vec![],
+                tags: vec![],
+                sample_queries: vec![],
+                visibility: String::new(),
+                valence: None,
+                output_contract: None,
+                input_contract: None,
+                temperature: None,
+                evaluators: None,
+                reasoning: None,
+            }))
+            .await
+            .expect("create ok");
+
+        let card_path = std::path::Path::new(&agents_dir)
+            .join("no_model_agent")
+            .join("agent_card.json");
+        let card: Value = serde_json::from_str(
+            &std::fs::read_to_string(&card_path).expect("card written"),
+        )
+        .expect("card is json");
+        assert_eq!(
+            card["capabilities"]["model"], "",
+            "no model supplied — the card must carry an EMPTY model (host session default at \\
+             run time), never a stamped config default"
         );
     }
 }

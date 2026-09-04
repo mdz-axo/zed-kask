@@ -885,12 +885,14 @@ impl SwarmServer {
                         .unwrap_or_default(),
                 })
                 .unwrap_or_default();
-            let model = abw_card
-                .get("capabilities")
-                .and_then(|c| c.get("model"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
+            // Model semantics (the operator's spec): the local clone does
+            // NOT carry the ABW card's model. A local agent runs on the host
+            // session's default model unless the operator sets an explicit
+            // per-agent override — a cloud model id is not a local-run
+            // instruction (it may not even resolve on the local substrate).
+            // The cloud original keeps its model on ABW; `swarm_push_to_cloud`
+            // omits an empty model so fermi keeps its own (round-trip safe).
+            let model = String::new();
             let system_prompt = abw_card
                 .get("system_prompt")
                 .and_then(|s| s.as_str())
@@ -1355,11 +1357,15 @@ impl SwarmServer {
                         .to_string(),
                 )
             })?;
-            let model = if req.model.trim().is_empty() {
-                self.client.config().default_agent_model.clone()
-            } else {
-                req.model.clone()
-            };
+            // Model semantics (the operator's spec): an EMPTY card model
+            // means "run on the host session's default model" — resolved at
+            // RUN time by the executor (empty → no override → the zed
+            // session default via the inference bridge). Nothing is stamped
+            // here: a frozen default would silently diverge from the
+            // session model the operator actually chose. A non-empty model
+            // is an explicit per-agent override, resolved via the zed
+            // LanguageModelRegistry.
+            let model = req.model.clone();
             let card = LocalAgentCard {
                 agent_id: safe_id.clone(),
                 agent_type: req.agent_type,

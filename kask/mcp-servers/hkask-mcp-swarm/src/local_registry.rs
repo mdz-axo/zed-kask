@@ -189,6 +189,14 @@ pub struct LocalAgentDependencies {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCapabilities {
+    /// The agent's model — an EXPLICIT per-agent override only. Empty (the
+    /// default) means "run on the host session's default model", resolved
+    /// at RUN time by the executor (empty → no override → the zed session
+    /// default via the inference bridge; direct fallback → the platform
+    /// default). Nothing stamps a model into a card at create/clone time —
+    /// a frozen default would silently diverge from the session model the
+    /// operator chose (the operator's spec: local agents use the host
+    /// session's model, never a hardcoded inferior one).
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -270,9 +278,14 @@ pub const PORT_TYPES_FILE: &str = "port_types.json";
 
 /// Reads agent cards from a local directory. Catalogue only — no execution.
 ///
-/// The directory layout mirrors fermi's `agents/curated/`:
+/// The registry lives under the hKask data dir — `HKASK_LOCAL_AGENTS_DIR`
+/// (injected by zed, always emitted) or the default
+/// `mcp/swarm/agents/curated` resolved under the data dir (D28). It is NOT
+/// the repo's `agents/local/curated/` — cards committed in the repo are
+/// source material and must be copied into the registry (or cloned via
+/// `swarm_clone_to_local`) before the server sees them. Layout:
 /// ```text
-/// agents/local/curated/
+/// {registry_dir}/
 ///   market_research/
 ///     agent_card.json
 ///   sentiment_analyzer/

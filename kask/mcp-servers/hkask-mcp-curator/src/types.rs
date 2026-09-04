@@ -35,6 +35,13 @@ pub struct EscalationDismissByPatternRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct BackfillEmbeddingsRequest {
+    /// List the candidates that would be embedded, without embedding
+    /// anything. Default false.
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SemanticSearchRequest {
     pub query: String,
     pub limit: Option<usize>,

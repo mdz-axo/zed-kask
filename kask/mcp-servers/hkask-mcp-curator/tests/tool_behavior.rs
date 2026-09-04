@@ -815,6 +815,389 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
     );
 }
 
+// ── Insert-path semantic recallability (the entity_ref invariant) ──────
+
+/// `memory_insert` must embed the inserted memory's text under its entity.
+/// The original stored the h_mem with no embedding, so every agent-inserted
+/// memory (operator rulings, verified code status — the knowledge layer)
+/// was invisible to `curator_semantic_search`: recallable only by exact
+/// entity name, and a semantic search that found nothing was read as "no
+/// memory exists". Pins the embedding and the end-to-end semantic recall of
+/// an inserted memory.
+#[tokio::test]
+async fn memory_insert_embeds_value_for_semantic_recall() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed = hkask_storage::HMem::new(
+        "chat:thread:evidence-source",
+        "chatted",
+        serde_json::Value::String("the source turn".to_string()),
+        WebID::new(),
+    );
+    let seed_id = seed.id.to_string();
+    memory.store(seed).expect("seed evidence h_mem");
+
+    let response = parse(
+        &server
+            .memory_insert(Parameters(MemoryInsertRequest {
+                entity: "zed-kask".to_string(),
+                attribute: "default_agent_model".to_string(),
+                value: serde_json::json!("qwen3"),
+                evidence_h_mem_id: seed_id,
+                note: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "insert must succeed — got: {response}",
+    );
+    assert_eq!(
+        response["semantic_recall"].as_str(),
+        Some("embedded"),
+        "the embedding must be surfaced as stored — got: {response}",
+    );
+    assert_eq!(
+        memory.embedding_count().expect("embedding count"),
+        1,
+        "memory_insert must store one embedding under the inserted entity",
+    );
+
+    // End-to-end: a natural-language query sharing no tokens with the entity
+    // name must find the inserted memory via KNN.
+    let search = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "what model does the agent use by default".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("search ok"),
+    );
+    assert!(
+        search["results"].as_array().is_some_and(|results| {
+            results
+                .iter()
+                .any(|r| r["entity"].as_str() == Some("zed-kask"))
+        }),
+        "the inserted memory must be semantically recallable — got: {search}",
+    );
+}
+
+/// `curator_report_skill_use_issue` must store at the 0.5 confidence floor
+/// — not the `HMem::new` 1.0 default — and embed the report text under the
+/// entity. At 1.0, unverified issue reports outranked verified facts in
+/// recall ranking (confidence is a ranking multiplier); without an
+/// embedding the report was invisible to the semantic search this tool's
+/// contract advertises.
+#[tokio::test]
+async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
+    let (server, memory) = make_server_with_embeddings();
+
+    let response = parse(
+        &server
+            .curator_report_skill_use_issue(Parameters(ReportSkillUseIssueRequest {
+                skill_name: "grounding-verify".to_string(),
+                tool_name: "lisp_eval".to_string(),
+                step_ordinal: 2,
+                error: "closed-vocabulary validation form errored".to_string(),
+                tool_input: None,
+                failure_type: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(
+        response["reported"].as_bool(),
+        Some(true),
+        "the report must store — got: {response}",
+    );
+
+    let stored = memory
+        .query_deduped_untouched("skill_use_issue:grounding-verify")
+        .expect("query stored reports");
+    assert_eq!(stored.len(), 1, "one report must be stored");
+    assert!(
+        (stored[0].confidence.value() - 0.5).abs() < 1e-9,
+        "issue reports start at the 0.5 floor, not the HMem::new 1.0 default — got {}",
+        stored[0].confidence.value(),
+    );
+    assert_eq!(
+        memory.embedding_count().expect("embedding count"),
+        1,
+        "the report text must be embedded under the report entity",
+    );
+}
+
+/// The insert paths' embedding degradation contract (write-side invariant
+/// 3): with no embedding store and a failing inference port, inserts still
+/// succeed and the degradation is surfaced in the output — never a failed
+/// insert, never a silent success.
+#[tokio::test]
+async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
+    // The degraded shape: a live memory store with NO embedding store and a
+    // failing inference port.
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
+    let memory = Arc::new(
+        hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store)
+            .expect("memory store init"),
+    );
+    let seed = hkask_storage::HMem::new(
+        "chat:thread:evidence-source",
+        "chatted",
+        serde_json::Value::String("the source turn".to_string()),
+        WebID::new(),
+    );
+    let seed_id = seed.id.to_string();
+    memory.store(seed).expect("seed evidence h_mem");
+    let stores = CuratorStores {
+        escalation_queue: None,
+        regulation_store: None,
+        memory: Some(memory),
+    };
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::from_stores(stores)),
+        failing_inference_port(),
+    );
+
+    let insert = parse(
+        &server
+            .memory_insert(Parameters(MemoryInsertRequest {
+                entity: "zed-kask".to_string(),
+                attribute: "mcp_tool_surface".to_string(),
+                value: serde_json::json!("full surface, no router"),
+                evidence_h_mem_id: seed_id,
+                note: None,
+            }))
+            .await
+            .expect("insert must succeed without embeddings"),
+    );
+    assert_eq!(
+        insert["inserted"].as_bool(),
+        Some(true),
+        "the h_mem is durable SQL — embedding failure must not fail the insert — got: {insert}",
+    );
+    assert_eq!(
+        insert["semantic_recall"].as_str(),
+        Some("degraded (embedding unavailable — warn logged)"),
+        "the degradation must be surfaced in the output — got: {insert}",
+    );
+
+    let report = parse(
+        &server
+            .curator_report_skill_use_issue(Parameters(ReportSkillUseIssueRequest {
+                skill_name: "therapy".to_string(),
+                tool_name: "memory_insert".to_string(),
+                step_ordinal: 5,
+                error: "announce-then-stop".to_string(),
+                tool_input: None,
+                failure_type: None,
+            }))
+            .await
+            .expect("report must succeed without embeddings"),
+    );
+    assert_eq!(
+        report["reported"].as_bool(),
+        Some(true),
+        "the report is durable SQL — embedding failure must not fail it — got: {report}",
+    );
+    assert_eq!(
+        report["semantic_recall"].as_str(),
+        Some("degraded (embedding unavailable — warn logged)"),
+        "the degradation must be surfaced in the output — got: {report}",
+    );
+}
+
+/// `memory_resolve_contradiction` must resolve its target by h_mem ID. The
+/// previous verification used the entity-keyed `query_deduped_untouched`
+/// with the bare UUID — and no entity is a bare UUID, so every resolution
+/// attempt returned not_found and the tool could never resolve anything
+/// (the same bug class memory_insert's evidence check was fixed for).
+/// Pins both the expire and update_confidence strategies.
+#[tokio::test]
+async fn resolve_contradiction_finds_target_by_id() {
+    let (server, memory) = make_server_with_embeddings();
+    let expire_target = hkask_storage::HMem::new(
+        "zed-kask/duplicate-ruling",
+        "operator_ruling",
+        serde_json::Value::String("ruling A".to_string()),
+        WebID::new(),
+    );
+    let expire_id = expire_target.id.to_string();
+    memory.store(expire_target).expect("seed expire target");
+
+    let response = parse(
+        &server
+            .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
+                h_mem_ids: vec!["some-other-id".to_string()],
+                strategy: "expire".to_string(),
+                target_h_mem_id: expire_id,
+                new_confidence: None,
+                reason: "duplicate ruling merge".to_string(),
+            }))
+            .await
+            .expect("expire must resolve by ID"),
+    );
+    assert_eq!(
+        response["resolved"].as_bool(),
+        Some(true),
+        "expire must resolve — got: {response}",
+    );
+    assert!(
+        memory
+            .h_mems_by_entity_prefix("zed-kask/duplicate-ruling")
+            .expect("query after expire")
+            .is_empty(),
+        "the expired target must be soft-deleted (valid_to set)"
+    );
+
+    let confidence_target = hkask_storage::HMem::new(
+        "zed-kask/confidence-target",
+        "policy",
+        serde_json::Value::String("policy text".to_string()),
+        WebID::new(),
+    );
+    let confidence_id = confidence_target.id.to_string();
+    memory
+        .store(confidence_target)
+        .expect("seed confidence target");
+
+    let response = parse(
+        &server
+            .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
+                h_mem_ids: vec![],
+                strategy: "update_confidence".to_string(),
+                target_h_mem_id: confidence_id,
+                new_confidence: Some(0.5),
+                reason: "floor reset".to_string(),
+            }))
+            .await
+            .expect("update_confidence must resolve by ID"),
+    );
+    assert_eq!(
+        response["resolved"].as_bool(),
+        Some(true),
+        "update_confidence must resolve — got: {response}",
+    );
+    let updated = memory
+        .h_mems_by_entity_prefix("zed-kask/confidence-target")
+        .expect("query after update");
+    assert_eq!(updated.len(), 1);
+    assert!(
+        (updated[0].confidence.value() - 0.5).abs() < 1e-9,
+        "update_confidence must set the value — got {}",
+        updated[0].confidence.value(),
+    );
+}
+
+/// `curator_memory_backfill_embeddings` must embed knowledge-layer h_mems
+/// whose entities have no embedding, while excluding turn-storage entities
+/// (their embeddings live under the shared copy by design) and distillation
+/// watermarks (process markers). The tool exists because h_mems inserted
+/// before the 2026-09-04 embedding contract are invisible to semantic
+/// search. Also pins dry-run (embeds nothing) and idempotence (a second
+/// run finds no candidates).
+#[tokio::test]
+async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
+    let (server, memory) = make_server_with_embeddings();
+
+    let ruling = hkask_storage::HMem::new(
+        "zed-kask/provider_budget_blocks",
+        "operator_ruling",
+        serde_json::Value::String("do not touch the provider files".to_string()),
+        WebID::new(),
+    );
+    memory.store(ruling).expect("seed ruling");
+    let shared_turn = hkask_storage::HMem::new(
+        "curator:thread:backfill-test",
+        "turn",
+        serde_json::Value::String("shared turn content".to_string()),
+        WebID::new(),
+    );
+    memory.store(shared_turn).expect("seed shared turn");
+    let perspective_turn = hkask_storage::HMem::new(
+        "chat:thread:backfill-test",
+        "chatted",
+        serde_json::Value::String("perspective original".to_string()),
+        WebID::new(),
+    );
+    memory
+        .store(perspective_turn)
+        .expect("seed perspective turn");
+    let watermark = hkask_storage::HMem::new(
+        "curator:distilled:backfill-test",
+        "distilled_through",
+        serde_json::json!({"through": "2026-09-04", "turns": 1}),
+        WebID::new(),
+    );
+    memory.store(watermark).expect("seed watermark");
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding("curator:thread:backfill-test", &vector, "test-model", None)
+        .expect("seed turn embedding");
+
+    // Dry run: lists the ruling only, embeds nothing.
+    let dry = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("dry run ok"),
+    );
+    assert_eq!(dry["dry_run"].as_bool(), Some(true));
+    assert_eq!(
+        dry["candidate_count"].as_u64(),
+        Some(1),
+        "only the knowledge-layer entity is a candidate — got: {dry}",
+    );
+    assert_eq!(
+        memory.embedding_count().expect("count"),
+        1,
+        "dry run must not embed anything",
+    );
+
+    // Real run: the ruling gains an embedding; turns and watermark untouched.
+    let run = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("backfill ok"),
+    );
+    assert_eq!(
+        run["backfilled"].as_u64(),
+        Some(1),
+        "one entity backfilled — got: {run}",
+    );
+    assert_eq!(run["failed"].as_u64(), Some(0));
+    assert_eq!(
+        memory.embedding_count().expect("count"),
+        2,
+        "the ruling's embedding landed; no turn/watermark embeddings added",
+    );
+
+    // Idempotent: a second run finds no candidates.
+    let second = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: None,
+            }))
+            .await
+            .expect("second run ok"),
+    );
+    assert_eq!(
+        second["candidate_count"].as_u64(),
+        Some(0),
+        "entities with embeddings are skipped — the pass is idempotent — got: {second}",
+    );
+}
+
 // ── Semantic search — per-entity flood cap ──────────────────────────────
 
 /// One entity must not flood semantic recall: a thread entity holds one

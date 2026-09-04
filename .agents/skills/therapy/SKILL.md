@@ -37,6 +37,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 - When confidence values appear miscalibrated.
 - When the user wants to extract lessons from accumulated memory and reify them as skills, templates, or rules.
 - When memory is bloated with episodic detail that has been superseded by learned habits (skills/rules).
+- When the memory system's own wiring is suspect — confidence values escaping the floor, memories invisible to semantic search, unbounded episodic growth. The scan doubles as a wiring audit: systematic patterns in the data are wiring symptoms, and hygiene executed on buggy wiring is re-corrupted by the next write.
 
 ## When NOT to Use
 
@@ -93,7 +94,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - template: `therapy/scan.j2`
    - variables: { "target": "<target name>", "target_type": "<curator|corpus|swarm>" }
 
-2. Following the template's guidance, scan the memory database for four categories of issues:
+2. Following the template's guidance, scan the memory database for five categories of issues:
 
    **a. Contradictions** — h_mems with the same entity+attribute but divergent values or confidence. Use `curator_memory_recall` (for curator) or `corpus_query` (for corpus) or `swarm_recall_local` (for swarm) to query by entity, then compare values. For curator memory, also use `curator_semantic_search` to find related entities that may contradict.
 
@@ -109,11 +110,23 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - Accumulated experience on a topic that could inform a rule or template (e.g., "when doing X, always check Y first" — if this lesson appears in multiple memories, it's a reification candidate).
    - Episodic detail that has been superseded by a learned habit (if a skill or rule already captures the lesson, the episodic memories are purge candidates).
 
+   **e. System wiring defects** — scan findings that indicate the memory system's own wiring is broken, not just the memories. The scan is the memory system's feedback loop: systematic patterns in the data are wiring symptoms. Check:
+   - **Confidence-floor escapes** — rows above the 0.5 floor: the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers (`rg "HMem::new" --type rust` in the inserting crate) and check each site applies the floor.
+   - **Embedding-invisible memories** — knowledge-layer entities (structured memories, skill-use reports) with no row in the embeddings table: the insert path doesn't embed, so `curator_semantic_search` cannot see them and absence gets read as "no memory exists." Verify every insert path calls the shared embedding contract (`embed_for_semantic_recall` in hkask-mcp-curator).
+   - **Key-scheme drift** — the same knowledge under multiple entity/attribute keys (two writers keyed the same fact differently). Merge candidates — but also check whether the writers share a key convention.
+   - **Isolated knowledge** — structured entities absent from `memory_links` (doubly isolated when they also lack embeddings).
+   - **Unbounded episodic growth** — row-count trend, episodic-to-structured ratio, max value size. Distillation is additive-only by design; without a retirement path the episodic layer grows monotonically and therapy is the only valve.
+
+   Each wiring finding records the data symptom (from the scan), the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed BEFORE or alongside memory hygiene — a writer bug re-corrupts cleaned rows (the 2026-09-01 recalibration set every row to 0.5; the skill-use reporting path then re-created 1.0 rows because the recalibration fixed the rows, not the writer).
+
+   Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path.
+
 3. Collect all findings as structured data. Each finding includes:
    - `h_mem_id`: the ID of the problematic h_mem (or the cluster ID for reification candidates).
    - `entity`: the entity of the h_mem.
    - `attribute`: the attribute.
-   - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate".
+   - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate" | "system_defect".
+   - `root_cause`: for system_defect findings, the file:line of the writing path that produces the bad rows.
    - `description`: what the issue is.
    - `contradicting_h_mem_ids`: for contradictions, the IDs of the contradicting h_mems.
    - `source_h_mem_ids`: for reification candidates, the IDs of the memories that form the pattern.
@@ -167,6 +180,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "delete" to purge them (cognitive load shedding).
    - **Condense source memories**: if the source memories have ongoing reference value, propose replacing them with a single high-confidence summary h_mem via `memory_insert` + `memory_resolve_contradiction` (expire the originals, keep the summary).
 
+   **For system wiring defects** — these are not contradictions between memories and take no Festinger strategy. The proposal is a code fix: correct the writing path to enforce the invariant it violates (confidence floor, embedding contract, key convention), with a pinning test in the same change. Grounding: the operator's standing rule — fix the tool, never work around the tool failure — applied to the memory system itself.
+
 3. Produce a structured proposal list. Each proposal includes:
    - `finding_id`: the ID of the finding being addressed.
    - `strategy`: the resolution strategy.
@@ -196,6 +211,9 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 ### Phase 5 — Execute
 
 1. For each approved proposal, execute the corresponding tool call:
+
+   **System-defect fixes (the wiring repairs) — execute FIRST:**
+   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them.
 
    **Memory hygiene proposals:**
    - `memory_insert` for "add_consonant" and "link" strategies.
@@ -245,6 +263,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 - **Evidence-grounded proposals.** Every proposal must cite the specific h_mems and data that support the finding. No free-association.
 - **Two distinct processes — do not conflate.** Memory hygiene (resolving contradictions, purging, condensing) is forgetting, not learning. Reification (extracting meaning, creating skills/templates/rules) is learning. Forgetting is a hygiene side-effect of successful reification, not part of the learning loop.
 - **Festinger's three strategies only for contradictions.** Every contradiction resolution must use one of: reduce importance, add consonant, remove dissonant.
+- **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix ships in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 floor, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
 - **Reification requires user review of the proposed skill/template/rule content.** The user must see and approve the actual content before it is written.
 - **Post-reification forgetting requires separate approval.** The user approves reification and forgetting as separate decisions — they may reify a lesson but choose to keep the source memories.
 - **Curator-only writes for curator memory.** The `memory_insert`, `memory_update`, and `memory_resolve_contradiction` tools are curator MCP server tools, restricted to curator threads (enforced in `enabled_tools`). Read-only curator tools remain available to all threads.

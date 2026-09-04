@@ -52,7 +52,7 @@ pub(crate) const DEFAULT_DISTILLATION_IDLE_SECS: u64 = 300;
 /// transcript remains; therapy can still distill them).
 const FIRST_PASS_LOOKBACK_SECS: i64 = 6 * 3600;
 
-const WATERMARK_PREFIX: &str = "curator:distilled:";
+pub(crate) const WATERMARK_PREFIX: &str = "curator:distilled:";
 const MAX_TURNS_PER_PROMPT: usize = 12;
 const MAX_TURN_CHARS: usize = 3_000;
 const MAX_LESSONS_PER_THREAD: usize = 5;
@@ -442,33 +442,12 @@ async fn insert_lesson(
         .with_dimension(hkask_types::Dimension::Why);
     memory.store(lesson)?;
     // Embed the lesson text under the lesson's entity so semantic recall
-    // finds it by meaning — the entity_ref invariant: the embedding joins
-    // the h_mem that was just stored under the same entity. Failure is
-    // non-fatal: entity/keyword recall still works, matching the ingest
-    // path's degradation contract.
-    let embedding_model = hkask_inference::model_constants::embedding_model();
-    match inference_port
-        .embed(&embedding_model, std::slice::from_ref(&candidate.text))
-        .await
-    {
-        Ok(vectors) if !vectors.is_empty() && !vectors[0].is_empty() => {
-            if let Err(error) =
-                memory.store_embedding(entity, &vectors[0], &embedding_model, Some(&candidate.text))
-            {
-                tracing::warn!(
-                    target: "hkask.mcp.curator.distillation",
-                    %error,
-                    "Failed to store lesson embedding — semantic recall degraded for this lesson"
-                );
-            }
-        }
-        _ => {
-            tracing::warn!(
-                target: "hkask.mcp.curator.distillation",
-                "Lesson embedding unavailable — semantic recall degraded for this lesson"
-            );
-        }
-    }
+    // finds it by meaning — the shared insert-path embedding contract
+    // (`embed_for_semantic_recall`), which also serves `memory_insert` and
+    // the skill-use issue path. The embedded text is the same truncated
+    // text that was stored, so the vector always represents the durable
+    // lesson (the previous inline copy embedded the untruncated original).
+    crate::embed_for_semantic_recall(inference_port, memory, entity, &text).await;
     Ok(true)
 }
 

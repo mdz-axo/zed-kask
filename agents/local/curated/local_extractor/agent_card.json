@@ -3,14 +3,18 @@
   "agent_type": "extractor",
   "description": "A local extractor agent that pulls structured fields (dates, names, numbers, identifiers) from unstructured text. Runs entirely on a local Ollama model — no ABW calls, no cloud round-trips. Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
   "display_name": "",
-  "accepts": ["text"],
-  "produces": ["text"],
+  "accepts": [
+    "text"
+  ],
+  "produces": [
+    "text"
+  ],
   "dependencies": {
     "required": [],
     "optional": []
   },
   "capabilities": {
-    "model": "ollama/qwen3.8:27b",
+    "model": "",
     "min_provider_class": "local",
     "system_prompt": "You are a local extractor. Given unstructured text, extract the requested fields and report each on its own line as 'field: value'. Stay faithful to the input — do not invent values. If a requested field is absent, report 'field: not found'. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],

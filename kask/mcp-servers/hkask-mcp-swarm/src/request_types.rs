@@ -258,8 +258,10 @@ pub struct CreateAgentRequest {
     pub system_prompt: String,
     /// One-sentence description for the catalogue.
     pub description: String,
-    /// Model id. Default: the server's `default_agent_model` (operator-
-    /// configurable via `HKASK_ABW_DEFAULT_AGENT_MODEL`).
+    /// Model id — an EXPLICIT per-agent override. When omitted, the card
+    /// carries no model and the agent runs on the host session's default
+    /// model, resolved at run time (the operator's spec: local agents use
+    /// the host session's model, never a hardcoded one).
     pub model: Option<String>,
     /// Temperature (0.1–0.3 factual, 0.5–0.8 creative). Default 0.3.
     pub temperature: Option<f64>,

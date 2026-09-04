@@ -171,8 +171,14 @@ impl DiscoveryState {
                     state_for_notify.update(cx, |_, cx| cx.notify());
                 }
                 Err(error) => {
+                    // `{error:#}` (anyhow's alternate format) includes the
+                    // full source chain — connect vs DNS vs TLS vs timeout.
+                    // The top-level Display alone logged "error sending
+                    // request" with no cause, leaving transport failures
+                    // undiagnosable (observed 2026-09-04: two discovery
+                    // failures whose root cause could not be recovered).
                     log::warn!(
-                        "RunPod provider: endpoint discovery from {api_url}/graphql failed: {error}"
+                        "RunPod provider: endpoint discovery from {api_url}/graphql failed: {error:#}"
                     );
                 }
             }

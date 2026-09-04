@@ -322,11 +322,18 @@ impl LanguageModelInferencePort {
     }
 
     /// Resolve a model, using the override if provided, else the default.
+    ///
+    /// Returns `None` when an explicit override cannot be resolved — the
+    /// caller must surface that as a typed error, never silently substitute
+    /// the default model: the default is usually a text model, and a vision
+    /// override resolved to a text model drops the images and returns
+    /// garbage/empty output that reads like an endpoint failure (observed:
+    /// ollama OCR overrides "failing" while the local endpoint was fine).
     async fn resolve_model(
         model_for_task: &Arc<dyn LanguageModel>,
         override_name: Option<&str>,
         cx: &AsyncApp,
-    ) -> Arc<dyn LanguageModel> {
+    ) -> Option<Arc<dyn LanguageModel>> {
         if let Some(override_name) = override_name {
             let override_name = override_name.to_string();
             let resolved = cx.update(|cx| {
@@ -341,20 +348,20 @@ impl LanguageModelInferencePort {
                 .next()
             });
             match resolved {
-                Some(m) => m,
+                Some(m) => Some(m),
                 None => {
                     tracing::warn!(
                         target: "hkask.inference",
                         model_override = %override_name.as_str(),
                         "model_override could not be resolved from LanguageModelRegistry — \
-                         falling back to the default model. Ensure the model is configured \
-                         in Settings → AI → LLM Providers."
+                         replying with a typed error instead of substituting the default \
+                         model. Ensure the model is configured in Settings → AI → LLM Providers."
                     );
-                    model_for_task.clone()
+                    None
                 }
             }
         } else {
-            model_for_task.clone()
+            Some(model_for_task.clone())
         }
     }
 
@@ -367,7 +374,26 @@ impl LanguageModelInferencePort {
         cx: &AsyncApp,
         recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
     ) {
-        let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
+        let model =
+            match Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await {
+                Some(model) => model,
+                None => {
+                    let name = req.model_override.clone().unwrap_or_default();
+                    let result = Err(InferenceError::Model(format!(
+                        "model_override '{name}' not found in the LanguageModelRegistry — \
+                     not falling back to the default model (a vision override resolved to \
+                     a text model drops images silently). Ensure the model is configured \
+                     in Settings → AI → LLM Providers."
+                    )));
+                    if req.reply.send(result).is_err() {
+                        tracing::trace!(
+                            target: "hkask.inference",
+                            "inference reply dropped — caller cancelled"
+                        );
+                    }
+                    return;
+                }
+            };
         let cx = cx.clone();
         let request = req.request;
         let result = async move {
@@ -447,7 +473,27 @@ impl LanguageModelInferencePort {
         cx: &AsyncApp,
         recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
     ) {
-        let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
+        let model = match Self::resolve_model(model_for_task, req.model_override.as_deref(), cx)
+            .await
+        {
+            Some(model) => model,
+            None => {
+                let name = req.model_override.clone().unwrap_or_default();
+                let error = InferenceError::Model(format!(
+                    "model_override '{name}' not found in the LanguageModelRegistry — \
+                     not falling back to the default model (a vision override resolved to \
+                     a text model drops images silently). Ensure the model is configured \
+                     in Settings → AI → LLM Providers."
+                ));
+                if req.reply.send(Err(error)).is_err() {
+                    tracing::trace!(
+                        target: "hkask.inference",
+                        "streaming inference reply dropped — caller cancelled before first event"
+                    );
+                }
+                return;
+            }
+        };
         let cx = cx.clone();
         let request = req.request;
         let reply = req.reply;

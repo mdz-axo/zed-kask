@@ -800,4 +800,132 @@ mod tests {
         assert_eq!(resolved.top_k, 10);
         assert_eq!(resolved.top_p, defaults.top_p);
     }
+
+    /// A stub that records the `model_override` it was called with, so tests
+    /// can pin the model-resolution contract.
+    struct RecordingInference {
+        override_seen: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl hkask_types::InferencePort for RecordingInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+            >,
+        > {
+            self.override_seen
+                .lock()
+                .unwrap()
+                .push(None);
+            Box::pin(async {
+                Ok(hkask_types::InferenceResult {
+                    text: "stub".into(),
+                    model: "stub-model".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+
+        fn generate_with_messages(
+            &self,
+            _messages: &[hkask_types::ChatMessage],
+            _parameters: &hkask_types::template::LLMParameters,
+            model_override: Option<&str>,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+            >,
+        > {
+            self.override_seen
+                .lock()
+                .unwrap()
+                .push(model_override.map(str::to_string));
+            Box::pin(async {
+                Ok(hkask_types::InferenceResult {
+                    text: "stub".into(),
+                    model: "stub-model".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// The model-resolution contract (the operator's spec): an EMPTY card
+    /// model means "host session default" — the executor must pass NO
+    /// override so the inference bridge resolves the session's model. A
+    /// non-empty model is an explicit override and must be passed through.
+    /// Nothing stamps a default into the chain.
+    #[tokio::test]
+    async fn empty_card_model_passes_no_override_and_explicit_model_passes_through() {
+        use crate::local_registry::LocalAgentCapabilities;
+        use std::sync::Arc;
+        let inference = Arc::new(RecordingInference {
+            override_seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let executor =
+            AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
+
+        let mut card = crate::local_registry::LocalAgentCard {
+            agent_id: "model_probe".to_string(),
+            agent_type: "research".to_string(),
+            description: String::new(),
+            display_name: String::new(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: Default::default(),
+            capabilities: LocalAgentCapabilities::default(),
+            cloud_swarm_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+            version: "1.0.0".to_string(),
+            workflow_template: None,
+        };
+        // Empty model → NO override → the bridge resolves the host session
+        // default.
+        executor.run(&card, "task").await.expect("empty model runs");
+        assert_eq!(
+            inference.override_seen.lock().unwrap().as_slice(),
+            &[None],
+            "empty card model must produce no override — the host session default resolves it"
+        );
+
+        // Explicit model → passed through as the override.
+        card.capabilities.model = "OpenRouter/z-ai/glm-5.2".to_string();
+        executor.run(&card, "task").await.expect("explicit model runs");
+        assert_eq!(
+            inference.override_seen.lock().unwrap().as_slice(),
+            &[None, Some("OpenRouter/z-ai/glm-5.2".to_string())],
+            "an explicit per-agent model must be passed through as the override"
+        );
+    }
 }
