@@ -138,10 +138,15 @@ impl MediaServer {
 }
 
 impl MediaServer {
-    /// Resolve the best available vision model with fallback chain.
-    /// Tries: OpenRouter.
+    /// Resolve the best available vision model.
+    /// Picks the first OpenRouter vision model the registry reports.
     /// Returns (model_name, label) or None if no vision provider is configured.
-    pub(crate) async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
+    ///
+    /// The returned name is the registry's own — the former hardcoded
+    /// fallback ("OpenRouter/qwen/qwen-2.5-vl-72b-instruct") was a frozen
+    /// literal that rotted out of the catalog and, before the fail-closed
+    /// resolver, silently rerouted every vision call to a text model.
+    pub(crate) async fn resolve_vision_model(&self) -> Option<(String, String)> {
         let models = match self.vision_port.list_vision_models().await {
             Ok(models) => models,
             Err(e) => {
@@ -159,11 +164,15 @@ impl MediaServer {
             // the IPC bridge returns zed provider ids like "openrouter" (a
             // standalone MediaRouter is media-only and returns no chat models).
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
-            match prefix.to_ascii_lowercase().as_str() {
-                "openrouter" => {
-                    return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
-                }
-                _ => continue,
+            if prefix.eq_ignore_ascii_case("openrouter") {
+                // The label (the model part after the provider prefix) is for
+                // logs and tool results.
+                let label = model
+                    .prefixed_name
+                    .split_once('/')
+                    .map(|(_, rest)| rest.to_string())
+                    .unwrap_or_else(|| model.prefixed_name.clone());
+                return Some((model.prefixed_name.clone(), label));
             }
         }
 
@@ -243,6 +252,10 @@ impl MediaServer {
                 );
             }
         };
+        // Shadow to &str so the per-pipeline call sites below (which take
+        // Option<&str> / &str) work unchanged.
+        let vision_model = vision_model.as_str();
+        let vision_label = vision_label.as_str();
         let mut analyzed = 0u32;
         let mut errors = Vec::new();
 

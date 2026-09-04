@@ -35,7 +35,7 @@ pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 // ── Re-exports ──
 
 pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
-pub(crate) use ranking::{apply_rerank, llm_rerank, rrf_score};
+pub(crate) use ranking::{RerankOutcome, apply_rerank, llm_rerank, rrf_score};
 pub use rate_limiter::RateLimiter;
 pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 

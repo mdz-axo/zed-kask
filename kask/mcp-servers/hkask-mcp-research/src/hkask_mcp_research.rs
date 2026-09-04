@@ -28,8 +28,8 @@ use crate::research::{
     GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
     MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput, ProviderProfileOutput,
-    ProviderRecommendation, RateLimiter, RerankInfo, ResponseCache, SearchMetadata, SearchOutput,
-    SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
+    ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResponseCache, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
     SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
     cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile,
 };
@@ -59,6 +59,13 @@ hkask_mcp_server::mcp_server!(
         /// `LazyInferencePort` that bridges to zed's LanguageModelRegistry
         /// over `HKASK_INFERENCE_SOCKET` on each call.
         pub inference_port: Arc<dyn hkask_types::InferencePort>,
+        /// The deep strategy's rerank model — resolved ONCE at the
+        /// construction seam from `HKASK_RERANK_MODEL` (the visible
+        /// `kask.models.rerank_model` setting). `None` = not configured:
+        /// the deep strategy degrades to heuristic order with a fail-visible
+        /// reason naming the setting — never a hidden constant (the
+        /// operator's no-hidden-models spec).
+        pub rerank_model: Option<String>,
     }
 );
 
@@ -256,18 +263,36 @@ impl ResearchServer {
 
             // Deep strategy rerank stage: ONE templated rerank call
             // carrying all candidates as documents, routed through the
-            // inference IPC bridge to the provider's rerank endpoint
-            // (default `OpenRouter/qwen/qwen3-reranker-8b`, override via
-            // `HKASK_RERANK_MODEL`). Every degraded outcome (call failed,
-            // or documents missing from the response) is surfaced in
-            // `rerank` — never a silent fallback.
+            // inference IPC bridge to the provider's rerank endpoint. The
+            // model resolves from `HKASK_RERANK_MODEL` (the visible
+            // `kask.models.rerank_model` setting) — unconfigured is a
+            // fail-visible degraded outcome naming the setting, never a
+            // hidden constant (the operator's no-hidden-models spec). Every
+            // degraded outcome is surfaced in `rerank` — never a silent
+            // fallback.
             let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
-                let outcome = llm_rerank(
-                    self.inference_port.as_ref(),
-                    &req.query,
-                    &mut compound.results,
-                )
-                .await;
+                let outcome = match self.rerank_model.as_deref() {
+                    Some(model) => {
+                        llm_rerank(
+                            self.inference_port.as_ref(),
+                            &req.query,
+                            &mut compound.results,
+                            model,
+                        )
+                        .await
+                    }
+                    None => RerankOutcome {
+                        scored: 0,
+                        failed: compound.results.len(),
+                        first_error: Some(
+                            "no rerank model configured — set \
+                             kask.models.rerank_model (injected as \
+                             HKASK_RERANK_MODEL); kask never falls back to a \
+                             hidden code constant"
+                                .to_string(),
+                        ),
+                    },
+                };
                 if outcome.scored == 0 {
                     tracing::warn!(
                         target: "hkask.web",
@@ -1737,6 +1762,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 rss_db,
                 rss_client,
                 inference_port.clone(),
+                // The visible settings chain, resolved once at the
+                // construction seam (no hidden constant — the operator's
+                // no-hidden-models spec).
+                hkask_inference::model_constants::rerank_model(),
             ))
         },
         credential_requirements(),

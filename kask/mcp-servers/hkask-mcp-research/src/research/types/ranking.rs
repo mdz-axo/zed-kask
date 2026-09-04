@@ -338,27 +338,9 @@ pub(crate) async fn llm_rerank(
     inference_port: &dyn InferencePort,
     query: &str,
     results: &mut Vec<RankedResult>,
+    rerank_model: &str,
 ) -> RerankOutcome {
     let total = results.len();
-    // The rerank model resolves from `HKASK_RERANK_MODEL` (injected from
-    // the visible `kask.models.rerank_model` setting) — `None` is a
-    // fail-visible outcome naming the setting, never a hidden constant
-    // (the operator's no-hidden-models spec).
-    let rerank_model = match hkask_inference::model_constants::rerank_model() {
-        Some(model) => model,
-        None => {
-            return RerankOutcome {
-                scored: 0,
-                failed: total,
-                first_error: Some(
-                    "no rerank model configured — set \
-                     kask.models.rerank_model (injected as HKASK_RERANK_MODEL); \
-                     kask never falls back to a hidden code constant"
-                        .to_string(),
-                ),
-            };
-        }
-    };
     let documents: Vec<String> = results.iter().map(build_rerank_document).collect();
 
     let scores = match inference_port
@@ -559,7 +541,7 @@ mod rerank_tests {
         ]);
         let mut results = three_candidates();
 
-        let outcome = llm_rerank(&port, "test", &mut results).await;
+        let outcome = llm_rerank(&port, "test", &mut results, "test-rerank-model").await;
 
         assert_eq!(outcome.scored, 3);
         assert_eq!(outcome.failed, 0);
@@ -588,7 +570,7 @@ mod rerank_tests {
         let port = FixedRerankPort::with_scores(vec![score_entry(0, 0.50), score_entry(2, 0.90)]);
         let mut results = three_candidates();
 
-        let outcome = llm_rerank(&port, "test", &mut results).await;
+        let outcome = llm_rerank(&port, "test", &mut results, "test-rerank-model").await;
 
         assert_eq!(outcome.scored, 2);
         assert_eq!(outcome.failed, 1);
@@ -618,7 +600,7 @@ mod rerank_tests {
         let port = FixedRerankPort::with_error("stub: rerank endpoint down");
         let mut results = three_candidates();
 
-        let outcome = llm_rerank(&port, "test", &mut results).await;
+        let outcome = llm_rerank(&port, "test", &mut results, "test-rerank-model").await;
 
         assert_eq!(outcome.scored, 0);
         assert_eq!(outcome.failed, 3);

@@ -758,7 +758,7 @@ impl MediaServer {
             }
             let result = self
                 .vision_port
-                .generate_vision(&prompt, &image_b64s, &params, Some(vision_model))
+                .generate_vision(&prompt, &image_b64s, &params, Some(vision_model.as_str()))
                 .await;
 
             for frame in &frames {

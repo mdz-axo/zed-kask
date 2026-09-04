@@ -101,7 +101,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "OCR a PDF or image through the page pipeline (per-page vision OCR with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model defaults to the configured OCR model (HKASK_OCR_MODEL or the built-in default); an explicit vision-capable model override is accepted."
+        description = "OCR a PDF or image through the page pipeline (per-page vision OCR with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var or the kask.models.ocr_model setting); there is no built-in default — unset fails with visible guidance. The resolved model must be vision-capable."
     )]
     pub async fn corpus_ocr(
         &self,

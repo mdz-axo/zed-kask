@@ -69,8 +69,6 @@ enum SemanticRecallError {
     },
     #[error("embedding model returned no vector for the recall query")]
     NoVector,
-    #[error("no embedding model configured (HKASK_EMBEDDING_MODEL unset)")]
-    NoEmbeddingModel,
     #[error("semantic search over curator memory failed: {source}")]
     Search {
         #[source]
@@ -492,9 +490,7 @@ impl CuratorServer {
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
-        let Some(embedding_model) = hkask_inference::model_constants::embedding_model() else {
-            return Err(SemanticRecallError::NoEmbeddingModel);
-        };
+        let embedding_model = curator_embedding_model();
         let vectors = self
             .inference_port
             .embed(&embedding_model, &[query.to_string()])
@@ -1677,6 +1673,20 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
 /// result, never a silent success.
 pub(crate) const DEGRADED_EMBEDDING_NOTE: &str = "degraded (embedding unavailable — warn logged)";
 
+/// The curator server's embedding model: the env-resolved model when
+/// configured, else the canonical `DEFAULT_EMBEDDING_MODEL` — the same
+/// constant the bridge's turn ingestion embeds with. The env-only
+/// resolver returns None under default settings (the env emitter
+/// suppresses default-valued vars, pinned by the `mcp_env` tests), so
+/// without this fallback the default configuration degraded every
+/// semantic path to entity-exact lookup (the 2026-09-04 post-rebuild
+/// regression: insert-path embeddings, semantic search, and consult all
+/// reported "no embedding model configured").
+pub(crate) fn curator_embedding_model() -> String {
+    hkask_inference::model_constants::embedding_model()
+        .unwrap_or_else(|| hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string())
+}
+
 /// The embed-text composition for inserted memories: entity + attribute +
 /// value. A bare value like "qwen3" embeds to a semantically thin vector;
 /// "zed-kask default_agent_model: qwen3" matches the natural-language
@@ -1713,14 +1723,7 @@ pub(crate) async fn embed_for_semantic_recall(
     text: &str,
 ) -> bool {
     let owned_text = text.to_string();
-    let Some(embedding_model) = hkask_inference::model_constants::embedding_model() else {
-        tracing::warn!(
-            target: "hkask.mcp.curator",
-            entity,
-            "No embedding model configured (HKASK_EMBEDDING_MODEL unset) — semantic recall degraded for this memory"
-        );
-        return false;
-    };
+    let embedding_model = curator_embedding_model();
     match inference_port
         .embed(&embedding_model, std::slice::from_ref(&owned_text))
         .await

@@ -50,7 +50,7 @@ impl MediaServer {
                 &self.vision_port,
                 &self.template_env,
                 image_url,
-                Some(vision_model),
+                Some(vision_model.as_str()),
             )
             .await
             .map_err(map_media_error)?;
@@ -246,7 +246,7 @@ impl MediaServer {
                     &self.template_env,
                     &ref_url,
                     &query_url,
-                    Some(vision_model),
+                    Some(vision_model.as_str()),
                 )
                 .await
                 {
@@ -266,7 +266,7 @@ impl MediaServer {
                                 "face",
                                 &new_value.to_string(),
                                 result.confidence,
-                                vision_model,
+                                vision_model.as_str(),
                             );
                             faces_matched += 1;
                             break;

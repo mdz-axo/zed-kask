@@ -220,6 +220,7 @@ fn make_server_without_db() -> ResearchServer {
             .build()
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
+        None,
     )
 }
 
@@ -245,6 +246,7 @@ fn make_server_with_rss_db() -> ResearchServer {
             .build()
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
+        None,
     )
 }
 
@@ -726,6 +728,7 @@ impl WebSearchPort for FixedResultsPool {
 fn make_server_with_pool_and_port(
     pool: Arc<dyn WebSearchPort>,
     inference_port: Arc<dyn InferencePort>,
+    rerank_model: Option<&str>,
 ) -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
@@ -737,6 +740,7 @@ fn make_server_with_pool_and_port(
             .build()
             .expect("reqwest client build"),
         inference_port,
+        rerank_model.map(str::to_string),
     )
 }
 
@@ -753,13 +757,18 @@ fn deep_search_request() -> SearchRequest {
     }
 }
 
+
 /// Success contract: the LLM's per-candidate scores reach the caller
 /// (descending score order) and the output names `mode: "llm"` with no
 /// reason.
 #[tokio::test]
 async fn deep_search_llm_rerank_reorders_results() {
     let server =
-        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(ScoringInferencePort));
+        make_server_with_pool_and_port(
+            Arc::new(FixedResultsPool),
+            Arc::new(ScoringInferencePort),
+            Some("test-rerank-model"),
+        );
     let output = parse(&ok(server
         .web_search(Parameters(deep_search_request()))
         .await));
@@ -795,7 +804,11 @@ async fn deep_search_llm_rerank_reorders_results() {
 #[tokio::test]
 async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
     let server =
-        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(FailingInferencePort));
+        make_server_with_pool_and_port(
+            Arc::new(FixedResultsPool),
+            Arc::new(FailingInferencePort),
+            Some("test-rerank-model"),
+        );
     let output = parse(&ok(server
         .web_search(Parameters(deep_search_request()))
         .await));
@@ -836,7 +849,11 @@ async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
 #[tokio::test]
 async fn quick_search_has_no_rerank_field() {
     let server =
-        make_server_with_pool_and_port(Arc::new(FixedResultsPool), Arc::new(FailingInferencePort));
+        make_server_with_pool_and_port(
+            Arc::new(FixedResultsPool),
+            Arc::new(FailingInferencePort),
+            Some("test-rerank-model"),
+        );
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     let output = parse(&ok(server.web_search(Parameters(request)).await));
@@ -959,6 +976,7 @@ async fn web_search_does_not_cache_provider_failures() {
             failed_once: std::sync::Mutex::new(false),
         }),
         Arc::new(FailingInferencePort),
+        None,
     );
     let make_request = || SearchRequest {
         query: "cache gate".to_string(),
@@ -1119,6 +1137,7 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
             .build()
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
+        None,
     );
     let output = server
         .web_search(Parameters(SearchRequest {

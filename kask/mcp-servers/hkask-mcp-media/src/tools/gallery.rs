@@ -625,7 +625,7 @@ impl MediaServer {
                 .map_err(crate::error::map_media_error)?;
             let r = self
                 .vision_port
-                .generate_vision(&prompt, &[image_b64], &params, Some(vision_model))
+                .generate_vision(&prompt, &[image_b64], &params, Some(vision_model.as_str()))
                 .await
                 .map_err(|e| classify_inference_error("Vision inference failed", e))?;
 
@@ -701,7 +701,7 @@ impl MediaServer {
                 .resolve_vision_model()
                 .await
                 .map(|(_, label)| label)
-                .unwrap_or("none");
+                .unwrap_or_else(|| "none".to_string());
 
             Ok(serde_json::json!({
                 "status": "complete",
@@ -799,7 +799,7 @@ impl MediaServer {
                 &self.vision_port,
                 &self.template_env,
                 &image_url,
-                Some(vision_model),
+                Some(vision_model.as_str()),
             )
             .await
             .map_err(map_media_error)?;

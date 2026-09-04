@@ -288,7 +288,7 @@ impl MediaServer {
     }
 
     /// Return the best available vision model or an error if none is configured.
-    async fn require_vision(&self) -> Result<(&'static str, &'static str), McpToolError> {
+    async fn require_vision(&self) -> Result<(String, String), McpToolError> {
         self.resolve_vision_model().await.ok_or_else(|| {
             McpToolError::permission_denied(
                 "No vision-capable provider configured. Vision LLMs route through zed's \
