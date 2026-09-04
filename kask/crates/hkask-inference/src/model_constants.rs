@@ -11,22 +11,6 @@
 //! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
 //! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
 
-/// Default embedding model. Served by DeepInfra (OpenAI-compatible
-/// `/v1/embeddings` endpoint). The `DeepInfra/` prefix routes through
-/// `resolve_embedding_credentials` to `https://api.deepinfra.com/v1/openai`
-/// with the `DEEPINFRA_API_KEY` env var. Operators must set this key via
-/// Settings → AI → LLM Providers (it lives at the provider's `api_url`
-/// keychain slot — the ONE location) for embedding-based recall to work.
-///
-/// Previously defaulted to `ollama/qwen3-embedding:0.6b` (local Ollama),
-/// which works but is impractically slow on CPU for large corpora (33K+
-/// chunks). The cloud endpoint serves the same Qwen model at scale.
-pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
-// NOTE: the LAST remaining constant default — its single functional
-// consumer (kask_bridge/src/settings.rs `effective_embedding_model`) is in
-// the parallel session's in-flight file; delete both together when that
-// pass lands (the operator's no-hidden-models spec).
-
 // ── Resolved model accessors (env var → Option; None = not configured) ────
 //
 // The operator's no-hidden-models spec: these accessors have NO constant

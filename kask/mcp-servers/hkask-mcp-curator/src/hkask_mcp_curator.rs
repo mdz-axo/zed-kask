@@ -74,6 +74,10 @@ enum SemanticRecallError {
         #[source]
         source: hkask_memory::MemoryStoreError,
     },
+    #[error("no embedding model configured — set kask.models.embedding_model \\
+             (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+             hidden code constant")]
+    EmbeddingNotConfigured,
 }
 
 /// The four stores the curator's tools read, all backed by the curator's
@@ -490,7 +494,8 @@ impl CuratorServer {
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
-        let embedding_model = curator_embedding_model();
+        let embedding_model = curator_embedding_model()
+            .ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
         let vectors = self
             .inference_port
             .embed(&embedding_model, &[query.to_string()])
@@ -1674,17 +1679,17 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
 pub(crate) const DEGRADED_EMBEDDING_NOTE: &str = "degraded (embedding unavailable — warn logged)";
 
 /// The curator server's embedding model: the env-resolved model when
-/// configured, else the canonical `DEFAULT_EMBEDDING_MODEL` — the same
-/// constant the bridge's turn ingestion embeds with. The env-only
-/// resolver returns None under default settings (the env emitter
-/// suppresses default-valued vars, pinned by the `mcp_env` tests), so
-/// without this fallback the default configuration degraded every
-/// semantic path to entity-exact lookup (the 2026-09-04 post-rebuild
-/// regression: insert-path embeddings, semantic search, and consult all
-/// reported "no embedding model configured").
-pub(crate) fn curator_embedding_model() -> String {
+/// configured, else `None`. `None` is NOT a fallback to a hidden constant
+/// (the operator's no-hidden-models spec) — the semantic paths degrade
+/// VISIBLY: `curator_semantic_search` returns a typed
+/// `EmbeddingNotConfigured` error naming the setting, and the insert
+/// paths stamp `DEGRADED_EMBEDDING_NOTE` + warn. The 2026-09-04
+/// regression this note previously guarded against was the degradation
+/// firing under default settings; the ratified fix is to surface it (the
+/// operator sets `kask.models.embedding_model`), not to hide a constant
+/// model behind it.
+pub(crate) fn curator_embedding_model() -> Option<String> {
     hkask_inference::model_constants::embedding_model()
-        .unwrap_or_else(|| hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string())
 }
 
 /// The embed-text composition for inserted memories: entity + attribute +
@@ -1723,7 +1728,18 @@ pub(crate) async fn embed_for_semantic_recall(
     text: &str,
 ) -> bool {
     let owned_text = text.to_string();
-    let embedding_model = curator_embedding_model();
+    let Some(embedding_model) = curator_embedding_model() else {
+        tracing::warn!(
+            target: "hkask.mcp.curator",
+            entity,
+            reason = "no embedding model configured — set \\
+                      kask.models.embedding_model (injected as \\
+                      HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+                      hidden code constant",
+            "embedding skipped — semantic recall degraded for this memory"
+        );
+        return false;
+    };
     match inference_port
         .embed(&embedding_model, std::slice::from_ref(&owned_text))
         .await

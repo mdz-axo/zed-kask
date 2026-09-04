@@ -751,7 +751,7 @@ mod tests {
     }
 
     // The `embedding_model` field has a non-empty `Default`
-    // (`DEFAULT_EMBEDDING_MODEL`), so the comparison must be
+    // (empty), so the comparison must be
     // against `Default`, not `is_empty()`. A user override must be emitted;
     // the default must not.
     #[test]

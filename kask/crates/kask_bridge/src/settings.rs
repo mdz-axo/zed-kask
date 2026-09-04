@@ -333,8 +333,9 @@ pub struct KaskCorpusSettings {
     /// Embedding dimensionality (must match the embedding model's output).
     pub embedding_dim: u32,
 
-    /// Embedding model. Defaults to the kask router constant
-    /// (`hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`).
+    /// Embedding model. Empty = not configured — embedding-dependent
+    /// calls fail visibly naming the setting (the operator's
+    /// no-hidden-models spec: no constant fallback).
     pub embedding_model: String,
 
     /// OCR simple threshold (0.0–1.0). Pages below this are processed simply.
@@ -369,7 +370,9 @@ impl Default for KaskCorpusSettings {
 }
 
 fn default_embedding_model() -> String {
-    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
+    // Empty = not configured (the operator's no-hidden-models spec): no
+    // code-constant fallback — consumers fail visibly naming the setting.
+    String::new()
 }
 
 /// Prediction-markets data-service configuration.
@@ -630,7 +633,9 @@ impl Settings for KaskSettings {
 impl KaskSettings {
     /// Effective embedding model, resolving the documented precedence:
     /// `models.embedding_model` (if non-empty) → `corpus.embedding_model`
-    /// (if non-default) → the `DEFAULT_EMBEDDING_MODEL` constant.
+    /// (if set) → EMPTY (not configured). Empty means embedding-dependent
+    /// calls fail visibly naming the setting — never a hidden constant
+    /// (the operator's no-hidden-models spec).
     ///
     /// This is the single source of truth for the `HKASK_EMBEDDING_MODEL`
     /// env emission. Previously two separate `env.insert` blocks in
@@ -642,10 +647,10 @@ impl KaskSettings {
     pub fn effective_embedding_model(&self) -> String {
         if !self.models.embedding_model.is_empty() {
             self.models.embedding_model.clone()
-        } else if self.corpus.embedding_model != default_embedding_model() {
+        } else if !self.corpus.embedding_model.is_empty() {
             self.corpus.embedding_model.clone()
         } else {
-            default_embedding_model()
+            String::new()
         }
     }
 
@@ -1191,10 +1196,9 @@ mod tests {
     #[test]
     fn effective_embedding_model_falls_back_to_corpus_when_models_empty() {
         let mut settings = KaskSettings::default();
-        assert_eq!(
-            settings.effective_embedding_model(),
-            default_embedding_model()
-        );
+        // Nothing configured → EMPTY (not configured), never a hidden
+        // constant — embedding calls fail visibly naming the setting.
+        assert_eq!(settings.effective_embedding_model(), "");
         settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
         assert_eq!(
             settings.effective_embedding_model(),

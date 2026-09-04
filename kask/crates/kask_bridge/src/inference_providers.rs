@@ -94,7 +94,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     },
     // DeepInfra is a cloud inference platform serving Qwen embedding models
     // via an OpenAI-compatible `/v1/embeddings` endpoint. The default
-    // embedding model (`DEFAULT_EMBEDDING_MODEL`) routes through this provider.
+    // embedding model routes through this provider.
     // Operators must set `DEEPINFRA_API_KEY` (via Settings → AI → LLM
     // Providers, which writes the keychain slot at the provider `api_url`, or
     // via the env var).
