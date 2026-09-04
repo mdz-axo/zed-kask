@@ -364,11 +364,7 @@ mod calibration_scan_tests {
         assert!(observations[0].1.outcome);
         // The snapshot is consumed — a second pass cannot re-record it.
         let mut second_pass = 0;
-        let again = resolved_observations_from_snapshots(
-            &settled,
-            &mut store,
-            &mut second_pass,
-        );
+        let again = resolved_observations_from_snapshots(&settled, &mut store, &mut second_pass);
         assert!(again.is_empty());
         assert_eq!(second_pass, 1);
     }

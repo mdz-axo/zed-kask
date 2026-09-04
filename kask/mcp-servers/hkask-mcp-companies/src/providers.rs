@@ -1490,7 +1490,6 @@ pub async fn fetch_eodhd_screener(
     Ok(all_rows)
 }
 
-
 /// Fetch the EODHD screener with market cap band splitting to exhaust
 /// the 1,000-result offset limit. Adds market_capitalization band filters
 /// to the existing filter set.
@@ -1588,7 +1587,6 @@ async fn fetch_screener_page(
         None => Ok(Vec::new()),
     }
 }
-
 
 /// Inputs for multi-signal symbol resolution: the company name and ticker
 /// from the prompt, plus optional exchange / country disambiguators. At

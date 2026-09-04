@@ -177,7 +177,6 @@ pub struct ProviderRecommendation {
     pub live_sample_count: Option<usize>,
 }
 
-
 // ── Request types ──
 
 #[derive(Debug, Deserialize, JsonSchema)]

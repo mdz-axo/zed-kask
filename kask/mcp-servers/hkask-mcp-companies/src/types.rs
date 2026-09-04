@@ -760,7 +760,6 @@ fn default_screener_limit() -> u32 {
     20
 }
 
-
 // ── Economic Profit valuation request ────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

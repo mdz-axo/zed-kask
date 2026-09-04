@@ -753,9 +753,7 @@ mod smoke {
             "r=0 must refuse (G-M3 division by zero), got: {content}"
         );
         assert_eq!(content["has_refusals"], true);
-        let findings = content["findings"]
-            .as_array()
-            .expect("findings array");
+        let findings = content["findings"].as_array().expect("findings array");
         let gm3 = findings
             .iter()
             .find(|f| f["gate_id"] == "G-M3")
@@ -848,4 +846,3 @@ mod smoke {
         );
     }
 }
-

@@ -80,7 +80,6 @@ struct ValidationResult {
     notes: String,
 }
 
-
 impl SwarmPanel {
     // ── AI Assist ─────────────────────────────────────────────────────────
     //
@@ -603,7 +602,6 @@ impl SwarmPanel {
                 ),
         )
     }
-
 }
 
 #[cfg(test)]

@@ -11,9 +11,11 @@ use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use serde_json::json;
 
 use crate::KanbanPanel;
-use crate::{BOARD_LIST_TOOL, KANBAN_SERVER, TASK_LIST_TOOL, classify_kanban_fetch_error, refresh_target};
 use crate::REFRESH_INTERVAL;
 use crate::RefreshTarget;
+use crate::{
+    BOARD_LIST_TOOL, KANBAN_SERVER, TASK_LIST_TOOL, classify_kanban_fetch_error, refresh_target,
+};
 use crate::{BoardListResponse, CommentsResponse, TaskListResponse};
 use hkask_tool_invoker::shared_tool_invoker;
 

@@ -500,7 +500,8 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Correction(correction) = &record.layer else {
-                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
+                return Err(McpToolError::internal(
+                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after correction filter",
                 ));
             };
@@ -620,7 +621,8 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Highlight(highlight) = &record.layer else {
-                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
+                return Err(McpToolError::internal(
+                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after highlight filter",
                 ));
             };
@@ -723,7 +725,8 @@ impl MediaServer {
                 )));
             };
             let TranscriptLayer::Edl(edl) = &record.layer else {
-                return Err(McpToolError::internal( // rr0044-ok: store-layer-kind-mismatch
+                return Err(McpToolError::internal(
+                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after EDL filter",
                 ));
             };
@@ -964,7 +967,8 @@ impl MediaServer {
             for range in ranges {
                 let (start_ms, end_ms) =
                     word_range_to_time_range(&bundle.words, range).map_err(|error| {
-                        McpToolError::internal(format!( // rr0044-ok: documented-impossible-invariant
+                        McpToolError::internal(format!(
+                            // rr0044-ok: documented-impossible-invariant
                             "impossible: text_to_word_ranges produced an out-of-bounds \
                              range: {error}"
                         ))

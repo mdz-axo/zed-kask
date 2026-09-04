@@ -23,8 +23,8 @@
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_mcp_swarm::agent_stats::AgentStatsStore;
+use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};

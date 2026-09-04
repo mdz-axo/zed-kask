@@ -444,7 +444,6 @@ impl CorpusServer {
         })
         .await
     }
-
 }
 
 // ── Build Prompts helpers ─────────────────────────────────────────────────
@@ -621,4 +620,3 @@ pub(crate) struct PrepareTrainingDatasetRequest {
     #[serde(default)]
     pub dry_run: bool,
 }
-

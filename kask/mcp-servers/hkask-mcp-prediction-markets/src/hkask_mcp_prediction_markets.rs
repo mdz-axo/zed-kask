@@ -47,10 +47,9 @@ mod requests;
 pub use requests::{
     MarketCalibrationRequest, MarketCheckResolutionsRequest, MarketCmpContextSuggestRequest,
     MarketCmpIndexRequest, MarketCmpIndexStoreRequest, MarketCmpIndicesRequest,
-    MarketCmpPortfolioStoreRequest, MarketHistoryRequest, MarketLadderRequest,
-    MarketLookupRequest, MarketMatchRequest, MarketOntologyMapRequest,
-    MarketRecordResolutionRequest, MarketResidualRequest, MarketSubscribeRequest,
-    MarketVolatilityRequest, StatusRequest,
+    MarketCmpPortfolioStoreRequest, MarketHistoryRequest, MarketLadderRequest, MarketLookupRequest,
+    MarketMatchRequest, MarketOntologyMapRequest, MarketRecordResolutionRequest,
+    MarketResidualRequest, MarketSubscribeRequest, MarketVolatilityRequest, StatusRequest,
 };
 
 // ── Server struct ──────────────────────────────────────────────────────────
@@ -1928,4 +1927,3 @@ mod smoke {
         );
     }
 }
-

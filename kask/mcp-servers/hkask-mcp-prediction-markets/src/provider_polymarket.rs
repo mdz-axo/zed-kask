@@ -353,12 +353,30 @@ mod calibration_scan_tests {
     #[test]
     fn snapshot_then_resolution_scores_the_pre_resolution_price() {
         let mut store = CalibrationStore::new();
-        let open = vec![gamma("pm-1", "will-x-happen", "[\"0.35\", \"0.65\"]", false, false)];
+        let open = vec![gamma(
+            "pm-1",
+            "will-x-happen",
+            "[\"0.35\", \"0.65\"]",
+            false,
+            false,
+        )];
         assert_eq!(snapshot_open_markets(&open, &mut store), 1);
         // Drift toward resolution keeps the earliest snapshot.
-        let drifted = vec![gamma("pm-1", "will-x-happen", "[\"0.90\", \"0.10\"]", false, false)];
+        let drifted = vec![gamma(
+            "pm-1",
+            "will-x-happen",
+            "[\"0.90\", \"0.10\"]",
+            false,
+            false,
+        )];
         assert_eq!(snapshot_open_markets(&drifted, &mut store), 0);
-        let resolved = vec![gamma("pm-1", "will-x-happen", "[\"1.0\", \"0.0\"]", true, true)];
+        let resolved = vec![gamma(
+            "pm-1",
+            "will-x-happen",
+            "[\"1.0\", \"0.0\"]",
+            true,
+            true,
+        )];
         let mut skipped_ambiguous = 0;
         let mut resolved_without_snapshot = 0;
         let observations = resolved_observations_from_snapshots(
@@ -375,9 +393,21 @@ mod calibration_scan_tests {
     #[test]
     fn ambiguous_resolution_is_skipped_never_fabricated() {
         let mut store = CalibrationStore::new();
-        let open = vec![gamma("pm-2", "will-y-happen", "[\"0.55\", \"0.45\"]", false, false)];
+        let open = vec![gamma(
+            "pm-2",
+            "will-y-happen",
+            "[\"0.55\", \"0.45\"]",
+            false,
+            false,
+        )];
         assert_eq!(snapshot_open_markets(&open, &mut store), 1);
-        let ambiguous = vec![gamma("pm-2", "will-y-happen", "[\"0.55\", \"0.45\"]", true, true)];
+        let ambiguous = vec![gamma(
+            "pm-2",
+            "will-y-happen",
+            "[\"0.55\", \"0.45\"]",
+            true,
+            true,
+        )];
         let mut skipped_ambiguous = 0;
         let mut resolved_without_snapshot = 0;
         let observations = resolved_observations_from_snapshots(

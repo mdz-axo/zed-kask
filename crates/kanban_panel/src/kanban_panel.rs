@@ -25,8 +25,8 @@ use std::collections::HashSet;
 use anyhow::Result;
 use editor::Editor;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Task, WeakEntity, Window, actions,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Task,
+    WeakEntity, Window, actions,
 };
 use gpui_util::ResultExt;
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
