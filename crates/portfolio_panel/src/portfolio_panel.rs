@@ -170,27 +170,32 @@ impl PortfolioPanel {
     }
 }
 
-/// The Steer prompt. Text-only; verified against the server's generated
-/// TOOL_NAMES by `verify_tool_advertisement` inside `ensure_steer`.
+/// The Steer prompt. Behavioral prose is written by hand; the tool list is
+/// rendered from the server's generated `TOOL_NAMES` by
+/// `render_grouped_tool_advertisement`, so a rename/merge/addition in the
+/// server propagates at the next build instead of degrading to "tool not
+/// found" at dispatch. `verify_tool_advertisement` inside `ensure_steer`
+/// still checks the prose's tool mentions.
 fn steer_system_prompt() -> SharedString {
-    let prompt = "## Portfolio Panel — Steer Mode\n\
+    let tool_section = hkask_steer::render_grouped_tool_advertisement(
+        hkask_mcp_portfolio::TOOL_NAMES,
+        &[
+            ("Portfolio tools", &["portfolio_"]),
+            ("Ledger tools", &["ledger_"]),
+        ],
+    );
+    let prompt = format!(
+        "## Portfolio Panel — Steer Mode\n\
          You are operating in the Portfolio panel's Steer mode, scoped to the \
          `hkask-mcp-portfolio` MCP server. All portfolio management is driven \
          through chat — there are no management forms in this panel.\n\
          \n\
-         **Portfolio tools**: `portfolio_create` (idempotent), `portfolio_list`, \
-         `portfolio_snapshot`, `portfolio_returns`, `portfolio_roll`, \
-         `portfolio_delete`, `portfolio_rebuild_views`, \
-         `portfolio_materialize_returns`, `portfolio_daily_returns`.\n\
-         **Ledger tools**: `ledger_apply` (buy/sell/roll/weight/deposit/\
-         withdrawal/dividend), `ledger_read`, `ledger_import`, `ledger_export` \
-         (CSV or JSON).\n\
-         **Price feed**: `portfolio_seed_price` writes a price-cache entry the \
-         returns tools read.\n\
+         {tool_section}\
          \n\
          The portfolio widget (the ```markdown portfolio block) already renders \
          artifacts inline — use it for visualization; this conversation is the \
-         management surface.";
+         management surface."
+    );
     prompt.into()
 }
 

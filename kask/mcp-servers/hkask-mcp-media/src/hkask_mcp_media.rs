@@ -409,9 +409,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_79_registered_tools() {
+    fn tool_surface_is_exactly_80_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 79, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 80, "media registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1332,10 +1332,14 @@ mod tool_behavior_tests {
     /// A mock inference port returning canned responses on both paths —
     /// `generate` (the text passes) and `media_generate` (the audio-chat
     /// path) — so the full pass pipelines run end-to-end without a live
-    /// model.
+    /// model. When `media_response_is_json` is set, `media_generate` returns
+    /// the canned string as a full provider-response JSON object instead
+    /// (the STT shape: text/words/segments/duration) — the
+    /// transcribe_and_store path.
     struct MockInferencePort {
         response: String,
         media_response: String,
+        media_response_is_json: bool,
     }
 
     impl hkask_types::ports::InferencePort for MockInferencePort {
@@ -1373,8 +1377,16 @@ mod tool_behavior_tests {
             _op: &str,
             _params: &hkask_types::MediaGenerateParams,
         ) -> hkask_types::MediaFuture<'a> {
-            let text = self.media_response.clone();
-            Box::pin(async move { Ok(serde_json::json!({ "text": text, "model": "mock-model" })) })
+            if self.media_response_is_json {
+                let value = serde_json::from_str::<serde_json::Value>(&self.media_response)
+                    .expect("media_response_is_json requires valid JSON");
+                Box::pin(async move { Ok(value) })
+            } else {
+                let text = self.media_response.clone();
+                Box::pin(
+                    async move { Ok(serde_json::json!({ "text": text, "model": "mock-model" })) },
+                )
+            }
         }
     }
 
@@ -1388,15 +1400,31 @@ mod tool_behavior_tests {
     /// (`generate`) and the media path (`media_generate` — the audio-chat
     /// source).
     fn make_inference_server(response: String, media_response: String) -> MediaServer {
+        make_server_with_port(Arc::new(MockInferencePort {
+            response,
+            media_response,
+            media_response_is_json: false,
+        }))
+    }
+
+    /// A server whose `media_generate` returns the canned string as a full
+    /// provider-response JSON object as-is — the STT shape the
+    /// transcribe_and_store path consumes.
+    fn make_stt_server(media_json: String) -> MediaServer {
+        make_server_with_port(Arc::new(MockInferencePort {
+            response: String::new(),
+            media_response: media_json,
+            media_response_is_json: true,
+        }))
+    }
+
+    fn make_server_with_port(port: Arc<MockInferencePort>) -> MediaServer {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store =
             Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
         MediaServer::new(
             hkask_types::WebID::new(),
-            Arc::new(MockInferencePort {
-                response,
-                media_response,
-            }),
+            port,
             Arc::new(std::sync::Mutex::new(None)),
             gallery_store,
             templates::create_env().expect("media templates must compile"),
@@ -1404,6 +1432,68 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
         )
+    }
+
+    /// transcribe_and_store composes transcription + storage server-side and
+    /// returns ONLY the summary — the long-media path (an hour-long bundle
+    /// is ~550KB of JSON; the two-step flow relays it through the model
+    /// context at ~140K tokens each way). The stored record must carry the
+    /// full word-timed bundle with separator-prefixed tokens trimmed (the
+    /// rendered-form contract), verified by loading it back through
+    /// educt_get_transcript. The fixture is a real local file, so the test
+    /// also pins the local-path acceptance at the tool boundary.
+    #[tokio::test]
+    async fn transcribe_and_store_returns_summary_and_stores_word_timed_bundle() {
+        let media_json = serde_json::json!({
+            "text": " alpha  beta ",
+            "duration": 1.0,
+            "words": [
+                {"word": " alpha", "start": 0.0, "end": 0.5},
+                {"word": " beta", "start": 0.5, "end": 1.0}
+            ],
+            "segments": [
+                {"text": " alpha  beta ", "start": 0.0, "end": 1.0}
+            ]
+        })
+        .to_string();
+        let server = make_stt_server(media_json);
+
+        let fixture = std::env::temp_dir().join(format!(
+            "transcribe-and-store-{}-{}.m4a",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::write(&fixture, b"fixture").expect("fixture write");
+        let audio_url = fixture.to_str().expect("utf-8 path").to_string();
+
+        let result = server
+            .transcribe_and_store(Parameters(crate::types::TranscribeAndStoreRequest {
+                audio_url,
+                language: Some("en".to_string()),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("transcribe_and_store succeeds");
+        let content = content_of(&result);
+        assert_eq!(content["words_count"], serde_json::json!(2));
+        assert_eq!(content["has_word_timings"], serde_json::json!(true));
+        let transcript_id = content["id"].as_str().expect("id present").to_string();
+
+        let stored = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id,
+                include_layers: Some(false),
+            }))
+            .await
+            .expect("get transcript succeeds");
+        let stored = content_of(&stored);
+        let words = stored["transcript"]["words"]
+            .as_array()
+            .expect("words array");
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0]["word"], serde_json::json!("alpha"));
+        assert_eq!(words[0]["start_ms"], serde_json::json!(0));
+        assert_eq!(words[1]["end_ms"], serde_json::json!(1000));
     }
 
     /// Store a two-word transcript and return its ID.

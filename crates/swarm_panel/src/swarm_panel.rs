@@ -120,6 +120,12 @@ const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 /// context (active workspace, current backend mode, the skill's purpose).
 /// Build the Steer-mode system prompt for the curator agent.
 ///
+/// The ABW/local tool lists are generated from the server's canonical
+/// consts (`hkask_mcp_swarm::CLOUD_SWARM_TOOL_NAMES` and the complement of
+/// `TOOL_NAMES`) — never hand-maintained, so a server-side rename/merge
+/// propagates at the next build instead of degrading to "tool not found"
+/// at dispatch.
+///
 /// Design tradeoff (R7): the `mode` variable reaches the `swarm-intelligence`
 /// skill execution via the curator's `context` argument, which is prompt-level
 /// instruction — not a hard-enforced input. The manifest defaults `mode` to
@@ -148,6 +154,17 @@ fn steer_system_prompt(
     let workspace_context = selected_workspace
         .map(|id| format!("\"swarm_id\": \"{id}\""))
         .unwrap_or_else(|| "\"swarm_id\": \"\"".to_string());
+    // The ABW/local split is generated from the server's canonical lists, not
+    // hand-maintained: the cloud router's tools are the ABW set, and the local
+    // substrate is the complement — a new non-cloud tool lands in the local
+    // list automatically, and a rename propagates at the next build.
+    let abw_tools = hkask_steer::render_tool_names(hkask_mcp_swarm::CLOUD_SWARM_TOOL_NAMES);
+    let local_tool_names: Vec<&str> = parse::SWARM_TOOLS
+        .iter()
+        .copied()
+        .filter(|name| !hkask_mcp_swarm::CLOUD_SWARM_TOOL_NAMES.contains(name))
+        .collect();
+    let local_tools = hkask_steer::render_tool_names(&local_tool_names);
     let prompt = format!(
         "## Agent Swarm Panel — Steer Mode
          \n\
@@ -156,27 +173,11 @@ fn steer_system_prompt(
          selected by the operator via the `kask.swarm.mode` setting (`abw` or \
          `local`):\n\
          \n\
-         **ABW tools** (`mode: abw`, the default): `swarm_list_agents`, \
-         `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
-         `swarm_authorize_session`, `swarm_hire`, `swarm_delegate`, \
-         `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_fire`, \
-         `swarm_create_agent`, `swarm_update_agent`, `swarm_create_swarm`, \
-         `swarm_generate_prompt`, `swarm_generate_ontology`, \
-         `swarm_fork_agent`, `swarm_run_status`, \
-         `swarm_search_knowledge`, `swarm_publish_checks`, \
-         `swarm_publish_agent`, `swarm_xaman`. These \
+         **ABW tools** (`mode: abw`, the default): {abw_tools}. These \
          route to Agent Bestiary World and require the ABW API key. Per-tool \
          behavior is in each tool's description.\n\
          \n\
-         **Local tools** (`mode: local`): `swarm_list_local_agents`, \
-         `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
-         `swarm_delegate_local`, `swarm_fanout_local`, \
-         `swarm_pipeline_local`, `swarm_clone_to_local`, `swarm_remove_local`, \
-         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
-         `swarm_push_to_cloud`, `swarm_search_knowledge_local`, \
-         `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, \
-         `swarm_evaluate_local`, `swarm_execute_plan_local`, \
-         `swarm_workflow_check_local`. \
+         **Local tools** (`mode: local`): {local_tools}. \
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger`) with no \
          ABW round-trips. Local delegation needs NO funding and NO consent — it \
@@ -286,9 +287,10 @@ The kanban panel (View → Kanban Board) is the durable coordination source of t
     );
     // A `swarm_*`/`kanban_*` name in the prompt that the server does not
     // expose degrades to "tool not found" at dispatch time, so catch it here
-    // in dev builds. The `steer_prompt_mentions_only_known_tools` test is
-    // the CI enforcement. Both name lists are re-exports of the servers'
-    // build.rs-generated `TOOL_NAMES` — the single source of truth.
+    // in dev builds. The generated lists cannot drift by construction; this
+    // catches the residual risk — prose that names tools by hand. The
+    // `steer_prompt_mentions_only_known_tools` and
+    // `server_tools_are_all_advertised` tests are the CI enforcement.
     hkask_steer::verify_tool_advertisement(&prompt, parse::SWARM_TOOLS, &["swarm_"]);
     hkask_steer::verify_tool_advertisement(&prompt, parse::KANBAN_TOOLS, &["kanban_"]);
     prompt.into()
@@ -2810,12 +2812,12 @@ mod tests {
 
     // M5: the Steer-mode system prompt must not advertise any `swarm_*`
     // tool that isn't in the canonical `SWARM_TOOLS` const. The const is a
-    // verified copy of the server's `hkask_mcp_swarm::TOOL_NAMES` (asserted by
-    // `panel_tool_names_match_server`); when a tool is renamed in
-    // `hkask-mcp-swarm`, that test fails until the const is updated, and this
-    // test then catches any stale name the prompt still mentions — so a rename
-    // surfaces here rather than degrading to "tool not found" at runtime. The
-    // publish-checks and staleness-chip parsers are unit-tested in `parse::tests`.
+    // re-export of the server's `hkask_mcp_swarm::TOOL_NAMES` (asserted by
+    // `panel_tool_names_match_server`), and the ABW/local lists are rendered
+    // from it, so they cannot drift — this test catches the residual risk of
+    // prose that names tools by hand, so a rename surfaces here rather than
+    // degrading to "tool not found" at runtime. The publish-checks and
+    // staleness-chip parsers are unit-tested in `parse::tests`.
     #[test]
     fn steer_prompt_mentions_only_known_tools() {
         let known: std::collections::HashSet<&str> = parse::SWARM_TOOLS.iter().copied().collect();
@@ -2854,6 +2856,31 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Every tool the swarm server exposes must be advertised in the prompt —
+    /// the ABW/local lists are rendered from `TOOL_NAMES`, so this passes by
+    /// construction and pins the renderer's completeness (a regression to a
+    /// hand-curated subset would fail here — the prompt previously omitted
+    /// ~46 of the server's tools).
+    #[test]
+    fn server_tools_are_all_advertised() {
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw);
+        for tool in parse::SWARM_TOOLS {
+            assert!(
+                prompt.contains(tool),
+                "hkask_mcp_swarm::TOOL_NAMES lists `{tool}` but the Steer prompt \
+                 never mentions it"
+            );
+        }
+        // The ABW/local split must be a partition: every cloud tool in the
+        // ABW list, every other tool in the local list.
+        for tool in hkask_mcp_swarm::CLOUD_SWARM_TOOL_NAMES {
+            assert!(
+                prompt.contains(tool),
+                "cloud tool `{tool}` missing from the ABW advertisement"
+            );
         }
     }
 

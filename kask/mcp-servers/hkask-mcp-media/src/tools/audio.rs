@@ -220,6 +220,60 @@ impl MediaServer {
     }
 
     #[tool(
+        description = "Transcribe audio AND store the TranscriptBundle server-side in one call, returning only the transcript summary (id, words_count, has_word_timings). For long media this is the path: an hour-long talk is ~550KB of bundle JSON, and relaying it through the model context (transcribe_bundle then educt_store_transcript) costs ~140K tokens each way. Accepts the same inputs as transcribe_bundle plus an optional gallery asset id; continue with the educt passes by transcript id."
+    )]
+    pub async fn transcribe_and_store(
+        &self,
+        Parameters(TranscribeAndStoreRequest {
+            audio_url,
+            language,
+            gallery_asset_id,
+        }): Parameters<TranscribeAndStoreRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "transcribe_and_store", async {
+            // Same local-path rule as transcribe_bundle: the SSRF validator
+            // is for network URLs (see `is_local_media_path`).
+            if !crate::is_local_media_path(&audio_url) {
+                validate_tool_url_with_dns(&audio_url).await?;
+            }
+
+            let media_params = hkask_types::MediaGenerateParams {
+                audio_url: Some(audio_url.clone()),
+                language: language.clone(),
+                ..Default::default()
+            };
+            let raw = self
+                .vision_port
+                .media_generate("transcribe", &media_params)
+                .await
+                .map_err(|e| classify_inference_error("Transcription failed", e))?;
+
+            let bundle =
+                transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0, None);
+
+            let driver = &**self.gallery_store.driver();
+            let summary = crate::transcript_store::store_transcript(
+                driver,
+                &bundle,
+                gallery_asset_id.as_deref(),
+            )
+            .map_err(crate::tools::educt::map_store_error)?;
+
+            let mut result = serde_json::to_value(&summary).map_err(|e| {
+                McpToolError::internal(format!("serialize summary: {e}")) // rr0044-ok: serde serialization of own data
+            })?;
+            if !summary.has_word_timings {
+                result["degradation"] = serde_json::json!(
+                    "no word-level timings — stored for text/segments only; layers \
+                     cannot anchor (NoWordTimings)"
+                );
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    #[tool(
         description = "Capture audio from the default system microphone. Records to a WAV file optimized for Whisper transcription (16kHz mono)."
     )]
     pub async fn audio_capture(

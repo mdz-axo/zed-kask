@@ -271,52 +271,48 @@ impl MediaPanel {
     }
 }
 
-/// The Steer prompt. Text-only; verified against the server's generated
-/// TOOL_NAMES by `verify_tool_advertisement` inside `ensure_steer`.
+/// The Steer prompt. Behavioral prose is written by hand; the tool list is
+/// rendered from the server's generated `TOOL_NAMES` by
+/// `render_grouped_tool_advertisement`, so a rename/merge/addition in the
+/// server propagates here at the next build instead of degrading to
+/// "tool not found" at dispatch. `verify_tool_advertisement` inside
+/// `ensure_steer` still checks the prose's tool mentions.
 fn steer_system_prompt() -> SharedString {
-    let prompt = "## Media Panel — Steer Mode\n\
+    // Labels and prefixes only — never tool names. First matching group wins,
+    // so `kanban`-style overlaps resolve by declaration order; tools matching
+    // no group land in "Other tools" and are still advertised.
+    let tool_section = hkask_steer::render_grouped_tool_advertisement(
+        hkask_mcp_media::TOOL_NAMES,
+        &[
+            ("Gallery tools", &["gallery_"]),
+            ("Face tools", &["face_"]),
+            ("Image tools", &["image_", "describe_"]),
+            ("Video tools", &["video_"]),
+            (
+                "Generation tools",
+                &["generate_", "transform_", "upscale_", "expand_"],
+            ),
+            ("Voice tools", &["voice_"]),
+            ("Audio tools", &["audio_", "transcribe", "record_"]),
+            ("Transcript store tools", &["educt_"]),
+            ("Model tools", &["model_"]),
+            ("Job tools", &["job_"]),
+            ("Workflow tools", &["workflow_"]),
+        ],
+    );
+    let prompt = format!(
+        "## Media Panel — Steer Mode\n\
          You are operating in the Media panel's Steer mode, scoped to the \
          `hkask-mcp-media` MCP server. All media operations are driven \
          through chat — there are no management forms in this panel.\n\
          \n\
-         **Gallery tools**: `gallery_organize`, `gallery_status`, \
-         `gallery_search`, `gallery_find_similar`, `gallery_refresh`, \
-         `gallery_timeline`, `gallery_analyze`, `gallery_record_generation`, \
-         `gallery_lineage`, `gallery_asset_detail`, `gallery_reproduce`, \
-         `gallery_delete_image`, `gallery_add_video`, `gallery_add_audio`, \
-         `gallery_list_assets`, \
-         `gallery_create_album`, `gallery_list_albums`, \
-         `gallery_move_to_album`, `gallery_remove_from_album`, \
-         `gallery_delete_album`, `gallery_list_album_members`.\n\
-         **Image tools**: `describe_image`, `image_remove_background`, \
-         `image_apply_style`, `image_create_collage`, `image_edit_region`.\n\
-         **Video tools**: `video_clip`, `video_to_gif`, `image_to_video`, \
-         `video_add_caption`, `video_remix`, `video_concat`, \
-         `video_from_images`, `video_caption`, `video_meme`, \
-         `video_extract_frames`, `video_fetch`, `video_info`.\n\
-         **Generation tools**: `generate_image`, `transform_image`, \
-         `upscale_image`, `generate_video`, `generate_variants`, \
-         `expand_prompt`.\n\
-         **Voice tools**: `voice_design`, `generate_speech`.\n\
-         **Audio tools**: `transcribe`, `transcribe_bundle`, \
-         `audio_capture`, `record_and_transcribe`, `audio_trim`, \
-         `audio_concat`.\n\
-         **Transcript store tools**: `educt_store_transcript`, \
-         `educt_list_transcripts`, `educt_get_transcript`, \
-         `educt_delete_transcript`, `educt_store_layer`, \
-         `educt_list_layers`.\n\
-         **Face tools**: `face_validate`, `face_register`, \
-         `face_scan_folder`, `face_list`, `face_remove`, \
-         `gallery_name_face`.\n\
-         **Model tools**: `model_info`, `model_list`.\n\
-         **Job tools**: `job_submit`, `job_status`, `job_list`, `job_cancel`.\n\
-         **Workflow tools**: `workflow_save`, `workflow_load`, \
-         `workflow_list`, `workflow_delete`.\n\
+         {tool_section}\
          \n\
          Generated media (images, videos) renders inline in the conversation \
          via the media block renderer. Use `generate_image` for image \
          creation, `gallery_search` to find existing images, and \
-         `gallery_organize` to manage the gallery structure.";
+         `gallery_organize` to manage the gallery structure."
+    );
     prompt.into()
 }
 
@@ -495,8 +491,11 @@ mod tests {
     use super::*;
 
     /// Every tool name the Steer prompt advertises in backticks must exist
-    /// in the server's generated TOOL_NAMES — a rename fails here, not at
-    /// dispatch.
+    /// in the server's generated TOOL_NAMES. The list itself is rendered
+    /// from TOOL_NAMES (`render_grouped_tool_advertisement`), so this passes
+    /// by construction — it exists to catch a regression back to a
+    /// hand-written list, which is how the 2026-09-03 media consolidation
+    /// shipped stale names.
     #[test]
     fn steer_prompt_advertises_only_known_tools() {
         let prompt = steer_system_prompt();
@@ -531,6 +530,7 @@ mod tests {
 
     /// Every tool the server exposes should be advertised in the prompt — a
     /// missing name means the curator cannot discover it in Steer mode.
+    /// Generated by construction; pins the renderer's completeness.
     #[test]
     fn server_tools_are_all_advertised() {
         let prompt = steer_system_prompt();

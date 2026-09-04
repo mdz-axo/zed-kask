@@ -48,17 +48,19 @@ const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
 /// sound while the window was not visible, and the operator could not see
 /// what was sounding).
 ///
-/// Video autoplays because frames only decode while Playing — without
-/// play() the widget renders an empty placeholder. Audio never autoplays:
-/// it has no visual placeholder to preserve, so nothing sounds until the
-/// operator presses play (`AudioPlayer::load_bytes_paused`).
-fn autoplays(kind: MediaKind) -> bool {
-    matches!(kind, MediaKind::Video)
+/// Video autoplays MUTED because frames only decode while Playing —
+/// without play() the widget renders an empty placeholder. Audio never
+/// autoplays: it has no visual placeholder to preserve, so nothing sounds
+/// until the operator presses play (`AudioPlayer::load_bytes_paused`).
+///
+/// Returns the volume to start playback at, or `None` when the kind must
+/// not autoplay.
+fn autoplay_volume(kind: MediaKind) -> Option<f32> {
+    match kind {
+        MediaKind::Video => Some(0.0),
+        MediaKind::Audio | MediaKind::Image | MediaKind::Svg => None,
+    }
 }
-
-/// The volume autoplay starts at — muted. Unsolicited sound is never OK;
-/// the transport's volume control (or its "Muted" label) unmutes.
-const AUTOPLAY_VOLUME: f32 = 0.0;
 
 /// The media widget view. Renders inline in markdown (via the D18 seam)
 /// or as a standalone panel item.
@@ -299,14 +301,16 @@ impl MediaWidget {
                 if let Some(path) = &resolved.path {
                     if let Some(player) = &mut self.video_player {
                         match player.open(path) {
-                            // Autoplay MUTED (the widget's autoplay policy):
-                            // frames only decode while Playing — without
-                            // play() the widget renders an empty placeholder
-                            // — but unsolicited sound is never OK. The
-                            // transport's volume control unmutes.
+                            // Autoplay MUTED (autoplay_volume): frames only
+                            // decode while Playing — without play() the widget
+                            // renders an empty placeholder — but unsolicited
+                            // sound is never OK. The transport's volume
+                            // control unmutes.
                             Ok(()) => {
-                                player.set_volume(AUTOPLAY_VOLUME);
-                                player.play();
+                                if let Some(volume) = autoplay_volume(MediaKind::Video) {
+                                    player.set_volume(volume);
+                                    player.play();
+                                }
                             }
                             Err(error) => self.error = Some(SharedString::from(error.to_string())),
                         }
@@ -395,15 +399,16 @@ impl MediaWidget {
                             match player
                                 .open_stream(&stream_urls.video, stream_urls.audio.as_deref())
                             {
-                                // Autoplay MUTED (the widget's autoplay
-                                // policy): frames only decode while Playing
-                                // — without play() the widget renders an
-                                // empty placeholder — but unsolicited sound
-                                // is never OK. The transport's volume
-                                // control unmutes.
+                                // Autoplay MUTED (autoplay_volume): frames
+                                // only decode while Playing — without play()
+                                // the widget renders an empty placeholder —
+                                // but unsolicited sound is never OK. The
+                                // transport's volume control unmutes.
                                 Ok(()) => {
-                                    player.set_volume(AUTOPLAY_VOLUME);
-                                    player.play();
+                                    if let Some(volume) = autoplay_volume(MediaKind::Video) {
+                                        player.set_volume(volume);
+                                        player.play();
+                                    }
                                 }
                                 Err(error) => {
                                     widget.error = Some(SharedString::from(format!(
@@ -480,13 +485,14 @@ impl MediaWidget {
                 if let Some(player) = &mut self.video_player {
                     let path = std::path::PathBuf::from(&src);
                     match player.open(&path) {
-                        // Autoplay MUTED (the widget's autoplay policy) —
-                        // same as the resolved-path branch: without play()
-                        // no frames decode and the widget renders an empty
-                        // placeholder.
+                        // Autoplay MUTED (autoplay_volume) — same as the
+                        // resolved-path branch: without play() no frames
+                        // decode and the widget renders an empty placeholder.
                         Ok(()) => {
-                            player.set_volume(AUTOPLAY_VOLUME);
-                            player.play();
+                            if let Some(volume) = autoplay_volume(MediaKind::Video) {
+                                player.set_volume(volume);
+                                player.play();
+                            }
                         }
                         Err(error) => {
                             self.error = Some(SharedString::from(error.to_string()));
@@ -1638,11 +1644,15 @@ mod layout_tests {
     /// flips either arm re-introduces sound the operator never asked for.
     #[test]
     fn autoplay_policy_never_sounds_unsolicited() {
-        assert!(autoplays(MediaKind::Video), "video autoplays (muted)");
-        assert!(
-            !autoplays(MediaKind::Audio),
+        assert_eq!(
+            autoplay_volume(MediaKind::Video),
+            Some(0.0),
+            "video autoplays muted"
+        );
+        assert_eq!(
+            autoplay_volume(MediaKind::Audio),
+            None,
             "audio never autoplays — it loads paused"
         );
-        assert_eq!(AUTOPLAY_VOLUME, 0.0, "autoplay is muted");
     }
 }

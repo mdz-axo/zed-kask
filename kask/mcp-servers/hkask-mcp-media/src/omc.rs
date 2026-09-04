@@ -64,6 +64,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "record_and_transcribe"
         | "voice_design"
         | "transcribe_bundle"
+        | "transcribe_and_store"
         | "audio_trim"
         | "audio_concat" => Some(CAPTURE),
         // Video processing — produces a sequence (a clip is a sequence of shots).
@@ -191,6 +192,7 @@ mod tests {
     fn audio_transcription_maps_to_media_source() {
         assert_eq!(tool_to_omc("voice_design"), Some(CAPTURE));
         assert_eq!(tool_to_omc("transcribe_bundle"), Some(CAPTURE));
+        assert_eq!(tool_to_omc("transcribe_and_store"), Some(CAPTURE));
     }
 
     #[test]

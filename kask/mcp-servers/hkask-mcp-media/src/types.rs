@@ -576,6 +576,17 @@ pub struct TranscribeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TranscribeAndStoreRequest {
+    /// URL or local path of the audio/video to transcribe (local paths and
+    /// file:// URIs naming existing files are read directly).
+    pub audio_url: String,
+    /// Optional ISO 639-1 language code (e.g., "en", "ja").
+    pub language: Option<String>,
+    /// Optional gallery asset id to key the transcript record to.
+    pub gallery_asset_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct AudioCaptureRequest {
     /// Duration to record in seconds (max 3600 = 1 hour).
     pub duration_secs: f32,

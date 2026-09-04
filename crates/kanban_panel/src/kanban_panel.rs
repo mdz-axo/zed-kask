@@ -302,12 +302,14 @@ pub fn init(cx: &mut App) {
 /// tools for board and task management, including spawning subagents and
 /// coordinating with swarms.
 ///
-/// The advertised tool names are verified against
-/// `hkask_mcp_kata_kanban::TOOL_NAMES` (build.rs-generated from the server's
-/// `#[tool]` fns — the single source of truth). Advertising a tool the server
-/// does not expose is worse than omitting it: the model calls a name that
-/// cannot resolve and the turn fails at dispatch. The
-/// `steer_prompt_advertises_only_known_tools` test is the enforcement point.
+/// The tool list is rendered from `hkask_mcp_kata_kanban::TOOL_NAMES`
+/// (build.rs-generated from the server's `#[tool]` fns — the single source of
+/// truth) by `render_grouped_tool_advertisement`, so a rename/merge in the
+/// server propagates at the next build instead of degrading to "tool not
+/// found" at dispatch. Prose tool mentions are still verified against
+/// TOOL_NAMES by `verify_tool_advertisement`; the
+/// `steer_prompt_advertises_only_known_tools` and
+/// `server_tools_are_all_advertised` tests are the enforcement points.
 fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
     let board_clause = match selected_board_id {
         Some(id) => format!(
@@ -315,32 +317,30 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
         ),
         None => String::new(),
     };
+    // Labels and prefixes only — never tool names. `kanban_task_kata_` is
+    // declared before `kanban_task_` so the kata tool lands in its own group.
+    let tool_section = hkask_steer::render_grouped_tool_advertisement(
+        hkask_mcp_kata_kanban::TOOL_NAMES,
+        &[
+            ("Board tools", &["kanban_board_"]),
+            ("Kata coaching", &["kanban_task_kata_"]),
+            ("Task tools", &["kanban_task_"]),
+            ("Goal tools", &["kanban_goal_"]),
+            ("Contract grounding", &["contract_"]),
+        ],
+    );
     let prompt = format!(
         "## Kanban Panel — Steer Mode\n\
          You are operating in the Kanban panel's Steer mode, scoped to the \
          `{KANBAN_SERVER}` MCP server. You have access to all kanban tools:\n\
          \n\
-         **Board tools**: `kanban_board_create`, `kanban_board_list`, `kanban_board_delete`, \
-         `kanban_board_export` (mermaid markdown), `kanban_board_import` (mermaid markdown).\n\
-         **Task tools**: `kanban_task_create`, `kanban_task_list`, `kanban_task_move`, \
-         `kanban_task_assign`, `kanban_task_unassign`, `kanban_task_update`, `kanban_task_delete`, \
-         `kanban_task_verify`, `kanban_task_reopen`, `kanban_task_add_rjoules` (inference/API budget).\n\
-         **Communication**: `kanban_task_comment`, `kanban_task_comments_since`, `kanban_task_add_deliverable`.\n\
-         **Swarm delegation**: `kanban_task_spawn` (delegates a task to a subagent or swarm agent), \
-         `kanban_task_delegate_result` (reads the structured delegation result and verdict).\n\
-         **Kata coaching**: `kanban_task_kata_coaching`, `kanban_task_kata_improvement`, `kanban_task_kata_practice`.
-\
-         **Goal tools (functional target conditions)**: `kanban_goal_create` (a functional goal \
-         with observable criteria + intake prediction), `kanban_goal_judge` (record a \
-         done/continue/blocked verdict with confidence), `kanban_goal_score` (resolve: \
-         achieved/not-achieved, Brier-scores the intake prediction), `kanban_goal_list` \
-         (this session's goals with latest verdicts). Goals are the kata target condition: \
-         the user's functional requirement in the user's words, judged against observable \
-         criteria, never revised by the agent. Goals are EPHEMERAL (in-memory, die with \
-         the session) — the curator's memory is the durable record; lessons are learned \
-         in therapy / algedonic reviews, not from a persistent goal store.
-\
-         **Contract grounding**: `contract_propose_expect` (creates tasks for contracts missing expect: annotations).
+         {tool_section}\
+         \n\
+         Goals are the kata target condition: the user's functional requirement \
+         in the user's words, judged against observable criteria, never revised \
+         by the agent. Goals are EPHEMERAL (in-memory, die with the session) — \
+         the curator's memory is the durable record; lessons are learned in \
+         therapy / algedonic reviews, not from a persistent goal store.\n\
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \
          cascade is available. Pass the board id so the cascade writes the durable link on every \

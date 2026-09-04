@@ -27,7 +27,7 @@ use crate::*;
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
 /// internal): a missing transcript is NotFound; a validation failure is
 /// InvalidArgument carrying the named invariant; a DB failure is Internal.
-fn map_store_error(error: TranscriptStoreError) -> McpToolError {
+pub(crate) fn map_store_error(error: TranscriptStoreError) -> McpToolError {
     match error {
         TranscriptStoreError::TranscriptNotFound { transcript_id } => {
             McpToolError::not_found(format!("transcript {transcript_id} not found"))

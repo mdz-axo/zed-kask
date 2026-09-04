@@ -33,12 +33,17 @@ layers.
 
 1. If recording now: call `record_and_transcribe` with the duration.
    It returns the audio path and a synchronized TranscriptBundle.
-   If the media already exists: call `transcribe_bundle` with the
-   audio/video URL.
-2. Call `educt_store_transcript` with the bundle (and the gallery
-   asset id if the media is indexed). If the summary notes missing
-   word timings, stop — layers cannot anchor to a timing-free
-   transcript; re-transcribe with `transcribe_bundle`.
+   If the media already exists: call `transcribe_and_store` with the
+   audio/video path or URL (plus the gallery asset id if the media is
+   indexed). It transcribes and stores the bundle server-side in one
+   call, returning only the summary — for long media this is the only
+   sane path: an hour-long bundle is ~550KB of JSON, and relaying it
+   through the model context (`transcribe_bundle` then
+   `educt_store_transcript`) costs ~140K tokens each way. If the
+   summary notes missing word timings, stop — layers cannot anchor to
+   a timing-free transcript; re-transcribe. (`transcribe_bundle` →
+   `educt_store_transcript` remains available for short media when the
+   caller needs the bundle in hand.)
 
 ### Phase 2 — Correct and structure (the passes)
 

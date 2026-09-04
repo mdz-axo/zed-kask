@@ -844,4 +844,24 @@ mod tool_surface_tests {
             "TOOL_NAMES const and combined_router() surface diverged"
         );
     }
+
+    // The cloud partition must match the live cloud router — the swarm panel
+    // renders its ABW/local Steer split from this const, so drift there
+    // degrades to "tool not found" at dispatch.
+    #[test]
+    fn cloud_swarm_tool_names_match_live_cloud_router() {
+        let mut live: Vec<String> = SwarmServer::cloud_swarm_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        live.sort();
+        let mut generated = crate::CLOUD_SWARM_TOOL_NAMES.to_vec();
+        generated.sort();
+        assert_eq!(
+            generated, live,
+            "CLOUD_SWARM_TOOL_NAMES (build.rs-generated) must match the live \
+             cloud_swarm_router surface"
+        );
+    }
 }
