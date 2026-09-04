@@ -45,6 +45,9 @@ pub(crate) struct AgentDetail {
     pub(crate) sample_queries: Vec<String>,
     pub(crate) accepts: Vec<String>,
     pub(crate) produces: Vec<String>,
+    /// Sampling temperature (fermi `agents.temperature` / local card
+    /// `capabilities.temperature`). `None` = backend default.
+    pub(crate) temperature: Option<f64>,
 }
 
 impl AgentDetail {
@@ -93,6 +96,12 @@ impl AgentDetail {
         let sample_queries = string_array(card.get("sample_queries"));
         let accepts = string_array(card.get("accepts"));
         let produces = string_array(card.get("produces"));
+        // Local card: `capabilities.temperature` (the serialized
+        // `LocalAgentCard`).
+        let temperature = card
+            .get("capabilities")
+            .and_then(|c| c.get("temperature"))
+            .and_then(|t| t.as_f64());
         Self {
             agent_id,
             agent_type,
@@ -107,6 +116,7 @@ impl AgentDetail {
             sample_queries,
             accepts,
             produces,
+            temperature,
         }
     }
 
@@ -179,6 +189,12 @@ impl AgentDetail {
         };
         let accepts = string_array(card.get("accepts"));
         let produces = string_array(card.get("produces"));
+        // fermi's `build_agent_json` carries the sampling temperature under
+        // `capabilities.temperature`.
+        let temperature = card
+            .get("capabilities")
+            .and_then(|c| c.get("temperature"))
+            .and_then(|t| t.as_f64());
         Self {
             agent_id,
             agent_type,
@@ -193,6 +209,7 @@ impl AgentDetail {
             sample_queries,
             accepts,
             produces,
+            temperature,
         }
     }
 }
@@ -413,6 +430,13 @@ impl SwarmPanel {
         self.author
             .produces
             .update(cx, |e, cx| e.set_text(produces, window, cx));
+        let temperature = detail
+            .temperature
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        self.author
+            .temperature
+            .update(cx, |e, cx| e.set_text(temperature, window, cx));
     }
 
     /// Permanently delete the agent currently loaded in the author form.
@@ -532,6 +556,7 @@ impl SwarmPanel {
                 Self::comma_list(&self.author.accepts.read(cx).text(cx)),
                 Self::comma_list(&self.author.produces.read(cx).text(cx)),
                 self.gather_valence(cx),
+                self.gather_temperature(cx),
             ))
         };
         cx.spawn({
@@ -539,7 +564,9 @@ impl SwarmPanel {
             let agent_name = editing_id.clone();
             async move |this, cx| {
                 let result =
-                    if let Some((description, tags, accepts, produces, valence)) = cloud_fields {
+                    if let Some((description, tags, accepts, produces, valence, temperature)) =
+                        cloud_fields
+                    {
                         invoker
                             .invoke_tool(
                                 crate::SWARM_SERVER,
@@ -552,6 +579,7 @@ impl SwarmPanel {
                                     "accepts": accepts,
                                     "produces": produces,
                                     "valence": valence,
+                                    "temperature": temperature,
                                 }),
                             )
                             .await

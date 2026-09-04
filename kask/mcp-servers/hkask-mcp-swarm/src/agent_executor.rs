@@ -755,4 +755,48 @@ mod tests {
         let history = format_reasoning_history(&[]);
         assert!(history.is_empty());
     }
+
+    /// Card-driven sampling — the local analog of fermi's
+    /// `agents.temperature` + `agents.model_params` precedence: defaults,
+    /// then the `temperature` field, then `model_params` keys override both.
+    #[test]
+    fn sampling_params_follow_card_precedence() {
+        use crate::local_registry::LocalAgentCapabilities;
+        let mut card = crate::local_registry::LocalAgentCard {
+            agent_id: "sampling_agent".to_string(),
+            agent_type: "research".to_string(),
+            description: String::new(),
+            display_name: String::new(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: Default::default(),
+            capabilities: LocalAgentCapabilities::default(),
+            cloud_swarm_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+            version: "1.0.0".to_string(),
+        };
+        // No card values → the executor's default preset.
+        let defaults = hkask_types::LLMParameters::default();
+        assert_eq!(sampling_params(&card).temperature, defaults.temperature);
+
+        // The temperature field overrides the default temperature.
+        card.capabilities.temperature = Some(0.2);
+        assert_eq!(sampling_params(&card).temperature, 0.2);
+        assert_eq!(sampling_params(&card).top_p, defaults.top_p);
+
+        // model_params keys override BOTH (fermi: "Keys override the legacy
+        // temperature field") — and a partial object keeps the defaults for
+        // keys it does not name.
+        card.capabilities.model_params = Some(serde_json::json!({
+            "temperature": 0.8,
+            "top_k": 10
+        }));
+        let resolved = sampling_params(&card);
+        assert_eq!(resolved.temperature, 0.8);
+        assert_eq!(resolved.top_k, 10);
+        assert_eq!(resolved.top_p, defaults.top_p);
+    }
 }

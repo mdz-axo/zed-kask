@@ -639,6 +639,37 @@ impl SwarmServer {
         .await
     }
 
+    /// Get a single local agent's full card — the local analog of
+    /// `swarm_get_agent` (fermi's `GET /api/agents/:id`). Returns the complete
+    /// `LocalAgentCard` (system prompt, contracts, sampling, valence,
+    /// dependencies, sync link) for one agent, so a caller does not have to
+    /// list the whole registry and filter.
+    #[tool(
+        description = "Get a single local agent's full card (the local analog of swarm_get_agent). Returns the complete LocalAgentCard — system prompt, input/output contracts, sampling, valence, dependencies, and the cloud sync link."
+    )]
+    pub(crate) async fn swarm_get_local_agent(
+        &self,
+        parameters: Parameters<GetLocalAgentRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_get_local_agent", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            serde_json::to_value(&card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))
+        })
+        .await
+    }
+
     /// Clone an ABW agent to the local registry. Fetches the agent card from
     /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id` to
@@ -829,6 +860,23 @@ impl SwarmServer {
                             .map(String::from),
                         personality_traits: string_list(v.get("personality_traits")),
                     });
+            // fermi's `build_agent_json` carries the card version, the
+            // sampling temperature (under `capabilities`), and the
+            // provider-agnostic `model_params` — all top-level except
+            // temperature. Copy them so the local clone runs with the same
+            // sampling behavior as the cloud original.
+            let version = abw_card
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("1.0.0")
+                .to_string();
+            let temperature = abw_caps
+                .and_then(|c| c.get("temperature"))
+                .and_then(|t| t.as_f64());
+            let model_params = abw_card
+                .get("model_params")
+                .filter(|v| !v.is_null())
+                .cloned();
             let import_labels: Vec<String> =
                 accepts.iter().chain(produces.iter()).cloned().collect();
             let local_card = LocalAgentCard {
@@ -847,6 +895,8 @@ impl SwarmServer {
                     skills,
                     output_contract,
                     input_contract,
+                    temperature,
+                    model_params,
                     ..Default::default()
                 },
                 cloud_swarm_id: Some(req.agent_name),
@@ -854,6 +904,7 @@ impl SwarmServer {
                 sample_queries,
                 visibility,
                 valence,
+                version,
             };
             // The ABW catalogue's port labels are the card's own
             // taxonomy, not locally-authored free strings. Register them
@@ -932,6 +983,17 @@ impl SwarmServer {
                 "output_contract": local_card.capabilities.output_contract,
                 "input_contract": local_card.capabilities.input_contract,
             });
+            // Sampling + version (fermi `AgentUpdate` accepts all three).
+            // Omitted when unset so fermi keeps its own values.
+            if let Some(temperature) = local_card.capabilities.temperature {
+                update_payload["temperature"] = serde_json::json!(temperature);
+            }
+            if let Some(model_params) = &local_card.capabilities.model_params {
+                update_payload["model_params"] = serde_json::json!(model_params);
+            }
+            if !local_card.version.trim().is_empty() {
+                update_payload["version"] = serde_json::json!(local_card.version);
+            }
             // An empty model would overwrite fermi's default with "" — omit
             // the key so fermi keeps whatever it has (create) or its default.
             if !local_card.capabilities.model.trim().is_empty() {
@@ -1194,6 +1256,10 @@ impl SwarmServer {
                     output_contract: req.output_contract.map(serde_json::Value::from),
                     input_contract: req.input_contract.map(serde_json::Value::from),
                     temperature: req.temperature,
+                    // fermi's create does not accept model_params (it
+                    // stamps an empty object) — local create mirrors that;
+                    // the field flows via clone/push/card-edit.
+                    model_params: None,
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },
@@ -1211,6 +1277,9 @@ impl SwarmServer {
                     primary_affect: v.primary_affect,
                     personality_traits: v.personality_traits.unwrap_or_default(),
                 }),
+                // fermi's create stamps new agents "1.0.0" — mirror it so a
+                // pushed card and its ABW original agree on version.
+                version: "1.0.0".to_string(),
             };
             let card_path = self
                 .local_registry
@@ -3110,6 +3179,8 @@ mod tests {
                 skills: vec![],
                 output_contract: None,
                 input_contract: None,
+                temperature: None,
+                model_params: None,
                 evaluators: vec![],
                 reasoning: false,
             },
@@ -3118,6 +3189,7 @@ mod tests {
             visibility: String::new(),
             sample_queries: vec![],
             valence: None,
+            version: "1.0.0".to_string(),
         }
     }
 

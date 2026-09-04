@@ -48,6 +48,9 @@ pub(crate) struct AuthorForm {
     pub(crate) valence_primary_affect: Entity<Editor>,
     /// Comma-separated personality trait descriptors.
     pub(crate) valence_personality_traits: Entity<Editor>,
+    /// Sampling temperature (fermi `agents.temperature`, 0.0–1.0). Empty =
+    /// the backend's default (fermi 0.3 / the local executor's preset).
+    pub(crate) temperature: Entity<Editor>,
     /// Sample queries, one per line (fermi `has_sample_queries`: without
     /// one, nobody can tell what to ask this agent).
     pub(crate) sample_queries: Entity<Editor>,
@@ -126,6 +129,11 @@ impl AuthorForm {
                     window,
                     cx,
                 );
+                e
+            }),
+            temperature: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("0.0–1.0 (empty = backend default)", window, cx);
                 e
             }),
             sample_queries: cx.new(|cx| {
@@ -401,11 +409,31 @@ impl SwarmPanel {
                             .border_color(border)
                             .rounded_sm()
                             .tooltip(Tooltip::text(
-                                "The agent's instructions — what it should do, how \
-                                 it should behave, and any constraints. Multiple lines \
-                                 supported. Required.",
+                                "The agent's instructions — what it should do, how \n                                 it should behave, and any constraints. Multiple lines \n                                 supported. Required.",
                             ))
                             .child(self.author.system_prompt.clone()),
+                    ),
+            )
+            // Temperature — fermi `agents.temperature`, applied by both the
+            // cloud executor and the local executor (card-driven sampling).
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Temperature (0–1)")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("author-temperature")
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "Sampling temperature: 0.1–0.3 factual/deterministic, \n                                 0.5–0.8 creative. Empty = the backend's default.",
+                            ))
+                            .child(self.author.temperature.clone()),
                     ),
             )
             // Tags — comma-separated discovery tags.
@@ -760,6 +788,9 @@ impl SwarmPanel {
         self.author
             .valence_personality_traits
             .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .temperature
+            .update(cx, |e, cx| e.clear(window, cx));
         self.author.agent_type = "research".to_string();
         self.author.visibility = "private".to_string();
     }
@@ -798,6 +829,19 @@ impl SwarmPanel {
                 "personality_traits": personality_traits,
             }))
         }
+    }
+
+    /// Gather the temperature editor into an optional f64. `None` when
+    /// empty (backend default) or unparseable — the same semantics as the
+    /// valence floats. Shared by the create and update paths.
+    pub(crate) fn gather_temperature(&self, cx: &mut Context<Self>) -> Option<f64> {
+        self.author
+            .temperature
+            .read(cx)
+            .text(cx)
+            .trim()
+            .parse::<f64>()
+            .ok()
     }
 
     /// Create a new agent from the authoring form. Mode-aware: in Local mode
@@ -886,6 +930,7 @@ impl SwarmPanel {
         let produces = Self::comma_list(&self.author.produces.read(cx).text(cx));
         let visibility = self.author.visibility.clone();
         let valence = self.gather_valence(cx);
+        let temperature = self.gather_temperature(cx);
         self.author.busy = true;
         self.author.status = None;
         cx.notify();
@@ -904,6 +949,7 @@ impl SwarmPanel {
                             "tags": tags,
                             "visibility": visibility,
                             "valence": valence,
+                            "temperature": temperature,
                             "sample_queries": sample_queries,
                             "accepts": accepts,
                             "produces": produces,
@@ -923,6 +969,7 @@ impl SwarmPanel {
                             "tags": tags,
                             "visibility": visibility,
                             "valence": valence,
+                            "temperature": temperature,
                             "sample_queries": sample_queries,
                             "accepts": accepts,
                             "produces": produces,

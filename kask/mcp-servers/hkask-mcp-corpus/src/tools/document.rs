@@ -260,6 +260,20 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         if let Some(input_dir) = input_dir {
             return execute_tool(self, "corpus_chunk", async {
+                // Loud rejection, not silent ignoring: directory mode writes a
+                // single-tier JSONL (the tag/QA substrate). Honoring a
+                // multi_tier request here would need per-tier rows the
+                // downstream stages were never shaped for; silently
+                // dropping it would let an agent believe the output is
+                // multi-tier. Multi-tier retrieval indexing is the per-file
+                // path's job (path/text mode with index=true).
+                if multi_tier.unwrap_or(false) {
+                    return Err(McpToolError::invalid_argument(
+                        "multi_tier is not supported in directory mode — directory mode writes \
+                         a single-tier chunks JSONL (the tag/QA substrate). Call per-file \
+                         (path mode) for multi-tier retrieval indexing, or set multi_tier=false.",
+                    ));
+                }
                 ConvertService::from_corpus(self)
                     .chunk_directory(
                         &input_dir,

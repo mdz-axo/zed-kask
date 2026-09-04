@@ -117,7 +117,7 @@ pub fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
             card.display_name.clone()
         },
         description: description_or_fallback(card),
-        version: "1.0.0".to_string(),
+        version: card.version.clone(),
         supported_interfaces: vec![a2a::AgentInterface {
             url: format!("{}/{}", base_url.trim_end_matches('/'), card.agent_id),
             protocol_binding: a2a::TRANSPORT_PROTOCOL_HTTP_JSON.to_string(),
@@ -194,9 +194,7 @@ pub fn task_from_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local_registry::{
-        LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies,
-    };
+    use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies};
 
     fn local_card(accepts: Vec<String>, produces: Vec<String>) -> LocalAgentCard {
         LocalAgentCard {
@@ -213,6 +211,7 @@ mod tests {
             visibility: "private".to_string(),
             sample_queries: vec!["Price 50g Ashwagandha".to_string()],
             valence: None,
+            version: "1.2.0".to_string(),
         }
     }
 
@@ -231,13 +230,14 @@ mod tests {
     /// I/O; free-text labels mean plain text; empty ports are permissive.
     #[test]
     fn derive_modes_matches_fermi() {
-        let (input, output) =
-            derive_modes(&["scro/bom-query/1".to_string()], &["scro/bom-response/1".to_string()]);
+        let (input, output) = derive_modes(
+            &["scro/bom-query/1".to_string()],
+            &["scro/bom-response/1".to_string()],
+        );
         assert_eq!(input, vec!["application/json".to_string()]);
         assert_eq!(output, vec!["application/json".to_string()]);
 
-        let (input, output) =
-            derive_modes(&["query".to_string()], &["forecast".to_string()]);
+        let (input, output) = derive_modes(&["query".to_string()], &["forecast".to_string()]);
         assert_eq!(input, vec!["text/plain".to_string()]);
         assert_eq!(output, vec!["text/plain".to_string()]);
 
@@ -289,6 +289,9 @@ mod tests {
         // card must keep saying so (honest capability flags).
         assert_eq!(a2a_card.capabilities.streaming, Some(false));
         assert_eq!(a2a_card.capabilities.push_notifications, Some(false));
+        // The card's semver travels to the A2A card (fermi parity — the
+        // cloud A2A card carries the agent's version, not a constant).
+        assert_eq!(a2a_card.version, "1.2.0");
     }
 
     #[test]
@@ -296,6 +299,9 @@ mod tests {
         let card = local_card(vec!["query".to_string()], vec!["forecast".to_string()]);
         let a2a_card = to_a2a_card(&card, "local://swarm/agents");
         assert_eq!(a2a_card.default_input_modes, vec!["text/plain".to_string()]);
-        assert_eq!(a2a_card.default_output_modes, vec!["text/plain".to_string()]);
+        assert_eq!(
+            a2a_card.default_output_modes,
+            vec!["text/plain".to_string()]
+        );
     }
 }

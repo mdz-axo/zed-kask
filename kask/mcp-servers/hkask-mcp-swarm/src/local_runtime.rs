@@ -1043,3 +1043,117 @@ pub struct TaskSuccessVerdict {
     /// full trust-level table.
     pub provenance: VerdictSource,
 }
+
+#[cfg(test)]
+mod contract_check_tests {
+    use super::contract_checks;
+    use serde_json::json;
+
+    fn input_contract() -> serde_json::Value {
+        json!({
+            "accepts_schema": "scro/bom-query/1",
+            "title": "BOM pricing request",
+            "required": ["task", "bom_items"],
+            "schema": {
+                "type": "object",
+                "required": ["task", "bom_items"],
+                "properties": {
+                    "task": { "type": "string" },
+                    "bom_items": { "type": "array" }
+                }
+            }
+        })
+    }
+
+    fn output_contract() -> serde_json::Value {
+        json!({
+            "domain": "supply-chain",
+            "produces_schema": "scro/bom-response/1",
+            "schema": {
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                    "items": { "type": "array" },
+                    "currency": { "type": "string" }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn no_contracts_yield_none_checks() {
+        let (input, output) = contract_checks(None, None, "any task", "any response");
+        assert!(input.is_none());
+        assert!(output.is_none());
+    }
+
+    #[test]
+    fn valid_payloads_pass_both_checks() {
+        let task = r#"{"task":"resolve_bom","bom_items":[{"name":"sugar"}]}"#;
+        let response = r#"{"items":[{"name":"sugar"}],"currency":"EUR"}"#;
+        let (input, output) = contract_checks(
+            Some(&input_contract()),
+            Some(&output_contract()),
+            task,
+            response,
+        );
+        assert_eq!(input.unwrap()["status"], "valid");
+        assert_eq!(output.unwrap()["status"], "valid");
+    }
+
+    #[test]
+    fn schema_violations_report_invalid_with_violations() {
+        // Missing required `bom_items` on input; missing required `items`
+        // on output.
+        let task = r#"{"task":"resolve_bom"}"#;
+        let response = r#"{"currency":"EUR"}"#;
+        let (input, output) = contract_checks(
+            Some(&input_contract()),
+            Some(&output_contract()),
+            task,
+            response,
+        );
+        let input = input.unwrap();
+        assert_eq!(input["status"], "invalid");
+        assert!(input["violations"].as_array().unwrap().len() > 0);
+        let output = output.unwrap();
+        assert_eq!(output["status"], "invalid");
+        assert!(output["violations"].as_array().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn non_json_payloads_are_unverified_not_invalid() {
+        // A plain-text task against a structured input contract, and a
+        // prose response against a structured output contract — advisory
+        // unverified, mirroring fermi's soft InputBinding verdict.
+        let (input, output) = contract_checks(
+            Some(&input_contract()),
+            Some(&output_contract()),
+            "price my sugar please",
+            "Here is your pricing summary.",
+        );
+        assert_eq!(input.unwrap()["status"], "unverified_not_json");
+        assert_eq!(output.unwrap()["status"], "unverified_not_json");
+    }
+
+    #[test]
+    fn contract_without_schema_key_is_unverified_no_schema() {
+        let contract = json!({ "accepts_schema": "x/1" });
+        let (input, _) = contract_checks(Some(&contract), None, "{}", "ok");
+        assert_eq!(input.unwrap()["status"], "unverified_no_schema");
+    }
+
+    #[test]
+    fn unsupported_schema_keywords_are_not_a_pass() {
+        // `patternProperties` is outside the minimal validator's closed
+        // keyword set — the verdict must say unverified_unsupported, never
+        // valid (the `.rules` trap: an unsupported keyword is NOT a pass).
+        let contract = json!({
+            "schema": { "type": "object", "patternProperties": { "^a": { "type": "string" } } }
+        });
+        let (input, _) = contract_checks(Some(&contract), None, "{}", "ok");
+        let input = input.unwrap();
+        assert_eq!(input["status"], "unverified_unsupported");
+        assert!(input["unsupported"].as_array().unwrap().len() > 0);
+    }
+}
