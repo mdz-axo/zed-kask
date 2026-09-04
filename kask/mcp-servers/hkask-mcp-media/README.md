@@ -2,14 +2,16 @@
 
 Media generation MCP server — image, video, audio, and 3D generation via the configured media providers.
 
-## Tools (36)
+## Tools (79)
+
+The full surface is pinned end-to-end by `tool_surface_is_exactly_79_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|
 | `gallery_organize` | Organize a photo gallery. Point at a folder — the system creates the index, scans for images, and returns status. Use gallery_search to find photos by content. |
 | `gallery_status` | Get gallery status: path, mode, image count, and total size |
-| `gallery_search` | Search your gallery by describing what you're looking for. Fuzzy-matches against AI-generated tags (objects, faces, colors, composition) |
-| `gallery_find_similar` | Find gallery images similar to a text description or to another image. Uses AI caption embeddings for semantic similarity (requires gallery_analyze to have been run first) |
+| `gallery_search` | Search your gallery by describing what you're looking for. Mode `tags` (default) fuzzy-matches AI-generated tags; mode `semantic` matches by caption-embedding similarity (the former `gallery_find_similar`, requires `gallery_analyze` first) |
+| `gallery_add_media` | Import a video or audio file into the gallery index (`media_type` selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged |
 | `gallery_refresh` | Refresh the gallery: scan for new/removed images, then update all AI metadata (objects, colors, composition, scene descriptions). Face detection is OFF by default; when include_faces=true, also scans the face reference folder (mcp/media/faces/ by default) for new reference faces, then auto-matches detected faces against the face_registry |
 | `describe_image` | Describe an image in detail. Choose a style: descriptive (full scene), artistic (poetic), technical (photographic analysis), or alt_text (accessibility) |
 | `gallery_analyze` | Analyze gallery images with AI: detect faces, objects, colors, composition, and generate scene descriptions. Tags are persisted and become searchable |
@@ -34,8 +36,7 @@ Media generation MCP server — image, video, audio, and 3D generation via the c
 | `video_meme` | Create a meme video from a gallery image with text overlay and camera motion. Composes text rendering + AI motion generation |
 | `voice_design` | Design a synthetic voice profile from a character description. Returns a VoiceDesign JSON for use with generate_speech |
 | `generate_speech` | Generate speech audio from text using a voice design. Returns audio as base64 data URI |
-| `transcribe` | Transcribe speech audio to text. Returns transcribed text for REPL injection |
-| `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings |
+| `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone. Records to a WAV file optimized for Whisper transcription (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
 | `generate_image` | Generate an image from a text prompt. Describe what you want to see |

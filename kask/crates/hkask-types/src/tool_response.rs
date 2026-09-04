@@ -155,7 +155,7 @@ pub fn is_config_gap_kind(kind: &str) -> bool {
 /// Extract fenced media-block display hints from a tool output text (the
 /// `{"content": ...}` envelope serialized by `ToolSpanGuard::ok_json`).
 /// `display_hint` is a single fenced ```media block; `display_hints` is an
-/// array (gallery_search, generate_variants). Returns an empty vec for
+/// array (gallery_search, generate_image). Returns an empty vec for
 /// non-JSON or hint-free outputs — ordinary tool results carry nothing.
 /// Consumers: the agent's structural rendering (T-V2 — the tool card
 /// renders the blocks via the D18 media renderer) and the media panel's
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(hints.len(), 1);
         assert!(hints[0].starts_with("```media"));
 
-        // display_hints array (gallery_search / generate_variants shape).
+        // display_hints array (gallery_search / generate_image shape).
         let output = serde_json::json!({
             "content": {
                 "results": [],

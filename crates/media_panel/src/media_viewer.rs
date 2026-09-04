@@ -1436,7 +1436,7 @@ mod tests {
         assert!(tool_mutates_gallery("gallery_delete_image"));
         assert!(tool_mutates_gallery("gallery_organize"));
         assert!(tool_mutates_gallery("gallery_refresh"));
-        assert!(tool_mutates_gallery("gallery_add_video"));
+        assert!(tool_mutates_gallery("gallery_add_media"));
         assert!(tool_mutates_gallery("video_fetch"));
         assert!(tool_mutates_gallery("video_extract_frames"));
         assert!(!tool_mutates_gallery("generate_image"));

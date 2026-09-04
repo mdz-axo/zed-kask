@@ -259,11 +259,11 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 
 ## Key paths
 
-- **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` / `gallery_find_similar` / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_video` / `gallery_add_audio` for non-image assets
+- **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` (tags or semantic mode) / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_media` for non-image assets
 - **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors). Full build-out is deferred; the store's nullable `embedding` column is unused legacy from the removed path and not part of this design.
 - **Generation with lineage:** `generate_image` → save to gallery → `gallery_organize`/`gallery_refresh` → `gallery_record_generation` → later `gallery_reproduce` or `gallery_lineage`/`gallery_asset_detail`
-- **Prompt enrichment:** `expand_prompt` → `generate_image` / `generate_video` / `generate_variants`
-- **Video from gallery assets:** `video_fetch` (acquire) or `gallery_add_video` (import) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` to turn keyframes back into searchable assets
+- **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
+- **Video from gallery assets:** `video_fetch` (acquire) or `gallery_add_media` (import) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` to turn keyframes back into searchable assets
 - **Async generation:** `job_submit` → `job_status` (poll) → `job_cancel` if needed; `workflow_save` / `workflow_load` to persist multi-step recipes
 
 ## Cross-links
