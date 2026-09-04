@@ -93,6 +93,11 @@ extend-exclude = [
 [default]
 check-filename = true
 extend-ignore-re = [
+    # Git commit hashes cited in docs and .rules (e.g. the stepped-ramp
+    # spec `93b9951afe` and its deletion commit `a71f79b263`) — hex
+    # identifiers, not misspellings of "safe".
+    "93b9951afe",
+    "a71f79b263",
     # PNG is a file format, not a typo
     "PNG",
     'cl\[ist]',

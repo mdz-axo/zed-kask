@@ -247,6 +247,65 @@ impl<'a> ConvertService<'a> {
         std::sync::Arc::clone(&self.pipeline_executor) as std::sync::Arc<dyn OcrExecutor>
     }
 
+    /// Run the page pipeline with the service's standard parameters — the
+    /// server's executor, thresholds, resolved model, and the concurrency
+    /// bounds (adaptive remote gate inside the executor, static local page
+    /// bound in the pipeline) — and persist the outcome for Regulation
+    /// observability. Every OCR path in `convert` shares this seam; the
+    /// former copy-pasted `run_pipeline` call sites differed only in what
+    /// they built from the outcome.
+    async fn run_standard_pipeline(
+        &self,
+        page_images: Vec<image::DynamicImage>,
+        model: &str,
+    ) -> PipelineOutcome {
+        let expected = page_images.len();
+        let outcome = pipeline::run_pipeline(
+            page_images,
+            expected,
+            self.pipeline_executor(),
+            &self.ocr_thresholds,
+            Some(model),
+            Some(max_concurrency()),
+        )
+        .await;
+        self.persist_pipeline_outcome(&outcome).await;
+        outcome
+    }
+
+    /// Fold the common pipeline-outcome fields — the verification report,
+    /// backend split, breaker state, adaptive concurrency level, and error
+    /// count — into a site-specific OCR result JSON. One place to change the
+    /// outcome contract (adding `llm_concurrency` to four copy-pasted blocks
+    /// was the dedup's motivating chore).
+    fn with_pipeline_outcome(
+        &self,
+        mut result: serde_json::Value,
+        outcome: &PipelineOutcome,
+    ) -> serde_json::Value {
+        let common = serde_json::json!({
+            "structure": if include_structure {
+                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            },
+            "verification_passed": outcome.report.passed,
+            "page_count_match": outcome.report.page_count_match,
+            "empty_pages": outcome.report.empty_pages,
+            "degraded_pages": &outcome.report.degraded_pages,
+            "backends": &outcome.backends,
+            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+            "error_count": outcome.errors.len(),
+        });
+        return Ok(result);
+        if let (Some(result_map), Some(common_map)) = (result.as_object_mut(), common.as_object()) {
+            for (key, value) in common_map {
+                result_map.insert(key.clone(), value.clone());
+            }
+        }
+        result
+    }
+
     /// OCR a file through the page pipeline — the same execution path as
     /// `convert(force_ocr)`. PDFs are decimated to 72-DPI page images; image
     /// files become a single page. Returns the assembled text plus the
@@ -431,6 +490,7 @@ impl<'a> ConvertService<'a> {
         path: String,
         force_ocr: bool,
         target_pages: Option<String>,
+        include_structure: bool,
     ) -> Result<Value, McpToolError> {
         // Contain the caller-supplied path before any read or subprocess spawn:
         // validate_path rejects `..`/control chars but NOT absolute paths, so
@@ -495,17 +555,7 @@ impl<'a> ConvertService<'a> {
                 };
 
                 let page_images = vec![image];
-                let expected = page_images.len();
-                let outcome = pipeline::run_pipeline(
-                    page_images,
-                    expected,
-                    Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
-                    &self.ocr_thresholds,
-                    Some(&model),
-                    Some(max_concurrency()),
-                )
-                .await;
-                self.persist_pipeline_outcome(&outcome).await;
+                let outcome = self.run_standard_pipeline(page_images, &model).await;
                 let text = outcome
                     .results
                     .iter()
@@ -516,16 +566,8 @@ impl<'a> ConvertService<'a> {
                 let result = serde_json::json!({
                     "format": format, "path": path, "method": "ocr_pipeline",
                     "model": model, "text": text, "word_count": word_count,
-                    "verification_passed": outcome.report.passed,
-                    "page_count_match": outcome.report.page_count_match,
-                    "empty_pages": outcome.report.empty_pages,
-                    "degraded_pages": &outcome.report.degraded_pages,
-                    "backends": &outcome.backends,
-                    "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
-                    "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
-                    "error_count": outcome.errors.len(),
                 });
-                return Ok(result);
+                return Ok(self.with_pipeline_outcome(result, &outcome));
             }
 
             // Not an image — try decimation + pipeline for PDFs (72 DPI JPEG to stay within 128K token limit)
@@ -546,22 +588,14 @@ impl<'a> ConvertService<'a> {
                             }
                         };
                         let expected = page_images.len();
-                        let outcome = pipeline::run_pipeline(
-                            page_images,
-                            expected,
-                            Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
-                            &self.ocr_thresholds,
-                            Some(&model),
-                            Some(max_concurrency()),
-                        )
-                        .await;
-                        self.persist_pipeline_outcome(&outcome).await;
+                        let outcome = self.run_standard_pipeline(page_images, &model).await;
                         let text = outcome
                             .results
                             .iter()
                             .map(|r| r.text.as_str())
                             .collect::<Vec<_>>()
                             .join("\n\n");
+                        let word_count = text.split_whitespace().count();
                         let structure = markdown_pages_to_structure(
                             outcome
                                 .results
@@ -571,21 +605,12 @@ impl<'a> ConvertService<'a> {
                         );
                         let result = serde_json::json!({
                             "format": format, "path": path, "method": "ocr_pipeline",
-                            "model": model, "text": text,
-                            "word_count": text.split_whitespace().count(),
+                            "model": model, "text": text, "word_count": word_count,
                             "pages": expected,
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
                             "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
-                            "verification_passed": outcome.report.passed,
-                            "page_count_match": outcome.report.page_count_match,
-                            "empty_pages": outcome.report.empty_pages,
-                            "degraded_pages": &outcome.report.degraded_pages,
-                            "backends": &outcome.backends,
-                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
-                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
-                            "error_count": outcome.errors.len(),
                         });
-                        return Ok(result);
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
                     Err(e) => {
                         // The page pipeline is the only OCR mechanism — the
@@ -680,17 +705,7 @@ impl<'a> ConvertService<'a> {
                 .await
                 {
                     Ok(page_images) if !page_images.is_empty() => {
-                        let expected = page_images.len();
-                        let outcome = pipeline::run_pipeline(
-                            page_images,
-                            expected,
-                            Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
-                            &self.ocr_thresholds,
-                            Some(&model),
-                            Some(max_concurrency()),
-                        )
-                        .await;
-                        self.persist_pipeline_outcome(&outcome).await;
+                        let outcome = self.run_standard_pipeline(page_images, &model).await;
                         let mut per_page: Vec<String> = page_texts.clone();
                         for (k, result) in outcome.results.iter().enumerate() {
                             if let Some(&page_idx) = ocr_pages.get(k)
@@ -721,16 +736,8 @@ impl<'a> ConvertService<'a> {
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
                             "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
                             "triage": triage_summary,
-                            "verification_passed": outcome.report.passed,
-                            "page_count_match": outcome.report.page_count_match,
-                            "empty_pages": outcome.report.empty_pages,
-                            "degraded_pages": &outcome.report.degraded_pages,
-                            "backends": &outcome.backends,
-                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
-                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
-                            "error_count": outcome.errors.len(),
                         });
-                        return Ok(result);
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
                     Ok(_) => {
                         tracing::warn!(
@@ -760,16 +767,7 @@ impl<'a> ConvertService<'a> {
                 match imgs_res {
                     Ok(page_images) => {
                         let expected = page_images.len();
-                        let outcome = pipeline::run_pipeline(
-                            page_images,
-                            expected,
-                            Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
-                            &self.ocr_thresholds,
-                            Some(&model),
-                            Some(max_concurrency()),
-                        )
-                        .await;
-                        self.persist_pipeline_outcome(&outcome).await;
+                        let outcome = self.run_standard_pipeline(page_images, &model).await;
                         let text = outcome
                             .results
                             .iter()
@@ -790,17 +788,9 @@ impl<'a> ConvertService<'a> {
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
                             "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
                             "pages": expected,
-                            "verification_passed": outcome.report.passed,
-                            "page_count_match": outcome.report.page_count_match,
-                            "empty_pages": outcome.report.empty_pages,
-                            "degraded_pages": &outcome.report.degraded_pages,
-                            "backends": &outcome.backends,
-                            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
-                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
-                            "error_count": outcome.errors.len(),
                             "cross_validations": outcome.cross_validations.len(),
                         });
-                        return Ok(result);
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
                     Err(e) => {
                         // The page pipeline is the only OCR mechanism — the

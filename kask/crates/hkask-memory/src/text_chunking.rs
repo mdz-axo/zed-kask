@@ -161,14 +161,19 @@ pub fn chunk_text(
                     chunk_index += 1;
                     buffer.clear();
                     buffer_words = 0;
-                } else if !buffer.is_empty() {
-                    buffer.push(' ');
+                } else {
+                    // Fragment below the floor: hold it in the buffer to
+                    // merge with the next fragment or the final flush.
+                    // Emitting it standalone produced 1-word chunks that
+                    // pollute embeddings and QA generation (observed:
+                    // 1-char chunks in a 32K-chunk corpus run). The final
+                    // flush still emits whatever remains — content is
+                    // never dropped.
+                    if !buffer.is_empty() {
+                        buffer.push(' ');
+                    }
                     buffer.push_str(&text);
                     buffer_words += cw;
-                } else {
-                    let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-                    passages.push((entity_ref, text));
-                    chunk_index += 1;
                 }
                 start = split_at;
             }

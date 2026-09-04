@@ -752,7 +752,7 @@ impl SwarmServer {
             let report = crate::workflow::check_workflow(&req.agent_name, template, |agent_id| {
                 registry
                     .get(agent_id)
-                    .map(|card| (card.accepts.clone(), card.produces.clone()))
+                    .map(|card| (card.accepts.clone(), card.produces))
             });
             serde_json::to_value(&report)
                 .map_err(|e| McpToolError::internal(format!("failed to serialize report: {e}")))

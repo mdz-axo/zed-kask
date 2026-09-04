@@ -37,6 +37,7 @@ impl CorpusServer {
             output,
             force_ocr,
             target_pages,
+            include_structure,
         }): Parameters<ConvertRequest>,
     ) -> Result<String, McpToolError> {
         if std::path::Path::new(&path).is_dir() {
@@ -50,7 +51,7 @@ impl CorpusServer {
             "corpus_convert",
             async {
                 let result = ConvertService::from_corpus(self)
-                    .convert(path, force_ocr, target_pages)
+                    .convert(path, force_ocr, target_pages, include_structure.unwrap_or(false))
                     .await?;
                 // Honor the `output` parameter on the file path: the
                 // extracted text lands at the caller's destination instead
@@ -179,7 +180,11 @@ impl CorpusServer {
     )]
     pub async fn corpus_is_complex(
         &self,
-        Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
+        Parameters(IsComplexRequest {
+            path,
+            target_pages,
+            summary,
+        }): Parameters<IsComplexRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_is_complex", async {
             let resolved = crate::path_safety::contain_for_read(&path)?;
@@ -224,13 +229,48 @@ impl CorpusServer {
                 needs_ocr,
                 "is-complex triage complete"
             );
-            let result = serde_json::json!({
-                "path": path,
-                "pages": pages,
-                "page_count": verdicts.len(),
-                "ocr_pages": ocr_page_count,
-                "needs_ocr": needs_ocr,
-            });
+            let result = if summary.unwrap_or(false) {
+                // Aggregate view: the routing decision reads needs_ocr +
+                // ocr_pages; the reason histogram and a few flagged-page
+                // examples carry the diagnostics without the per-page
+                // array's bulk.
+                let mut reason_counts: std::collections::BTreeMap<&str, usize> =
+                    std::collections::BTreeMap::new();
+                for verdict in &verdicts {
+                    for reason in &verdict.reasons {
+                        *reason_counts.entry(reason.as_str()).or_insert(0) += 1;
+                    }
+                }
+                let flagged_examples: Vec<serde_json::Value> = verdicts
+                    .iter()
+                    .filter(|v| v.needs_ocr)
+                    .take(10)
+                    .map(|v| {
+                        serde_json::json!({
+                            "page": v.page_number,
+                            "word_count": v.word_count,
+                            "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "path": path,
+                    "summary": true,
+                    "page_count": verdicts.len(),
+                    "ocr_pages": ocr_page_count,
+                    "needs_ocr": needs_ocr,
+                    "reason_counts": reason_counts,
+                    "flagged_examples": flagged_examples,
+                })
+            } else {
+                serde_json::json!({
+                    "path": path,
+                    "pages": pages,
+                    "page_count": verdicts.len(),
+                    "ocr_pages": ocr_page_count,
+                    "needs_ocr": needs_ocr,
+                })
+            };
             Ok(result)
         })
         .await
@@ -623,12 +663,17 @@ impl CorpusServer {
                     continue;
                 };
                 let output_path = output_dir.join(format!("{}.txt", file_name.to_string_lossy()));
-                if output_path
-                    .metadata()
-                    .is_ok_and(|metadata| metadata.len() > 50)
-                {
-                    skipped += 1;
-                    continue;
+                // Skip only outputs that would PASS the Stage-1 word-count
+                // floor. The old `len > 50` byte check treated a 72-byte
+                // zero-word garbage extraction as a valid existing output,
+                // so a re-run never healed it — silent data loss presented
+                // as idempotency. A read failure falls through to
+                // re-extraction (the safe direction).
+                if let Ok(existing) = std::fs::read_to_string(&output_path) {
+                    if existing.split_whitespace().count() >= 50 {
+                        skipped += 1;
+                        continue;
+                    }
                 }
 
                 let response = match Box::pin(self.corpus_convert(Parameters(ConvertRequest {
@@ -717,6 +762,13 @@ pub(crate) struct ConvertRequest {
     /// OCR. Mirrors LiteParse's `--target-pages`. `None` = all pages.
     #[serde(default)]
     pub target_pages: Option<String>,
+    /// If true, include the `structure` field (per-page blocks) in the
+    /// result. Default false: the structure duplicates the full text in
+    /// the response (~2x response size for a book; observed on a 412-page
+    /// OCR result) and no pipeline stage consumes it from the response —
+    /// `corpus_chunk` derives its own structure via `extract_text`.
+    #[serde(default)]
+    pub include_structure: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -735,6 +787,12 @@ pub(crate) struct IsComplexRequest {
     /// Optional target pages (1-based), e.g. "1-5,10,15-20". None = all pages.
     #[serde(default)]
     pub target_pages: Option<String>,
+    /// When true, return aggregates only (counts, reason histogram, up to
+    /// 10 flagged-page examples) instead of the full per-page array. The
+    /// routing decision reads `needs_ocr` + `ocr_pages`; a 412-page book's
+    /// full array is a ~100KB response the decision never reads.
+    #[serde(default)]
+    pub summary: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

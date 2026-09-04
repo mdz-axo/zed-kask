@@ -76,17 +76,25 @@ struct CircuitBreaker {
     failures: AtomicU64,
     /// Unix timestamp (seconds) until which the breaker is open.
     cooldown_until: AtomicI64,
+    /// Consecutive openings without an intervening success — drives the
+    /// exponential backoff below.
+    consecutive_openings: AtomicU64,
     /// Consecutive failures before opening.
     threshold: u64,
-    /// Cooldown duration in seconds.
+    /// Base cooldown duration in seconds; escalated per consecutive
+    /// opening up to [`CircuitBreaker::MAX_COOLDOWN_SECS`].
     cooldown_secs: u64,
 }
 
 impl CircuitBreaker {
+    /// Hard cap for the escalated cooldown.
+    const MAX_COOLDOWN_SECS: u64 = 300;
+
     const fn new(threshold: u64, cooldown_secs: u64) -> Self {
         Self {
             failures: AtomicU64::new(0),
             cooldown_until: AtomicI64::new(0),
+            consecutive_openings: AtomicU64::new(0),
             threshold,
             cooldown_secs,
         }
@@ -99,22 +107,37 @@ impl CircuitBreaker {
         now >= until
     }
 
-    /// Record a successful request — resets the failure counter.
+    /// Record a successful request — resets the failure counter and the
+    /// backoff escalation.
     fn record_success(&self) {
         self.failures.store(0, Ordering::Relaxed);
         self.cooldown_until.store(0, Ordering::Relaxed);
+        self.consecutive_openings.store(0, Ordering::Relaxed);
     }
 
     /// Record a failure. If the threshold is reached, open the circuit.
+    ///
+    /// The cooldown escalates exponentially per consecutive opening
+    /// (base × 2^(openings-1), capped): a repeatedly-tripping breaker on a
+    /// long book run otherwise re-burns one doomed vision call every fixed
+    /// cooldown window — a dead endpoint taxed a 412-page run for its
+    /// full duration at 30s intervals.
     fn record_failure(&self) {
         let count = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
         if count >= self.threshold {
-            let until = now_unix() + self.cooldown_secs as i64;
+            let openings = self.consecutive_openings.fetch_add(1, Ordering::Relaxed) + 1;
+            let shift = (openings - 1).min(4);
+            let cooldown_secs = self
+                .cooldown_secs
+                .saturating_mul(1_u64 << shift)
+                .min(Self::MAX_COOLDOWN_SECS);
+            let until = now_unix() + cooldown_secs as i64;
             self.cooldown_until.store(until, Ordering::Relaxed);
             tracing::warn!(
                 target: "reg.pipeline.ocr.circuit_breaker",
                 failures = count,
-                cooldown_secs = self.cooldown_secs,
+                consecutive_openings = openings,
+                cooldown_secs,
                 "Circuit breaker opened — pausing LLM OCR requests"
             );
         }
