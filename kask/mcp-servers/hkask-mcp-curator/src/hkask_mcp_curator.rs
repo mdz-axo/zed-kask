@@ -12,6 +12,7 @@
 //! and algedonic event history.
 
 pub(crate) mod distillation;
+pub(crate) mod forgetting;
 pub(crate) mod governance;
 pub(crate) mod thread_turns;
 pub mod types;
@@ -63,6 +64,8 @@ enum SemanticRecallError {
     },
     #[error("embedding model returned no vector for the recall query")]
     NoVector,
+    #[error("no embedding model configured (HKASK_EMBEDDING_MODEL unset)")]
+    NoEmbeddingModel,
     #[error("semantic search over curator memory failed: {source}")]
     Search {
         #[source]
@@ -484,7 +487,9 @@ impl CuratorServer {
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
-        let embedding_model = hkask_inference::model_constants::embedding_model();
+        let Some(embedding_model) = hkask_inference::model_constants::embedding_model() else {
+            return Err(SemanticRecallError::NoEmbeddingModel);
+        };
         let vectors = self
             .inference_port
             .embed(&embedding_model, &[query.to_string()])
@@ -1699,7 +1704,14 @@ pub(crate) async fn embed_for_semantic_recall(
     text: &str,
 ) -> bool {
     let owned_text = text.to_string();
-    let embedding_model = hkask_inference::model_constants::embedding_model();
+    let Some(embedding_model) = hkask_inference::model_constants::embedding_model() else {
+        tracing::warn!(
+            target: "hkask.mcp.curator",
+            entity,
+            "No embedding model configured (HKASK_EMBEDDING_MODEL unset) — semantic recall degraded for this memory"
+        );
+        return false;
+    };
     match inference_port
         .embed(&embedding_model, std::slice::from_ref(&owned_text))
         .await

@@ -93,16 +93,15 @@ async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
 /// restarted with it.
 #[must_use]
 pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
-    let embedding_model = model_constants::embedding_model();
-    std::sync::Arc::new(LazyInferencePort::new(&embedding_model))
-        as std::sync::Arc<dyn hkask_types::InferencePort>
+    std::sync::Arc::new(LazyInferencePort::new()) as std::sync::Arc<dyn hkask_types::InferencePort>
 }
 
 /// A lazy inference port that tries the IPC bridge on each call and
 /// falls back to `DirectEmbeddingPort` when the socket is unavailable.
-struct LazyInferencePort {
-    embedding_model: String,
-}
+/// Carries NO stored model — every direct-path construction resolves the
+/// provider from the model actually being called (the operator's
+/// no-hidden-models spec: no stored/default model may decide the endpoint).
+struct LazyInferencePort {}
 
 /// Process-local media router backing `LazyInferencePort::media_generate`.
 ///
@@ -116,10 +115,8 @@ static LOCAL_MEDIA_ROUTER: std::sync::OnceLock<crate::media_router::MediaRouter>
     std::sync::OnceLock::new();
 
 impl LazyInferencePort {
-    fn new(embedding_model: &str) -> Self {
-        Self {
-            embedding_model: embedding_model.to_string(),
-        }
+    fn new() -> Self {
+        Self {}
     }
 }
 
@@ -208,20 +205,39 @@ impl hkask_types::InferencePort for LazyInferencePort {
                     )
                     .await;
             }
-            // Fall back to direct HTTP.
-            let port = DirectEmbeddingPort::try_new(&self.embedding_model).ok_or_else(|| {
+            // Fall back to direct HTTP. Resolve the model FIRST (the
+            // visible chain: explicit override → `kask.models.default_model`
+            // → typed error — never a code constant), then construct the
+            // port FROM that model so the provider endpoint always matches
+            // the model actually called. The prior code built the port from
+            // a separate stored embedding model — the endpoint could
+            // mismatch the per-call model, and the stored model was itself
+            // a hidden default.
+            let model_str = match model_override {
+                Some(model) => model.to_string(),
+                None => {
+                    let configured = crate::config::InferenceConfig::from_env().default_model;
+                    if configured.trim().is_empty() {
+                        return Err(hkask_types::InferenceError::NotConfigured(
+                            "no default model configured — set \
+                             kask.models.default_model (injected as \
+                             HKASK_DEFAULT_MODEL) or pass an explicit model; \
+                             kask never falls back to a hidden code constant"
+                                .to_string(),
+                        ));
+                    }
+                    configured
+                }
+            };
+            let port = DirectEmbeddingPort::try_new(&model_str).ok_or_else(|| {
                 hkask_types::InferenceError::Connection(format!(
-                    "No inference available: {IPC_BRIDGE_UNAVAILABLE} \
-                         and direct fallback failed (no API key or provider)"
+                    "model '{model_str}': no provider prefix matched and no \
+                     provider credentials resolved — use a provider-prefixed \
+                     model or configure the provider"
                 ))
             })?;
-            port.generate_with_model(
-                &prompt,
-                &params,
-                model_override.as_deref(),
-                tools.as_deref(),
-            )
-            .await
+            port.generate_with_model(&prompt, &params, Some(model_str.as_str()), tools.as_deref())
+                .await
         })
     }
 
@@ -281,16 +297,21 @@ impl hkask_types::InferencePort for LazyInferencePort {
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
-        let embedding_model = self.embedding_model.clone();
         Box::pin(async move {
             // Try the IPC bridge first.
             if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
                 return client.embed(&model, &texts).await;
             }
-            // Fall back to direct HTTP.
-            let port = DirectEmbeddingPort::try_new(&embedding_model).ok_or_else(|| {
+            // Fall back to direct HTTP: construct the port FROM the per-call
+            // model so the provider endpoint always matches the model
+            // actually embedded (the prior code built it from a separate
+            // stored embedding model — a hidden default that could also
+            // mismatch the endpoint).
+            let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
                 hkask_types::EmbeddingGenerationError::Connection(format!(
-                    "embed unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+                    "embed model '{model}': no provider prefix matched and no \
+                     provider credentials resolved — use a provider-prefixed \
+                     model or run under the zed bridge"
                 ))
             })?;
             port.embed(&model, &texts).await

@@ -648,6 +648,36 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Expire every active h_mem under an entity prefix (soft-delete
+    /// via valid_to), in one statement. Returns the number expired.
+    /// The curator's retirement pass retires a distilled thread's
+    /// shared-copy turns this way.
+    pub fn expire_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
+        let count = self.h_mem_store.close_by_entity_prefix(prefix)?;
+        if count > 0 {
+            tracing::debug!(
+                target: "hkask.memory",
+                prefix,
+                count,
+                "h_mems expired by entity prefix (soft-delete via valid_to)"
+            );
+        }
+        Ok(count)
+    }
+
+    /// Delete every embedding under an entity — vectors and metadata.
+    /// The retirement pass uses this so a retired thread's turn
+    /// embeddings stop dominating semantic recall.
+    pub fn delete_embeddings_by_entity(&self, entity_ref: &str) -> Result<usize, MemoryStoreError> {
+        Ok(self.embedding.delete_all_by_entity_ref(entity_ref)?)
+    }
+
+    /// Delete vector rows orphaned from their metadata rows. KNN's
+    /// inner join already ignores orphans; this reclaims the space.
+    pub fn delete_orphaned_embeddings(&self) -> Result<usize, MemoryStoreError> {
+        Ok(self.embedding.delete_orphaned_vectors()?)
+    }
+
     // ── Budget / cleanup ──────────────────────────────────────────────────
 
     pub fn h_mem_count(&self) -> Result<usize, MemoryStoreError> {

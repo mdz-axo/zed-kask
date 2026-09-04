@@ -380,6 +380,74 @@ impl EmbeddingStore {
         conn.execute_batch("COMMIT;")?;
         Ok(())
     }
+
+    /// Delete every embedding under an entity — the vector rows AND the
+    /// metadata rows, transactionally. `delete` resolves only the first
+    /// id for an entity; a thread entity holds one embedding per turn,
+    /// and the retirement pass must remove all of them.
+    pub fn delete_all_by_entity_ref(&self, entity_ref: &str) -> Result<usize, EmbeddingError> {
+        let rows = self.query_driver(
+            "SELECT id FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id = row.get(0)?.as_text()?.to_string();
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+        for id in &ids {
+            // vec0 is rowid-keyed; resolve the UUID to the embeddings
+            // rowid and delete the vector by integer key (same pattern
+            // as delete).
+            if let Err(e) = conn.execute(
+                "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
+                rusqlite::params![id],
+            ) {
+                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(e));
+            }
+            // Delete from embeddings on the SAME connection — not via
+            // self.exec, which would acquire a second pool connection and
+            // self-deadlock on SQLite's single-writer lock.
+            if let Err(e) = conn.execute(
+                "DELETE FROM embeddings WHERE id = ?1",
+                rusqlite::params![id],
+            ) {
+                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(e));
+            }
+        }
+        conn.execute_batch("COMMIT;")?;
+        Ok(ids.len())
+    }
+
+    /// Delete vector rows whose rowid has no embeddings metadata row —
+    /// orphans left when metadata was deleted without vec access (e.g.
+    /// a therapy SQL pass). KNN's inner join already ignores them; this
+    /// reclaims the shadow-table space.
+    pub fn delete_orphaned_vectors(&self) -> Result<usize, EmbeddingError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM vec_embeddings WHERE rowid NOT IN (SELECT rowid FROM embeddings)",
+            rusqlite::params![],
+        )
+        .map_err(EmbeddingError::Storage)
+    }
     /// Count total embeddings stored.
     /// Count stored embeddings.
     ///

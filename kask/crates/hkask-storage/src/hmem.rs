@@ -728,6 +728,20 @@ impl HMemStore {
         )?;
         Ok(())
     }
+
+    /// Soft-delete (expire) every active h_mem under an entity prefix,
+    /// in one statement. Returns the number of rows expired. The
+    /// curator's retirement pass uses this to retire a distilled
+    /// thread's shared-copy turns.
+    pub fn close_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
+        self.exec(
+            "UPDATE hmems SET valid_to = ?1 WHERE entity LIKE ?2 AND valid_to IS NULL",
+            &[
+                DbValue::Text(now_rfc3339()),
+                DbValue::Text(format!("{}%", prefix)),
+            ],
+        )
+    }
     /// Hard-delete a h_mem row entirely.
     /// Hard-delete a h_mem by ID.
     ///

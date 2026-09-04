@@ -2921,10 +2921,12 @@ fn main() {
 
 /// zed-kask: D24 — wire the kask edit-prediction port.
 ///
-/// Resolves `DEFAULT_FALLBACK_MODEL` (e.g. `OpenRouter/z-ai/glm-5.2`) from
-/// the `LanguageModelRegistry`, constructs a `BridgeEditPredictionPort` that
-/// makes raw `/completions` calls through the model's `api_url()`/`api_key()`,
-/// and injects it into the edit-prediction store via
+/// Resolves the VISIBLE default chain — `kask.models.default_model` when
+/// set, else the zed default model — from the `LanguageModelRegistry` (never
+/// a code constant, per the operator's no-hidden-models spec), constructs a
+/// `BridgeEditPredictionPort` that makes raw `/completions` calls through
+/// the model's `api_url()`/`api_key()`, and injects it into the
+/// edit-prediction store via
 /// `edit_prediction::open_ai_compatible::set_kask_completion_port`.
 ///
 /// Called from the same model-dependent task as the edit-prediction port wiring
@@ -2951,10 +2953,19 @@ async fn try_wire_edit_prediction_port(
 
     cx.update(|cx| {
         let tokio_handle = gpui_tokio::Tokio::handle(cx);
+        // The visible chain only (the operator's no-hidden-models spec):
+        // `kask.models.default_model` when set, else the zed default.
+        let kask_default_model = kask_bridge::KaskSettings::get_global(cx)
+            .models
+            .default_model
+            .trim()
+            .to_string();
+        let kask_default_model = (!kask_default_model.is_empty()).then_some(kask_default_model);
         let port = kask_bridge::BridgeEditPredictionPort::from_registry(
             registry.read(cx),
             http_client,
             tokio_handle,
+            kask_default_model.as_deref(),
             cx,
         );
         if let Some(port) = port {
@@ -2966,7 +2977,7 @@ async fn try_wire_edit_prediction_port(
             log::info!(
                 "hKask edit-prediction port wired — routing FIM completions \
                  through LanguageModelRegistry ({})",
-                kask_bridge::DEFAULT_FALLBACK_MODEL
+                kask_default_model.as_deref().unwrap_or("zed default model")
             );
         } else {
             // The registry fires a burst of events at startup while provider
@@ -2980,13 +2991,13 @@ async fn try_wire_edit_prediction_port(
                      from LanguageModelRegistry (no api_url/api_key). Edit \
                      predictions will fall back to the configured provider. \
                      Retries until the key resolves log at debug.",
-                    kask_bridge::DEFAULT_FALLBACK_MODEL
+                    kask_default_model.as_deref().unwrap_or("zed default model")
                 );
             } else {
                 log::debug!(
                     "hKask edit-prediction port retry: {} still unresolved \
                      (no api_url/api_key)",
-                    kask_bridge::DEFAULT_FALLBACK_MODEL
+                    kask_default_model.as_deref().unwrap_or("zed default model")
                 );
             }
         }

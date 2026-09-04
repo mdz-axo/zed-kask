@@ -12,12 +12,77 @@
 //!
 //! All prompts are backed by Jinja2 templates embedded in templates.rs.
 
+use base64::Engine;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Load an image and return it as raw base64-encoded PNG — the exact
+/// payload the inference bridge's `LanguageModelImage` contract expects
+/// (`to_base64_url` prepends `data:image/png;base64,` itself). The former
+/// conventions passed URLs and pre-built data URIs, which the bridge
+/// wrapped into `data:image/png;base64,<garbage>` — the image never
+/// reached the model.
+///
+/// Accepts local file paths (optional `file://` prefix), http(s) URLs, and
+/// pre-built `data:<mime>;base64,<payload>` URIs (unwrapped, not passed
+/// through — the bridge would double-wrap them). Images larger than 2048px
+/// are downscaled to fit: a full-size photo re-encoded as PNG would exceed
+/// the 16MB IPC line cap, and vision models tile internally at lower
+/// resolutions anyway.
+pub(crate) async fn load_image_as_png_base64(
+    image_source: &str,
+) -> Result<String, crate::MediaError> {
+    const MAX_DIMENSION: u32 = 2048;
+
+    let bytes: Vec<u8> = if let Some(payload) = image_source
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split_once(";base64,").map(|(_, payload)| payload))
+    {
+        // Pre-built data URI: decode the payload — passing the URI whole
+        // would make the bridge double-wrap it into undeclarable garbage.
+        base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .map_err(|e| {
+                crate::MediaError::VisionApi(format!("Invalid base64 image payload: {e}"))
+            })?
+    } else if image_source.starts_with("http://") || image_source.starts_with("https://") {
+        reqwest::get(image_source)
+            .await
+            .map_err(|e| {
+                crate::MediaError::VisionApi(format!("Failed to fetch image '{image_source}': {e}"))
+            })?
+            .bytes()
+            .await
+            .map_err(|e| {
+                crate::MediaError::VisionApi(format!(
+                    "Failed to read image bytes from '{image_source}': {e}"
+                ))
+            })?
+            .to_vec()
+    } else {
+        let path = image_source.strip_prefix("file://").unwrap_or(image_source);
+        tokio::fs::read(path).await.map_err(|e| {
+            crate::MediaError::VisionApi(format!("Failed to read image file '{path}': {e}"))
+        })?
+    };
+
+    let mut img = image::load_from_memory(&bytes)
+        .map_err(|e| crate::MediaError::VisionApi(format!("Failed to decode image: {e}")))?;
+    if img.width() > MAX_DIMENSION || img.height() > MAX_DIMENSION {
+        img = img.thumbnail(MAX_DIMENSION, MAX_DIMENSION);
+    }
+    let mut png_bytes: Vec<u8> = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| crate::MediaError::VisionApi(format!("Failed to re-encode image as PNG: {e}")))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png_bytes))
+}
 
 /// Result of face reference validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,8 +143,9 @@ pub async fn detect_faces(
         "Vision LLM face detection"
     );
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| {
             tracing::warn!(
@@ -144,8 +210,9 @@ pub async fn validate_face_reference(
         "Vision LLM face reference validation"
     );
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| {
             tracing::warn!(
@@ -209,13 +276,10 @@ pub async fn match_faces(
         "Vision LLM face match"
     );
 
+    let reference_b64 = load_image_as_png_base64(reference_url).await?;
+    let query_b64 = load_image_as_png_base64(query_url).await?;
     let result = inference
-        .generate_vision(
-            &prompt,
-            &[reference_url.to_string(), query_url.to_string()],
-            &params,
-            vision_model,
-        )
+        .generate_vision(&prompt, &[reference_b64, query_b64], &params, vision_model)
         .await
         .map_err(|e| {
             tracing::warn!(
@@ -267,8 +331,9 @@ pub async fn detect_objects(
 
     let params = LLMParameters::default();
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
@@ -300,8 +365,9 @@ pub async fn analyze_colors(
 
     let params = LLMParameters::default();
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
@@ -331,8 +397,9 @@ pub async fn analyze_composition(
 
     let params = LLMParameters::default();
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
@@ -363,10 +430,81 @@ pub async fn caption_scene(
 
     let params = LLMParameters::default();
 
+    let image_b64 = load_image_as_png_base64(image_url).await?;
     let result = inference
-        .generate_vision(&prompt, &[image_url.to_string()], &params, vision_model)
+        .generate_vision(&prompt, &[image_b64], &params, vision_model)
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
     Ok(result.text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_image_as_png_base64;
+
+    /// A 1×1 PNG fixture (the same byte pattern the corpus server's OCR
+    /// guard tests use).
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    /// The payload must be RAW base64 PNG — no data: prefix (the bridge adds
+    /// it) and decodable to a PNG (the bridge declares the MIME).
+    fn assert_raw_png_base64(b64: &str) {
+        assert!(!b64.starts_with("data:"), "raw base64, not a data URI");
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .expect("valid base64");
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+            "the payload must decode to a PNG"
+        );
+    }
+
+    #[tokio::test]
+    async fn loads_local_file_as_raw_png_base64() {
+        let path = std::env::temp_dir().join(format!(
+            "vision-load-test-{}-{}.png",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::write(&path, TINY_PNG).expect("fixture write");
+        let b64 = load_image_as_png_base64(path.to_str().unwrap())
+            .await
+            .expect("local file loads");
+        assert_raw_png_base64(&b64);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Pre-built data URIs must be UNWRAPPED — passing them whole would make
+    /// the bridge double-wrap into `data:image/png;base64,data:...` garbage
+    /// (the video_caption path's former fate).
+    #[tokio::test]
+    async fn prebuilt_data_uri_is_unwrapped_not_double_wrapped() {
+        use base64::Engine;
+        let data_uri = format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(TINY_PNG)
+        );
+        let b64 = load_image_as_png_base64(&data_uri)
+            .await
+            .expect("data URI loads");
+        assert_raw_png_base64(&b64);
+    }
+
+    #[tokio::test]
+    async fn missing_file_errors_not_silently_empty() {
+        let result = load_image_as_png_base64("/nonexistent/no-such-image.png").await;
+        assert!(
+            result.is_err(),
+            "a missing image must error — never silently pass an empty payload"
+        );
+    }
 }

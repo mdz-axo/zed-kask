@@ -217,6 +217,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // filter would silently drop an operator override.
             "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
             "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
+            "HKASK_MEMORY_FORGETTING_DAYS",
         ]),
     },
     BuiltinMcpServer {

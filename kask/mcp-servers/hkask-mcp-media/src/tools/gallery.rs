@@ -620,9 +620,12 @@ impl MediaServer {
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
+            let image_b64 = crate::gallery::vision::load_image_as_png_base64(&image_url)
+                .await
+                .map_err(crate::error::map_media_error)?;
             let r = self
                 .vision_port
-                .generate_vision(&prompt, &[image_url], &params, Some(vision_model))
+                .generate_vision(&prompt, &[image_b64], &params, Some(vision_model))
                 .await
                 .map_err(|e| classify_inference_error("Vision inference failed", e))?;
 

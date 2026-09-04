@@ -73,57 +73,40 @@ pub(crate) static ARTIFACTS_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>
 
 // ── Model configuration ───────────────────────────────────────────────
 
-/// Default open-weight models for media processing.
-/// All can be overridden via environment variables.
-///
-/// The default values are `const` references to the single source of truth in
-/// `hkask_inference::model_constants` — do not duplicate the model ids here.
+/// Configured media models — resolved from env vars (injected from the
+/// visible kask settings). NO hidden constants: every accessor returns
+/// `None` when unset and callers fail visibly naming the env var (the
+/// operator's no-hidden-models spec).
 pub mod models {
-    /// Default TTS model: Kokoro-82M via DeepInfra
-    pub const TTS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_TTS_MODEL;
     pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
-
-    /// Default STT model: Whisper Large v3 via DeepInfra
-    pub const STT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_STT_MODEL;
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
-
-    /// Default transcript-pass model (classifier tier) for Educt LLM layers
-    pub const PASS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL;
     pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
-
-    /// Default audio-input chat model (the speaker pass's primary source)
-    pub const AUDIO_CHAT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_AUDIO_CHAT_MODEL;
     pub const AUDIO_CHAT_ENV: &str = "HKASK_MEDIA_AUDIO_CHAT_MODEL";
-
-    /// Default structured-outputs pass model (the v2 spike's opt-in mode)
-    pub const STRUCTURED_PASS_DEFAULT: &str =
-        hkask_inference::model_constants::DEFAULT_STRUCTURED_PASS_MODEL;
     pub const STRUCTURED_PASS_ENV: &str = "HKASK_MEDIA_STRUCTURED_PASS_MODEL";
-
-    /// Default vision model: Qwen3-VL (Apache 2.0) via OpenRouter
-    pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
-
-    /// Default image generation model: FLUX-2-klein-4B via DeepInfra
-    pub const IMAGE_GEN_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL;
     pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
-    /// Resolve a model name from env var or default.
-    pub fn resolve(env_key: &str, default: &str) -> String {
-        std::env::var(env_key).unwrap_or_else(|_| default.to_string())
+    /// Resolve a configured media model from its env var — `None` when
+    /// unset (the operator's no-hidden-models spec: no constant fallback;
+    /// callers fail visibly naming the env var).
+    fn configured(env_key: &str) -> Option<String> {
+        std::env::var(env_key).ok().filter(|m| !m.trim().is_empty())
     }
 
-    pub fn tts_model() -> String {
-        resolve(TTS_ENV, TTS_DEFAULT)
+    pub fn tts_model() -> Option<String> {
+        configured(TTS_ENV)
     }
-    pub fn stt_model() -> String {
-        resolve(STT_ENV, STT_DEFAULT)
+    pub fn stt_model() -> Option<String> {
+        configured(STT_ENV)
     }
-    pub fn vision_model() -> String {
-        resolve(VISION_ENV, VISION_DEFAULT)
+    pub fn vision_model() -> Option<String> {
+        configured(VISION_ENV)
     }
-    pub fn image_gen_model() -> String {
-        resolve(IMAGE_GEN_ENV, IMAGE_GEN_DEFAULT)
+    pub fn image_gen_model() -> Option<String> {
+        configured(IMAGE_GEN_ENV)
+    }
+    pub fn video_model() -> Option<String> {
+        configured("HKASK_MEDIA_VIDEO_MODEL")
     }
 }
 

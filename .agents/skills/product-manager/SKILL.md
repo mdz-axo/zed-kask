@@ -1,6 +1,6 @@
 ---
 name: product-manager
-description: The operator's side of the Division of Responsibilities — the product manager's judgment deliverables in the AI age. Requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, decisions on the wire-or-remove queue, and ground-truth confirmation. Dual audience: the operator reads it as their working guide; the agent consults it when a request arrives underspecified, to structure what to ask for instead of improvising the requirement.
+description: "The operator's side of the Division of Responsibilities — the product manager's judgment deliverables in the AI age. Requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, decisions on the wire-or-remove queue, and ground-truth confirmation. Dual audience: the operator reads it as their working guide; the agent consults it when a request arrives underspecified, to structure what to ask for instead of improvising the requirement."
 ---
 
 # Product Manager

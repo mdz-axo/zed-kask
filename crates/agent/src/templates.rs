@@ -363,15 +363,24 @@ mod tests {
     fn test_division_skill_references_resolve_on_disk() {
         // The Division of Responsibilities names two skills as the operational
         // rubrics for its two roles. A prompt reference to a skill that does
-        // not exist is a ghost instruction — this pins that both resolve.
+        // not LOAD is a ghost instruction — the file can exist and still be
+        // unusable (observed 2026-09-04: an unquoted description containing
+        // ": " made product-manager's frontmatter unparseable YAML). This
+        // pins that both skills exist AND parse with the real loader.
         let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for skill in ["program-manager", "product-manager"] {
             let path = repo_root.join(format!(".agents/skills/{skill}/SKILL.md"));
-            assert!(
-                path.exists(),
-                "the system prompt references the {skill} skill; {} must exist",
-                path.display()
-            );
+            let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "the system prompt references the {skill} skill; reading {} failed: {e}",
+                    path.display()
+                )
+            });
+            agent_skills::parse_skill_file_content(&content).unwrap_or_else(|e| {
+                panic!(
+                    "the system prompt references the {skill} skill; its frontmatter must load: {e}"
+                )
+            });
         }
     }
 

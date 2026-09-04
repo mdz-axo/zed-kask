@@ -1733,6 +1733,11 @@ pub struct KaskMemorySettingsContent {
     /// A thread counts as finished when its newest turn is at least this
     /// many seconds old — the distillation pass skips younger threads.
     pub distillation_idle_secs: Option<u64>,
+    /// Distillation-gated forgetting age in days (0 = disabled). The
+    /// curator server's background pass forgets (expires) the
+    /// shared-copy turns of threads whose distillation watermark is
+    /// older than this — the goldfish principle's automatic leg.
+    pub forgetting_days: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

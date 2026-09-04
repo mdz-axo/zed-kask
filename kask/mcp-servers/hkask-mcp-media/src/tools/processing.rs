@@ -748,9 +748,17 @@ impl MediaServer {
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
+            let mut image_b64s = Vec::with_capacity(image_urls.len());
+            for url in &image_urls {
+                image_b64s.push(
+                    crate::gallery::vision::load_image_as_png_base64(url)
+                        .await
+                        .map_err(crate::error::map_media_error)?,
+                );
+            }
             let result = self
                 .vision_port
-                .generate_vision(&prompt, &image_urls, &params, Some(vision_model))
+                .generate_vision(&prompt, &image_b64s, &params, Some(vision_model))
                 .await;
 
             for frame in &frames {

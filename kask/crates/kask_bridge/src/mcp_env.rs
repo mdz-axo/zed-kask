@@ -76,6 +76,12 @@ pub(crate) fn emit_curator_distillation_env(
             memory.distillation_idle_secs.to_string(),
         );
     }
+    if memory.forgetting_days != default.forgetting_days {
+        env.insert(
+            "HKASK_MEMORY_FORGETTING_DAYS".to_string(),
+            memory.forgetting_days.to_string(),
+        );
+    }
 }
 
 pub(crate) fn emit_mcp_server_ids_env(env: &mut std::collections::HashMap<String, String>) {

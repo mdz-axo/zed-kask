@@ -1,7 +1,7 @@
 {
   "agent_id": "local_extractor",
   "agent_type": "extractor",
-  "description": "A local extractor agent that pulls structured fields (dates, names, numbers, identifiers) from unstructured text. Runs entirely on a local Ollama model — no ABW calls, no cloud round-trips. Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
+  "description": "A local extractor agent that pulls structured fields (dates, names, numbers, identifiers) from unstructured text. Runs on the host session's default model (no ABW calls, no ABW round-trips). Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
   "display_name": "",
   "accepts": [
     "text"

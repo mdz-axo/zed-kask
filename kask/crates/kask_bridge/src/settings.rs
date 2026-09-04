@@ -243,6 +243,15 @@ pub struct KaskMemorySettings {
     /// A thread counts as finished when its newest turn is at least this
     /// many seconds old — the distillation pass skips younger threads.
     pub distillation_idle_secs: u64,
+
+    /// Distillation-gated forgetting age in days (0 = disabled). The
+    /// curator server's background pass forgets (expires) the
+    /// shared-copy turns of threads whose distillation watermark is
+    /// older than this — the goldfish principle's automatic leg.
+    /// Time-based and distillation-gated, never count-based: budgets
+    /// are deprecated (operator ruling 2026-09-04). Default 7, matching
+    /// the curator server's `DEFAULT_FORGETTING_DAYS`.
+    pub forgetting_days: u64,
 }
 
 impl Default for KaskMemorySettings {
@@ -256,6 +265,7 @@ impl Default for KaskMemorySettings {
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             distillation_cadence_secs: 600,
             distillation_idle_secs: 300,
+            forgetting_days: 7,
         }
     }
 }
@@ -776,6 +786,7 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
             distillation_idle_secs: c
                 .distillation_idle_secs
                 .unwrap_or(default.distillation_idle_secs),
+            forgetting_days: c.forgetting_days.unwrap_or(default.forgetting_days),
         }
     }
 }

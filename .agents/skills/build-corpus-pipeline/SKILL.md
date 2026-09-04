@@ -436,6 +436,36 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
    duplicate left in this directory is a corpus-quality bug — the chunk
    stage would ingest it as a second source.
 
+8. **Re-OCR procedure (quality upgrade of passing outputs).** When
+   existing extractions pass the word-count floor but must be re-OCR'd
+   (model upgrade, endpoint recovery, quality improvement), the same
+   machinery runs the job — no bespoke scripts, no per-run model
+   pinning:
+   a. **Pre-flight the backend** (the standard pre-flight slice). The
+      model comes from the platform chain: `kask.models.ocr_model`
+      setting → `HKASK_OCR_MODEL` env → `DEFAULT_OCR_MODEL`
+      (RunPod/kask-ocr). If the default endpoint is unhealthy, the
+      OPERATOR decides the fallback: fix the endpoint, or set a cloud
+      fallback model via the `kask.models.ocr_model` setting (the
+      designed surface). An agent never pins a model per-run.
+   b. **Move the outputs to re-extract** into a sibling backup dir
+      (e.g. `extracted/{{ entity_ref_prefix }}-ocr-prev/`) — the
+      word-count-aware skip keeps passing outputs, so re-OCR requires
+      the move. Never delete: the backup is the rollback.
+   c. **Run `corpus_convert` directory mode** (`force_ocr: true`) —
+      the machinery re-extracts exactly the moved-aside sources and
+      skips the rest. The run is interruptible and resumable: the
+      self-healing skip means a re-launch continues where it stopped.
+      Do not restart the OCR backend mid-run — in-flight pages degrade
+      to the fallback backend and the skip keeps the lower-quality
+      text.
+   d. **Audit the new outputs** (the step-5 word-count audit) and
+      spot-check quality against the backup — word count is a floor,
+      not a quality signal.
+   e. **Re-merge** (step 7), re-audit, and re-chunk (Stage 2) —
+      downstream stages always rebuild from the current extraction
+      set; a re-OCR without a re-chunk leaves the corpus stale.
+
 ### Stage 2 — Chunk the text
 
 **Parallelizable**: per sub-directory for very large corpora. For most

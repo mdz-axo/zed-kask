@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use edit_prediction::open_ai_compatible::KaskCompletionPort;
 use futures::{AsyncReadExt, FutureExt};
-use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
+
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -149,30 +149,35 @@ impl BridgeEditPredictionPort {
         Self { tx }
     }
 
-    /// Resolve the port from the `LanguageModelRegistry`.
-    ///
-    /// Looks up `DEFAULT_FALLBACK_MODEL` (e.g. `OpenRouter/z-ai/glm-5.2`)
-    /// in the registry, extracts `api_url()` + `api_key()` from the resolved
-    /// model, strips the provider prefix, and constructs the port.
-    /// Returns `None` if the model cannot be resolved or has no `api_url`/`api_key`.
+    /// Resolve the port from the `LanguageModelRegistry` — the visible
+    /// chain only (the operator's no-hidden-models spec):
+    /// 1. `kask.models.default_model` when the user set it,
+    /// 2. else the zed default model (the user's active default, visible
+    ///    in Settings → AI).
+    /// Never a code constant. Returns `None` when nothing resolves or the
+    /// resolved model has no `api_url`/`api_key` — edit prediction then
+    /// falls back to the user's own configured provider (fail-visible, not
+    /// a hidden model).
     pub fn from_registry(
         registry: &language_model::LanguageModelRegistry,
         http_client: Arc<dyn HttpClient>,
         tokio_handle: tokio::runtime::Handle,
+        kask_default_model: Option<&str>,
         cx: &gpui::App,
     ) -> Option<Self> {
-        let model = crate::model_resolution::resolve_model_names(
-            registry,
-            &[DEFAULT_FALLBACK_MODEL.to_string()],
-            cx,
-        )
-        .0
-        .into_values()
-        .next()?;
+        let model = match kask_default_model {
+            Some(name) => {
+                crate::model_resolution::resolve_model_names(registry, &[name.to_string()], cx)
+                    .0
+                    .into_values()
+                    .next()?
+            }
+            None => registry.default_model()?.model,
+        };
 
         let api_url = model.api_url(cx)?;
         let api_key = model.api_key(cx)?;
-        let model_id = crate::inference_providers::strip_provider_prefix(DEFAULT_FALLBACK_MODEL);
+        let model_id = model.id().0.to_string();
 
         Some(Self::new(
             api_url,

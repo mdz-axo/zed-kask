@@ -45,17 +45,13 @@ pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
 /// endpoints via the RunPod GraphQL API.
 pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 
-/// Fallback model when no other model is configured.
-/// Prefixed with `OpenRouter/` so it routes to OpenRouter (which hosts this exact id).
-/// Matches `InferenceConfig::from_env()` default.
+/// Fallback model for the audit-listed subsystem surfaces that still
+/// carry a constant default (see `KaskModelsSettings`'s default-model
+/// policy note). NOT the default inference model — the default-model chain
+/// is settings-driven only (`kask.models.default_model` → the zed default
+/// → typed error; never this constant). Prefixed with `OpenRouter/` so it
+/// routes to OpenRouter (which hosts this exact id).
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
-
-/// Default agent model for local swarm agents (the model the agent runs on).
-/// Used by `SwarmConfig::default()` and `KaskSwarmSettings::default()`.
-/// Open-weight Qwen3-235B-A22B-Thinking (Apache-2.0) — the platform
-/// preference is open-weight defaults; the former closed-weight
-/// `claude-haiku-4-5-20251001` default was replaced 2026-08-31.
-pub const DEFAULT_AGENT_MODEL: &str = "qwen/qwen3-235b-a22b-thinking-2507";
 
 /// Default TTS model — Kokoro via DeepInfra.
 pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
@@ -104,29 +100,42 @@ pub const DEFAULT_VIDEO_MODEL: &str = "DeepInfra/Wan-AI/Wan2.2-T2V-A14B";
 /// side of the inference IPC bridge (the prefix is stripped before the call).
 pub const DEFAULT_RERANK_MODEL: &str = "OpenRouter/qwen/qwen3-reranker-8b";
 
-// ── Resolved model accessors (env var → default) ──────────────────────────
+// ── Resolved model accessors (env var → Option; None = not configured) ────
+//
+// The operator's no-hidden-models spec: these accessors have NO constant
+// fallback. `None` means "not configured" — callers fail visibly (a typed
+// error naming the setting to set), never a silent hidden default. The env
+// vars are injected from the visible kask settings
+// (`kask.models.classifier_model`, etc.).
 
-/// Resolve the primary classifier: `HKASK_CLASSIFIER_MODEL` → default.
-pub fn classifier_model() -> String {
-    std::env::var("HKASK_CLASSIFIER_MODEL").unwrap_or_else(|_| DEFAULT_CLASSIFIER_MODEL.to_string())
+/// Resolve the classifier model: `HKASK_CLASSIFIER_MODEL` → `None` when
+/// unset (callers fail visibly).
+pub fn classifier_model() -> Option<String> {
+    std::env::var("HKASK_CLASSIFIER_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the embedding model: `HKASK_EMBEDDING_MODEL` → default.
-pub fn embedding_model() -> String {
-    std::env::var("HKASK_EMBEDDING_MODEL").unwrap_or_else(|_| DEFAULT_EMBEDDING_MODEL.to_string())
+/// Resolve the embedding model: `HKASK_EMBEDDING_MODEL` → `None` when
+/// unset (callers fail visibly).
+pub fn embedding_model() -> Option<String> {
+    std::env::var("HKASK_EMBEDDING_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the OCR model: `HKASK_OCR_MODEL` → default.
-pub fn ocr_model() -> String {
-    std::env::var("HKASK_OCR_MODEL").unwrap_or_else(|_| DEFAULT_OCR_MODEL.to_string())
+/// Resolve the OCR model: `HKASK_OCR_MODEL` → `None` when unset (callers
+/// fail visibly).
+pub fn ocr_model() -> Option<String> {
+    std::env::var("HKASK_OCR_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
 }
 
-/// Resolve the rerank model: `HKASK_RERANK_MODEL` → default.
-pub fn rerank_model() -> String {
-    std::env::var("HKASK_RERANK_MODEL").unwrap_or_else(|_| DEFAULT_RERANK_MODEL.to_string())
-}
-
-/// Resolve a model name from an env var or fall back to a default.
-pub fn resolve(env_key: &str, default: &str) -> String {
-    std::env::var(env_key).unwrap_or_else(|_| default.to_string())
+/// Resolve the rerank model: `HKASK_RERANK_MODEL` → `None` when unset
+/// (callers fail visibly).
+pub fn rerank_model() -> Option<String> {
+    std::env::var("HKASK_RERANK_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
 }

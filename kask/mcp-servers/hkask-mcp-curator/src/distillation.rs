@@ -144,6 +144,16 @@ pub(crate) fn spawn_distillation_timer(
     };
     let cadence = config.cadence_secs;
     let idle_secs = config.idle_secs;
+    // Forgetting rides the distillation timer — it consumes what
+    // distillation produces (the watermark is the extraction proof), so
+    // cadence 0 disables both.
+    let forgetting_days = crate::forgetting::ForgettingConfig::from_env().days;
+    if forgetting_days == 0 {
+        tracing::info!(
+            target: "hkask.mcp.curator.forgetting",
+            "Memory forgetting pass disabled (forgetting days 0)"
+        );
+    }
     handle.spawn(async move {
         let poll_interval = std::time::Duration::from_secs(cadence.clamp(60, 3600));
         let mut interval = tokio::time::interval(poll_interval);
@@ -165,6 +175,23 @@ pub(crate) fn spawn_distillation_timer(
                 lessons_skipped = outcome.lessons_skipped,
                 "Memory distillation pass complete"
             );
+            // Distillation-gated forgetting (operator ruling 2026-09-04):
+            // forget (expire) the shared-copy turns of threads whose
+            // distillation watermark has aged past the forgetting
+            // threshold — the goldfish principle's automatic leg.
+            if forgetting_days > 0 {
+                let forgetting_outcome =
+                    crate::forgetting::run_forgetting_pass(&db, now, forgetting_days);
+                tracing::info!(
+                    target: "hkask.mcp.curator.forgetting",
+                    threads_examined = forgetting_outcome.threads_examined,
+                    threads_forgotten = forgetting_outcome.threads_forgotten,
+                    turns_expired = forgetting_outcome.turns_expired,
+                    embeddings_deleted = forgetting_outcome.embeddings_deleted,
+                    orphans_swept = forgetting_outcome.orphans_swept,
+                    "Memory forgetting pass complete"
+                );
+            }
             last_pass = Some(now);
         }
     });

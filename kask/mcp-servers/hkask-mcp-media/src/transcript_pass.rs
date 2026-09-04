@@ -113,6 +113,14 @@ pub enum PassError {
     Prompt(String),
     #[error("inference call failed: {0}")]
     Inference(#[from] hkask_types::InferenceError),
+    #[error(
+        "no {kind} model configured — set {env} or pass an explicit model; \
+             kask never falls back to a hidden code constant"
+    )]
+    NotConfigured {
+        kind: &'static str,
+        env: &'static str,
+    },
 }
 
 fn pass_stats_json(attempts: &AtomicU64, rejections: &AtomicU64) -> serde_json::Value {
