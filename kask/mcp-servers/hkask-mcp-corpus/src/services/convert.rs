@@ -45,6 +45,21 @@ use crate::{
 };
 use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
 
+/// A passage-indexing failure, structured by kind. `index_passages`
+/// returns this so callers can surface *why* nothing was indexed — a dead
+/// embedding provider is operator-actionable, a poisoned index mutex means
+/// a prior panic corrupted in-memory state.
+#[derive(Debug, thiserror::Error)]
+pub enum PassageIndexError {
+    #[error("embedding failed: {source}")]
+    Embed {
+        #[source]
+        source: hkask_types::EmbeddingGenerationError,
+    },
+    #[error("index mutex poisoned — the index may be corrupted by a prior panic")]
+    IndexMutexPoisoned,
+}
+
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
 ///
 /// `ConvertService` holds the cheaply-clonable state (inference router, OCR
@@ -117,6 +132,15 @@ fn assemble_pipeline_outcome(
         backends: outcome.backends,
         llm_breaker_open,
     })
+}
+
+/// OCR page-render resolution (DPI). Default 72 — the JPEG payload fits the
+/// vision model's 128K-token context. Raising it (e.g. 150) improves
+/// Tesseract accuracy on scanned books at the cost of render memory and LLM
+/// payload size; a malformed value warns naming the bad input and falls
+/// back to the default (the parse_env_warn contract).
+fn ocr_render_dpi() -> u32 {
+    hkask_mcp_server::parse_env_warn("HKASK_OCR_RENDER_DPI", 72_u32)
 }
 
 impl<'a> ConvertService<'a> {
@@ -283,21 +307,19 @@ impl<'a> ConvertService<'a> {
         mut result: serde_json::Value,
         outcome: &PipelineOutcome,
     ) -> serde_json::Value {
+        // Structure is deliberately NOT folded here: it is site-specific
+        // (three of the four OCR paths carry it) and doubles the response
+        // with the full text — each site gates it on `include_structure`.
         let common = serde_json::json!({
-            "structure": if include_structure {
-                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
-            } else {
-                serde_json::Value::Null
-            },
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
             "degraded_pages": &outcome.report.degraded_pages,
             "backends": &outcome.backends,
             "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
             "error_count": outcome.errors.len(),
         });
-        return Ok(result);
         if let (Some(result_map), Some(common_map)) = (result.as_object_mut(), common.as_object()) {
             for (key, value) in common_map {
                 result_map.insert(key.clone(), value.clone());
@@ -326,7 +348,7 @@ impl<'a> ConvertService<'a> {
         executor: std::sync::Arc<dyn OcrExecutor>,
     ) -> Result<PipelineOcrOutcome, McpToolError> {
         let page_images = if format == "pdf" {
-            decimation::pdf_to_images(resolved, 72)
+            decimation::pdf_to_images(resolved, ocr_render_dpi())
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("PDF page rendering failed: {e}")))?
         } else {
@@ -417,14 +439,14 @@ impl<'a> ConvertService<'a> {
     /// Embeds each passage text and stores it with metadata.
     ///
     /// Returns `Ok(count)` on success (including 0 for empty input).
-    /// Returns `Err(message)` when embedding fails entirely — the caller
-    /// must surface this so the operator can distinguish "document was empty"
-    /// from "embedding provider is down."
+    /// Returns [`PassageIndexError`] when indexing fails entirely — the
+    /// caller must surface this so the operator can distinguish "document
+    /// was empty" from "embedding provider is down."
     pub async fn index_passages(
         &self,
         passages: &[(String, String)],
         source_label: &str,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, PassageIndexError> {
         let texts: Vec<String> = passages.iter().map(|(_, t)| t.clone()).collect();
         if texts.is_empty() {
             return Ok(0);
@@ -443,7 +465,7 @@ impl<'a> ConvertService<'a> {
                     "Failed to embed passages for indexing — \
                      none of these passages will be findable by semantic search"
                 );
-                return Err(e.to_string());
+                return Err(PassageIndexError::Embed { source: e });
             }
         };
 
@@ -456,7 +478,7 @@ impl<'a> ConvertService<'a> {
                     "Failed to lock index for passage indexing — skipping. \
                      The index mutex may be poisoned from a prior panic."
                 );
-                return Err(e.to_string());
+                return Err(PassageIndexError::IndexMutexPoisoned);
             }
         };
         for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
@@ -573,9 +595,14 @@ impl<'a> ConvertService<'a> {
             // Not an image — try decimation + pipeline for PDFs (72 DPI JPEG to stay within 128K token limit)
             if format == "pdf" {
                 let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(&resolved, 72, &target_indices(ts)).await
+                    decimation::pdf_to_images_for_pages(
+                        &resolved,
+                        ocr_render_dpi(),
+                        &target_indices(ts),
+                    )
+                    .await
                 } else {
-                    decimation::pdf_to_images(&resolved, 72).await
+                    decimation::pdf_to_images(&resolved, ocr_render_dpi()).await
                 };
                 match imgs_res {
                     Ok(page_images) => {
@@ -608,7 +635,11 @@ impl<'a> ConvertService<'a> {
                             "model": model, "text": text, "word_count": word_count,
                             "pages": expected,
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
+                            "structure": if include_structure {
+                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
+                            } else {
+                                serde_json::Value::Null
+                            },
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
@@ -699,7 +730,7 @@ impl<'a> ConvertService<'a> {
             {
                 match decimation::pdf_to_images_for_pages(
                     std::path::Path::new(&path),
-                    72,
+                    ocr_render_dpi(),
                     ocr_pages,
                 )
                 .await
@@ -734,7 +765,11 @@ impl<'a> ConvertService<'a> {
                             "pages": page_texts.len(),
                             "ocr_pages": ocr_pages.len(),
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
+                            "structure": if include_structure {
+                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
+                            } else {
+                                serde_json::Value::Null
+                            },
                             "triage": triage_summary,
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
@@ -760,9 +795,14 @@ impl<'a> ConvertService<'a> {
                 && let Ok(model) = self.resolve_ocr_model(None).await
             {
                 let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(&resolved, 72, &target_indices(ts)).await
+                    decimation::pdf_to_images_for_pages(
+                        &resolved,
+                        ocr_render_dpi(),
+                        &target_indices(ts),
+                    )
+                    .await
                 } else {
-                    decimation::pdf_to_images(&resolved, 72).await
+                    decimation::pdf_to_images(&resolved, ocr_render_dpi()).await
                 };
                 match imgs_res {
                     Ok(page_images) => {
@@ -786,7 +826,11 @@ impl<'a> ConvertService<'a> {
                             "format": format, "path": path, "method": "ocr_pipeline",
                             "model": model, "text": text, "word_count": word_count,
                             "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null),
+                            "structure": if include_structure {
+                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
+                            } else {
+                                serde_json::Value::Null
+                            },
                             "pages": expected,
                             "cross_validations": outcome.cross_validations.len(),
                         });
@@ -1011,7 +1055,7 @@ impl<'a> ConvertService<'a> {
                 indexed += self
                     .index_passages(&passages, &source_label)
                     .await
-                    .map_err(McpToolError::unavailable)?;
+                    .map_err(|e| McpToolError::unavailable(e.to_string()))?;
             }
 
             use std::io::Write as _;

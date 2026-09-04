@@ -712,9 +712,10 @@ impl SwarmServer {
         .await
     }
 
-    /// Validate a local compound agent's declared workflow — the scaffold
+    /// Validate a local agent's declared `workflow_template` — the scaffold
     /// for the run-the-declared-workflow pattern (the execution analog of
-    /// fermi's compound agents). Resolves each stage's slot against the
+    /// how fermi agents with a declared workflow orchestrate). Resolves each
+    /// stage's slot against the
     /// local registry (does the declared agent exist? do its actual
     /// `accepts`/`produces` match the stage's declared ports?) and
     /// seam-checks consecutive stages (upstream `produces` must overlap
@@ -722,7 +723,7 @@ impl SwarmServer {
     /// ports are permissive). Advisory: a violation describes what a runner
     /// would trip over, it blocks nothing.
     #[tool(
-        description = "Validate a local compound agent's declared workflow_template. Resolves each stage's slot against the local registry and seam-checks consecutive stages (upstream produces must overlap downstream accepts). Advisory — reports what a workflow runner would trip over; blocks nothing. Returns per-stage resolution, seam violations, and a valid flag."
+        description = "Validate a local agent's declared workflow_template. Resolves each stage's slot against the local registry and seam-checks consecutive stages (upstream produces must overlap downstream accepts). Advisory — reports what a workflow runner would trip over; blocks nothing. Returns per-stage resolution, seam violations, and a valid flag."
     )]
     pub(crate) async fn swarm_workflow_check_local(
         &self,
@@ -745,7 +746,7 @@ impl SwarmServer {
                 return Ok(serde_json::json!({
                     "agent_id": req.agent_name,
                     "workflow": serde_json::Value::Null,
-                    "note": "agent declares no workflow_template — not a compound agent",
+                    "note": "agent declares no workflow_template",
                 }));
             };
             let registry = self.local_registry.clone();
@@ -967,7 +968,7 @@ impl SwarmServer {
                 .get("model_params")
                 .filter(|v| !v.is_null())
                 .cloned();
-            // The compound agent's declared workflow (fermi
+            // The agent's declared workflow (fermi
             // `build_agent_json` carries `workflow_template` top-level).
             // Parsed into the typed struct so the clone round-trips and the
             // workflow check can read it; a malformed template is warned
@@ -1110,7 +1111,7 @@ impl SwarmServer {
             if !local_card.version.trim().is_empty() {
                 update_payload["version"] = serde_json::json!(local_card.version);
             }
-            // The compound agent's declared workflow — fermi's `AgentUpdate`
+            // The agent's declared workflow — fermi's `AgentUpdate`
             // accepts `workflow_template`. Omitted when the card declares
             // none so fermi keeps whatever it has.
             if let Some(workflow_template) = &local_card.workflow_template {

@@ -324,7 +324,16 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.pipeline.ocr.rate_limit",
     "reg.pipeline.ocr.silent_failure",
     "reg.pipeline.ocr.trust_invert",
+    // OCR health snapshot persistence — the file the regulation loop senses
+    // (a write failure blinds the loop to OCR degradation).
+    "reg.pipeline.ocr.health",
+    // Zero-chunk surfacing: a source that produces no chunks after processing
+    // is pipeline degradation, surfaced not skipped.
+    "reg.pipeline.chunk",
     "reg.pipeline.pdf_extract",
+    // ── Batch (corpus AIMD concurrency ramp — ratified spec, PM decision
+    // 2026-09-03) ──
+    "reg.batch.concurrency",
     // ── Supply chain (security audit — supply-chain-sentinel skill) ──
     "reg.supply_chain",
     "reg.supply_chain.select",

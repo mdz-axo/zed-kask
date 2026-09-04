@@ -585,6 +585,68 @@ mod smoke {
         );
     }
 
+    /// `convert_directory` skips only outputs that pass the Stage-1
+    /// word-count floor. The old `len > 50` byte check treated a 72-byte
+    /// zero-word garbage extraction as a valid existing output, so a
+    /// re-run never healed it — silent data loss presented as idempotency
+    /// (the exact class that left 5 garbage extractions in the corpus).
+    #[tokio::test]
+    async fn convert_directory_reextracts_below_floor_outputs() {
+        use crate::tools::document::ConvertRequest;
+
+        let dir = std::path::Path::new("target/test-convert-skip");
+        let src = dir.join("src");
+        let out = dir.join("out");
+        std::fs::create_dir_all(&src).expect("create src");
+        std::fs::create_dir_all(&out).expect("create out");
+        let content = "This source document has plenty of real words. ".repeat(20);
+        std::fs::write(src.join("doc.txt"), &content).expect("write source");
+        // Pre-seed a garbage output (2 words, below the 50-word floor)
+        // under the exact name directory mode writes.
+        std::fs::write(out.join("doc.txt.txt"), "garbage zero words").expect("seed garbage");
+
+        let server = make_server();
+        let call = || {
+            Parameters(ConvertRequest {
+                path: src.to_string_lossy().into_owned(),
+                output: Some(out.to_string_lossy().into_owned()),
+                force_ocr: false,
+                target_pages: None,
+                include_structure: None,
+            })
+        };
+
+        let response = server
+            .corpus_convert(call())
+            .await
+            .expect("directory convert succeeds");
+        let parsed =
+            hkask_types::tool_response::parse_tool_response(&response).expect("parse response");
+        assert_eq!(
+            parsed.get("extracted").and_then(serde_json::Value::as_u64),
+            Some(1),
+            "the below-floor output must be re-extracted, got: {parsed}"
+        );
+        let healed = std::fs::read_to_string(out.join("doc.txt.txt")).expect("read healed");
+        assert!(
+            healed.split_whitespace().count() >= 50,
+            "the healed output must pass the word floor"
+        );
+
+        // A re-run now skips the good output — idempotency preserved.
+        let response2 = server
+            .corpus_convert(call())
+            .await
+            .expect("second directory convert succeeds");
+        let parsed2 = hkask_types::tool_response::parse_tool_response(&response2)
+            .expect("parse second response");
+        assert_eq!(
+            parsed2.get("skipped").and_then(serde_json::Value::as_u64),
+            Some(1),
+            "a passing output is skipped on re-run, got: {parsed2}"
+        );
+    }
+
     /// The build_prompts KNN scaffold honors the caller's entity-ref prefix
     /// (the 2026-09-03 fix): embeddings stored under "corpus:custom:" reach
     /// the scaffold only when prefix="corpus:custom:" is passed. Pre-fix the

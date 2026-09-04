@@ -464,6 +464,44 @@ impl OcrExecutor for LlmOcrExecutor {
 mod tests {
     use super::*;
 
+    /// The breaker's cooldown escalates per consecutive opening (base ×
+    /// 2^(openings-1), capped at 300s) and a success resets the escalation.
+    /// A fixed 30s cooldown let a dead endpoint tax a 412-page run for its
+    /// full duration — one doomed vision call every cooldown window.
+    #[test]
+    fn breaker_cooldown_escalates_on_consecutive_openings() {
+        let breaker = CircuitBreaker::new(5, 30);
+
+        let cooldown_after = |failures: usize| {
+            for _ in 0..failures {
+                breaker.record_failure();
+            }
+            let until = breaker
+                .cooldown_until
+                .load(std::sync::atomic::Ordering::Relaxed);
+            (until - now_unix()).max(0) as u64
+        };
+
+        // First opening (5 failures): base cooldown.
+        let first = cooldown_after(5);
+        assert!(
+            first <= 30,
+            "first opening uses the base cooldown, got {first}"
+        );
+        // Each subsequent failure re-opens with escalation: 60, 120, 240,
+        // then capped at 300.
+        assert_eq!(cooldown_after(1), 60, "second opening doubles");
+        assert_eq!(cooldown_after(1), 120, "third opening doubles again");
+        assert_eq!(cooldown_after(1), 240, "fourth opening doubles again");
+        assert_eq!(cooldown_after(1), 300, "fifth opening hits the cap");
+        assert_eq!(cooldown_after(1), 300, "cap holds");
+
+        // A success resets the failure counter and the escalation.
+        breaker.record_success();
+        let reset = cooldown_after(5);
+        assert!(reset <= 30, "success resets the backoff, got {reset}");
+    }
+
     fn temp_health_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("ocr-recorder-test-{name}-{}", std::process::id()))
     }

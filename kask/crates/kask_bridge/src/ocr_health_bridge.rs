@@ -57,7 +57,7 @@ impl Default for BridgeOcrHealthSource {
 
 #[async_trait::async_trait]
 impl hkask_regulation::OcrHealthSource for BridgeOcrHealthSource {
-    async fn recent_silent_failures(&self) -> Result<u64, String> {
+    async fn recent_silent_failures(&self) -> Result<u64, hkask_regulation::OcrHealthError> {
         let contents = match std::fs::read_to_string(&self.path) {
             Ok(contents) => contents,
             // A missing file is the legitimate "no OCR has run yet" state,
@@ -66,11 +66,17 @@ impl hkask_regulation::OcrHealthSource for BridgeOcrHealthSource {
             // is an error (warned by the sensor, never collapsed to 0).
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => {
-                return Err(format!("{}: {error}", self.path.display()));
+                return Err(hkask_regulation::OcrHealthError::Unreadable {
+                    path: self.path.clone(),
+                    source: error,
+                });
             }
         };
         let snapshot: hkask_types::ocr_health::OcrHealthSnapshot = serde_json::from_str(&contents)
-            .map_err(|error| format!("{}: {error}", self.path.display()))?;
+            .map_err(|error| hkask_regulation::OcrHealthError::Unparseable {
+                path: self.path.clone(),
+                source: error,
+            })?;
         let now_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -141,7 +147,7 @@ mod tests {
             .await
             .expect_err("a corrupt health file must be Err, not Ok(0)");
         assert!(
-            error.contains(&path_display),
+            error.to_string().contains(&path_display),
             "error must name the file: {error}"
         );
     }

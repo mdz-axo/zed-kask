@@ -275,9 +275,11 @@ pub struct CreateAgentRequest {
     /// match on these). Passed through to the ABW card's top-level
     /// `produces`.
     pub produces: Option<Vec<String>>,
-    /// Required dependency agent names (for compound agents).
+    /// Required member agent names — agents this one invokes as part of
+    /// its work (fermi `dependencies.required`).
     pub dependencies_required: Option<Vec<String>>,
-    /// Optional dependency agent names (for compound agents).
+    /// Optional member agent names — agents this one may invoke
+    /// (fermi `dependencies.optional`).
     pub dependencies_optional: Option<Vec<String>>,
     /// Outbound MCP tool allowlist — what this agent *exposes* over
     /// `/mcp/agents/:id` to external MCP clients (Claude Desktop, Cursor,
@@ -472,14 +474,14 @@ pub struct GetLocalAgentRequest {
     pub agent_name: String,
 }
 
-/// Validate a local compound agent's declared workflow — the scaffold for
-/// the run-the-declared-workflow pattern. Resolves each stage's slot
+/// Validate a local agent's declared `workflow_template` — the scaffold
+/// for the run-the-declared-workflow pattern. Resolves each stage's slot
 /// against the local registry and seam-checks consecutive stages
 /// (upstream `produces` must overlap downstream `accepts`). Advisory — a
 /// violation describes what a runner would trip over, it blocks nothing.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkflowCheckLocalRequest {
-    /// The local compound agent whose `workflow_template` to check.
+    /// The local agent whose `workflow_template` to check.
     pub agent_name: String,
 }
 

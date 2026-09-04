@@ -112,17 +112,38 @@ pub(crate) struct ConceptPoint {
     pub provider: String,
 }
 
+/// A FIBO cache open/resolve failure. Cache failures are non-fatal by
+/// design — the server logs the Display message and runs uncached — but the
+/// kind is structured so a future caller can distinguish a bad path from a
+/// corrupt database.
+#[derive(Debug, thiserror::Error)]
+pub enum FiboCacheError {
+    #[error("failed to create fibo-cache directory: {source}")]
+    CreateDir {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to open fibo-cache DB: {source}")]
+    Open {
+        #[source]
+        source: rusqlite::Error,
+    },
+    #[error("failed to initialize fibo-cache schema: {source}")]
+    InitSchema {
+        #[source]
+        source: rusqlite::Error,
+    },
+}
+
 impl FiboDataCache {
     /// Open (or create) the cache database at the given path.
-    pub fn open(db_path: &Path) -> Result<Self, String> {
+    pub fn open(db_path: &Path) -> Result<Self, FiboCacheError> {
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create fibo-cache directory: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| FiboCacheError::CreateDir { source: e })?;
         }
-        let conn =
-            Connection::open(db_path).map_err(|e| format!("failed to open fibo-cache DB: {e}"))?;
+        let conn = Connection::open(db_path).map_err(|e| FiboCacheError::Open { source: e })?;
         conn.execute_batch(SCHEMA_DDL)
-            .map_err(|e| format!("failed to initialize fibo-cache schema: {e}"))?;
+            .map_err(|e| FiboCacheError::InitSchema { source: e })?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -427,13 +448,12 @@ pub(crate) fn hash_params(extra: &[(&str, &str)]) -> String {
 /// The FIBO cache is a database, so it lives under `mcp/companies/` in the
 /// internal data dir — databases are the one artifact class that stays
 /// hidden; artifact files and outputs go to the visible artifacts dir.
-pub(crate) fn resolve_cache_db_path(owner: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_cache_db_path(owner: &str) -> Result<PathBuf, FiboCacheError> {
     let mut path = hkask_types::agent_paths::resolve_under_data_dir(
         &hkask_types::agent_paths::mcp_server_subdir("companies", "fibo-cache"),
     );
     path.push(sanitize_name(owner));
-    std::fs::create_dir_all(&path)
-        .map_err(|e| format!("failed to create fibo-cache directory: {e}"))?;
+    std::fs::create_dir_all(&path).map_err(|e| FiboCacheError::CreateDir { source: e })?;
     Ok(path.join("master.db"))
 }
 

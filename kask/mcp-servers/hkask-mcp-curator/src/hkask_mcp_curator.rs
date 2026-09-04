@@ -45,6 +45,31 @@ const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 /// floods the whole result set and every other entity vanishes from recall.
 const MAX_FRAGMENTS_PER_ENTITY: usize = 2;
 
+/// A semantic-recall failure, structured by kind. Callers fall back to
+/// exact-entity lookup and surface the Display message in the result's
+/// `note` so the operator can tell "semantic recall broken" from "no
+/// matching memories" (the `unwrap_or(0)` trap).
+#[derive(Debug, thiserror::Error)]
+enum SemanticRecallError {
+    #[error("curator memory unavailable: {source}")]
+    MemoryUnavailable {
+        #[source]
+        source: McpToolError,
+    },
+    #[error("embedding the recall query failed: {source}")]
+    Embed {
+        #[source]
+        source: hkask_types::EmbeddingGenerationError,
+    },
+    #[error("embedding model returned no vector for the recall query")]
+    NoVector,
+    #[error("semantic search over curator memory failed: {source}")]
+    Search {
+        #[source]
+        source: hkask_memory::MemoryStoreError,
+    },
+}
+
 /// The four stores the curator's tools read, all backed by the curator's
 /// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
@@ -454,21 +479,21 @@ impl CuratorServer {
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(hkask_storage::HMem, f64)>, String> {
+    ) -> Result<Vec<(hkask_storage::HMem, f64)>, SemanticRecallError> {
         let stores = self.db.get();
         let memory = stores
             .memory()
-            .map_err(|e| format!("curator memory unavailable: {e}"))?;
+            .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
         let embedding_model = hkask_inference::model_constants::embedding_model();
         let vectors = self
             .inference_port
             .embed(&embedding_model, &[query.to_string()])
             .await
-            .map_err(|e| format!("embedding the recall query failed: {e}"))?;
+            .map_err(|source| SemanticRecallError::Embed { source })?;
         let query_vector = vectors
             .into_iter()
             .next()
-            .ok_or_else(|| "embedding model returned no vector for the recall query".to_string())?;
+            .ok_or(SemanticRecallError::NoVector)?;
         // Fetch more KNN neighbors than the fragment limit: each distinct
         // entity contributes at most MAX_FRAGMENTS_PER_ENTITY fragments, and
         // the same entity holds one embedding per turn, so a 1:1 KNN limit
@@ -476,7 +501,7 @@ impl CuratorServer {
         let knn_limit = limit.saturating_mul(MAX_FRAGMENTS_PER_ENTITY).max(limit);
         let results = memory
             .search_similar(&query_vector, knn_limit)
-            .map_err(|e| format!("semantic search over curator memory failed: {e}"))?;
+            .map_err(|source| SemanticRecallError::Search { source })?;
         let mut fragments = Vec::with_capacity(results.len());
         let mut seen_h_mem_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();

@@ -1,11 +1,11 @@
 //! Workflow resolution and seam validation — the scaffold for the local
-//! "run the declared workflow" pattern (the execution analog of fermi's
-//! compound agents, whose `workflow_template` declares the pipeline on the
-//! card).
+//! "run the declared workflow" pattern. Some agents' cards declare a
+//! `workflow_template` (the stages they run and the member agents that fill
+//! each slot); this module is everything a runner needs BEFORE executing
+//! one, built as pure functions so the future `swarm_run_workflow_local`
+//! reuses them verbatim.
 //!
-//! What exists here is everything a runner needs BEFORE executing, built as
-//! pure functions so the future `swarm_run_workflow_local` reuses them
-//! verbatim:
+//! The pieces:
 //! - **Slot resolution** — each stage names the agent that fills it (or is an
 //!   open slot); resolution reports whether that agent exists in the local
 //!   registry and whether its ACTUAL `accepts`/`produces` match the stage's
@@ -17,8 +17,8 @@
 //!   the same permissive-empty rule as `a2a::derive_modes`). Violations are
 //!   reported, never blocking — advisory, like the contract checks.
 //!
-//! Surfaced today via `swarm_workflow_check_local`, so a cloned compound
-//! agent's declaration is inspectable and validatable before a runner exists.
+//! Surfaced today via `swarm_workflow_check_local`, so a cloned agent's
+//! declared workflow is inspectable and validatable before a runner exists.
 
 use crate::local_registry::{LocalWorkflowStage, LocalWorkflowTemplate};
 
@@ -46,7 +46,7 @@ pub struct WorkflowStageReport {
 /// The full workflow check report.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct WorkflowReport {
-    /// The compound agent whose workflow was checked.
+    /// The agent whose declared workflow was checked.
     pub agent_id: String,
     /// Per-stage resolution, in pipeline order.
     pub stages: Vec<WorkflowStageReport>,
@@ -217,7 +217,7 @@ mod tests {
             stage("gather", Some("research"), &["text"], &["analysis"]),
             stage("write", Some("writer"), &["analysis"], &["draft"]),
         ]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         assert!(report.valid, "seams hold, slots resolve");
         assert!(report.seam_violations.is_empty());
         assert_eq!(report.stages.len(), 2);
@@ -237,7 +237,7 @@ mod tests {
             // the agents would actually compose.
             stage("write", Some("writer"), &["unrelated"], &["draft"]),
         ]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         assert!(!report.valid);
         assert_eq!(report.seam_violations.len(), 1);
         assert!(report.seam_violations[0].contains("no overlap"));
@@ -251,7 +251,7 @@ mod tests {
             stage("gather", Some("research"), &[], &[]),
             stage("write", Some("writer"), &["analysis"], &["draft"]),
         ]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         assert!(report.seam_violations.is_empty());
     }
 
@@ -263,7 +263,7 @@ mod tests {
             &["text"],
             &["analysis"],
         )]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         assert!(!report.valid);
         assert_eq!(report.stages[0].agent_found, Some(false));
         assert!(
@@ -278,7 +278,7 @@ mod tests {
             stage("gather", None, &["text"], &["analysis"]),
             stage("write", Some("writer"), &["analysis"], &["draft"]),
         ]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         // The open slot resolves to nothing (agent_found: None) — the seam
         // still holds on the DECLARED ports, so the workflow is valid; the
         // runner will ask the operator to fill the slot.
@@ -297,7 +297,7 @@ mod tests {
             &["text"],
             &["analysis", "phantom"],
         )]);
-        let report = check_workflow("compound", &workflow, lookup);
+        let report = check_workflow("orchestrator", &workflow, lookup);
         assert!(report.valid, "no seam violations, slot resolves");
         assert!(
             report.stages[0]

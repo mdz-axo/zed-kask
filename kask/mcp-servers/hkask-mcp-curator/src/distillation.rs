@@ -359,10 +359,20 @@ struct LessonCandidate {
     evidence: Vec<String>,
 }
 
-fn parse_lessons(text: &str) -> Result<Vec<LessonCandidate>, String> {
+/// A distillation-output parse failure. The Display message is surfaced in
+/// the retry warn so the operator can see the model emitted unparseable
+/// output (the thread is retried next pass, watermark not advanced).
+#[derive(Debug, thiserror::Error)]
+#[error("lesson array parse: {source}")]
+struct LessonParseError {
+    #[source]
+    source: serde_json::Error,
+}
+
+fn parse_lessons(text: &str) -> Result<Vec<LessonCandidate>, LessonParseError> {
     let extracted = hkask_types::json_extract::extract_json_from_response(text);
     let parsed: Vec<LessonCandidate> =
-        serde_json::from_str(&extracted).map_err(|error| format!("lesson array parse: {error}"))?;
+        serde_json::from_str(&extracted).map_err(|source| LessonParseError { source })?;
     Ok(parsed)
 }
 

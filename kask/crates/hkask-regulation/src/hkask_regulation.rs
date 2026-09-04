@@ -37,5 +37,6 @@ pub use runtime::RegulationLedger;
 pub use sensor_provider::ContextServerHealthSource;
 pub use sensor_provider::InferenceHealthSource;
 pub use sensor_provider::MemoryHealthSource;
+pub use sensor_provider::OcrHealthError;
 pub use sensor_provider::OcrHealthSource;
 pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};

@@ -41,6 +41,27 @@ struct OpenRouterRerankResult {
     relevance_score: f64,
 }
 
+/// A rerank-pipeline failure, structured by kind. The IPC server surfaces
+/// the Display message verbatim in `InferenceOutcome::Error`.
+#[derive(Debug, thiserror::Error)]
+pub enum RerankError {
+    #[error("rerank request failed: {source}")]
+    Request {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("rerank endpoint returned {status}: {body}")]
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    #[error("rerank response unparseable: {source}")]
+    Parse {
+        #[source]
+        source: reqwest::Error,
+    },
+}
+
 /// Rerank `documents` against `query` via OpenRouter's rerank router.
 ///
 /// `api_key` is the OpenRouter key read from the keychain on the zed side.
@@ -52,7 +73,7 @@ pub async fn rerank_documents(
     model: &str,
     query: &str,
     documents: &[String],
-) -> Result<Vec<RerankScoreEntry>, String> {
+) -> Result<Vec<RerankScoreEntry>, RerankError> {
     let response = rerank_http_client()
         .post("https://openrouter.ai/api/v1/rerank")
         .bearer_auth(api_key)
@@ -63,7 +84,7 @@ pub async fn rerank_documents(
         }))
         .send()
         .await
-        .map_err(|error| format!("rerank request failed: {error}"))?;
+        .map_err(|error| RerankError::Request { source: error })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -71,13 +92,13 @@ pub async fn rerank_documents(
             .text()
             .await
             .unwrap_or_else(|_| "<body read failed>".to_string());
-        return Err(format!("rerank endpoint returned {status}: {body}"));
+        return Err(RerankError::Status { status, body });
     }
 
     let parsed: OpenRouterRerankResponse = response
         .json()
         .await
-        .map_err(|error| format!("rerank response unparseable: {error}"))?;
+        .map_err(|error| RerankError::Parse { source: error })?;
 
     Ok(parsed
         .results

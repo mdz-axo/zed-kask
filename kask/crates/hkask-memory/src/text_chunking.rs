@@ -156,10 +156,22 @@ pub fn chunk_text(
                 let text = chunk_words.join(" ");
                 let cw = chunk_words.len();
                 if cw >= min_words {
+                    // Fold any sub-floor buffer content into this passage —
+                    // clearing the buffer here would silently drop the
+                    // below-floor fragments merged forward (a pre-existing
+                    // loss path: the buffer could hold a sub-min remainder
+                    // from a previous paragraph when an oversized paragraph
+                    // entered the split loop).
+                    let passage = if buffer.is_empty() {
+                        text
+                    } else {
+                        buffer.push(' ');
+                        buffer.push_str(&text);
+                        std::mem::take(&mut buffer)
+                    };
                     let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-                    passages.push((entity_ref, text));
+                    passages.push((entity_ref, passage));
                     chunk_index += 1;
-                    buffer.clear();
                     buffer_words = 0;
                 } else {
                     // Fragment below the floor: hold it in the buffer to
@@ -470,6 +482,51 @@ mod tests {
         assert!(
             !filtered.trim().is_empty(),
             "a whole OCR'd document of long prose lines must survive filtering"
+        );
+    }
+
+    /// Below-floor fragments must merge into the next passage instead of
+    /// standing alone as tiny chunks, and no content may be dropped along
+    /// the way. Pins two defects: standalone 1-word chunks (observed in a
+    /// 32K-chunk corpus run) and the split-loop `buffer.clear()` that
+    /// silently discarded a sub-floor buffer when an oversized paragraph
+    /// entered the loop.
+    #[test]
+    fn below_floor_fragments_merge_and_no_content_is_dropped() {
+        // 130-word paragraph then a 120-word paragraph, min 50 / max 100,
+        // no sentence boundaries: para 1 leaves a 30-word fragment, para 2
+        // splits into a 100-word chunk + 20-word tail.
+        let para1: Vec<String> = (0..130).map(|i| format!("alpha{i}")).collect();
+        let para2: Vec<String> = (0..120).map(|i| format!("beta{i}")).collect();
+        let text = format!("{}\n\n{}", para1.join(" "), para2.join(" "));
+        let passages = chunk_text(&text, "t", 50, 100, ".!? ");
+
+        let total: usize = passages
+            .iter()
+            .map(|(_, passage)| passage.split_whitespace().count())
+            .sum();
+        assert_eq!(total, 250, "every input word must survive chunking");
+
+        // No mid-document passage below the floor — only the final tail
+        // flush may carry one.
+        for (index, (entity_ref, passage)) in passages.iter().enumerate() {
+            let words = passage.split_whitespace().count();
+            if index < passages.len() - 1 {
+                assert!(
+                    words >= 50,
+                    "mid-document passage below the floor: {entity_ref} ({words} words)"
+                );
+            }
+        }
+
+        // The 30-word fragment must have merged into the next passage, not
+        // stand alone.
+        let merged = passages
+            .iter()
+            .any(|(_, passage)| passage.contains("alpha129") && passage.contains("beta0"));
+        assert!(
+            merged,
+            "the below-floor fragment must merge into the following passage"
         );
     }
 

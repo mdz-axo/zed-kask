@@ -533,7 +533,7 @@ impl CorpusServer {
                     let all: Vec<_> = coarse.into_iter().chain(medium).chain(fine).collect();
                     match service.index_passages(&all, &source_label).await {
                         Ok(n) => (n, None),
-                        Err(e) => (0, Some(e)),
+                        Err(e) => (0, Some(e.to_string())),
                     }
                 } else {
                     (0, None)
@@ -576,7 +576,7 @@ impl CorpusServer {
                 let (indexed, index_error) = if index {
                     match service.index_passages(&passages, &source_label).await {
                         Ok(n) => (n, None),
-                        Err(e) => (0, Some(e)),
+                        Err(e) => (0, Some(e.to_string())),
                     }
                 } else {
                     (0, None)
@@ -681,6 +681,7 @@ impl CorpusServer {
                     output: None,
                     force_ocr,
                     target_pages: None,
+                    include_structure: None,
                 })))
                 .await
                 {

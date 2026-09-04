@@ -649,6 +649,25 @@ impl Sensor for ContextServerHealthSensor {
 /// in the zed main process. This is the same blind-feedback-loop class as
 /// `InferenceHealthSource`/`ContextServerHealthSource` but for a subprocess
 /// whose events cross the process boundary via a health file.
+/// The OCR health file is present but cannot be read or parsed — a broken
+/// sensor, not a missing one (a missing file is the legitimate "no OCR has
+/// run yet" state and surfaces as `Ok(0)`).
+#[derive(Debug, thiserror::Error)]
+pub enum OcrHealthError {
+    #[error("OCR health file unreadable at {path}: {source}")]
+    Unreadable {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("OCR health snapshot unparseable at {path}: {source}")]
+    Unparseable {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
 #[async_trait::async_trait]
 pub trait OcrHealthSource: Send + Sync {
     /// OCR silent failures (empty LLM output on a page) observed in the
@@ -658,7 +677,7 @@ pub trait OcrHealthSource: Send + Sync {
     /// `warn!` about, never collapse into `Ok(0)` (the `.rules`
     /// `unwrap_or(0)` trap: an unreadable file would read as "no
     /// deviation").
-    async fn recent_silent_failures(&self) -> Result<u64, String>;
+    async fn recent_silent_failures(&self) -> Result<u64, OcrHealthError>;
 }
 
 /// Senses OCR silent failures from the corpus server's health file.
@@ -1113,9 +1132,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl OcrHealthSource for MockOcrHealth {
-        async fn recent_silent_failures(&self) -> Result<u64, String> {
+        async fn recent_silent_failures(&self) -> Result<u64, OcrHealthError> {
             if self.broken {
-                Err("health file unreadable".to_string())
+                Err(OcrHealthError::Unreadable {
+                    path: std::path::PathBuf::from("mock-health.json"),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "health file unreadable",
+                    ),
+                })
             } else {
                 Ok(self.recent_count)
             }

@@ -115,8 +115,9 @@ pub struct LocalAgentCard {
     /// sends it back on update (fermi's `AgentUpdate` accepts `version`).
     #[serde(default = "default_card_version")]
     pub version: String,
-    /// The compound agent's declared workflow (fermi
-    /// `workflow_template`). `None` for non-compound agents. Cloned from
+    /// The agent's declared workflow (fermi `workflow_template`) — the
+    /// stages it runs and the member agents that fill them. `None` when the
+    /// card declares no workflow. Cloned from
     /// the ABW card; pushed back on update (fermi's `AgentUpdate` accepts
     /// `workflow_template`). Inspect/validate via
     /// `swarm_workflow_check_local` — the execution runner is the next
@@ -143,8 +144,9 @@ pub struct LocalAgentValence {
     pub personality_traits: Vec<String>,
 }
 
-/// A compound agent's declared workflow — the local analog of fermi's
-/// `AgentCard.workflow_template`. Typed (not a raw `Value`) so the workflow
+/// An agent's declared workflow — the local analog of fermi's
+/// `AgentCard.workflow_template` (the stages an agent runs and the member
+/// agents that fill each slot). Typed (not a raw `Value`) so the workflow
 /// check and the future runner read stages without re-parsing, and so a
 /// cloned card round-trips through JSON losslessly.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -158,7 +160,7 @@ pub struct LocalWorkflowTemplate {
     pub description: Option<String>,
 }
 
-/// One stage in a compound agent's declared pipeline. `agent` is the slot's
+/// One stage in an agent's declared workflow. `agent` is the slot's
 /// filling agent id, or `None` for an open/user slot (fermi `WorkflowStage`).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LocalWorkflowStage {

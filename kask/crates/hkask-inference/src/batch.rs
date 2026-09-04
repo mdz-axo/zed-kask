@@ -157,6 +157,10 @@ fn batch_http_client() -> &'static reqwest::Client {
 /// Uses `BatchPromptEntry` from `hkask-types::inference_ipc` directly — no
 /// duplicate `BatchPrompt` type. The bridge converts between the IPC protocol
 /// type and this function without an intermediate struct.
+///
+/// Errors are [`BatchError`] — structured per failure kind, with the
+/// operation context preserved in `context` fields so the operator can
+/// tell an upload failure from a download failure in the surfaced message.
 pub async fn submit_batch(
     provider: BatchProvider,
     api_key: &str,
@@ -164,7 +168,7 @@ pub async fn submit_batch(
     prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
     max_tokens: u32,
     temperature: f32,
-) -> Result<BatchResult, String> {
+) -> Result<BatchResult, BatchError> {
     let client = batch_http_client();
     let base = provider.base_url();
 
@@ -209,6 +213,43 @@ pub async fn submit_batch(
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────
+
+/// A batch-pipeline failure, structured by kind. The `context` fields name
+/// the pipeline stage ("Batch file upload", "Batch status poll", …) so the
+/// Display message preserves which leg failed — the bridge surfaces these
+/// verbatim in `InferenceOutcome::Error`.
+#[derive(Debug, thiserror::Error)]
+pub enum BatchError {
+    #[error("Batch {batch_id} did not complete within {secs} seconds")]
+    Timeout { batch_id: String, secs: u64 },
+    #[error("{context} failed: {source}")]
+    Request {
+        context: &'static str,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("{context} failed ({status}): {body}")]
+    Status {
+        context: &'static str,
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    #[error("{context} failed: {source}")]
+    Parse {
+        context: &'static str,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Failed to parse batch result line: {source}")]
+    ParseLine {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Batch {batch_id} completed but no output file id")]
+    MissingOutput { batch_id: String },
+    #[error("Batch {batch_id} ended with status: {status}")]
+    TerminalStatus { batch_id: String, status: String },
+}
 
 #[derive(Debug, Serialize)]
 struct BatchRequestLine {
@@ -325,7 +366,7 @@ async fn upload_batch_file(
     api_key: &str,
     base: &str,
     jsonl: &str,
-) -> Result<String, String> {
+) -> Result<String, BatchError> {
     let url = match provider {
         BatchProvider::OpenRouter => format!("{base}/batches/files"),
         BatchProvider::DeepInfra => format!("{base}/files"),
@@ -338,18 +379,25 @@ async fn upload_batch_file(
         .body(jsonl.to_string())
         .send()
         .await
-        .map_err(|e| format!("Batch file upload failed: {e}"))?;
+        .map_err(|e| BatchError::Request {
+            context: "Batch file upload",
+            source: e,
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Batch file upload failed ({status}): {body}"));
+        return Err(BatchError::Status {
+            context: "Batch file upload",
+            status,
+            body,
+        });
     }
 
-    let upload_resp: FileUploadResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Batch file upload response parse failed: {e}"))?;
+    let upload_resp: FileUploadResponse = resp.json().await.map_err(|e| BatchError::Parse {
+        context: "Batch file upload response parse",
+        source: e,
+    })?;
 
     Ok(upload_resp.id)
 }
@@ -360,7 +408,7 @@ async fn create_batch(
     api_key: &str,
     base: &str,
     file_id: &str,
-) -> Result<String, String> {
+) -> Result<String, BatchError> {
     let url = format!("{base}/batches");
     let body = serde_json::json!({
         "input_file_id": file_id,
@@ -375,18 +423,25 @@ async fn create_batch(
         .body(body.to_string())
         .send()
         .await
-        .map_err(|e| format!("Batch creation failed: {e}"))?;
+        .map_err(|e| BatchError::Request {
+            context: "Batch creation",
+            source: e,
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Batch creation failed ({status}): {body}"));
+        return Err(BatchError::Status {
+            context: "Batch creation",
+            status,
+            body,
+        });
     }
 
-    let create_resp: BatchCreateResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Batch creation response parse failed: {e}"))?;
+    let create_resp: BatchCreateResponse = resp.json().await.map_err(|e| BatchError::Parse {
+        context: "Batch creation response parse",
+        source: e,
+    })?;
 
     Ok(create_resp.id)
 }
@@ -397,16 +452,16 @@ async fn poll_batch_completion(
     api_key: &str,
     base: &str,
     batch_id: &str,
-) -> Result<String, String> {
+) -> Result<String, BatchError> {
     let url = format!("{base}/batches/{batch_id}");
     let start = std::time::Instant::now();
 
     loop {
         if start.elapsed() > MAX_BATCH_WAIT {
-            return Err(format!(
-                "Batch {batch_id} did not complete within {} seconds",
-                MAX_BATCH_WAIT.as_secs()
-            ));
+            return Err(BatchError::Timeout {
+                batch_id: batch_id.to_string(),
+                secs: MAX_BATCH_WAIT.as_secs(),
+            });
         }
 
         let resp = client
@@ -414,18 +469,26 @@ async fn poll_batch_completion(
             .header(provider.auth_header(), provider.auth_value(api_key))
             .send()
             .await
-            .map_err(|e| format!("Batch status poll failed: {e}"))?;
+            .map_err(|e| BatchError::Request {
+                context: "Batch status poll",
+                source: e,
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Batch status poll failed ({status}): {body}"));
+            return Err(BatchError::Status {
+                context: "Batch status poll",
+                status,
+                body,
+            });
         }
 
-        let status_resp: BatchStatusResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Batch status response parse failed: {e}"))?;
+        let status_resp: BatchStatusResponse =
+            resp.json().await.map_err(|e| BatchError::Parse {
+                context: "Batch status response parse",
+                source: e,
+            })?;
 
         tracing::info!(
             target: "hkask.inference.batch",
@@ -439,13 +502,15 @@ async fn poll_batch_completion(
             "completed" => {
                 return status_resp
                     .output_file_id
-                    .ok_or_else(|| format!("Batch {batch_id} completed but no output file id"));
+                    .ok_or_else(|| BatchError::MissingOutput {
+                        batch_id: batch_id.to_string(),
+                    });
             }
             "failed" | "cancelled" | "expired" => {
-                return Err(format!(
-                    "Batch {batch_id} ended with status: {}",
-                    status_resp.status
-                ));
+                return Err(BatchError::TerminalStatus {
+                    batch_id: batch_id.to_string(),
+                    status: status_resp.status,
+                });
             }
             _ => {
                 sleep(POLL_INTERVAL).await;
@@ -460,7 +525,7 @@ async fn download_batch_results(
     api_key: &str,
     base: &str,
     file_id: &str,
-) -> Result<String, String> {
+) -> Result<String, BatchError> {
     let url = match provider {
         BatchProvider::OpenRouter => format!("{base}/batches/files/{file_id}/content"),
         BatchProvider::DeepInfra => format!("{base}/files/{file_id}/content"),
@@ -471,20 +536,28 @@ async fn download_batch_results(
         .header(provider.auth_header(), provider.auth_value(api_key))
         .send()
         .await
-        .map_err(|e| format!("Batch results download failed: {e}"))?;
+        .map_err(|e| BatchError::Request {
+            context: "Batch results download",
+            source: e,
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Batch results download failed ({status}): {body}"));
+        return Err(BatchError::Status {
+            context: "Batch results download",
+            status,
+            body,
+        });
     }
 
-    resp.text()
-        .await
-        .map_err(|e| format!("Batch results read failed: {e}"))
+    resp.text().await.map_err(|e| BatchError::Request {
+        context: "Batch results read",
+        source: e,
+    })
 }
 
-fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
+fn parse_batch_results(content: &str) -> Result<BatchResult, BatchError> {
     let mut results = std::collections::HashMap::new();
     let mut succeeded = 0;
     let mut failed = 0;
@@ -493,8 +566,8 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, String> {
         if line.trim().is_empty() {
             continue;
         }
-        let result_line: BatchResultLine = serde_json::from_str(line)
-            .map_err(|e| format!("Failed to parse batch result line: {e}"))?;
+        let result_line: BatchResultLine =
+            serde_json::from_str(line).map_err(|e| BatchError::ParseLine { source: e })?;
 
         if let Some(resp) = result_line.response {
             if let Some(choice) = resp.body.choices.first() {
