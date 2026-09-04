@@ -43,6 +43,11 @@ use crate::sanitize::strip_leading_mentions;
 /// by the observer.
 pub struct LazyLocalSwarmRuntime {
     ledger_path: String,
+    /// The per-agent execution-stats store — shared with the server (reads:
+    /// `swarm_get_local_agent` / `swarm_list_local_agents`; writes: the
+    /// runtime's debit path). Passed through to the runtime so recording
+    /// and surfacing see one store.
+    agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
 
@@ -115,9 +120,13 @@ impl LazyEventStore {
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub fn lazy(ledger_path: String) -> Self {
+    pub fn lazy(
+        ledger_path: String,
+        agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+    ) -> Self {
         Self {
             ledger_path,
+            agent_stats,
             inner: tokio::sync::OnceCell::new(),
         }
     }
@@ -127,7 +136,9 @@ impl LazyLocalSwarmRuntime {
     /// Subsequent calls return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
-            .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
+            .get_or_try_init(|| async {
+                LocalSwarmRuntime::new(&self.ledger_path, self.agent_stats.clone()).await
+            })
             .await
     }
 }
@@ -152,6 +163,10 @@ pub struct LocalSwarmRuntime {
     /// never silent. Shared so the drainer task can increment it while the
     /// runtime hands out `&self`.
     capture_drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Per-agent execution stats — the local analog of fermi's
+    /// `measured_exec_stats`. Recorded at the debit path (single-writer by
+    /// construction) and surfaced by the local agent tools.
+    stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
 }
 
 impl LocalSwarmRuntime {
@@ -160,7 +175,10 @@ impl LocalSwarmRuntime {
     ///
     /// The operator account is ensured in the ledger namespace "local_swarm".
     /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
-    pub(crate) async fn new(db_path: &str) -> Result<Self, LocalSwarmError> {
+    pub(crate) async fn new(
+        db_path: &str,
+        stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+    ) -> Result<Self, LocalSwarmError> {
         // Open the ledger at the file path. Create the directory if needed.
         if let Some(parent) = std::path::Path::new(db_path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -207,6 +225,7 @@ impl LocalSwarmRuntime {
             operator_account,
             asset,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            stats,
         })
     }
 
@@ -227,12 +246,21 @@ impl LocalSwarmRuntime {
         let operator_account = "operator".to_string();
         let asset = "credits".to_string();
         let _ = ledger.ensure_account(&operator_account, "local_swarm");
+        // A throwaway stats store — tests exercise the delegate logic, not
+        // stats persistence (that is unit-tested on `AgentStatsStore`
+        // directly).
+        let stats_dir =
+            std::env::temp_dir().join(format!("hkask-swarm-runtime-test-{}", uuid::Uuid::new_v4()));
+        let stats = std::sync::Arc::new(crate::agent_stats::AgentStatsStore::load(
+            &stats_dir.to_string_lossy(),
+        ));
         Self {
             ledger,
             executor,
             operator_account,
             asset,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            stats,
         }
     }
 
@@ -512,8 +540,16 @@ impl LocalSwarmRuntime {
         // from whether an account is funded.
 
         // Run the agent (tool loop). The executor returns the RAW output —
-        // it does NOT debit the ledger.
-        let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
+        // it does NOT debit the ledger. A failed run is a real execution
+        // failure (fermi counts failed episodes the same way), so it is
+        // recorded on the agent's stats before propagating.
+        let raw: RawDelegateResult = match self.executor.run(agent, &task_clean).await {
+            Ok(raw) => raw,
+            Err(error) => {
+                self.stats.record_failure(&agent.agent_id);
+                return Err(error);
+            }
+        };
 
         let mut result = self.debit_and_build(
             raw,
@@ -599,6 +635,13 @@ impl LocalSwarmRuntime {
                 fallback
             }
         };
+
+        // Record the completed execution on the agent's stats — the one
+        // point where cost, tokens, and latency are all known (fermi's
+        // `measured_exec_stats` analog). Non-fatal by contract: a failed
+        // flush is warned inside the store and never fails the delegation.
+        self.stats
+            .record_success(agent_id, cost, tokens, latency_ms);
 
         LocalDelegateResult {
             agent_id: agent_id.to_string(),
@@ -734,6 +777,14 @@ impl LocalSwarmRuntime {
             let raw = match raw_result {
                 Ok(r) => r,
                 Err(e) => {
+                    // A failed batch entry is a real execution failure
+                    // (run error or panicked task) — EXCEPT the ceiling
+                    // refusal, which rejected the request before any
+                    // execution and is not a failed execution (fermi does
+                    // not count never-started requests as failed episodes).
+                    if credits[index] <= ceiling {
+                        self.stats.record_failure(&agent_ids[index]);
+                    }
                     results.push(Err(e));
                     continue;
                 }

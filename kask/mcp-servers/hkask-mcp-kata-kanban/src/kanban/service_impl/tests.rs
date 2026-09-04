@@ -476,6 +476,8 @@ fn task_record_delegation_writes_structured_fields() {
         bind_matched: None,
         rollout_id: None,
         reasoning_steps: vec![],
+        input_contract_check: None,
+        output_contract_check: None,
     };
     let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
         pass: true,
@@ -538,6 +540,8 @@ fn task_record_delegation_rejects_non_owner() {
         tool_calls: vec![],
         task_success: None,
         bind_matched: None,
+        input_contract_check: None,
+        output_contract_check: None,
         rollout_id: None,
         reasoning_steps: vec![],
     };

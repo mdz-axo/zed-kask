@@ -163,6 +163,25 @@ pub(crate) struct LocalAgentInfo {
     /// Port labels this agent produces (typed outputs).
     #[serde(default)]
     pub(crate) produces: Vec<String>,
+    /// Per-agent execution stats (the server's fermi-parity
+    /// `execution_stats` — `source: local_stats_file`). `None` when the
+    /// server omits it (older server builds); zeros are real (never ran).
+    #[serde(default)]
+    pub(crate) execution_stats: Option<LocalExecStats>,
+}
+
+/// The execution-stats object the swarm server attaches to every local
+/// agent (fermi's `build_agent_json` shape).
+#[derive(Debug, Deserialize)]
+pub(crate) struct LocalExecStats {
+    #[serde(default)]
+    pub(crate) total_executions: u64,
+    #[serde(default)]
+    pub(crate) successful_executions: u64,
+    #[serde(default)]
+    pub(crate) failed_executions: u64,
+    #[serde(default)]
+    pub(crate) avg_execution_time_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]

@@ -74,7 +74,7 @@ All inputs are parameterized. None are hardcoded.
 | `enable_qa` | boolean | no | true | Whether to run Stages 6–9 (QA generation and training dataset assembly) |
 | `max_tokens` | integer | no | 512 | Maximum tokens per chunk |
 | `overlap_tokens` | integer | no | 64 | Token overlap between adjacent chunks |
-| `multi_tier` | boolean | no | true | Whether to use multi-tier chunking (coarse + medium + fine) |
+| `multi_tier` | boolean | no | false | Whether to use multi-tier chunking (coarse + medium + fine). PER-FILE path/text mode only — directory mode (`input_dir`) writes a single-tier JSONL (the tag/QA substrate) and rejects `multi_tier=true` with a typed error. Use per-file calls with `index: true` when the retrieval index needs tiered passages. |
 | `embedding_model` | string | no | from config or `DEFAULT_EMBEDDING_MODEL` | Embedding model for vectorization |
 | `batch_size` | integer | no | 25 | Embedding batch size |
 | `tag_batch_size` | integer | no | 1 | Number of chunks per tagging LLM call. MUST be 1 — the classifier model returns a single JSON object, not a JSON array, so batch_size > 1 results in only the first chunk getting real tags (10% success rate). With batch_size=1, success rate is 75-100%. Do NOT set this higher than 1. |
@@ -231,13 +231,12 @@ exactly this.
 Before running the pipeline, estimate the expected chunk count:
 
 ```
-expected_chunks ≈ (total_text_tokens / max_tokens) × tier_multiplier
+expected_chunks ≈ total_text_words / words_per_chunk
 ```
 
-Where `tier_multiplier` is 1 for single-tier, ~2-3 for multi-tier chunking.
-For a 138-document corpus at ~250 tokens/chunk with multi-tier, expect
-25,000–40,000 chunks. Record this estimate and use it in Stage 2's quality
-gate.
+At the default `max_tokens=512` (~380 words/chunk after overlap), a
+9.5M-word / 138-document corpus yields ~25,000–40,000 chunks. Record this
+estimate and use it in Stage 2's quality gate.
 
 ## Instructions
 
@@ -434,13 +433,20 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
 corpora (≤ 500 files), a single `corpus_chunk` call is sufficient.
 
 1. **Sequential** (default): call `corpus_chunk` on the extracted text
-directory:
+   directory:
    - `input_dir`: `corpus/extracted/{{ entity_ref_prefix }}/`
    - `output`: `corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl`
    - `entity_ref_prefix`: `{{ entity_ref_prefix }}`
    - `max_tokens`: `{{ max_tokens }}`
    - `overlap_tokens`: `{{ overlap_tokens }}`
-   - `multi_tier`: `{{ multi_tier }}`
+
+   Directory mode writes a SINGLE-TIER chunks JSONL — the tag/QA substrate
+   — and REJECTS `multi_tier=true` with a typed error (do not pass it).
+   Multi-tier retrieval indexing (coarse/medium/fine passages into the
+   vector index) is the per-file path's job: call `corpus_chunk` with
+   `path` per file and `index: true` when the retrieval index needs
+   tiered passages. The two artifacts serve different consumers: the
+   JSONL feeds tagging and QA generation; the index serves `corpus_query`.
 
 2. **Parallel subagent dispatch** (if `parallel_subagents` is true and
    extracted file count > 500): split the extracted directory into

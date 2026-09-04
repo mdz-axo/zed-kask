@@ -482,6 +482,49 @@ mod smoke {
         );
     }
 
+    /// Directory-mode `corpus_chunk` must REJECT `multi_tier=true` loudly
+    /// instead of silently ignoring it: the directory path writes a
+    /// single-tier JSONL (the tag/QA substrate), and an agent that passed
+    /// multi_tier=true believing the output was tiered would carry a false
+    /// expectation into every downstream stage. Pinned after the
+    /// silent-ignore defect surfaced in the interrupted john-brooks run.
+    #[tokio::test]
+    async fn chunk_directory_rejects_multi_tier_loudly() {
+        use crate::tools::document::ChunkRequest;
+
+        let server = make_server();
+        let error = server
+            .corpus_chunk(Parameters(ChunkRequest {
+                text: None,
+                path: None,
+                input_dir: Some("some/dir".into()),
+                output: Some("out.jsonl".into()),
+                entity_ref_prefix: "test".into(),
+                max_tokens: None,
+                overlap_tokens: None,
+                strip_gutenberg: None,
+                multi_tier: Some(true),
+                coarse_max_tokens: None,
+                medium_max_tokens: None,
+                fine_max_tokens: None,
+                index: false,
+                target_pages: None,
+            }))
+            .await
+            .expect_err("multi_tier=true in directory mode must be rejected");
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+            "error kind must be InvalidArgument, got: {:?}",
+            error.kind
+        );
+        assert!(
+            error
+                .message
+                .contains("multi_tier is not supported in directory mode"),
+            "expected the multi_tier rejection diagnostic, got: {error}"
+        );
+    }
+
     /// The build_prompts KNN scaffold honors the caller's entity-ref prefix
     /// (the 2026-09-03 fix): embeddings stored under "corpus:custom:" reach
     /// the scaffold only when prefix="corpus:custom:" is passed. Pre-fix the
@@ -511,10 +554,20 @@ mod smoke {
         .expect("open memory DB");
         let context_text = "The Cinderella curve describes firms with high returns on capital that fade over time.";
         store
-            .store_embedding("corpus:custom:doc1", &vec![0.9; dim], "test-model", Some(context_text))
+            .store_embedding(
+                "corpus:custom:doc1",
+                &vec![0.9; dim],
+                "test-model",
+                Some(context_text),
+            )
             .expect("seed context embedding");
         store
-            .store_embedding("corpus:custom:doc2", &vec![0.9; dim], "test-model", Some("A passage about capital returns."))
+            .store_embedding(
+                "corpus:custom:doc2",
+                &vec![0.9; dim],
+                "test-model",
+                Some("A passage about capital returns."),
+            )
             .expect("seed chunk embedding");
 
         // Two tagged chunks under the same custom prefix and source (the
@@ -556,8 +609,7 @@ mod smoke {
             content["prompts_written"].as_u64().unwrap_or(0) > 0,
             "at least one prompt must be written, got: {content}"
         );
-        let prompts_text =
-            std::fs::read_to_string(&prompts_path).expect("prompts file written");
+        let prompts_text = std::fs::read_to_string(&prompts_path).expect("prompts file written");
         assert!(
             prompts_text.contains("Similarity:"),
             "the KNN scaffold must carry scored passages when the prefix matches"
@@ -586,8 +638,7 @@ mod smoke {
             }))
             .await
             .expect("build_prompts ok");
-        let default_text =
-            std::fs::read_to_string(&default_prompts).expect("prompts file written");
+        let default_text = std::fs::read_to_string(&default_prompts).expect("prompts file written");
         assert!(
             !default_text.contains("Similarity:"),
             "the default prefix must not see custom-prefix embeddings in the scaffold"
@@ -600,4 +651,3 @@ mod smoke {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-

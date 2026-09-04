@@ -59,11 +59,13 @@ impl SwarmServer {
 
     /// Recall prior swarm turns from the shared knowledgebase by semantic
     /// similarity (the episodic-memory complement to `swarm_search_knowledge_local`,
-    /// which searches the EAV graph). Spans ALL agents and ALL swarms — a turn
-    /// any agent produced is retrievable here. Degrades to a `memory_unconfigured`
+    /// which searches the EAV graph). By default spans ALL agents and ALL
+    /// swarms — a turn any agent produced is retrievable. Pass `agent_name`
+    /// to scope the recall to one agent (fermi parity: its per-agent KG is
+    /// searched per-agent). Degrades to a `memory_unconfigured`
     /// note when the store cannot be opened or the query cannot be embedded.
     #[tool(
-        description = "Recall prior swarm turns from the shared swarm memory by semantic similarity to a query. Spans all agents and all swarms (one shared knowledgebase). Returns the most similar past turns (task + response + model + producing agent). The episodic-memory complement to swarm_search_knowledge_local (which searches the EAV graph). Degrades to an empty result with a memory_unconfigured note when the store cannot be opened or the query cannot be embedded."
+        description = "Recall prior swarm turns from the shared swarm memory by semantic similarity to a query. Spans all agents and all swarms by default (one shared knowledgebase); pass agent_name to scope the recall to one agent's turns (the per-agent analog of fermi's per-agent KG search). Returns the most similar past turns (task + response + model + producing agent). The episodic-memory complement to swarm_search_knowledge_local (which searches the EAV graph). Degrades to an empty result with a memory_unconfigured note when the store cannot be opened or the query cannot be embedded."
     )]
     pub(crate) async fn swarm_recall_local(
         &self,
@@ -77,24 +79,37 @@ impl SwarmServer {
                 ));
             }
             let limit = req.limit.unwrap_or(10).clamp(1, 50);
+            let agent_scope = req
+                .agent_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
             let runtime = self
                 .local_runtime
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
             let inference = runtime.inference();
-            match local_knowledge::recall_turns(&self.local_memory, &inference, &req.query, limit)
-                .await
+            match local_knowledge::recall_turns(
+                &self.local_memory,
+                &inference,
+                &req.query,
+                limit,
+                agent_scope,
+            )
+            .await
             {
                 Ok(turns) => Ok(serde_json::json!({
                     "turns": turns,
                     "source": "local_episodic_memory",
+                    "scope": agent_scope.unwrap_or("all_agents"),
                     "count": turns.len(),
                     "note": "",
                 })),
                 Err(reason) => Ok(serde_json::json!({
                     "turns": [],
                     "source": "local_episodic_memory",
+                    "scope": agent_scope.unwrap_or("all_agents"),
                     "count": 0,
                     "note": format!("memory_unconfigured: {reason}"),
                 })),

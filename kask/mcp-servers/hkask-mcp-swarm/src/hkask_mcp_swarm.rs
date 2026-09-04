@@ -85,6 +85,7 @@ mod a2a_tools;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
+mod agent_stats;
 mod cloud_swarm;
 mod cloud_swarm_tools;
 mod config;
@@ -161,6 +162,7 @@ hkask_mcp_server::mcp_server!(
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
         pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
         pub local_memory: std::sync::Arc<local_knowledge::LazyLocalMemory>,
+        pub agent_stats: std::sync::Arc<agent_stats::AgentStatsStore>,
         pub event_store: std::sync::Arc<LazyEventStore>,
     }
 );
@@ -297,8 +299,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .to_string_lossy()
                     .to_string()
                 });
+            // Per-agent execution stats — the local analog of fermi's
+            // `measured_exec_stats`. One store, two handles: the runtime
+            // records at the debit path, the tools surface it on
+            // get/list. Loaded eagerly — a dir scan of tiny JSON files.
+            let agent_stats = std::sync::Arc::new(agent_stats::AgentStatsStore::load(
+                &config.local_agents_dir,
+            ));
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
                 ledger_path,
+                agent_stats.clone(),
             ));
 
             // The rollout event store (event-substrate data plane). Same D28
@@ -426,6 +436,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 local_runtime,
                 local_swarms,
                 local_memory,
+                agent_stats,
                 event_store,
             ))
         },
@@ -509,7 +520,12 @@ mod smoke_tests {
         ));
         let consent = Arc::new(ConsentStore::default());
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+        let stats_dir = scratch.join("stats").to_string_lossy().to_string();
+        let agent_stats = Arc::new(agent_stats::AgentStatsStore::load(&stats_dir));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
+            ledger_path,
+            agent_stats.clone(),
+        ));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
         let local_memory = Arc::new(LazyLocalMemory::lazy(
             memory_path,
@@ -526,6 +542,7 @@ mod smoke_tests {
             local_runtime,
             local_swarms,
             local_memory,
+            agent_stats,
             event_store,
         )
     }

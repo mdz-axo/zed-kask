@@ -441,6 +441,14 @@ pub struct RecalledTurn {
 /// spans ALL agents and ALL swarms — the shared knowledgebase. A turn any
 /// agent produced is retrievable here.
 ///
+/// `agent_filter` scopes the recall to one agent (fermi parity: its
+/// per-agent KG is searched per-agent). The filter matches the turn's
+/// entity prefix (`agent:<agent_id>:turn:`) — the delimiter after the id
+/// makes the match exact (`agent:foo:` never matches `agent:foobar:`).
+/// KNN still runs over the whole index (the store has no entity-filtered
+/// search); the filter is applied to the results, so a scoped recall may
+/// return fewer than `limit` turns when other agents' turns rank higher.
+///
 /// Returns turns ranked by similarity (most similar first). Only episodic
 /// turns carry embeddings (the stigmergy triples from `record_delegation`
 /// have none), so every KNN hit resolves to a turn. Degrades to an error when
@@ -452,6 +460,7 @@ pub(crate) async fn recall_turns(
     inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
     query: &str,
     limit: usize,
+    agent_filter: Option<&str>,
 ) -> Result<Vec<RecalledTurn>, LocalSwarmError> {
     let store = memory.get().await?;
     let embedding_model = hkask_inference::model_constants::embedding_model();
@@ -466,14 +475,31 @@ pub(crate) async fn recall_turns(
             "embedding model returned no vector for the recall query".to_string(),
         )
     })?;
+    // A scoped recall still ranks over the whole index, then keeps only the
+    // scoped agent's turns — so the KNN limit is widened to keep the
+    // scoped result meaningful (without this, a scope over a 10-hit window
+    // could return 0 turns even when the agent has matching history).
+    let knn_limit = if agent_filter.is_some() {
+        limit.saturating_mul(5).max(50)
+    } else {
+        limit
+    };
     let results = store
-        .search_similar(&query_vector, limit)
+        .search_similar(&query_vector, knn_limit)
         .map_err(|error| {
             LocalSwarmError::Database(format!("semantic search over swarm memory failed: {error}"))
         })?;
+    let scope_prefix = agent_filter.map(|agent_id| format!("{AGENT_PREFIX}{agent_id}:turn:"));
     let mut turns = Vec::with_capacity(results.len());
     for result in results {
         let entity_ref = result.embedding.entity_ref.clone();
+        // Per-agent scope: keep only this agent's turns (the entity prefix
+        // carries the producing agent id).
+        if let Some(prefix) = &scope_prefix
+            && !entity_ref.starts_with(prefix)
+        {
+            continue;
+        }
         match store.query_deduped_untouched(&entity_ref) {
             Ok(h_mems) => {
                 for h_mem in h_mems {
@@ -509,6 +535,9 @@ pub(crate) async fn recall_turns(
             }
         }
     }
+    // The scoped path widened the KNN window — bring the result back down
+    // to the caller's limit after filtering.
+    turns.truncate(limit);
     Ok(turns)
 }
 
@@ -641,7 +670,7 @@ mod tests {
         )
         .await;
 
-        let turns = recall_turns(&memory, &inference, "market", 10)
+        let turns = recall_turns(&memory, &inference, "market", 10, None)
             .await
             .expect("recall succeeds on a configured store");
         assert_eq!(turns.len(), 1, "the ingested turn is the only KNN hit");
@@ -676,7 +705,7 @@ mod tests {
 
         // `recall_turns` takes no agent argument — it spans the whole KB. A
         // turn `agent_alpha` produced is retrievable here ("by" any agent).
-        let turns = recall_turns(&memory, &inference, "anything", 10)
+        let turns = recall_turns(&memory, &inference, "anything", 10, None)
             .await
             .expect("recall succeeds");
         assert_eq!(turns.len(), 1);
@@ -705,7 +734,7 @@ mod tests {
         // Must not panic and must not fail the call (memory is non-fatal).
         ingest_turn(&memory, &inference, "agent", "task", "response", "m").await;
 
-        let recall_error = recall_turns(&memory, &inference, "q", 10).await;
+        let recall_error = recall_turns(&memory, &inference, "q", 10, None).await;
         assert!(
             recall_error.is_err(),
             "recall surfaces unavailability, not empty hits"
@@ -747,7 +776,7 @@ mod tests {
         )
         .await;
 
-        let turns = recall_turns(&memory, &inference, "query", 50)
+        let turns = recall_turns(&memory, &inference, "query", 50, None)
             .await
             .expect("recall succeeds");
         assert_eq!(
@@ -835,7 +864,7 @@ mod tests {
         .await;
 
         // Episodic turn memory: retrievable by semantic recall.
-        let turns = recall_turns(&memory, &inference, "market", 10)
+        let turns = recall_turns(&memory, &inference, "market", 10, None)
             .await
             .expect("recall succeeds");
         assert_eq!(turns.len(), 1, "ingest_turn wrote a retrievable turn");
@@ -850,5 +879,57 @@ mod tests {
             !h_mems.is_empty(),
             "record_delegation wrote stigmergy annotations"
         );
+    }
+
+    /// The per-agent recall scope (fermi parity: its per-agent KG is
+    /// searched per-agent). A scoped recall returns ONLY the named agent's
+    /// turns — and the delimiter after the id makes the prefix exact
+    /// (`agent:foo:` never matches `agent:foobar:`).
+    #[tokio::test]
+    async fn scoped_recall_returns_only_the_named_agents_turns() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+        ingest_turn(
+            &memory,
+            &inference,
+            "alpha_agent",
+            "market analysis task",
+            "market is bullish",
+            "test-model",
+        )
+        .await;
+        ingest_turn(
+            &memory,
+            &inference,
+            "beta_agent",
+            "market analysis task",
+            "market is bearish",
+            "test-model",
+        )
+        .await;
+        ingest_turn(
+            &memory,
+            &inference,
+            "alpha_agent_fan",
+            "market analysis task",
+            "market is sideways",
+            "test-model",
+        )
+        .await;
+
+        // Scoped to alpha_agent: only its turn — not beta_agent's, and not
+        // alpha_agent_fan's (the delimiter makes the prefix exact).
+        let turns = recall_turns(&memory, &inference, "market", 10, Some("alpha_agent"))
+            .await
+            .expect("scoped recall succeeds");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].agent_id, "alpha_agent");
+
+        // Unscoped: the shared knowledgebase spans all agents.
+        let turns = recall_turns(&memory, &inference, "market", 10, None)
+            .await
+            .expect("unscoped recall succeeds");
+        assert_eq!(turns.len(), 3);
     }
 }

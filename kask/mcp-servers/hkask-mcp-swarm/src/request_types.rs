@@ -1007,6 +1007,12 @@ pub struct RecallLocalRequest {
     /// Maximum turns to return. Default 10.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Optional per-agent scope (fermi parity: its per-agent KG/episodes
+    /// are searched per-agent). When set, only turns produced by this
+    /// agent are returned; when absent, recall spans ALL agents — the
+    /// shared-knowledgebase default (one store, many namespaces).
+    #[serde(default)]
+    pub agent_name: Option<String>,
 }
 
 /// AI assist for the swarm panel authoring forms — suggests completions for

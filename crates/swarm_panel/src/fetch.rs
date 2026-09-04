@@ -959,7 +959,15 @@ pub(crate) fn merge_local_agents(entries: &mut Vec<SwarmEntry>, local_agents: Ve
             description: local.description,
             display_name: local.display_name,
             author: String::new(),
-            executions: 0,
+            // fermi parity: the browse card shows the agent's measured run
+            // count for local agents too (cloud agents get theirs from the
+            // catalogue's execution_stats). Absent stats (older server) →
+            // 0, same as the cloud fallback.
+            executions: local
+                .execution_stats
+                .as_ref()
+                .map(|stats| stats.total_executions)
+                .unwrap_or(0),
             updated_at: None,
             source: AgentSource::Local,
         }));

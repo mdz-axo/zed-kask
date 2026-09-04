@@ -631,8 +631,38 @@ impl SwarmServer {
             }
             agents.truncate(limit);
             let count = agents.len();
+            // fermi parity: the catalogue list carries `execution_stats` on
+            // every agent row (`build_agent_json`). The panel and the
+            // Curator read the same signal from cloud and local lists. A
+            // card that fails to serialize is skipped with a warning — a
+            // null row would fail the panel's `Vec<LocalAgentInfo>` parse
+            // and silently drop EVERY local agent, not just the bad one.
+            let agents_with_stats: Vec<serde_json::Value> = agents
+                .iter()
+                .filter_map(|card| {
+                    let mut value = match serde_json::to_value(card) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                agent = %card.agent_id,
+                                %error,
+                                "local agent card failed to serialize — skipped from the list"
+                            );
+                            return None;
+                        }
+                    };
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert(
+                            "execution_stats".to_string(),
+                            self.agent_stats.stats_json(&card.agent_id),
+                        );
+                    }
+                    Some(value)
+                })
+                .collect();
             Ok(serde_json::json!({
-                "agents": agents,
+                "agents": agents_with_stats,
                 "total": count,
             }))
         })
@@ -664,8 +694,18 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
-            serde_json::to_value(&card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))
+            let mut card_value = serde_json::to_value(&card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
+            // fermi parity: `build_agent_json` carries `execution_stats` on
+            // every agent (get and list). Zeros are real (never ran), labeled
+            // by `source` — the fermi `episodes`/`agents_row` honesty pattern.
+            if let Some(obj) = card_value.as_object_mut() {
+                obj.insert(
+                    "execution_stats".to_string(),
+                    self.agent_stats.stats_json(&req.agent_name),
+                );
+            }
+            Ok(card_value)
         })
         .await
     }
