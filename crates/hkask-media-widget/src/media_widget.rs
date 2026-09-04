@@ -43,6 +43,23 @@ const DEFAULT_SERVER: &str = "hkask-mcp-media";
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
 const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
 
+/// The widget's autoplay policy — pins the no-unsolicited-audio contract
+/// (the ghost-audio bug, 2026-09-04: a fetched video started playing with
+/// sound while the window was not visible, and the operator could not see
+/// what was sounding).
+///
+/// Video autoplays because frames only decode while Playing — without
+/// play() the widget renders an empty placeholder. Audio never autoplays:
+/// it has no visual placeholder to preserve, so nothing sounds until the
+/// operator presses play (`AudioPlayer::load_bytes_paused`).
+fn autoplays(kind: MediaKind) -> bool {
+    matches!(kind, MediaKind::Video)
+}
+
+/// The volume autoplay starts at — muted. Unsolicited sound is never OK;
+/// the transport's volume control (or its "Muted" label) unmutes.
+const AUTOPLAY_VOLUME: f32 = 0.0;
+
 /// The media widget view. Renders inline in markdown (via the D18 seam)
 /// or as a standalone panel item.
 pub struct MediaWidget {
@@ -263,7 +280,8 @@ impl MediaWidget {
             MediaKind::Audio => {
                 if let Some(bytes) = resolved.bytes {
                     if let Some(player) = &self.audio_player {
-                        if let Err(error) = player.play_bytes(bytes) {
+                        // No unsolicited audio: load paused (autoplay_policy).
+                        if let Err(error) = player.load_bytes_paused(bytes) {
                             self.error = Some(SharedString::from(error.to_string()));
                         }
                     }
@@ -281,11 +299,15 @@ impl MediaWidget {
                 if let Some(path) = &resolved.path {
                     if let Some(player) = &mut self.video_player {
                         match player.open(path) {
-                            // Autoplay: `open` leaves the player Stopped and
-                            // frames only decode while Playing — without this
-                            // the widget renders an empty placeholder until
-                            // the operator presses play.
-                            Ok(()) => player.play(),
+                            // Autoplay MUTED (the widget's autoplay policy):
+                            // frames only decode while Playing — without
+                            // play() the widget renders an empty placeholder
+                            // — but unsolicited sound is never OK. The
+                            // transport's volume control unmutes.
+                            Ok(()) => {
+                                player.set_volume(AUTOPLAY_VOLUME);
+                                player.play();
+                            }
                             Err(error) => self.error = Some(SharedString::from(error.to_string())),
                         }
                     }
@@ -333,7 +355,8 @@ impl MediaWidget {
                 match result {
                     Ok(bytes) => {
                         if let Some(player) = &widget.audio_player {
-                            if let Err(error) = player.play_bytes(bytes) {
+                            // No unsolicited audio: load paused (autoplay_policy).
+                            if let Err(error) = player.load_bytes_paused(bytes) {
                                 widget.error = Some(SharedString::from(error.to_string()));
                             }
                         }
@@ -372,12 +395,16 @@ impl MediaWidget {
                             match player
                                 .open_stream(&stream_urls.video, stream_urls.audio.as_deref())
                             {
-                                // Autoplay: `open_stream` leaves the player
-                                // Stopped and frames only decode while
-                                // Playing — without this the widget renders
-                                // an empty placeholder until the operator
-                                // presses play.
-                                Ok(()) => player.play(),
+                                // Autoplay MUTED (the widget's autoplay
+                                // policy): frames only decode while Playing
+                                // — without play() the widget renders an
+                                // empty placeholder — but unsolicited sound
+                                // is never OK. The transport's volume
+                                // control unmutes.
+                                Ok(()) => {
+                                    player.set_volume(AUTOPLAY_VOLUME);
+                                    player.play();
+                                }
                                 Err(error) => {
                                     widget.error = Some(SharedString::from(format!(
                                         "failed to open video stream: {error}"
@@ -403,7 +430,8 @@ impl MediaWidget {
         {
             match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data) {
                 Ok(bytes) => {
-                    if let Err(error) = player.play_bytes(bytes) {
+                    // No unsolicited audio: load paused (autoplay_policy).
+                    if let Err(error) = player.load_bytes_paused(bytes) {
                         self.error = Some(SharedString::from(error.to_string()));
                     }
                 }
@@ -428,7 +456,9 @@ impl MediaWidget {
                                 data,
                             ) {
                                 Ok(bytes) => {
-                                    if let Err(error) = player.play_bytes(bytes) {
+                                    // No unsolicited audio: load paused
+                                    // (autoplay_policy).
+                                    if let Err(error) = player.load_bytes_paused(bytes) {
                                         self.error = Some(SharedString::from(error.to_string()));
                                     }
                                 }
@@ -449,8 +479,18 @@ impl MediaWidget {
             Some(MediaKind::Video) => {
                 if let Some(player) = &mut self.video_player {
                     let path = std::path::PathBuf::from(&src);
-                    if let Err(error) = player.open(&path) {
-                        self.error = Some(SharedString::from(error.to_string()));
+                    match player.open(&path) {
+                        // Autoplay MUTED (the widget's autoplay policy) —
+                        // same as the resolved-path branch: without play()
+                        // no frames decode and the widget renders an empty
+                        // placeholder.
+                        Ok(()) => {
+                            player.set_volume(AUTOPLAY_VOLUME);
+                            player.play();
+                        }
+                        Err(error) => {
+                            self.error = Some(SharedString::from(error.to_string()));
+                        }
                     }
                 }
                 self.start_playback_loop(cx);
@@ -1589,5 +1629,20 @@ mod layout_tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    /// The no-unsolicited-audio contract (the ghost-audio bug, 2026-09-04):
+    /// video autoplays (frames only decode while Playing — an empty
+    /// placeholder otherwise) but MUTED; audio never autoplays (it loads
+    /// paused via `AudioPlayer::load_bytes_paused`). A regression that
+    /// flips either arm re-introduces sound the operator never asked for.
+    #[test]
+    fn autoplay_policy_never_sounds_unsolicited() {
+        assert!(autoplays(MediaKind::Video), "video autoplays (muted)");
+        assert!(
+            !autoplays(MediaKind::Audio),
+            "audio never autoplays — it loads paused"
+        );
+        assert_eq!(AUTOPLAY_VOLUME, 0.0, "autoplay is muted");
     }
 }

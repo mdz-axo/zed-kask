@@ -4,7 +4,8 @@
 //!   renderer (the same widget the conversation renders inline).
 //! - **Library**: the gallery's actual assets (via `gallery_list_assets`)
 //!   merged with assets surfaced by the conversation's tool results, with
-//!   delete (two-step confirm) affordances.
+//!   delete (two-step confirm) affordances. Each fetched page reconciles
+//!   the list — assets deleted from the gallery drop out of it.
 //! - **Queue**: generation jobs (via `job_list`) with cancel affordances.
 //! - **Detail**: the selected asset's inspector data (via
 //!   `gallery_asset_detail`) — record, tags, lineage.
@@ -13,8 +14,11 @@
 //! McpRuntime dispatch) against the `media` server. Failures surface in a
 //! status line — visible, never silent.
 
+use std::collections::HashSet;
+
 use acp_thread::AgentThreadEntry;
-use gpui::{App, Context, Entity, Render, SharedString, Window};
+use agent_client_protocol::schema::v1::ToolCallId;
+use gpui::{Context, Entity, Render, SharedString, Window};
 use serde_json::Value;
 use ui::{Icon, IconName, Label, LabelSize, prelude::*};
 use util::ResultExt as _;
@@ -84,6 +88,12 @@ pub struct MediaViewer {
     confirm_delete: Option<usize>,
     /// Visible status line (errors from tool dispatch, notices).
     status: Option<String>,
+    /// Tool-call ids whose results `ingest_thread` has already examined. A
+    /// call's result lands once (ACP `update_fields` sets `raw_output` when
+    /// the result arrives), so a first-seen id marks a newly-completed call
+    /// — the signal that a gallery-mutating tool finished and the Library
+    /// listing is stale. Cleared when the observed thread changes.
+    processed_tool_results: HashSet<ToolCallId>,
 }
 
 impl MediaViewer {
@@ -102,42 +112,70 @@ impl MediaViewer {
             detail: None,
             confirm_delete: None,
             status: None,
+            processed_tool_results: HashSet::new(),
         }
     }
 
     /// Scan an `AcpThread`'s tool results for display hints and merge the
     /// extracted assets. Deduplicates by body. A newly-seen asset
     /// auto-selects: the latest result is what the operator wants to see.
-    pub fn ingest_thread(&mut self, thread: Entity<acp_thread::AcpThread>, cx: &App) {
+    /// A newly-completed gallery-mutating tool call reloads the Library
+    /// listing so chat-driven mutations (delete, organize, imports) are
+    /// reflected without a manual refresh.
+    pub fn ingest_thread(&mut self, thread: Entity<acp_thread::AcpThread>, cx: &mut Context<Self>) {
+        // A different thread (resume/open) resets completion tracking —
+        // the new thread's historical calls are all first-seen again.
+        if self.thread.as_ref().and_then(|weak| weak.upgrade()) != Some(thread.clone()) {
+            self.processed_tool_results.clear();
+        }
         self.thread = Some(thread.downgrade());
-        let thread = thread.read(cx);
         let mut new_selection = None;
-        for entry in thread.entries() {
-            let AgentThreadEntry::ToolCall(call) = entry else {
-                continue;
-            };
-            let Some(Value::String(text)) = call.raw_output.as_ref() else {
-                continue;
-            };
-            let tool: SharedString = call.tool_name.clone().unwrap_or_else(|| "tool".into());
-            for hint in hkask_types::tool_response::display_hints_from_output_text(text) {
-                let Some(asset) = asset_from_hint(&hint, &tool) else {
+        let mut gallery_mutated = false;
+        {
+            let thread = thread.read(cx);
+            for entry in thread.entries() {
+                let AgentThreadEntry::ToolCall(call) = entry else {
                     continue;
                 };
-                if self
-                    .assets
-                    .iter()
-                    .any(|existing| existing.body == asset.body)
+                let Some(output) = call.raw_output.as_ref() else {
+                    continue; // still running — no result to ingest yet
+                };
+                let tool: SharedString = call.tool_name.clone().unwrap_or_else(|| "tool".into());
+                // First sight of this call's result: a gallery-mutating
+                // tool just completed in the conversation.
+                if self.processed_tool_results.insert(call.id.clone())
+                    && tool_mutates_gallery(&tool)
                 {
-                    continue;
+                    gallery_mutated = true;
                 }
-                self.assets.push(asset);
-                new_selection = Some(self.assets.len() - 1);
+                let Value::String(text) = output else {
+                    continue;
+                };
+                for hint in hkask_types::tool_response::display_hints_from_output_text(text) {
+                    let Some(asset) = asset_from_hint(&hint, &tool) else {
+                        continue;
+                    };
+                    if self
+                        .assets
+                        .iter()
+                        .any(|existing| existing.body == asset.body)
+                    {
+                        continue;
+                    }
+                    self.assets.push(asset);
+                    new_selection = Some(self.assets.len() - 1);
+                }
             }
         }
         if let Some(ix) = new_selection {
             self.selected = Some(ix);
             self.detail = None; // stale detail for the previous selection
+        }
+        // Only while the Library is on screen: switching to the tab already
+        // reloads it (`tab_button`), so reloading from other tabs would be
+        // wasted dispatches.
+        if gallery_mutated && self.active_tab == ViewerTab::Library {
+            self.load_gallery(cx);
         }
     }
 
@@ -335,37 +373,29 @@ impl MediaViewer {
             cx.notify();
             return;
         };
-        for record in records {
-            let Some(src) = record.get("path").and_then(|p| p.as_str()) else {
-                continue;
-            };
-            let kind = record
-                .get("media_type")
-                .and_then(|k| k.as_str())
-                .unwrap_or("image")
-                .to_string();
-            let gallery_index = record
-                .get("index")
-                .and_then(|i| i.as_u64())
-                .map(|i| i as usize);
-            let asset = MediaAsset {
-                body: serde_json::json!({"kind": kind, "src": src}).to_string(),
-                src: src.to_string(),
-                kind,
-                tool: "gallery".into(),
-                gallery_index,
-            };
-            // Merge by src: a conversation-surfaced asset for the same file
-            // gains its gallery index; new gallery assets are appended.
-            if let Some(existing) = self
-                .assets
-                .iter_mut()
-                .find(|existing| existing.src == asset.src)
-            {
-                existing.gallery_index = asset.gallery_index;
-            } else {
-                self.assets.push(asset);
+        // Capture what selection and the delete-confirmation point at
+        // BEFORE the merge: gallery indexes are positional, so a deletion
+        // renumbers every later asset. Re-locating by src afterwards keeps
+        // the selection on the same asset, and never lets a stale confirm
+        // index point at a different row — confirming would then delete
+        // the WRONG asset.
+        let selected_src = self
+            .selected
+            .and_then(|ix| self.assets.get(ix))
+            .map(|asset| asset.src.clone());
+        let confirmed_src = self
+            .confirm_delete
+            .and_then(|ix| self.assets.get(ix))
+            .map(|asset| asset.src.clone());
+        merge_gallery_records(&mut self.assets, records, self.gallery_offset);
+        if let Some(src) = selected_src {
+            self.selected = self.assets.iter().position(|asset| asset.src == src);
+            if self.selected.is_none() {
+                self.detail = None; // the selected asset left the list
             }
+        }
+        if let Some(src) = confirmed_src {
+            self.confirm_delete = self.assets.iter().position(|asset| asset.src == src);
         }
         if self.selected.is_none() && !self.assets.is_empty() {
             self.selected = Some(0);
@@ -1212,6 +1242,64 @@ fn asset_from_hint(hint: &str, tool: &SharedString) -> Option<MediaAsset> {
     })
 }
 
+/// Reconcile the asset list against one `gallery_list_assets` page.
+/// Records merge by src: a conversation-surfaced asset for the same file
+/// gains its gallery index; new gallery assets append. Then removals: the
+/// page vouches for global indexes `[offset, offset + len)` (the server's
+/// `index` is `offset + i` — the `image_index` other gallery tools accept),
+/// so an indexed asset inside that window whose src is absent from the
+/// page was deleted from the gallery — drop it. Unindexed
+/// (conversation-surfaced) assets and assets whose index falls outside the
+/// page are untouched: the page says nothing about them.
+fn merge_gallery_records(assets: &mut Vec<MediaAsset>, records: &[Value], offset: usize) {
+    let listed_srcs: HashSet<&str> = records
+        .iter()
+        .filter_map(|record| record.get("path").and_then(|path| path.as_str()))
+        .collect();
+    for record in records {
+        let Some(src) = record.get("path").and_then(|p| p.as_str()) else {
+            continue;
+        };
+        let kind = record
+            .get("media_type")
+            .and_then(|k| k.as_str())
+            .unwrap_or("image")
+            .to_string();
+        let gallery_index = record
+            .get("index")
+            .and_then(|i| i.as_u64())
+            .map(|i| i as usize);
+        let asset = MediaAsset {
+            body: serde_json::json!({"kind": kind, "src": src}).to_string(),
+            src: src.to_string(),
+            kind,
+            tool: "gallery".into(),
+            gallery_index,
+        };
+        if let Some(existing) = assets.iter_mut().find(|existing| existing.src == asset.src) {
+            existing.gallery_index = asset.gallery_index;
+        } else {
+            assets.push(asset);
+        }
+    }
+    let window = offset..offset + records.len();
+    assets.retain(|asset| match asset.gallery_index {
+        Some(index) if window.contains(&index) => listed_srcs.contains(asset.src.as_str()),
+        _ => true,
+    });
+}
+
+/// Tools whose completion can change the gallery's asset listing — the
+/// signal that the Library's cached listing is stale. Deliberately
+/// over-inclusive on the `gallery_` prefix: a reload is idempotent, a
+/// missed mutation is the stale-list bug. The importers index new assets
+/// into the gallery directly (per their tool docs); generation tools do
+/// not touch the index — their output surfaces via display hints.
+fn tool_mutates_gallery(tool_name: &str) -> bool {
+    const IMPORTERS: &[&str] = &["video_fetch", "video_extract_frames"];
+    tool_name.starts_with("gallery_") || IMPORTERS.contains(&tool_name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1241,35 +1329,164 @@ mod tests {
         assert!(asset_from_hint("plain text", &"t".into()).is_none());
     }
 
-    #[test]
-    fn merge_gallery_listing_assigns_indices_and_merges_by_src() {
-        // The extraction path from a gallery_list_assets payload to the
-        // viewer's asset list — the Library's data source.
-        let payload = serde_json::json!({
-            "total": 2,
-            "assets": [
-                {"index": 0, "path": "/gallery/a.png", "media_type": "image"},
-                {"index": 1, "path": "/gallery/b.mp4", "media_type": "video"},
-            ]
-        });
-        let mut viewer = MediaViewer::new();
-        // A conversation-surfaced asset for the same file as index 0.
-        viewer.assets.push(MediaAsset {
-            body: r#"{"kind":"image","src":"/gallery/a.png"}"#.into(),
-            src: "/gallery/a.png".into(),
+    fn indexed_asset(src: &str, index: usize) -> MediaAsset {
+        MediaAsset {
+            body: format!(r#"{{"kind":"image","src":"{src}"}}"#),
+            src: src.into(),
+            kind: "image".into(),
+            tool: "gallery".into(),
+            gallery_index: Some(index),
+        }
+    }
+
+    fn surfaced_asset(src: &str) -> MediaAsset {
+        MediaAsset {
+            body: format!(r#"{{"kind":"image","src":"{src}"}}"#),
+            src: src.into(),
             kind: "image".into(),
             tool: "generate_image".into(),
             gallery_index: None,
-        });
-        // merge_gallery_listing needs a Context — test the merge logic via
-        // the payload shape instead: the records the viewer must handle.
-        let records = payload.get("assets").unwrap().as_array().unwrap();
-        assert_eq!(records.len(), 2);
+        }
+    }
+
+    /// The confirmed-delete bug this pins: deleting in the Library reloads
+    /// the listing, but the merge used to only add and update — the deleted
+    /// asset's row never left the list, so a confirmed removal appeared to
+    /// do nothing. The merge must reconcile: in-page absences are
+    /// deletions; unindexed (conversation-surfaced) and out-of-page assets
+    /// stay; survivors' indexes follow the positional shift; a
+    /// conversation-surfaced asset for an indexed file gains its index
+    /// (listing indices are the gallery image_index contract — server:
+    /// `index = offset + i`).
+    #[test]
+    fn merge_gallery_records_merges_by_src_and_reconciles_deletions() {
+        let mut assets = vec![
+            surfaced_asset("/gallery/keep-a.png"),
+            indexed_asset("/gallery/deleted.png", 1),
+            indexed_asset("/gallery/keep-b.png", 2),
+            surfaced_asset("/tmp/chat-only.png"),
+            indexed_asset("/gallery/out-of-page.png", 150),
+        ];
+        // The fresh page (offset 0): deleted.png is gone; keep-b shifted
+        // from index 2 to 1.
+        let records = serde_json::json!([
+            {"index": 0, "path": "/gallery/keep-a.png", "media_type": "image"},
+            {"index": 1, "path": "/gallery/keep-b.png", "media_type": "image"},
+        ]);
+        merge_gallery_records(&mut assets, records.as_array().unwrap(), 0);
+
+        let srcs: Vec<&str> = assets.iter().map(|a| a.src.as_str()).collect();
         assert_eq!(
-            records[0].get("index").and_then(|i| i.as_u64()),
-            Some(0),
-            "listing indices are the gallery image_index contract"
+            srcs,
+            vec![
+                "/gallery/keep-a.png",
+                "/gallery/keep-b.png",
+                "/tmp/chat-only.png",
+                "/gallery/out-of-page.png",
+            ],
+            "the deleted in-page asset must drop; unindexed and out-of-page assets stay"
         );
+        assert_eq!(
+            assets.first().expect("keep-a survives").gallery_index,
+            Some(0),
+            "a conversation-surfaced asset for an indexed file gains its index"
+        );
+        assert_eq!(
+            assets
+                .iter()
+                .find(|a| a.src == "/gallery/keep-b.png")
+                .expect("keep-b survives")
+                .gallery_index,
+            Some(1),
+            "a survivor's index follows the positional shift"
+        );
+    }
+
+    /// A page fetched at a non-zero offset vouches only for its own window:
+    /// an asset on an earlier page absent from THIS page must survive —
+    /// only an in-window absence is a deletion.
+    #[test]
+    fn merge_gallery_records_reconciles_only_the_fetched_window() {
+        let mut assets = vec![
+            indexed_asset("/gallery/early.png", 5),
+            indexed_asset("/gallery/in-window-deleted.png", 100),
+            indexed_asset("/gallery/in-window-kept.png", 101),
+        ];
+        // Page at offset 100: one record — in-window-kept shifted down to
+        // 100 because in-window-deleted was removed.
+        let records = serde_json::json!([
+            {"index": 100, "path": "/gallery/in-window-kept.png", "media_type": "image"},
+        ]);
+        merge_gallery_records(&mut assets, records.as_array().unwrap(), 100);
+
+        let srcs: Vec<&str> = assets.iter().map(|a| a.src.as_str()).collect();
+        assert_eq!(
+            srcs,
+            vec!["/gallery/early.png", "/gallery/in-window-kept.png"],
+            "only in-window absences are deletions; earlier-page assets survive"
+        );
+    }
+
+    /// The chat-driven reload trigger: gallery mutations and direct
+    /// importers reload the Library listing; generation tools don't touch
+    /// the index (their output surfaces via display hints) and neither do
+    /// unrelated tools.
+    #[test]
+    fn gallery_mutation_classification() {
+        assert!(tool_mutates_gallery("gallery_delete_image"));
+        assert!(tool_mutates_gallery("gallery_organize"));
+        assert!(tool_mutates_gallery("gallery_refresh"));
+        assert!(tool_mutates_gallery("gallery_add_video"));
+        assert!(tool_mutates_gallery("video_fetch"));
+        assert!(tool_mutates_gallery("video_extract_frames"));
+        assert!(!tool_mutates_gallery("generate_image"));
+        assert!(!tool_mutates_gallery("video_clip"));
+        assert!(!tool_mutates_gallery("transcribe"));
+        assert!(!tool_mutates_gallery("job_list"));
+    }
+
+    /// Selection and delete-confirmation repair across a reconciling
+    /// merge: gallery indexes are positional, so after a deletion the old
+    /// indices point at different assets. The selection must follow its
+    /// asset (or clear with its detail when the asset left), and a pending
+    /// confirmation must follow its asset — a stale confirm index would
+    /// delete the WRONG asset on confirm.
+    #[gpui::test]
+    fn merge_gallery_listing_repairs_selection_and_confirm(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, _| {
+            viewer.assets = vec![
+                indexed_asset("/gallery/doomed.png", 0),
+                indexed_asset("/gallery/survivor.png", 1),
+            ];
+            viewer.selected = Some(0); // the asset about to be deleted
+            viewer.confirm_delete = Some(1); // the survivor, pre-shift
+        });
+        let payload = serde_json::json!({
+            "total": 1,
+            "assets": [
+                {"index": 0, "path": "/gallery/survivor.png", "media_type": "image"},
+            ]
+        });
+        viewer.update(cx, |viewer, cx| {
+            viewer.merge_gallery_listing(Some(payload), cx)
+        });
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.selected,
+                Some(0),
+                "the deleted selection falls back to the first asset"
+            );
+            assert!(
+                viewer.detail.is_none(),
+                "the deleted asset's detail is cleared"
+            );
+            assert_eq!(
+                viewer.confirm_delete,
+                Some(0),
+                "the pending confirmation follows its asset to the shifted index"
+            );
+        });
     }
 }
 
@@ -1349,7 +1566,7 @@ mod edit_tests {
 #[cfg(test)]
 mod viewer_layout_tests {
     use super::*;
-    use gpui::{TestAppContext, px, size};
+    use gpui::{DefiniteLength, TestAppContext, px, size};
 
     const FIXTURE: &str =
         "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
@@ -1452,27 +1669,35 @@ mod viewer_layout_tests {
     }
 
     /// The production panel embedding for the narrow-pane probes: the
-    /// director column (`min_w_96`, `flex_1`) and the viewer pane
-    /// (`flex_1`, `min_w_0`) side by side in a flex row, exactly as
-    /// `media_panel.rs` renders them.
+    /// viewer pane on top (`flex_1`, `min_h_0`, `min_w_0`), the 1px split
+    /// divider, and the director below at a fractional height — exactly as
+    /// `media_panel.rs` renders them (minus the drag wiring, which needs a
+    /// real pointer drag the harness doesn't synthesize).
     struct NarrowPaneHost {
         viewer: Entity<MediaViewer>,
     }
 
     impl gpui::Render for NarrowPaneHost {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            h_flex()
+            v_flex()
                 .size_full()
                 .child(
                     div()
-                        .h_full()
+                        .w_full()
                         .flex_1()
-                        .min_w_96()
-                        .border_r_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .child(self.viewer.clone()),
+                )
+                .child(div().w_full().flex_shrink_0().h(px(1.)))
+                .child(
+                    div()
+                        .w_full()
+                        .h(DefiniteLength::Fraction(0.5))
+                        .min_h_0()
                         .flex()
                         .flex_col(),
                 )
-                .child(div().h_full().flex_1().min_w_0().child(self.viewer.clone()))
         }
     }
 
@@ -1490,16 +1715,16 @@ mod viewer_layout_tests {
     }
 
     /// THE horizontal-fit invariant — the one the scaling test above does
-    /// not encode. At a 700px dock the pane's available width is ~316px
-    /// (after the director's 384px min-width); the pre-fix layout inflated
-    /// the pane to the viewer's min-content width (untruncated header src +
-    /// seven inline toolbar buttons ≈ 685px) because the pane div lacked
-    /// `min_w_0`, so the video area rendered 685px wide inside a 316px
-    /// pane — clipped at the dock edge, unviewable. This test failed on
-    /// that code and pins the fix: no part of the viewer may exceed the
-    /// pane's available horizontal bounds, at any pane width, with the
-    /// video's natural width (640px) larger than the pane. The final
-    /// iteration resizes back — the no-thrash probe.
+    /// not encode. No part of the viewer — media content, header, toolbar,
+    /// or tab bar — may exceed the pane's available width at any pane
+    /// width, with the video's natural width (640px) larger than the pane.
+    /// Historically the pane div lacked `min_w_0`, so the viewer's
+    /// min-content width (untruncated header src + seven inline toolbar
+    /// buttons ≈ 685px) inflated the pane and the video rendered clipped
+    /// at the dock edge, unviewable. This test pins the fix in the current
+    /// production embedding (top/bottom split): the pane is a flex-column
+    /// child and still carries `min_w_0`. The final iteration resizes back
+    /// — the no-thrash probe.
     #[gpui::test]
     fn viewer_content_fits_narrow_pane(cx: &mut TestAppContext) {
         if !std::path::Path::new(FIXTURE).exists() {
@@ -1525,13 +1750,15 @@ mod viewer_layout_tests {
             viewer: viewer.clone(),
         });
 
-        // (dock width, pane available) — the pane gets the dock minus the
-        // director's 384px min-width. 480px is the adversarial dock: a
-        // ~96px pane, far narrower than the fixture's natural 640px video.
+        // (dock width, pane available) — the split is horizontal
+        // (top/bottom panes), so the viewer spans the dock's full width;
+        // the director no longer takes a horizontal share. 480px is the
+        // adversarial dock: far narrower than the fixture's natural 640px
+        // video.
         for (dock_width, pane_available) in [
-            (px(700.), px(316.)),
-            (px(480.), px(96.)),
-            (px(700.), px(316.)),
+            (px(700.), px(700.)),
+            (px(480.), px(480.)),
+            (px(700.), px(700.)),
         ] {
             cx.simulate_resize(size(dock_width, px(600.)));
             cx.run_until_parked();

@@ -184,6 +184,17 @@ impl gpui::Render for TransportBar {
                     .text_color(cx.theme().colors().text_muted)
                     .child(duration_text),
             )
+            // A muted-autoplaying video is silent by design (the widget's
+            // autoplay_policy); without this label the operator sees a
+            // playing video with no sound and no explanation.
+            .child(if self.state.volume < 0.001 && self.state.is_playing {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(SharedString::from("Muted"))
+            } else {
+                div()
+            })
             .child(div().w(px(80.0)).child(self.volume_slider.clone()))
     }
 }
