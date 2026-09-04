@@ -154,7 +154,8 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 - **Scoring:** Sobel edge detection classifies pages as Simple/Moderate/Complex.
 - **Routing:** Simple pages → Tesseract. Complex pages → LLM vision OCR. Moderate pages → Tesseract with 10% dual-routing for cross-validation.
 - **Backends:** Tesseract (CLI with TSV confidence parsing) and LLM vision (via `hkask-inference`, quality heuristic confidence scoring).
-- **Verification:** Page count matching, empty page detection, word count estimation (±50% guardrail).
+- **Verification:** Page count matching, empty page detection, degraded-page detection (pages served by a fallback backend after the routed primary failed or the circuit breaker was open), and the final-backend distribution. Every `corpus_ocr`/`corpus_convert` result carries `verification_passed`, `empty_pages`, `degraded_pages`, `backends`, `llm_breaker_open`, and `llm_concurrency` — a dead LLM endpoint can never wear a passing verdict.
+- **Circuit breaker:** After 5 consecutive LLM failures the breaker opens; the cooldown escalates per consecutive opening (30s × 2^(n-1), capped at 300s) so a dead endpoint on a long book run does not re-burn a doomed vision call every fixed window. A success resets the escalation.
 - **Calibration:** Accumulates cross-validation data. When ≥100 samples show >95% agreement between backends, suggests raising routing thresholds via Regulation alert. **Never auto-adjusts** — P4 affirmative consent required.
 
 ## Configuration
@@ -181,6 +182,7 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | `HKASK_OCR_SAMPLE_RATE` | 0.10 | Dual-routing sample rate for Moderate pages |
 | `HKASK_OCR_TUNEABLE` | true | Whether Regulation calibration may suggest threshold adjustments |
 | `HKASK_OCR_CONCURRENCY` | 4 | Number of pages sent to the vision model in parallel |
+| `HKASK_OCR_RENDER_DPI` | 72 | Page-render resolution for the OCR pipeline. Default 72 keeps the JPEG payload inside the vision model's 128K-token context; raise to ~150 for better Tesseract accuracy on scanned books at the cost of render memory and LLM payload size. Malformed values warn and fall back to 72. |
 
 ### Page Triage Thresholds (per-page pre-OCR complexity detection)
 

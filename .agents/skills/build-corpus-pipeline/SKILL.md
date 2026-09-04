@@ -313,6 +313,11 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
 
 4. For PDFs that may need OCR, call `corpus_is_complex` first:
    - `path`: path to each PDF
+   - `summary: true` for large PDFs — the routing decision reads
+     `needs_ocr` + `ocr_pages` (+ the `reason_counts` histogram); the full
+     per-page array is a ~100KB response for a 400-page book that the
+     decision never reads. Omit `summary` only when per-page diagnostics
+     are needed.
    - If complex and OCR is available, call `corpus_convert` with
      `force_ocr: true` for that file (the page-by-page OCR pipeline —
      `corpus_ocr` is the single-image tool; on PDFs it routes through the
@@ -415,6 +420,10 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
    - `'fail-quality`: route every failed extraction through OCR
      (`corpus_convert` with `force_ocr: true`), re-run the audit, and do
      not proceed until all pass. Never drop a failed file from the corpus.
+     Re-runs are self-healing: directory-mode `corpus_convert` skips only
+     outputs that pass the ≥ 50-word floor, so a garbage extraction is
+     re-extracted on the next run instead of being honored as existing
+     output.
 
 7. **Merge OCR outputs into the extraction set.** OCR'd texts land in the
    OCR output directory (e.g. `corpus/extracted/{{ entity_ref_prefix }}-ocr/`);
@@ -848,6 +857,20 @@ step-up ramp.
 1. Call `corpus_query` with a test question to verify the vector index:
    - `query`: a question relevant to the corpus content
    - `top_k`: 5
+   - `db_path`: `{{ db_path }}` and `passphrase`: `{{ passphrase }}` —
+     REQUIRED. The in-memory index is empty after a server restart; the
+     query hydrates from the DB, and without `db_path` it returns zero
+     results with a note, which reads like an empty corpus.
+
+   OCR quality knob (apply at Stage 1 when Tesseract output on scanned
+   books is too noisy): `HKASK_OCR_RENDER_DPI` (default 72, chosen so the
+   JPEG payload fits the vision model's 128K-token context). Raising it
+   to ~150 improves Tesseract accuracy on scanned books at the cost of
+   render memory and LLM payload size — set it in the server env and
+   restart before the OCR run. `corpus_convert` responses carry
+   `structure: null` by default (the per-page block view duplicated the
+   full text and doubled response size); pass `include_structure: true`
+   only when the block layout is actually needed.
 
 2. Call the `grill-me` skill to interrogate the pipeline output:
    - **Recall**: How many chunks? Embeddings? QA pairs?
@@ -867,7 +890,7 @@ step-up ramp.
                  (qa_ok (if enable_qa (> ingested_count 0) t))
                  (train_ok (if enable_qa (> example_count 0) t))
                  (query_ok (> query_result_count 0)))
-            (and (>= conv_rate 0.80)
+            (and (>= conv_rate 1.0)
                  chunk_ok
                  embed_complete
                  (if enable_qa tag_ok t)
