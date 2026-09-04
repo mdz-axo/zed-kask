@@ -101,16 +101,6 @@ impl std::fmt::Display for Venue {
     }
 }
 
-impl Venue {
-    /// The filename stem for this venue's catalog file.
-    fn catalog_stem(self) -> &'static str {
-        match self {
-            Self::Kalshi => "kalshi",
-            Self::Polymarket => "gamma",
-        }
-    }
-}
-
 // ── Provenance wrapper ─────────────────────────────────────────────────────
 
 /// A CMP index with full provenance — the publishable unit per cmp-foundation

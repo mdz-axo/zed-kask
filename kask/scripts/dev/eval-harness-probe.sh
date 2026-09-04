@@ -20,7 +20,12 @@
 set -euo pipefail
 
 OLLAMA="${OLLAMA:-http://localhost:11434/api/chat}"
-MODEL="${MODEL:-qwen3.8:27b}"
+# MODEL is REQUIRED: no silent default. A prior era hardcoded
+# "qwen3.8:27b" here — a hallucinated model id that silently pinned a
+# 20GB CPU load whenever the probe ran. Per the ratified local-agent
+# design, local runs resolve to the host session's default model; a dev
+# probe must not bake in its own heavyweight model choice.
+MODEL="${MODEL:?set MODEL=<ollama-model-name>, e.g. MODEL=lightonocr2:latest}"
 REPEATS="${REPEATS:-3}"
 
 for bin in curl jq awk; do

@@ -8734,12 +8734,9 @@ name = "hkask-keystore"
 version = "0.39.0"
 dependencies = [
  "async-std",
- "hex",
  "hkask-types",
- "hmac",
  "oo7",
  "rand 0.9.4",
- "sha2 0.10.9",
  "thiserror 2.0.17",
  "tracing",
  "zeroize",

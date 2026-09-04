@@ -13,13 +13,10 @@ path = "src/hkask_keystore.rs"
 hkask-types.workspace = true
 oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
 async-std.workspace = true
-hmac.workspace = true
-sha2.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
-hex.workspace = true
 
 [lints]
 workspace = true

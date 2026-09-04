@@ -70,12 +70,6 @@ pub enum TriggerOrigin {
 /// Fermi pattern: the "impact gate" — after acting, re-sense the targeted
 /// metric and compare against the pre-action value. This closes the cybernetic
 /// feedback loop: sense → compare → compute → act → **verify**.
-///
-/// # Toyota Kata alignment (ADR-056 §6.1)
-///
-/// When the action carried a `prediction` (expected post-action value),
-/// `prediction_error` measures the gap between predicted and actual.
-/// This validates the regulator's *model*, not just its *effectiveness*.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImpactReport {
     /// The action that was verified.
@@ -92,14 +86,6 @@ pub struct ImpactReport {
     pub improved: bool,
     /// Classification decision based on the impact magnitude.
     pub decision: ActionDecision,
-    /// Expected metric value after the action (Toyota Kata prediction).
-    /// `None` if the action carried no prediction.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction: Option<f64>,
-    /// Absolute error between prediction and actual post-action value.
-    /// `None` if no prediction was made. Small error = model is correct.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction_error: Option<f64>,
 }
 
 impl ImpactReport {
@@ -132,29 +118,7 @@ impl ImpactReport {
             delta,
             improved,
             decision,
-            prediction: None,
-            prediction_error: None,
         }
-    }
-
-    /// Construct an ImpactReport with a prediction (Toyota Kata alignment).
-    ///
-    /// When the action carried a predicted post-action value, this constructor
-    /// computes `prediction_error` = |after - prediction|. Small error means
-    /// the regulator's model is correct; large error means the model needs
-    /// revision (Conant-Ashby: the regulator must model the system).
-    pub fn with_prediction(
-        action_type: ActionType,
-        metric: SignalMetric,
-        before: f64,
-        after: f64,
-        decision: ActionDecision,
-        prediction: f64,
-    ) -> Self {
-        let mut report = Self::new(action_type, metric, before, after, decision);
-        report.prediction = Some(prediction);
-        report.prediction_error = Some((after - prediction).abs());
-        report
     }
 }
 

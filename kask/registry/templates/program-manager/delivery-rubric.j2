@@ -1,0 +1,38 @@
+{# Delivery rubric — the program-manager closure ledger.
+   Phase 4 renders this with the session's findings inventory. The output
+   is the closure table every report must carry: each finding, its closure
+   state, and its evidence. The lisp_eval convergence check then scores it
+   (zero reported-abandoned, zero unowned) before the report is delivered.
+   Variables:
+     findings — array of objects: { id, title, evidence, state, owner }
+       state ∈ { fixed-verified, delegated-tracked, operator-decision,
+                  reported-abandoned }
+       owner — who holds the next action ("self", "sub-agent:<label>",
+               "operator", or "" for unowned) #}
+# Delivery rubric — {{ findings|length }} findings
+
+| # | Finding | Evidence | Closure state | Owner |
+|---|---------|----------|---------------|-------|
+{% for finding in findings %}
+| {{ finding.id }} | {{ finding.title }} | {{ finding.evidence }} | {{ finding.state }} | {{ finding.owner }} |
+{% endfor %}
+
+## Rubric score
+
+- reported-abandoned: {{ findings | selectattr("state", "equalto", "reported-abandoned") | list | length }}
+- unowned: {{ findings | rejectattr("owner") | list | length }}
+
+A rubric is green only when both counts are zero. Any reported-abandoned
+finding is a role failure — return to Phase 1 and give it a closure path.
+Any unowned finding is an open defect in the delivery process itself.
+
+## Operator-decision items
+
+{% for finding in findings if finding.state == "operator-decision" %}
+### {{ finding.id }} — {{ finding.title }}
+- What it was designed to do: {{ finding.design_intent | default("see evidence") }}
+- Evidence it is unwired/broken: {{ finding.evidence }}
+- Recommendation: {{ finding.recommendation | default("wire-or-remove decision needed") }}
+{% else %}
+None this session.
+{% endfor %}

@@ -803,10 +803,9 @@ mod smoke_tests {
         let card_path = std::path::Path::new(&agents_dir)
             .join("no_model_agent")
             .join("agent_card.json");
-        let card: Value = serde_json::from_str(
-            &std::fs::read_to_string(&card_path).expect("card written"),
-        )
-        .expect("card is json");
+        let card: Value =
+            serde_json::from_str(&std::fs::read_to_string(&card_path).expect("card written"))
+                .expect("card is json");
         assert_eq!(
             card["capabilities"]["model"], "",
             "no model supplied — the card must carry an EMPTY model (host session default at \\

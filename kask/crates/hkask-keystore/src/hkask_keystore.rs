@@ -20,7 +20,6 @@
 pub mod error;
 pub mod keychain;
 pub mod keychain_keys;
-pub mod master_key;
 pub mod passphrase;
 
 pub use error::KeystoreError;

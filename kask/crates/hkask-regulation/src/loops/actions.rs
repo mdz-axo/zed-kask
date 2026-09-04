@@ -127,14 +127,6 @@ impl RegulationData {
         }
     }
 
-    /// Extract `deficit` if this variant carries one.
-    pub fn deficit(&self) -> Option<f64> {
-        match self {
-            RegulationData::VarietyDeficitExceeded { deficit, .. } => Some(*deficit),
-            _ => None,
-        }
-    }
-
     /// Whether this variant's deviation is the value falling *below* its
     /// threshold (a floor metric), as opposed to rising above it (a ceiling
     /// metric).
@@ -212,15 +204,6 @@ impl RegulationData {
 /// new action is added — coupling the type system to runtime heuristics.
 /// The current design keeps the heuristic flexible while ensuring the
 /// field is always present (no `Option`, no JSON key lookup).
-///
-/// # Toyota Kata alignment (ADR-056 §6.1)
-///
-/// The `prediction` field carries the expected metric value after the
-/// action. This closes the Kata's prediction gap: `verify_impact()` can
-/// compare `after` vs. `prediction` (model validation) in addition to
-/// `after` vs. `before` (effectiveness). Without a prediction, the
-/// regulator learns whether its actions are effective, but not whether
-/// its *model* is correct.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RegulatoryActionParams {
     /// Human-readable reason for the action (required for observability).
@@ -228,54 +211,23 @@ pub struct RegulatoryActionParams {
     /// Typed regulation data (non-regulation actions use `RegulationData::NoData`).
     #[serde(default)]
     pub data: RegulationData,
-    /// Expected metric value after the action (Toyota Kata prediction).
-    /// When set, `verify_impact()` compares the actual post-action value
-    /// against this prediction to validate the regulator's model.
-    /// When `None`, only effectiveness (before vs. after) is checked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction: Option<f64>,
 }
 
 impl RegulatoryActionParams {
-    /// Create parameters with just a reason (no regulation data, no prediction).
+    /// Create parameters with just a reason (no regulation data).
     pub fn reason(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
             data: RegulationData::NoData,
-            prediction: None,
         }
     }
 
-    /// Create parameters with reason + typed regulation data (no prediction).
+    /// Create parameters with reason + typed regulation data.
     pub fn with_data(reason: impl Into<String>, data: RegulationData) -> Self {
         Self {
             reason: reason.into(),
             data,
-            prediction: None,
         }
-    }
-
-    /// Create parameters with reason + typed regulation data + prediction.
-    ///
-    /// The prediction is the expected metric value after the action.
-    /// This closes the Toyota Kata prediction gap (ADR-056 §6.1).
-    pub fn with_prediction(
-        reason: impl Into<String>,
-        data: RegulationData,
-        prediction: f64,
-    ) -> Self {
-        Self {
-            reason: reason.into(),
-            data,
-            prediction: Some(prediction),
-        }
-    }
-
-    /// Set a prediction on existing parameters.
-    #[must_use]
-    pub fn predicted(mut self, value: f64) -> Self {
-        self.prediction = Some(value);
-        self
     }
 }
 

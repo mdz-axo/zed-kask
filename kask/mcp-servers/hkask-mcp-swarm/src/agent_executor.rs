@@ -817,14 +817,11 @@ mod tests {
             Box<
                 dyn Future<
                         Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
+                    > + Send
+                    + '_,
             >,
         > {
-            self.override_seen
-                .lock()
-                .unwrap()
-                .push(None);
+            self.override_seen.lock().unwrap().push(None);
             Box::pin(async {
                 Ok(hkask_types::InferenceResult {
                     text: "stub".into(),
@@ -852,8 +849,8 @@ mod tests {
             Box<
                 dyn Future<
                         Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
+                    > + Send
+                    + '_,
             >,
         > {
             self.override_seen
@@ -890,8 +887,7 @@ mod tests {
         let inference = Arc::new(RecordingInference {
             override_seen: std::sync::Mutex::new(Vec::new()),
         });
-        let executor =
-            AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
+        let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
 
         let mut card = crate::local_registry::LocalAgentCard {
             agent_id: "model_probe".to_string(),
@@ -921,7 +917,10 @@ mod tests {
 
         // Explicit model → passed through as the override.
         card.capabilities.model = "OpenRouter/z-ai/glm-5.2".to_string();
-        executor.run(&card, "task").await.expect("explicit model runs");
+        executor
+            .run(&card, "task")
+            .await
+            .expect("explicit model runs");
         assert_eq!(
             inference.override_seen.lock().unwrap().as_slice(),
             &[None, Some("OpenRouter/z-ai/glm-5.2".to_string())],

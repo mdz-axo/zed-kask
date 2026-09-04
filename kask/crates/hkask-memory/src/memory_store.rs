@@ -16,8 +16,7 @@
 //! - `query_by_perspective()` — filter by who wrote the memory (the swarm
 //!   hive uses this to scope by agent)
 //! - Embedding operations (store, search, centroid, purge)
-//! - Consolidation helpers (update_confidence, consolidation_candidates,
-//!   expire_h_mem)
+//! - Consolidation helpers (update_confidence, expire_h_mem)
 //!
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
 //! at recall time.
@@ -636,39 +635,6 @@ impl MemoryStore {
             "h_mem confidence updated via Bayesian combination"
         );
         Ok(())
-    }
-
-    /// Identify h_mems eligible for consolidation (oldest, lowest
-    /// effective confidence) written by a given perspective. Uses recall-time
-    /// decayed confidence.
-    pub(crate) fn consolidation_candidates(
-        &self,
-        perspective: WebID,
-        limit: usize,
-    ) -> Result<Vec<HMem>, MemoryStoreError> {
-        let mut h_mems = self.h_mem_store.query_by_perspective(&perspective)?;
-        h_mems.sort_by(|a, b| {
-            let a_effective = a
-                .confidence
-                .memory_decay(
-                    crate::bayesian::days_since(a.recalled_at),
-                    self.memory_life_days,
-                )
-                .value();
-            let b_effective = b
-                .confidence
-                .memory_decay(
-                    crate::bayesian::days_since(b.recalled_at),
-                    self.memory_life_days,
-                )
-                .value();
-            a_effective
-                .partial_cmp(&b_effective)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.observed_at.cmp(&b.observed_at))
-        });
-        h_mems.truncate(limit);
-        Ok(h_mems)
     }
 
     /// Expire a h_mem by setting its `valid_to` (soft-delete).

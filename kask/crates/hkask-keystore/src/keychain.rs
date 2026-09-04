@@ -418,21 +418,6 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
     }
 }
 
-fn normalize_master_key_bytes(
-    master_key_bytes: Zeroizing<Vec<u8>>,
-) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
-    let Ok(as_str) = std::str::from_utf8(&master_key_bytes) else {
-        return Ok(master_key_bytes);
-    };
-    let trimmed = as_str.trim();
-    if trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        let decoded = hex::decode(trimmed)
-            .map_err(|e| KeychainError::Platform(format!("invalid master key hex: {e}")))?;
-        return Ok(Zeroizing::new(decoded));
-    }
-    Ok(master_key_bytes)
-}
-
 // ── Integration tests (live keychain; run with -- --ignored) ──────────────────
 //
 // These tests exercise the real OS keychain via `oo7`, not a mock. They
