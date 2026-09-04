@@ -45,7 +45,10 @@ pub use identity::{
     BridgeRotationError, ProvisionError, ProvisionedAgent, agent_name_from_username,
     provision_agent, rotate_all_kask_db_passphrases,
 };
-pub use inference_chat::{LanguageModelInferencePort, NoModelInferencePort};
+pub use inference_chat::{
+    LanguageModelInferencePort, NoModelInferencePort, global_inference_port,
+    set_global_inference_port,
+};
 pub use inference_edit_prediction::BridgeEditPredictionPort;
 pub use inference_embedding::LanguageModelEmbeddingPort;
 pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};

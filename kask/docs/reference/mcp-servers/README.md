@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-28
-version: "0.39.0"
+last_updated: 2026-09-04
+version: "0.40.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -13,8 +13,9 @@ mds_categories: [composition, domain]
 **Diataxis type:** Reference
 **Status:** Active (v0.39.0)
 
-> Built-in MCP servers shipped with hKask and launched by zed-kask's `context_server`
-> host as child processes over stdio. Each server is a thin surface over domain crates. The binary
+> Built-in MCP servers shipped with hKask and launched by the in-process governed
+> `McpRuntime` as child processes over stdio (D3 — single spawn authority since 2026-08-29; kask
+> servers are not registered with zed's per-project `ContextServerStore`). Each server is a thin surface over domain crates. The binary
 > entrypoint (`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the
 > library root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name,
 > version, factory, credentials)`, where `factory` receives a `ServerContext` and constructs the
@@ -22,13 +23,12 @@ mds_categories: [composition, domain]
 > in-process; the MCP servers themselves are child processes over stdio.)
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
-> <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are launched by zed's
-> `context_server` host as child processes over stdio; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs:55-431` enumerates the 11 on-disk servers.
+> <id>` and `kask serve` CLI surfaces have been **deleted**. The `BUILT_IN_MCP_SERVERS` constant in
+> `kask/crates/kask_bridge/src/mcp_servers.rs:55-463` enumerates the 11 on-disk servers.
 
 ## Server Catalog
 
-11 on-disk MCP servers, **366 registered tools** fleet-wide (verified 2026-09-03, post-consolidation; methods below).
+11 on-disk MCP servers, **368 registered tools** fleet-wide (verified 2026-09-04; methods below).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -41,7 +41,7 @@ mds_categories: [composition, domain]
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 22 |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 83 |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 85 |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
 ### Count verification methods (per row)
@@ -49,8 +49,8 @@ mds_categories: [composition, domain]
 - **Media = 79** — pinned end-to-end by `tool_surface_is_exactly_79_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:398`). The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images).
 - **Companies = 43** — pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`). The pin also guards absence: the portfolio ledger tools (portfolio_delete, ledger_import, ledger_export, portfolio_comparison, portfolio_returns, transaction_note_append) were removed from companies when the portfolio server took ownership, and any re-introduction fails this test. `company_research_search` was registered after shipping un-routed while two skills called it; `stock_universe` was removed (a market-cap-only `company_screener` prompt covers it).
 - **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` asserting `ScenariosServer::scenario_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`). The 2026-09-03 consolidation folded `scenario_research` into `scenario_build`, `scenario_sensitivity` into `scenario_quantify`, and `scenario_from_markets` into `scenario_from_markets_set`.
-- **Swarm = 83** — the build script generates the canonical tool-name list by scanning `src/*.rs` with the regex `pub\(crate\) async fn (swarm_\w+)\s*\(` (`kask/mcp-servers/hkask-mcp-swarm/build.rs:30-31`); replicating that regex over `src/` yields 83 unique `swarm_*` fns (48 in `cloud_swarm_tools.rs` — `swarm_update_agent` added 2026-09-03 for fermi API alignment, 25 in `local_tools.rs`, 3 in `a2a_tools.rs`, 4 in `knowledge_tools.rs`, 3 in `ledger_tools.rs`).
-- **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (verified 2026-08-28). This method reproduces the pinned counts exactly for media (67) and scenarios (21), and matches the swarm build.rs regex count (82), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — only media, scenarios, and swarm have mechanical pins against that failure mode.
+- **Swarm = 85** — pinned end-to-end by `tool_surface_is_exactly_85_registered_tools` asserting `SwarmServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:831`), with `tool_names_const_matches_registered_surface` keeping the build.rs-generated `TOOL_NAMES` const in agreement with the live router. Two tools were added 2026-09-03 after the previous count was taken (`swarm_update_agent` for fermi API alignment; `swarm_get_local_agent` for local parity with `swarm_get_agent`).
+- **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (verified 2026-08-28). This method reproduces the pinned counts exactly for media (79) and scenarios (19), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — media, scenarios, companies, corpus, and swarm have mechanical pins against that failure mode.
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
 > agent, D2). All 11 build clean.
@@ -257,11 +257,11 @@ three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-com
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 49 `#[tool]` methods, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Companies MCP Server Reference](companies.md) — 43 `#[tool]` methods, dual-provider routing, forecast store (the portfolio ledger lives in the portfolio server; DIAG-RF-004 inline)
 - [Corpus MCP Server Reference](corpus.md) — 23 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
-- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 82 `#[tool]` methods (47 ABW cloud + 35 local substrate), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 19 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
+- [Swarm MCP Server Reference](swarm.md) — 85 `#[tool]` methods (pinned; ABW cloud + local substrate), dual mode, swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend
 - [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets + companies layer over `hkask-forecast` (folded from the deleted explanation page)
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - Companies MCP Code Review — adversarial code review of the companies server
@@ -274,8 +274,8 @@ three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-com
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-IC-017
-verified_date: 2026-08-20
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs; kask/mcp-servers/hkask-mcp-kata-kanban/src/kata.rs; kask/crates/hkask-storage/src/hmem.rs
+verified_date: 2026-09-04
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:37,45 (KanbanService store + goal_store); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:1059 (kanban_task_kata_prompt); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44 (reg.kata span); kask/crates/hkask-types/src/kanban_status.rs:24 (TaskStatus)
 status: VERIFIED
 -->
 
@@ -289,43 +289,39 @@ classDiagram
     }
     class KanbanService {
         +store: HMemStore
-        +kata: KataEngine
-    }
-    class KataEngine {
-        +run_kata(board, task)
+        +goal_store: Option~HMemStore~
     }
     class HMemStore {
-        +boards: HashMap~String, Board~
-        +tasks: HashMap~String, Task~
+        boards and tasks persisted as RDF h_mems
     }
     class Board {
-        +id: String
+        +board_id: BoardId
         +name: String
-        +columns: Vec~Column~
+        +columns: Vec~ColumnDef~
     }
     class Task {
-        +id: String
+        +task_id: TaskId
         +title: String
         +status: TaskStatus
     }
     class TaskStatus {
-        <<enum>>
-        Todo
+        <<enum, hkask-types/src/kanban_status.rs>>
+        Backlog
+        Ready
         InProgress
+        Review
         Done
-        Blocked
     }
 
     KanbanServer --> KanbanService : delegates
     KanbanService --> HMemStore : persists via
-    KanbanService --> KataEngine : routes kata through
     HMemStore "1" o-- "many" Board : contains
     HMemStore "1" o-- "many" Task : contains
     Board "1" o-- "many" Task : holds
-    Task "1" o-- "1" TaskStatus : has
+    Task "1" --> "1" TaskStatus : has
 ```
 
-The Kata-Kanban server pairs a kanban board store (`HMemStore` from `hkask-storage`) with a `KataEngine` that routes improvement-kata and coaching-kata skill activations against live board state. The `KataEngine` is the bridge between the skill system (D1) and the task-management surface — it reads board state as the "actual condition" and writes task transitions as the PDCA "act" step.
+The Kata-Kanban server persists boards and tasks as RDF h_mems via `HMemStore` (`kanban/service_impl/service.rs:37`), alongside an ephemeral in-memory goal store (`service.rs:45` — goals die with the process, operator ruling 2026-08-29). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per-task by the `kanban_task_kata_prompt` tool (`hkask_mcp_kata_kanban.rs:1059` → `kanban/service_impl/kata.rs`, emitting `reg.kata` spans). `TaskStatus` is defined in `hkask-types/src/kanban_status.rs:24`.
 
 ## Footnotes
 

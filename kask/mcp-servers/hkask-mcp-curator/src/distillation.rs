@@ -496,31 +496,26 @@ fn build_distillation_prompt(thread_id: &str, turns: &[&HMem]) -> String {
     let start = turns.len().saturating_sub(MAX_TURNS_PER_PROMPT);
     let mut turns_json = Vec::new();
     for turn in &turns[start..] {
-        let user_input = turn
-            .value
-            .get("user_input")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let agent_response = turn
-            .value
-            .get("agent_response")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
+        // Chunk rows are plain strings — the cleaned passage with
+        // `user:` / `assistant:` role prefixes inline. The value IS the
+        // content; there is no envelope to parse (the pre-2026-09-04
+        // JSON-envelope rows were retired with the single-copy ruling —
+        // no backward compatibility requirement, operator ruling
+        // 2026-09-04).
         turns_json.push(serde_json::json!({
             "h_mem_id": turn.id.to_string(),
-            "user_input": truncate_chars(user_input, MAX_TURN_CHARS),
-            "agent_response": truncate_chars(agent_response, MAX_TURN_CHARS),
+            "text": truncate_chars(turn.value.as_str().unwrap_or(""), MAX_TURN_CHARS),
         }));
     }
     format!(
         "You are distilling a finished conversation thread into durable lessons \
          for a long-lived memory system.\n\n\
          Thread: {thread_id}\n\
-         Turns (oldest first):\n{turns}\n\n\
+         Passages (oldest first):\n{turns}\n\n\
          Extract 0-{MAX_LESSONS_PER_THREAD} durable, generalizable lessons — \
          stable facts, preferences, decisions, and corrections a future session \
          should know. Not task narration, not transient details. Each lesson must \
-         cite at least one h_mem_id from the turns above as evidence.\n\n\
+         cite at least one h_mem_id from the passages above as evidence.\n\n\
          Return ONLY a JSON array, no prose, no code fences:\n\
          [{{\"entity\": \"<short-stable-subject-slug>\", \
          \"attribute\": \"<what-is-remembered>\", \
@@ -561,13 +556,11 @@ mod tests {
         observed_at: chrono::DateTime<chrono::Utc>,
         webid: WebID,
     ) -> hkask_storage::HMemId {
+        // The real chunk shape: a plain string with role prefixes inline.
         let h_mem = HMem::new(
             &format!("{SHARED_TURN_PREFIX}{thread_id}"),
-            "turn",
-            serde_json::json!({
-                "user_input": user_input,
-                "agent_response": agent_response,
-            }),
+            "chunk:0",
+            serde_json::json!(format!("user: {user_input}\n\nassistant: {agent_response}")),
             webid,
         );
         let mut h_mem = h_mem;
@@ -905,6 +898,24 @@ mod tests {
         assert_eq!(
             parse_u64_value("HKASK_MEMORY_DISTILLATION_IDLE_SECS", "-5", 300),
             300
+        );
+    }
+
+    /// The distillation prompt presents each chunk's plain-string value as
+    /// its text — role prefixes inline, no envelope.
+    #[test]
+    fn distillation_prompt_reads_chunk_text_as_content() {
+        let webid = hkask_types::WebID::new();
+        let h_mem = HMem::new(
+            "curator:thread:t1",
+            "chunk:0",
+            serde_json::json!("user: please review the design"),
+            webid,
+        );
+        let prompt = build_distillation_prompt("t1", &[&h_mem]);
+        assert!(
+            prompt.contains("user: please review the design"),
+            "the chunk's text must appear in the prompt verbatim"
         );
     }
 }

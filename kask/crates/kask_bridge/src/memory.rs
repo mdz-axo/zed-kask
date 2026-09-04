@@ -59,15 +59,14 @@ pub(crate) use ingest::WriteContext;
 
 /// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
-/// Stores each completed turn as:
-/// 1. A user-perspective h_mem (Private) — the user's record in the
-///    user's own `memory.db`.
-/// 2. A shared copy written to the **curator's** sovereign `curator.db`,
-///    not the user's memory DB. The curator
-///    `curator_memory_recall` / `curator_semantic_search` see turns the
-///    agent has observed.
-/// 3. An embedding of the user prompt — for future retrieval and
-///    context injection, stored in the user's `memory.db`.
+/// Stores each completed turn as cleaned, word-bounded chunks under the
+/// thread entity `curator:thread:{thread_id}` in the curator's sovereign
+/// `curator.db` — one shared copy per turn (the former curator-perspective
+/// duplicate was removed by the operator's 2026-09-04 single-copy ruling),
+/// each chunk embedded (with its `passage_text`) and ontologically tagged
+/// (structural dimensions deterministically, content dimensions via the
+/// classifier model). The curator's `curator_memory_recall` /
+/// `curator_semantic_search` see every turn the agent observed.
 ///
 /// Construction requires a SQLCipher database path and passphrase. When these
 /// are not available, the port is simply not wired (the hook stays `None`).
@@ -81,12 +80,12 @@ pub struct RealMemoryPort {
     /// silently.
     //
     // All turns (curator and zed agent) are ingested into the curator's
-    // shared store. Curator turns additionally get a private perspective-scoped
-    // h_mem. The zed agent's turns are shared copies only — the curator can
-    // recall what happened across all agents. Context injection is wired for
-    // both the curator (via `recall_context_curator`) and the zed agent (via
-    // the `MemoryPort` trait impls, which are currently no-ops — recall is
-    // curator-only until the zed agent gets its own recall path).
+    // shared store as chunked h_mems — one copy per turn, no perspective
+    // duplicate. The curator can recall what happened across all agents.
+    // Context injection is wired for the curator (via
+    // `recall_context_curator`); the zed agent's `MemoryPort` trait impls
+    // are no-ops — recall is curator-only until the zed agent gets its own
+    // recall path.
     curator_store: Arc<CuratorStore>,
     /// `None` when embedding credentials are unavailable — h_mem writes still
     /// work (they're pure SQL), but semantic recall (KNN) is degraded to
@@ -94,6 +93,12 @@ pub struct RealMemoryPort {
     /// episodic memory of conversations is more valuable than vector search.
     embedding_port: Option<LanguageModelEmbeddingPort>,
     embedding_model: String,
+    /// The classifier model used for write-time chunk tagging
+    /// (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`).
+    /// `None` = not configured — chunks get structural tags only. The
+    /// inference port itself is read lazily per turn from the app-wide
+    /// global (the memory port wires before the inference stack does).
+    classifier_model: Option<String>,
     curator_webid: WebID,
     /// Consolidation service for the curator's store. `None` when
     /// consolidation is disabled (`consolidation_cadence_secs == 0`).
@@ -123,8 +128,7 @@ impl RealMemoryPort {
     ///
     /// Opens the curator's SQLCipher database and initializes the embedding
     /// router. All turns (curator and zed agent) are ingested into the
-    /// curator's DB — the curator has perspective-scoped memory, the zed
-    /// agent's turns are shared copies.
+    /// curator's DB as tagged chunks — one shared copy per turn.
     ///
     /// Returns `Err` if the curator database cannot be opened.
     pub fn new(
@@ -132,6 +136,7 @@ impl RealMemoryPort {
         embedding_model: String,
         embedding_dim: usize,
         embedding_port: Option<LanguageModelEmbeddingPort>,
+        classifier_model: Option<String>,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         tokio_handle: tokio::runtime::Handle,
@@ -164,6 +169,7 @@ impl RealMemoryPort {
             curator_store,
             embedding_port,
             embedding_model,
+            classifier_model,
             curator_webid,
             curator_consolidation,
             consolidation_cadence_secs,
@@ -487,6 +493,7 @@ impl MemoryPort for RealMemoryPort {
                 curator_store: &self.curator_store,
                 embedding_port: self.embedding_port.as_ref(),
                 embedding_model: &self.embedding_model,
+                classifier_model: self.classifier_model.as_deref(),
                 curator_webid: self.curator_webid,
                 tokio_handle: &self.tokio_handle,
                 curator_consolidation: &self.curator_consolidation,
@@ -565,14 +572,8 @@ impl RealMemoryPort {
             let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
-            self.recall_from(
-                curator_store,
-                Some(self.curator_webid),
-                query,
-                limit,
-                "recall_context_curator",
-            )
-            .await
+            self.recall_from(curator_store, query, limit, "recall_context_curator")
+                .await
         })
     }
 
@@ -592,15 +593,8 @@ impl RealMemoryPort {
             let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
-            self.recall_thread_from(
-                curator_store,
-                Some(curator_store),
-                self.curator_webid,
-                thread_id,
-                limit,
-                "recall_thread_curator",
-            )
-            .await
+            self.recall_thread_from(curator_store, thread_id, limit, "recall_thread_curator")
+                .await
         })
     }
 
@@ -634,11 +628,10 @@ impl RealMemoryPort {
             .unwrap_or(0)
     }
 
-    /// Shared recall implementation for both the user and curator stores.
+    /// Shared recall implementation for the curator's store.
     ///
-    /// `perspective` scopes the keyword search to the owning agent's WebID;
-    /// `None` skips the keyword leg entirely. `log_label` is used in tracing
-    /// so the user and curator paths are distinguishable in logs.
+    /// `log_label` is used in tracing so recall paths are distinguishable in
+    /// logs.
     ///
     /// This was previously duplicated verbatim between `recall_context` and
     /// `recall_context_curator`; the duplication was a maintenance hazard
@@ -646,7 +639,6 @@ impl RealMemoryPort {
     async fn recall_from<'a>(
         &'a self,
         store: &'a Arc<MemoryStore>,
-        perspective: Option<WebID>,
         query: &'a str,
         limit: usize,
         log_label: &'static str,
@@ -713,20 +705,35 @@ impl RealMemoryPort {
                         // to get the full text content. Use the untouched
                         // variant — we touch only the injected ones below.
                         let entity_ref = &result.embedding.entity_ref;
+                        // Chunk writes store the chunk's text as the vector's
+                        // passage_text — the KNN result pinpoints the matched
+                        // chunk and only that chunk is injected. No
+                        // passage_text, no injection: a vector that cannot
+                        // name its passage would inject the whole entity —
+                        // the 500KB-blob behavior this pipeline replaces.
+                        let Some(matched_passage) = result
+                            .embedding
+                            .passage_text
+                            .as_deref()
+                            .filter(|passage| !passage.is_empty())
+                        else {
+                            continue;
+                        };
                         if let Ok(h_mems) = store.query_deduped_untouched(entity_ref) {
                             for h_mem in h_mems {
                                 let text = h_mem.value.as_str().unwrap_or("").to_string();
-                                if !text.is_empty() {
-                                    candidates.push(Candidate {
-                                        snippet: MemorySnippet {
-                                            text,
-                                            entity: h_mem.entity.clone(),
-                                            confidence: h_mem.confidence.value(),
-                                            relevance_score: 1.0 - result.distance,
-                                        },
-                                        h_mem_id: h_mem.id,
-                                    });
+                                if text.is_empty() || text != matched_passage {
+                                    continue;
                                 }
+                                candidates.push(Candidate {
+                                    snippet: MemorySnippet {
+                                        text,
+                                        entity: h_mem.entity.clone(),
+                                        confidence: h_mem.confidence.value(),
+                                        relevance_score: 1.0 - result.distance,
+                                    },
+                                    h_mem_id: h_mem.id,
+                                });
                             }
                         }
                     }
@@ -759,29 +766,22 @@ impl RealMemoryPort {
             .map(|w| w.to_lowercase())
             .collect();
 
-        if !query_words.is_empty()
-            && let Some(perspective) = perspective
-        {
-            // Use a prefix query to load all chat:thread:* h_mems
-            // in a single SQL call. The previous implementation queried
-            // the exact entity "chat:thread:" (no thread_id suffix), which
-            // never matched stored entities "chat:thread:<thread_id>" —
-            // so the keyword search was dead code. Combined with
-            // the N+1 loop (one query per query word), this was both broken
-            // and a write storm.
+        if !query_words.is_empty() {
+            // Use a prefix query to load all curator:thread:* chunk h_mems
+            // in a single SQL call — perspective-free, because shared copies
+            // carry no perspective (the former chat:thread: perspective
+            // prefix was retired by the 2026-09-04 single-copy ruling).
             //
             // The recall budget caps the number of rows loaded — without
             // it, a session with thousands of past turns would load all of
             // them into memory on every recall call. We load 10x the
             // recall limit (most recent first) to give the keyword filter a
             // reasonable pool to filter from without unbounded loading.
-            let entity_prefix = "chat:thread:".to_string();
+            let entity_prefix = "curator:thread:".to_string();
             let recall_budget = limit.saturating_mul(10).max(50);
-            if let Ok(h_mems) = store.query_for_deduped_untouched_by_prefix(
-                &entity_prefix,
-                perspective,
-                recall_budget,
-            ) {
+            if let Ok(h_mems) =
+                store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget)
+            {
                 for h_mem in h_mems {
                     let text = h_mem.value.as_str().unwrap_or("").to_string();
                     if text.is_empty() {
@@ -892,93 +892,55 @@ impl RealMemoryPort {
         Ok(snippets)
     }
 
-    /// Shared thread-scoped recall implementation for both the user and curator
-    /// stores. Mirrors `recall_from` but uses exact-entity queries instead of
-    /// content-similarity / keyword overlap.
+    /// Shared thread-scoped recall implementation. Mirrors `recall_from` but
+    /// uses exact-entity queries instead of content-similarity / keyword
+    /// overlap.
     ///
-    /// The user entity is `chat:thread:{thread_id}` (scoped by `perspective`),
-    /// and the curator copy entity is `curator:thread:{thread_id}`.
+    /// The thread entity is `curator:thread:{thread_id}` — the single shared
+    /// copy every turn's chunks are written under (the former
+    /// `chat:thread:{thread_id}` perspective leg was retired by the
+    /// 2026-09-04 single-copy ruling).
     async fn recall_thread_from<'a>(
         &'a self,
-        primary_store: &'a Arc<MemoryStore>,
-        curator_store: Option<&'a Arc<MemoryStore>>,
-        perspective: WebID,
+        store: &'a Arc<MemoryStore>,
         thread_id: &'a str,
         limit: usize,
         log_label: &'static str,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
-        struct Candidate {
-            snippet: MemorySnippet,
-            h_mem_id: hkask_storage::HMemId,
-            touch_store_idx: usize, // 0 = primary, 1 = curator
-        }
-        let mut candidates: Vec<Candidate> = Vec::new();
+        let mut candidates: Vec<(MemorySnippet, hkask_storage::HMemId)> = Vec::new();
 
-        // ── 1. User store: exact entity match, perspective-scoped ────
-        let user_entity = format!("chat:thread:{thread_id}");
-        if let Ok(h_mems) = primary_store.query_for_deduped_untouched(&user_entity, perspective) {
+        // Exact entity match — every chunk of the thread.
+        let thread_entity = format!("curator:thread:{thread_id}");
+        if let Ok(h_mems) = store.query_deduped_untouched(&thread_entity) {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
                 if text.is_empty() {
                     continue;
                 }
-                candidates.push(Candidate {
-                    snippet: MemorySnippet {
+                candidates.push((
+                    MemorySnippet {
                         text,
                         entity: h_mem.entity.clone(),
                         confidence: h_mem.confidence.value(),
                         relevance_score: 1.0,
                     },
-                    h_mem_id: h_mem.id,
-                    touch_store_idx: 0,
-                });
+                    h_mem.id,
+                ));
             }
         }
 
-        // ── 2. Curator store: exact entity match (shared copy) ──────
-        let curator_entity = format!("curator:thread:{thread_id}");
-        if let Some(curator) = curator_store
-            && let Ok(h_mems) = curator.query_deduped_untouched(&curator_entity)
-        {
-            for h_mem in h_mems {
-                let text = h_mem.value.as_str().unwrap_or("").to_string();
-                if text.is_empty() {
-                    continue;
-                }
-                // Dedup against user store by text
-                if candidates.iter().any(|c| c.snippet.text == text) {
-                    continue;
-                }
-                candidates.push(Candidate {
-                    snippet: MemorySnippet {
-                        text,
-                        entity: h_mem.entity.clone(),
-                        confidence: h_mem.confidence.value(),
-                        relevance_score: 1.0,
-                    },
-                    h_mem_id: h_mem.id,
-                    touch_store_idx: 1,
-                });
-            }
-        }
-
-        // ── 3. Truncate to limit ────────────────────────────────────
-        // Both queries return most-recent-first, so the candidates are
-        // already in recency order. All candidates have relevance_score 1.0
-        // (exact entity match), so no sort is needed — just truncate.
+        // Truncate to limit. The query returns most-recent-first, so the
+        // candidates are already in recency order. All candidates have
+        // relevance_score 1.0 (exact entity match), so no sort is needed.
         candidates.truncate(limit);
 
-        // ── 4. Touch only the injected h_mems ────────────────────────
-        let stores: [&Arc<MemoryStore>; 2] =
-            [primary_store, curator_store.unwrap_or(primary_store)];
-        for c in &candidates {
-            let touch_store = stores[c.touch_store_idx];
-            let result: Result<(), Box<dyn std::error::Error>> =
-                touch_store.touch_recall(&c.h_mem_id).map_err(Into::into);
-            if let Err(e) = result {
+        // Touch only the injected h_mems — resets the decay clock on
+        // memories that actually got used.
+        for (_, h_mem_id) in &candidates {
+            if let Err(e) = store.touch_recall(h_mem_id) {
                 tracing::warn!(
                     target: "reg.memory.decay",
-                    triple_id = %c.h_mem_id.as_uuid(),
+                    triple_id = %h_mem_id.as_uuid(),
                     error = %e,
                     label = log_label,
                     "Failed to touch_recall h_mem during thread recall"
@@ -987,7 +949,8 @@ impl RealMemoryPort {
         }
 
         let touched = candidates.len();
-        let snippets: Vec<MemorySnippet> = candidates.into_iter().map(|c| c.snippet).collect();
+        let snippets: Vec<MemorySnippet> =
+            candidates.into_iter().map(|(snippet, _)| snippet).collect();
 
         tracing::debug!(
             target: "reg.memory",
@@ -1114,6 +1077,7 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
         curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
         embedding_port: Some(embedding_port),
         embedding_model: "test-model".to_string(),
+        classifier_model: None,
         curator_webid: WebID::from_persona(b"curator"),
         curator_consolidation: Arc::new(RwLock::new(None)),
         consolidation_cadence_secs: 0,
@@ -1166,6 +1130,7 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
+            classifier_model: None,
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
             consolidation_cadence_secs,
@@ -1205,6 +1170,7 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
+            classifier_model: None,
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
@@ -1216,7 +1182,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_turn_stores_episodic_h_mem() {
+    async fn ingest_turn_writes_single_copy_chunk_h_mems() {
         let port = in_memory_port();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
@@ -1232,20 +1198,41 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "ingest_turn should succeed");
 
-        // Verify h_mem was stored in the curator's store.
+        // Single copy (2026-09-04 ruling): chunks under the shared entity —
+        // no curator-perspective duplicate.
         let curator_store = port.curator_store.get().expect("curator store");
-        let h_mems = curator_store
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:test-thread")
+            .expect("query should succeed");
+        assert_eq!(chunks.len(), 1, "one chunk for a short turn");
+        assert_eq!(chunks[0].attribute, "chunk:0");
+        let text = chunks[0].value.as_str().expect("chunk value is plain text");
+        assert!(text.contains("user: What is Rust?"));
+        assert!(text.contains("assistant: Rust is a systems programming language."));
+
+        let perspective = curator_store
             .query_for_deduped_untouched("chat:thread:test-thread", curator_webid)
             .expect("query should succeed");
-        assert_eq!(h_mems.len(), 1, "one h_mem should be stored");
-        assert_eq!(h_mems[0].attribute, "chatted");
-        // The ontology blob carries process-axis anchoring (PKO).
-        let ontology = h_mems[0]
+        assert!(
+            perspective.is_empty(),
+            "no curator-perspective copy may be written (single-copy ruling)"
+        );
+
+        // Structural ontology: process-anchored, deterministic dimensions —
+        // no classifier model is configured in the test port, so the content
+        // pair (what/why) is absent and the structural four are the signal.
+        let ontology = chunks[0]
             .ontology
             .as_ref()
-            .expect("h_mem carries an ontology blob");
+            .expect("chunk carries an ontology blob");
         assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
-        assert_eq!(ontology.pko_step.as_deref(), Some("turn"));
+        assert_eq!(ontology.pko_step.as_deref(), Some("chunk:0"));
+        for dimension in ["how", "when", "who", "where"] {
+            assert!(
+                ontology.dimensions.contains(&dimension.to_string()),
+                "structural dimension {dimension} must be present without an LLM"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1310,10 +1297,10 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_turn_curator_goal_events_get_curator_perspective_h_mem() {
-        // "Curator remembers all goals it is involved with": a curator
-        // turn's goal events get BOTH the curator-perspective Private h_mem
-        // (the curator's own memory) and the shared copy.
+    async fn ingest_turn_goal_events_are_single_copy() {
+        // 2026-09-04 single-copy ruling: goal events get ONE shared h_mem
+        // under curator:goal:{goal_id} — the curator-perspective goal:{id}
+        // duplicate is gone, for curator and zed turns alike.
         let port = in_memory_port();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
@@ -1346,30 +1333,33 @@ pub(crate) mod tests {
             .expect("ingest should succeed");
         let curator_store = port.curator_store.get().expect("curator store");
 
-        // Curator-perspective h_mem for the scored goal.
-        let perspective = curator_store
-            .query_for_deduped_untouched("goal:g-456", curator_webid)
-            .expect("query should succeed");
-        assert_eq!(perspective.len(), 1, "curator-perspective goal h_mem");
-        assert_eq!(perspective[0].attribute, "kanban_goal_score");
-        assert_eq!(
-            perspective[0]
-                .value
-                .pointer("/content/brier")
-                .and_then(|v| v.as_f64()),
-            Some(0.04)
-        );
-
         // Shared copies for both events (perspective-free recall path).
         let shared_score = curator_store
             .query_deduped_untouched("curator:goal:g-456")
             .expect("query should succeed");
         assert_eq!(shared_score.len(), 1);
+        assert_eq!(shared_score[0].attribute, "kanban_goal_score");
+        assert_eq!(
+            shared_score[0]
+                .value
+                .pointer("/content/brier")
+                .and_then(|v| v.as_f64()),
+            Some(0.04)
+        );
         // The list event (no goal_id) lands under the list entity.
         let shared_list = curator_store
             .query_deduped_untouched("curator:goal:list")
             .expect("query should succeed");
         assert_eq!(shared_list.len(), 1, "goal_list event uses the list entity");
+
+        // No curator-perspective duplicates — one key convention.
+        let perspective = curator_store
+            .query_for_deduped_untouched("goal:g-456", curator_webid)
+            .expect("query should succeed");
+        assert!(
+            perspective.is_empty(),
+            "goal events must not create perspective h_mems (single-copy ruling)"
+        );
     }
 
     #[tokio::test]
@@ -1401,24 +1391,23 @@ pub(crate) mod tests {
             .expect("ingest should succeed");
         let curator_store = port.curator_store.get().expect("curator store");
 
-        let perspective = curator_store
-            .query_for_deduped_untouched("goal:g-789", curator_webid)
-            .expect("query should succeed");
-        assert_eq!(perspective.len(), 1, "top-level goal_id must resolve too");
         let shared = curator_store
             .query_deduped_untouched("curator:goal:g-789")
             .expect("query should succeed");
-        assert_eq!(shared.len(), 1, "shared copy under the same goal entity");
+        assert_eq!(shared.len(), 1, "top-level goal_id must resolve too");
+        let perspective = curator_store
+            .query_for_deduped_untouched("goal:g-789", curator_webid)
+            .expect("query should succeed");
+        assert!(perspective.is_empty(), "no perspective duplicate");
     }
 
     #[tokio::test]
     async fn ingest_turn_writes_h_mems_at_confidence_floor() {
-        // Turn dumps and goal events enter at the 0.5 floor — the same floor
+        // Chunks and goal events enter at the 0.5 floor — the same floor
         // `memory_insert` starts distilled memories at — so recall ranking
         // can discriminate and the consolidation floor is reachable. The
         // `HMem::new` default of 1.0 starved both consumers of confidence.
         let port = in_memory_port();
-        let curator_webid = port.curator_webid;
         let record = TurnRecord {
             thread_id: "confidence-floor-thread".to_string(),
             user_input: "check the write confidence".to_string(),
@@ -1452,18 +1441,10 @@ pub(crate) mod tests {
                 );
             }
         };
-        let perspective_turn = curator_store
-            .query_for_deduped_untouched("chat:thread:confidence-floor-thread", curator_webid)
-            .expect("query should succeed");
-        assert_floor(&perspective_turn, "curator-perspective turn h_mem");
-        let shared_turn = curator_store
+        let chunks = curator_store
             .query_deduped_untouched("curator:thread:confidence-floor-thread")
             .expect("query should succeed");
-        assert_floor(&shared_turn, "shared turn copy");
-        let perspective_goal = curator_store
-            .query_for_deduped_untouched("goal:g-floor", curator_webid)
-            .expect("query should succeed");
-        assert_floor(&perspective_goal, "curator-perspective goal h_mem");
+        assert_floor(&chunks, "chunk h_mems");
         let shared_goal = curator_store
             .query_deduped_untouched("curator:goal:g-floor")
             .expect("query should succeed");
@@ -1471,7 +1452,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_turn_stores_semantic_curator_copy() {
+    async fn ingest_turn_chunks_are_process_anchored() {
         let port = in_memory_port();
         let record = TurnRecord {
             thread_id: "test-thread-2".to_string(),
@@ -1486,22 +1467,20 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok());
 
-        // Verify the shared curator copy was stored in the curator's store.
+        // Chunks are process-anchored (PKO): they are steps of the chat
+        // procedure, not free-standing documents.
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
-        assert_eq!(h_mems.len(), 1, "one curator copy h_mem should be stored");
-        assert_eq!(h_mems[0].attribute, "turn");
+        assert_eq!(h_mems.len(), 1, "one chunk h_mem should be stored");
+        assert_eq!(h_mems[0].attribute, "chunk:0");
         let ontology = h_mems[0]
             .ontology
             .as_ref()
-            .expect("curator copy carries an ontology blob");
-        assert_eq!(ontology.dc_type, hkask_bridge_ontology::dc_bibo::DOCUMENT);
-        assert!(
-            ontology.pko_procedure.is_none(),
-            "the curator copy is a semantic fact, not a process step"
-        );
+            .expect("chunk carries an ontology blob");
+        assert_eq!(ontology.dc_type, hkask_bridge_ontology::pko::STEP_EXECUTION);
+        assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
     }
 
     #[tokio::test]
@@ -1525,7 +1504,7 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "zed agent ingest should succeed");
 
-        // The shared copy (curator:thread:...) must be present.
+        // The shared chunks (curator:thread:...) must be present.
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
             .query_deduped("curator:thread:zed-agent-thread")
@@ -1533,9 +1512,9 @@ pub(crate) mod tests {
         assert_eq!(
             h_mems.len(),
             1,
-            "shared copy must be stored for zed agent turns"
+            "shared chunks must be stored for zed agent turns"
         );
-        assert_eq!(h_mems[0].attribute, "turn");
+        assert_eq!(h_mems[0].attribute, "chunk:0");
 
         // The curator-perspective h_mem (chat:thread:...) must NOT exist —
         // that's the curator's own memory of its own turn, not a zed agent
@@ -1580,7 +1559,6 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn ingest_turn_handles_empty_prompt_gracefully() {
         let port = in_memory_port();
-        let curator_webid = port.curator_webid;
         let record = TurnRecord {
             thread_id: "test-empty".to_string(),
             user_input: String::new(),
@@ -1596,9 +1574,131 @@ pub(crate) mod tests {
 
         let curator_store = port.curator_store.get().expect("curator store");
         let h_mems = curator_store
-            .query_for_deduped_untouched("chat:thread:test-empty", curator_webid)
+            .query_deduped_untouched("curator:thread:test-empty")
             .expect("query should succeed");
-        assert_eq!(h_mems.len(), 1, "episodic h_mem should still be stored");
+        assert_eq!(h_mems.len(), 1, "chunk h_mems should still be stored");
+    }
+
+    /// A turn with BOTH sides empty has no durable content — no chunk h_mems
+    /// are written, but goal events still land (they are separate records).
+    #[tokio::test]
+    async fn ingest_turn_skips_chunks_when_turn_is_empty() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "fully-empty-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-empty-turn", "goal_text": "empty"}
+                }),
+            }],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:fully-empty-thread")
+            .expect("query should succeed");
+        assert!(chunks.is_empty(), "no chunk h_mems for an empty turn");
+
+        let goal = curator_store
+            .query_deduped_untouched("curator:goal:g-empty-turn")
+            .expect("query should succeed");
+        assert_eq!(goal.len(), 1, "goal events still land for an empty turn");
+    }
+
+    /// The orphan-embedding round-trip pin: every chunk h_mem's entity must
+    /// have an embedding whose passage_text equals the chunk text. Without
+    /// passage_text, KNN results cannot pinpoint the matched chunk and the
+    /// in-memory index cannot hydrate — the recall round-trip silently
+    /// degrades.
+    #[tokio::test]
+    async fn ingest_turn_embeds_every_chunk_with_passage_text() {
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut vector = vec![0.0f32; 1024];
+            vector[0] = 1.0;
+            vector
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+        let record = TurnRecord {
+            thread_id: "embedding-round-trip".to_string(),
+            user_input: "check the embedding round trip".to_string(),
+            agent_response: "the round trip is verified".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:embedding-round-trip")
+            .expect("query should succeed");
+        assert_eq!(chunks.len(), 1);
+        let chunk_text = chunks[0].value.as_str().expect("chunk text").to_string();
+
+        let embeddings = curator_store
+            .all_embeddings_with_text()
+            .expect("embeddings query should succeed");
+        let matched = embeddings
+            .iter()
+            .find(|(entity_ref, _, passage)| {
+                entity_ref == "curator:thread:embedding-round-trip"
+                    && passage.as_deref() == Some(chunk_text.as_str())
+            })
+            .expect("every chunk must have an embedding whose passage_text is the chunk text");
+        let _ = matched;
+    }
+
+    /// Chunk values are bounded: a huge turn becomes multiple chunks, each
+    /// within the word ceiling. The 538KB single-value rows the therapy scan
+    /// found must not be reproducible.
+    #[tokio::test]
+    async fn ingest_turn_chunk_values_are_bounded() {
+        let port = in_memory_port();
+        let long_response = "word ".repeat(2000);
+        let record = TurnRecord {
+            thread_id: "huge-turn".to_string(),
+            user_input: "dump something enormous".to_string(),
+            agent_response: long_response,
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:huge-turn")
+            .expect("query should succeed");
+        assert!(
+            chunks.len() > 1,
+            "a 2000-word turn must split into multiple chunks"
+        );
+        // The chunker folds sub-min fragments forward into the next passage
+        // ("content is never dropped"), so a chunk can exceed the ceiling by
+        // up to MIN_CHUNK_WORDS. The design bound — no 500KB single-value
+        // rows — is what this pins.
+        let word_ceiling =
+            crate::memory::ingest::MAX_CHUNK_WORDS + crate::memory::ingest::MIN_CHUNK_WORDS;
+        for (index, chunk) in chunks.iter().enumerate() {
+            let text = chunk.value.as_str().expect("chunk text");
+            let words = text.split_whitespace().count();
+            assert!(
+                words <= word_ceiling,
+                "chunk {index} has {words} words — the ceiling is {word_ceiling}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2105,6 +2205,7 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(Arc::clone(&store)))),
             embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
             embedding_model: "test-model".to_string(),
+            classifier_model: None,
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
@@ -2114,16 +2215,16 @@ pub(crate) mod tests {
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         };
 
-        // 20 h_mems under distinct chat:thread:* entities (the keyword leg's
-        // prefix), all matching the query word, all owned by the curator
+        // 20 h_mems under distinct curator:thread:* entities (the keyword
+        // leg's prefix), all matching the query word, all owned by the curator
         // perspective so the perspective-scoped prefix query returns them.
         let curator_webid = port.curator_webid;
         for index in 0..20 {
             store
                 .store(
                     hkask_storage::HMem::new(
-                        &format!("chat:thread:t{index}"),
-                        "chatted",
+                        &format!("curator:thread:t{index}"),
+                        "chunk:0",
                         serde_json::json!(format!("turn {index} about xvantium")),
                         curator_webid,
                     )
@@ -2186,10 +2287,10 @@ pub(crate) mod tests {
         };
         let curator_store = port.curator_store.get().expect("curator store");
         curator_store
-            .store_embedding("test:ranking:high", &unit_vec, "test-model", None)
+            .store_embedding("test:ranking:high", &unit_vec, "test-model", Some("alpha"))
             .expect("store embedding high");
         curator_store
-            .store_embedding("test:ranking:low", &unit_vec, "test-model", None)
+            .store_embedding("test:ranking:low", &unit_vec, "test-model", Some("beta"))
             .expect("store embedding low");
 
         curator_store.store(high_conf).expect("store high");
@@ -2232,7 +2333,6 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn recall_context_touches_only_injected_h_mems() {
         let port = in_memory_port();
-        let curator_webid = port.curator_webid;
 
         // Ingest one curator turn.
         port.ingest_turn(TurnRecord {
@@ -2251,7 +2351,7 @@ pub(crate) mod tests {
 
         // Read the stored recalled_at via the untouched query (no side effects).
         let before = curator_store
-            .query_for_deduped_untouched("chat:thread:touch-test", curator_webid)
+            .query_deduped_untouched("curator:thread:touch-test")
             .expect("untouched query succeeds");
         assert_eq!(before.len(), 1);
         let recalled_at_before = before[0].recalled_at;
@@ -2272,7 +2372,7 @@ pub(crate) mod tests {
         );
 
         let after = curator_store
-            .query_for_deduped_untouched("chat:thread:touch-test", curator_webid)
+            .query_deduped_untouched("curator:thread:touch-test")
             .expect("untouched query succeeds");
         assert_eq!(after.len(), 1);
         assert_eq!(
@@ -2290,7 +2390,7 @@ pub(crate) mod tests {
         assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
 
         let after_match = curator_store
-            .query_for_deduped_untouched("chat:thread:touch-test", curator_webid)
+            .query_deduped_untouched("curator:thread:touch-test")
             .expect("untouched query succeeds");
         assert_eq!(after_match.len(), 1);
         assert!(
@@ -2338,24 +2438,22 @@ pub(crate) mod tests {
         assert!(r2.is_ok(), "second ingestion should succeed: {r2:?}");
 
         // Both turns should be stored in the curator store.
-        let curator_webid = port.curator_webid;
         let curator_store = port.curator_store.get().expect("curator store");
         let h1 = curator_store
-            .query_for_deduped_untouched("chat:thread:sem-1", curator_webid)
+            .query_deduped_untouched("curator:thread:sem-1")
             .expect("query succeeds");
         let h2 = curator_store
-            .query_for_deduped_untouched("chat:thread:sem-2", curator_webid)
+            .query_deduped_untouched("curator:thread:sem-2")
             .expect("query succeeds");
         assert_eq!(h1.len(), 1, "first turn should be stored");
         assert_eq!(h2.len(), 1, "second turn should be stored");
     }
 
-    /// Curator turns must be ingested into the curator's sovereign DB with the
-    /// curator's WebID (Private, curator perspective), mirroring the user
-    /// agent's memory loop. This is the core of the curator memory mirror —
-    /// without it, the curator has no first-person memory.
+    /// Curator turn pin (2026-09-04 single-copy ruling): a curator turn
+    /// produces ONLY shared chunk h_mems — the first-person perspective
+    /// copy under chat:thread: is gone.
     #[tokio::test]
-    async fn ingest_curator_turn_stores_curator_perspective() {
+    async fn ingest_curator_turn_writes_no_perspective_duplicate() {
         let port = in_memory_port();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
@@ -2371,30 +2469,20 @@ pub(crate) mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "curator turn ingestion should succeed");
 
-        // The curator's store should have the turn, tagged with the curator's
-        // WebID (Private, curator perspective).
         let curator_store = port.curator_store.get().expect("curator store");
-        let h_mems = curator_store
-            .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)
-            .expect("curator episodic query should succeed");
-        assert_eq!(
-            h_mems.len(),
-            1,
-            "one curator-perspective episodic h_mem should be stored"
-        );
-        assert_eq!(h_mems[0].attribute, "chatted");
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:curator-thread-1")
+            .expect("chunk query should succeed");
+        assert_eq!(chunks.len(), 1, "one shared chunk h_mem");
+        assert_eq!(chunks[0].attribute, "chunk:0");
 
-        // The same curator store also holds the Shared semantic copy — the
-        // ontology blob distinguishes it from the episodic record above.
-        let semantic_h_mems = curator_store
-            .query_deduped("curator:thread:curator-thread-1")
-            .expect("curator copy query should succeed");
-        assert_eq!(
-            semantic_h_mems.len(),
-            1,
-            "one curator copy h_mem should be stored"
+        let perspective = curator_store
+            .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)
+            .expect("perspective query should succeed");
+        assert!(
+            perspective.is_empty(),
+            "curator turns must not produce a perspective duplicate (single-copy ruling)"
         );
-        assert_eq!(semantic_h_mems[0].attribute, "turn");
     }
 
     /// `recall_context_curator` should recall from the curator's stores, not
@@ -2505,7 +2593,6 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn maybe_consolidate_fires_curator_pass() {
         let port = in_memory_port_with_cadence(1, 0.3);
-        let curator_webid = port.curator_webid;
 
         // Ingest a curator turn so there's something to consolidate.
         port.ingest_turn(TurnRecord {
@@ -2520,18 +2607,18 @@ pub(crate) mod tests {
         .await
         .expect("ingest succeeds");
 
-        // Verify the curator store has the turn before consolidation.
+        // Verify the curator store has the chunks before consolidation.
         let curator_store = port
             .curator_store
             .get()
             .expect("curator store should be available in tests");
         let h_mems_before = curator_store
-            .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
-            .expect("curator episodic query should succeed");
+            .query_deduped_untouched("curator:thread:curator-consolidation-test")
+            .expect("chunk query should succeed");
         assert_eq!(
             h_mems_before.len(),
             1,
-            "curator episodic store should have the ingested turn"
+            "curator store should have the ingested chunks"
         );
 
         // Fire consolidation directly (simulating the timer callback).
@@ -2547,7 +2634,7 @@ pub(crate) mod tests {
         // We verify the query succeeds — whether the h_mem survived depends
         // on confidence decay, but the consolidation pass itself must not error.
         let h_mems_after = curator_store
-            .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
+            .query_deduped_untouched("curator:thread:curator-consolidation-test")
             .expect("curator memory query should succeed after consolidation");
         // The h_mem may or may not have been pruned depending on
         // confidence decay — we just verify the query succeeds and the
@@ -2555,11 +2642,10 @@ pub(crate) mod tests {
         let _ = h_mems_after;
     }
 
-    /// Curator turn pin: a curator turn must produce a first-person
-    /// episodic record (curator_webid, curator DB) plus the Shared
-    /// semantic copy in the curator's DB. Two records, one conversation.
+    /// Curator turn pin (2026-09-04 single-copy ruling): one conversation,
+    /// one record set — shared chunks only, no perspective duplicate.
     #[tokio::test]
-    async fn ingest_curator_turn_writes_both_perspectives() {
+    async fn ingest_curator_turn_writes_one_copy() {
         let port = in_memory_port();
         let record = TurnRecord {
             thread_id: "dual-perspective-test".to_string(),
@@ -2573,15 +2659,15 @@ pub(crate) mod tests {
         port.ingest_turn(record).await.expect("ingest succeeds");
 
         let curator_store = port.curator_store.get().expect("curator store");
-        let curator_perspective = curator_store
-            .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.curator_webid)
-            .expect("curator query");
-        assert_eq!(curator_perspective.len(), 1, "curator perspective present");
-
-        let shared = curator_store
+        let chunks = curator_store
             .query_deduped("curator:thread:dual-perspective-test")
-            .expect("semantic query");
-        assert_eq!(shared.len(), 1, "shared semantic copy present");
+            .expect("chunk query");
+        assert_eq!(chunks.len(), 1, "one shared chunk");
+
+        let perspective = curator_store
+            .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.curator_webid)
+            .expect("perspective query");
+        assert!(perspective.is_empty(), "no perspective duplicate");
     }
 
     /// Memory-health probe pin: reports the curator store up when healthy,
@@ -2662,7 +2748,7 @@ pub(crate) mod tests {
         .await
         .expect("post-heal ingestion succeeds");
         let curator_record = healed
-            .query_for_deduped_untouched("chat:thread:post-heal-test", port.curator_webid)
+            .query_deduped_untouched("curator:thread:post-heal-test")
             .expect("curator query");
         assert_eq!(curator_record.len(), 1, "curator record written after heal");
     }

@@ -5,34 +5,30 @@
 //! the `agent` crate calls it (via a global hook, same pattern as
 //! the memory port hook), and the bridge provides the implementation.
 //!
-//! The `TurnRecord` schema (`{"user_input": ..., "agent_response": ...}`)
-//! is the write-side contract for the h_mem `value` field. The read side
-//! (recall) reads `h_mem.value` as a raw JSON value — there is no typed
-//! projection struct on the read side.
-//!
-//! The initial bridge implementation is a logging no-op — the full hKask
-//! memory stack (SQLCipher storage, consolidation) is deferred until the
-//! storage layer and WebID mapping are available in-process.
+//! `TurnRecord` is the ingest-side contract: the completed turn's raw fields.
+//! The bridge's write path (2026-09-04 design) cleans and chunks the turn
+//! into word-bounded passages, so the h_mem `value` a turn produces is chunk
+//! text (with `user:` / `assistant:` role prefixes), not the whole-turn JSON
+//! envelope this module's earlier revisions described. The read side (recall)
+//! reads `h_mem.value` as a raw JSON value — there is no typed projection
+//! struct on the read side.
 
 use std::future::Future;
 use std::pin::Pin;
 
 /// A completed turn offered to the memory system for ingestion.
 ///
-/// Field names (`user_input`, `agent_response`) are the canonical schema for
-/// the h_mem `value` field written by [`TurnRecord::to_chat_turn_value`].
-/// The read side (recall) reads `h_mem.value` as a raw JSON value; there is
-/// no typed projection struct on the read side.
+/// The bridge's write path cleans this record into role-prefixed text and
+/// chunks it into word-bounded passages — one h_mem per chunk under the
+/// thread entity (2026-09-04 design; see `kask_bridge/src/memory/ingest.rs`).
 #[derive(Debug, Clone)]
 pub struct TurnRecord {
     /// The thread/session identifier (zed's `SessionId` as a string).
     /// Maps to the h_mem `entity` field.
     pub thread_id: String,
     /// The user's input text for this turn.
-    /// Stored as the `user_input` field of the h_mem `value` JSON.
     pub user_input: String,
     /// The agent's response text for this turn.
-    /// Stored as the `agent_response` field of the h_mem `value` JSON.
     pub agent_response: String,
     /// The model that produced the response (e.g., "claude-sonnet-4-20250514").
     pub model: String,
@@ -64,25 +60,6 @@ pub struct GoalEvent {
     /// The tool result's JSON output (goal text, criteria, verdicts, Brier
     /// scores — the structured record the curator's memory stores).
     pub output: serde_json::Value,
-}
-
-impl TurnRecord {
-    /// Serialize to the h_mem `value` JSON schema: `{"user_input": ..., "agent_response": ...}`.
-    ///
-    /// This is the value stored in the h_mem `value` field. The `thread_id`
-    /// becomes the h_mem `entity`, and `"chatted"` is the h_mem `attribute`.
-    /// `agent_id` is included when set so the stored record identifies which
-    /// agent produced the turn — useful for the curator's own memory recall.
-    pub fn to_chat_turn_value(&self) -> serde_json::Value {
-        let mut v = serde_json::json!({
-            "user_input": self.user_input,
-            "agent_response": self.agent_response,
-        });
-        if let Some(ref agent_id) = self.agent_id {
-            v["agent_id"] = serde_json::Value::String(agent_id.clone());
-        }
-        v
-    }
 }
 
 /// A recalled memory snippet for context injection.
@@ -121,11 +98,11 @@ pub(crate) type MemoryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// (standalone or first-run), ingestion is a no-op.
 ///
 /// The ingestion pattern mirrors hKask's `DaemonHandler::store_experience`:
-/// - Stored as a private, perspective-scoped h_mem with entity=thread_id,
-///   attribute="chatted", value=`TurnRecord::to_chat_turn_value()`
-/// - A shared copy is written to the curator's DB so the curator can recall
-///   all turns it observed.
-/// - Confidence: derived from experience classification (deferred)
+/// - The write path cleans and chunks the turn into word-bounded passages,
+///   stored as shared h_mems under `curator:thread:{thread_id}` — one copy
+///   per turn (2026-09-04 single-copy ruling), each chunk embedded with its
+///   passage text and ontologically tagged
+/// - Confidence: every write enters at the 0.5 floor
 pub trait MemoryPort: Send + Sync {
     /// Ingest a completed turn into memory.
     ///

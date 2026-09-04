@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-28
-version: "0.37.0"
+last_updated: 2026-09-04
+version: "0.38.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -163,7 +163,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
 | `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
 | `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
-| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Overridden by `HKASK_MEMORY_LIFE_DAYS` env var |
+| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. The `HKASK_MEMORY_LIFE_DAYS` env var is advertised-but-unwired — no production caller reads it (see `architecture/memory-system-specification.md` §13) |
 
 ## Condenser (`KaskCondenserSettings`)
 
@@ -188,7 +188,7 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `embedding_dim` | `u32` | `1024` | Must match embedding model output |
-| `embedding_model` | `String` | `default_embedding_model()` | Defaults to `hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL` |
+| `embedding_model` | `String` | `""` (empty) | Empty = not configured — embedding-dependent calls fail visibly naming the setting (no constant fallback; the operator's no-hidden-models spec) |
 | `ocr_concurrency` | `u32` | `4` | Pages sent to vision model in parallel |
 | `ocr_simple_max` | `f64` | `0.05` | Pages below this processed simply |
 | `ocr_moderate_max` | `f64` | `0.15` | Pages above simple but below this = moderate pipeline |
@@ -212,7 +212,7 @@ Prediction-markets data-service configuration (settings.rs:451-458).
 
 ## Swarm (`KaskSwarmSettings`)
 
-Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-swarm-intelligence.md`.[^reynolds-swarm-settings]
+Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/swarm_system/` and `DIVERGENCE.md` D2/D33.[^reynolds-swarm-settings]
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
@@ -240,42 +240,42 @@ dependency.
 
 ## Models (`KaskModelsSettings`)
 
-Kask-wide model configuration. Two-layer default design: fields default to
-empty strings; `effective_*` methods fall back to the `DEFAULT_*_MODEL`
-constants, which are `const` references to the single source of truth in
-`hkask_inference::model_constants`.[^ousterhout-models-settings]
+Kask-wide model configuration (`settings.rs:572`). Fields default to empty
+strings; **empty = not configured** — there are no hidden code-constant
+fallbacks (the operator's no-hidden-models spec). Consumers resolve the
+injected env var and fail visibly, naming the setting to
+set.[^ousterhout-models-settings]
 
-| Field | Type | Default | Effective fallback |
-|-------|------|---------|-------------------|
-| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:46) |
-| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"ollama/nomic-embed-text"` (model_constants.rs:32) |
-| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:24) |
+| Field | Type | Default | Resolution |
+|-------|------|---------|------------|
+| `default_model` | `String` | `""` | Injected as `HKASK_DEFAULT_MODEL` when set (`mcp_env.rs:435`) |
+| `embedding_model` | `String` | `""` | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty (`settings.rs:647`); injected as `HKASK_EMBEDDING_MODEL` |
+| `classifier_model` | `String` | `""` | Injected as `HKASK_CLASSIFIER_MODEL` when set (`mcp_env.rs:444`) |
 
-`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`,
-env `HKASK_OCR_MODEL`, model_constants.rs:41) and `DEFAULT_AGENT_MODEL`
-(`"claude-haiku-4-5-20251001"`, model_constants.rs:50). There is **no**
-`DEFAULT_VISION_MODEL` / `DEFAULT_TTS_MODEL` / `DEFAULT_STT_MODEL` /
-`DEFAULT_IMAGE_GEN_MODEL` constant — those were removed (zero callers); vision,
-TTS, STT, and image-gen model overrides are settings fields on
-`KaskMediaSettings` / `KaskCorpusSettings`, not compile-time constants here.
-Every retained constant has an env-var accessor (e.g. `classifier_model()`
-reads `HKASK_CLASSIFIER_MODEL` first) so operators can override without
-recompiling.
+`hkask_inference::model_constants` defines **env-var accessors only** —
+`classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
+each returning `Option<String>` (`None` = not configured; callers fail
+visibly naming the env var). The former `DEFAULT_*_MODEL` constants
+(`DEFAULT_INFERENCE_MODEL`, `DEFAULT_FALLBACK_MODEL`,
+`DEFAULT_EMBEDDING_MODEL`, `DEFAULT_CLASSIFIER_MODEL`, `DEFAULT_OCR_MODEL`,
+`DEFAULT_AGENT_MODEL`) are deleted. Vision, TTS, STT, video, and image-gen
+models are env-var-configured per media server (`HKASK_MEDIA_*_MODEL`), not
+compile-time constants.
 
 ## Keychain Architecture
 
-There are two keychain namespaces:[^owasp-keychain-settings]
+There is ONE keychain namespace: zed's `CredentialsProvider` — keys stored
+under `kask://credentials/<key>` (data services) or the provider's `api_url`
+slot (inference providers — one key, one location,
+D5).[^owasp-keychain-settings] The legacy `service=hkask` namespace is fully
+removed and purged at startup (`hkask-keystore/src/keychain.rs`); the single
+internal key is `hkask_db_passphrase` in the `kask://credentials/` namespace.
 
-1. **Zed's `CredentialsProvider`** — used by the settings UI. Keys are stored
-   under `kask://credentials/<key>` (for data services) or the provider's
-   `api_url` (for inference providers).
-2. **hKask's `Keychain`** (service "hkask") — used by MCP servers via
-   `resolve_credential` → `Keychain::retrieve_by_key(env_var)`.
-
-The composition root bridges these namespaces: at MCP server startup, it reads
-keys from zed's keychain and injects them as env vars into the child process.
-MCP servers then find the keys via `std::env::var` or their own keychain
-fallback.
+The composition root bridges the keychain to child processes: at MCP server
+startup, `build_mcp_server_env` reads keys from the keychain and injects them
+as env vars. MCP servers read API keys from env vars only — there is no
+keychain fallback for API keys, and a missing credential surfaces as
+`permission_denied` naming the env var.
 
 ### Restart-on-keychain-write
 

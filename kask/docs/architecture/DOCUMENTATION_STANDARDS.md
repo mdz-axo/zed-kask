@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-08-28
-version: "0.39.0"
+last_updated: 2026-09-04
+version: "0.39.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -335,7 +335,7 @@ Before a document is merged:
 - [ ] Every Mermaid block has a `DIAGRAM_ALIGNMENT` metadata comment
 - [ ] All internal links resolve (broken-link sweep: every relative link in the document resolves to a file in the tree — links to deleted documents fail this gate)
 - [ ] Document-count gate: the tree holds fewer than 70 documents (`find kask/docs -name '*.md' | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count
-- [ ] No aspirational content (if document is in `architecture/` or `status/`)
+- [ ] No aspirational content (if document is in `architecture/`)
 - [ ] `Last-Updated` date reflects the date of the final edit
 - [ ] Writing Excellence: document passes ≥ 3 of 4 perspective tests (see Appendix A §A.5)
     - [ ] Hopper (accessibility) — zero-context reader can accomplish the task

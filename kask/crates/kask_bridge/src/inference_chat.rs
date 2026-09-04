@@ -30,6 +30,52 @@ use language_model_core::{
 };
 use tokio::sync::{Semaphore, oneshot};
 
+/// The app-wide inference port, published by `wire_kask_inference_stack`.
+///
+/// Consumers that wire BEFORE the inference stack exists — the memory
+/// ingest path is the case that matters: `RealMemoryPort` is constructed
+/// before `wire_kask_inference_stack` runs, but its per-turn chunk tagging
+/// needs inference — read this lazily per turn instead of holding a
+/// construction-time handle. The mutex (not a `OnceLock`) is deliberate:
+/// the inference stack re-wires when the default model resolves late, and
+/// the re-wire must be able to replace the port.
+static GLOBAL_INFERENCE_PORT: std::sync::Mutex<Option<std::sync::Arc<dyn InferencePort>>> =
+    std::sync::Mutex::new(None);
+
+/// Publish the app-wide inference port. Called by `wire_kask_inference_stack`
+/// on every successful (re)wire. Poisoned-lock recovery mirrors
+/// `set_inference_timeout_secs` — a poisoned global is recovered via
+/// `into_inner`, never silently dropped.
+pub fn set_global_inference_port(port: std::sync::Arc<dyn InferencePort>) {
+    let mut guard = match GLOBAL_INFERENCE_PORT.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                "GLOBAL_INFERENCE_PORT mutex poisoned — recovering via into_inner"
+            );
+            poisoned.into_inner()
+        }
+    };
+    *guard = Some(port);
+}
+
+/// Read the app-wide inference port, if the inference stack has wired one.
+/// Returns a clone of the `Arc` — the caller holds it only for the duration
+/// of its request.
+pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
+    match GLOBAL_INFERENCE_PORT.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                "GLOBAL_INFERENCE_PORT mutex poisoned on read — recovering via into_inner"
+            );
+            poisoned.into_inner().clone()
+        }
+    }
+}
+
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
 struct InferenceRequest {
     request: LanguageModelRequest,

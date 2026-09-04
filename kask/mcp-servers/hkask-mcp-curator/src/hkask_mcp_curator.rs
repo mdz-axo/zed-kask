@@ -74,9 +74,11 @@ enum SemanticRecallError {
         #[source]
         source: hkask_memory::MemoryStoreError,
     },
-    #[error("no embedding model configured — set kask.models.embedding_model \\
+    #[error(
+        "no embedding model configured — set kask.models.embedding_model \\
              (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-             hidden code constant")]
+             hidden code constant"
+    )]
     EmbeddingNotConfigured,
 }
 
@@ -494,8 +496,8 @@ impl CuratorServer {
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
-        let embedding_model = curator_embedding_model()
-            .ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
+        let embedding_model =
+            curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
         let vectors = self
             .inference_port
             .embed(&embedding_model, &[query.to_string()])
@@ -1541,8 +1543,7 @@ impl CuratorServer {
                 .collect();
 
             let is_excluded = |entity: &str| {
-                entity.starts_with(thread_turns::PERSPECTIVE_TURN_PREFIX)
-                    || entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
+                entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
                     || entity.starts_with(distillation::WATERMARK_PREFIX)
             };
 

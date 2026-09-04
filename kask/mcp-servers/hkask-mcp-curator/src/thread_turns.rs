@@ -1,46 +1,40 @@
-//! Thread-turn discovery — the one place that knows which entity prefixes
-//! hold a thread's turns.
+//! Thread-turn discovery — the one place that knows which entity prefix
+//! holds a thread's turns.
 //!
 //! Both ALWAYS-mode consumers must see the same turns: the on-demand
-//! `curator_memory_extract` tool and the background distillation pass. The
-//! two prefixes come from the bridge's ingest path
+//! `curator_memory_extract` tool and the background distillation pass.
+//! The prefix comes from the bridge's ingest path
 //! (`kask_bridge/src/memory/ingest.rs`):
 //!
-//! - `chat:thread:{id}` — the curator-perspective original (Private),
-//!   written for **curator turns only**.
 //! - `curator:thread:{id}` — the shared copy (Shared), written for
-//!   **every turn**, curator and non-curator alike.
+//!   **every turn**, curator and non-curator alike. Since the
+//!   2026-09-04 single-copy ruling, a turn's content is stored as
+//!   cleaned, tagged chunk h_mems under this entity (attribute
+//!   `chunk:{index}`); legacy rows under the same entity carry the old
+//!   whole-turn `turn` attribute. Discovery is attribute-agnostic —
+//!   both shapes are extraction candidates.
 //!
 //! The shared-copy prefix is therefore the complete set: a scan over it
-//! alone sees every turn of every thread. The perspective prefix adds the
-//! curator originals to extraction candidates. Querying only
-//! `chat:thread:` is the one wrong shape — it hides every non-curator
-//! turn.
+//! alone sees every turn of every thread. The former `chat:thread:`
+//! curator-perspective prefix was retired by the same ruling (its rows
+//! were byte-identical duplicates; the legacy rows were expired by the
+//! 2026-09-04 therapy hygiene pass).
 
 use std::collections::HashMap;
 
 use hkask_memory::{MemoryStore, MemoryStoreError};
 use hkask_storage::HMem;
 
-/// The curator-perspective turn prefix (Private originals, curator turns
-/// only).
-pub(crate) const PERSPECTIVE_TURN_PREFIX: &str = "chat:thread:";
-
 /// The shared-copy turn prefix — every turn, the complete set.
 pub(crate) const SHARED_TURN_PREFIX: &str = "curator:thread:";
 
-/// One thread's turns as extraction presents them: the curator-perspective
-/// originals plus the shared copies. A curator turn appears twice (its
-/// Private original and its Shared copy) — both are valid evidence
-/// citations, and the candidate list preserves that shape.
+/// One thread's turns as extraction presents them: the shared copies
+/// (legacy whole-turn rows and chunk rows alike).
 pub(crate) fn thread_turns(
     memory: &MemoryStore,
     thread_id: &str,
 ) -> Result<Vec<HMem>, MemoryStoreError> {
-    let mut turns =
-        memory.h_mems_by_entity_prefix(&format!("{PERSPECTIVE_TURN_PREFIX}{thread_id}"))?;
-    turns.extend(memory.h_mems_by_entity_prefix(&format!("{SHARED_TURN_PREFIX}{thread_id}"))?);
-    Ok(turns)
+    memory.h_mems_by_entity_prefix(&format!("{SHARED_TURN_PREFIX}{thread_id}"))
 }
 
 /// Every thread's shared-copy turns since `since`, grouped by thread id —
@@ -76,49 +70,42 @@ mod tests {
         MemoryStore::try_new_without_embeddings(h_mem_store).expect("memory store")
     }
 
-    /// `thread_turns` must surface BOTH storage prefixes: the
-    /// curator-perspective originals and the shared copies. Dropping
-    /// either prefix silently shrinks extraction's candidate set — the
-    /// perspective prefix hides non-curator turns, the shared prefix
-    /// hides the curator originals.
+    /// `thread_turns` reads the shared-copy prefix — the complete set under
+    /// the single-copy design. Both row shapes (legacy `turn` attribute and
+    /// chunk `chunk:{n}` attribute) are candidates: discovery is
+    /// attribute-agnostic.
     #[test]
-    fn thread_turns_reads_both_prefixes() {
+    fn thread_turns_reads_shared_prefix_both_attribute_shapes() {
         let store = store();
         let webid = hkask_types::WebID::new();
         store
             .store(HMem::new(
-                "chat:thread:t1",
-                "chatted",
-                serde_json::json!("curator original"),
+                "curator:thread:t1",
+                "turn",
+                serde_json::json!("legacy whole-turn row"),
                 webid,
             ))
-            .expect("seed perspective turn");
+            .expect("seed legacy turn");
         store
             .store(HMem::new(
                 "curator:thread:t1",
-                "turn",
-                serde_json::json!("shared copy"),
+                "chunk:0",
+                serde_json::json!("chunk row"),
                 webid,
             ))
-            .expect("seed shared turn");
+            .expect("seed chunk");
 
         let turns = thread_turns(&store, "t1").expect("query turns");
         assert_eq!(
             turns.len(),
             2,
-            "both prefixes' turns must be returned — got: {turns:?}"
+            "legacy and chunk rows are both extraction candidates — got: {turns:?}"
         );
-        assert!(turns.iter().any(|h| h.entity == "chat:thread:t1"));
-        assert!(turns.iter().any(|h| h.entity == "curator:thread:t1"));
     }
 
     /// The distillation scan reads the shared-copy prefix — the complete
     /// set, because ingest writes a shared copy for every turn — and
-    /// groups by thread id. A turn stored only under the perspective
-    /// prefix (which ingest never does for a whole thread, since every
-    /// turn also gets a shared copy) is deliberately NOT part of the
-    /// scan: the pass distills shared copies, extraction additionally
-    /// surfaces originals.
+    /// groups by thread id.
     #[test]
     fn shared_scan_groups_shared_copies_by_thread() {
         let store = store();
@@ -126,8 +113,8 @@ mod tests {
         store
             .store(HMem::new(
                 "curator:thread:t1",
-                "turn",
-                serde_json::json!("t1 shared"),
+                "chunk:0",
+                serde_json::json!("t1 chunk"),
                 webid,
             ))
             .expect("seed t1");
@@ -139,27 +126,15 @@ mod tests {
                 webid,
             ))
             .expect("seed t2");
-        store
-            .store(HMem::new(
-                "chat:thread:t3",
-                "chatted",
-                serde_json::json!("perspective only"),
-                webid,
-            ))
-            .expect("seed perspective-only");
 
         let since = chrono::Utc::now() - chrono::Duration::days(365);
         let by_thread = shared_turns_by_thread_since(&store, since).expect("scan");
         assert_eq!(
             by_thread.len(),
             2,
-            "only threads with shared copies are scanned — got: {by_thread:?}"
+            "threads with shared copies are scanned — got: {by_thread:?}"
         );
         assert_eq!(by_thread["t1"].len(), 1);
         assert_eq!(by_thread["t2"].len(), 1);
-        assert!(
-            !by_thread.contains_key("t3"),
-            "perspective-only originals are extraction's, not the scan's"
-        );
     }
 }

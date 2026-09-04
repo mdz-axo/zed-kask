@@ -1718,11 +1718,31 @@ fn main() {
                         // RealMemoryPort below).
                         embedding_port_for_ipc = embedding_port.clone();
 
+                        // The classifier model for write-time chunk
+                        // tagging. Empty/unset degrades tagging to
+                        // structural-only — surfaced here once at wiring
+                        // time, not per turn (no-hidden-models: no silent
+                        // default fallback).
+                        let classifier_model = std::env::var("HKASK_CLASSIFIER_MODEL")
+                            .ok()
+                            .filter(|model| !model.trim().is_empty())
+                            .or_else(|| {
+                                let model = kask_settings.models.classifier_model.trim();
+                                (!model.is_empty()).then(|| model.to_string())
+                            });
+                        if classifier_model.is_none() {
+                            log::warn!(
+                                "hKask classifier model not configured — memory chunk tagging degrades to structural-only. \
+                                 Remediation: set kask.models.classifier_model (Settings → Kask → Models)."
+                            );
+                        }
+
                         match kask_bridge::RealMemoryPort::new(
                             &passphrase,
                             embedding_model,
                             embedding_dim,
                             embedding_port,
+                            classifier_model,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
                             gpui_tokio::Tokio::handle_async(&*cx),
@@ -3112,6 +3132,12 @@ fn wire_kask_inference_stack(
 
     let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
         std::sync::Arc::new(inference_port);
+
+    // Publish the app-wide port for consumers that wired before the inference
+    // stack existed — the memory ingest path reads it lazily per turn for
+    // write-time chunk tagging. The mutex global (not a OnceLock) survives the
+    // model-resolved re-wire, which replaces the port.
+    kask_bridge::set_global_inference_port(inference_port.clone());
 
     // Start the inference IPC server so MCP server child processes can route
     // inference through zed's LanguageModelRegistry (with zed's configured

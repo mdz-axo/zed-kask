@@ -1,14 +1,28 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-01
-version: "3.0.0"
+last_updated: 2026-09-04
+version: "4.0.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
 ---
 
 # Memory System Specification
+
+> **Design decision 2026-09-04 (operator-ratified) — chunked content
+> pipeline; supersedes the whole-turn dump design.** Threads are chunked
+> and those chunks embedded and ontologically tagged along the way, in a
+> process mirroring the corpus pipeline (chunk → embed → tag) with an
+> added cleaning step at write time. One shared copy per turn — the
+> curator-perspective duplicate (`chat:thread:`) and the goal perspective
+> duplicate (`goal:{id}`) are retired, and with them every dual-write code
+> path in this document's former §4. No backward compatibility requirement
+> exists (operator ruling, restated 2026-09-04): legacy whole-turn rows and
+> their envelope values are expired by the therapy hygiene pass and the
+> forgetting pass, not accommodated in code. Ratified package: inline LLM
+> tagging via the classifier model / single copy under `curator:thread:` /
+> rule-based clean / no migration of old rows.
 
 > **Scope:** `kask/crates/hkask-memory/` (unified store + consolidation),
 > `kask/crates/hkask-storage/` (`hmem.rs`, schema), and
@@ -38,20 +52,29 @@ narrative generation loop.
 ### What it does
 
 1. **Ingests** every completed thread turn (curator and zed-agent turns
-   alike) into the curator's sovereign `curator.db`
-   (`kask/crates/kask_bridge/src/memory/ingest.rs:39-57`):
-   - Curator turns: a curator-perspective h_mem (Private) at entity
-     `chat:thread:{thread_id}` (`ingest.rs:100-130`)
-   - Every turn: a shared copy (Shared) at entity
-     `curator:thread:{thread_id}` (`ingest.rs:132-154`)
-   - Every turn: an embedding of the user prompt stored under the shared
-     copy's entity (`ingest.rs:156-225`)
+   alike) into the curator's sovereign `curator.db` as a chunked content
+   pipeline (`kask/crates/kask_bridge/src/memory/ingest.rs`):
+   - Clean: role-prefixed text (`user:` / `assistant:`), base64-noise
+     lines stripped
+   - Chunk: word-bounded passages (30–400 words) via
+     `hkask_memory::chunk_text` — one h_mem per chunk under
+     `curator:thread:{thread_id}`, attribute `chunk:{index}`
+   - Tag: structural 5W1H dimensions (who/when/where/how) deterministically;
+     content dimensions (what/why), subjects, domain concepts, and
+     expertise via one batched classifier-model call per turn
+   - Embed: every chunk in one batched call; each vector stored under the
+     thread entity with its `passage_text`, so KNN pinpoints the matched
+     chunk
+   - Single copy per turn (2026-09-04 ruling): no perspective duplicate,
+     no goal duplicate
 2. **Recalls** relevant memories on every qualifying prompt by:
-   - Embedding the query and searching stored embeddings (KNN)
-   - Loading `chat:thread:*` h_mems by prefix and filtering by keyword overlap
+   - Embedding the query and searching stored embeddings (KNN), injecting
+     only the chunk whose text the matched vector names
+   - Loading `curator:thread:*` chunk h_mems by prefix and filtering by
+     keyword overlap
    - Merging, ranking by relevance × confidence × connectedness, and
      injecting the top results into the model's context
-   (`kask/crates/kask_bridge/src/memory.rs:655-882`)
+   (`kask/crates/kask_bridge/src/memory.rs`)
 3. **Consolidates** on a background timer — confidence-floor cleanup plus
    budget pruning only (`kask/crates/hkask-memory/src/consolidation_service.rs:29-33`).
 
@@ -96,7 +119,7 @@ flowchart TD
     Injector -->|"recall_context_curator<br/>recall_thread_curator"| RealPort
     RealPort -->|"store / store_embedding"| MemStore
     RealPort -->|"embed(model, [text])"| EmbedPort
-    EmbedPort -->|"HTTP /embeddings"| Provider["DeepInfra/Qwen/Qwen3-Embedding-0.6B<br/>(1024-dim default)"]
+    EmbedPort -->|"HTTP /embeddings"| Provider["the configured embedding model<br/>(kask.models.embedding_model;<br/>1024-dim via HKASK_EMBEDDING_DIM)"]
     MemStore --> HMemStore
     MemStore --> EmbedStore
     Consolidator -->|"background timer"| MemStore
@@ -104,8 +127,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-ARCH
-verified_date: 2026-08-28
-verified_against: kask/crates/kask_bridge/src/memory.rs:454-520 (BridgeMemoryPort→RealMemoryPort ingest, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:568-614 (recall_context_curator), kask/crates/kask_bridge/src/memory/ingest.rs:58-235 (write path), kask/crates/hkask-memory/src/memory_store.rs:128-184 (MemoryStore), kask/crates/hkask-inference/src/model_constants.rs:35 (DEFAULT_EMBEDDING_MODEL), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
+verified_date: 2026-09-04
+verified_against: kask/crates/kask_bridge/src/memory.rs:454-520 (BridgeMemoryPort→RealMemoryPort ingest, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:568-614 (recall_context_curator), kask/crates/kask_bridge/src/memory/ingest.rs:58-235 (write path), kask/crates/hkask-memory/src/memory_store.rs:128-184 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:647 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
 status: VERIFIED
 -->
 
@@ -185,14 +208,15 @@ The embedding's `entity_ref` and the h_mem's `entity` are plain `TEXT`
 columns with no foreign key. The invariant (`entity_ref == entity`) is
 enforced by:
 
-1. The ingestion call site: `let embedding_entity = curator_entity.clone()`
-   (`kask/crates/kask_bridge/src/memory/ingest.rs:168`) — the embedding is
-   stored under the **shared copy** entity `curator:thread:{id}`, which is
-   written for every turn; the `chat:thread:` h_mem only exists for curator
-   turns, so an embedding under it would join to nothing for zed-agent turns
-   (`ingest.rs:160-167`).
+1. The ingestion call site: every chunk h_mem and its embedding are
+   written under the same `curator:thread:{id}` entity in the same loop
+   iteration (`kask/crates/kask_bridge/src/memory/ingest.rs`), and the
+   vector's `passage_text` is set to the chunk's value text — the KNN
+   join always resolves and pinpoints the matched chunk.
 2. The regression test `recall_context_finds_turn_by_embedding_only`
-   (`kask/crates/kask_bridge/src/memory.rs:1681`).
+   plus the round-trip pin
+   `ingest_turn_embeds_every_chunk_with_passage_text`
+   (`kask/crates/kask_bridge/src/memory.rs`).
 
 A future `EntityRef(String)` newtype shared between `HMemStore` and
 `EmbeddingStore` would make this compile-time-enforced, but that is a
@@ -282,18 +306,18 @@ When a thread turn completes, the turn loop calls
 
 ### What gets stored (per turn, all in `curator.db`)
 
-| Store                        | Entity                | Attribute | Visibility | Perspective     | Content                     |
-| ---------------------------- | --------------------- | --------- | ---------- | --------------- | --------------------------- |
-| Curator store (curator turns only) | `chat:thread:{id}` | `chatted` | Private | `curator_webid` | Turn JSON, PKO process ontology |
-| Curator store (every turn)   | `curator:thread:{id}` | `turn`    | Shared     | `curator_webid` | Turn JSON, DC state ontology |
-| Curator store (embedding, every turn) | `curator:thread:{id}` | —  | —          | —               | Vector of `user_input`      |
+| Store | Entity | Attribute | Visibility | Content |
+| ----- | ------ | --------- | ---------- | ------- |
+| Curator store (every turn, one row per chunk) | `curator:thread:{id}` | `chunk:{index}` | Shared | Cleaned chunk text (plain string, role prefixes inline), structural + content ontology blob |
+| Curator store (embedding, every chunk) | `curator:thread:{id}` | — | — | Vector of the chunk text + `passage_text` = the chunk text |
+| Curator store (goal events, one row per event) | `curator:goal:{goal_id}` | tool name | Shared | The goal tool result JSON |
 
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
-(`ingest.rs:68`). The curator store is behind the self-healing
-`CuratorStore` handle — a failed initial open leaves the store `None`, and
-every `get()` re-attempts the open (`curator_stores.rs:104-160`); a
-successful re-open also rebuilds the consolidation service
-(`ingest.rs:80-95`).
+(`ingest.rs`) — used for logging only; the write path is identical for
+every agent. The curator store is behind the self-healing `CuratorStore`
+handle — a failed initial open leaves the store `None`, and every `get()`
+re-attempts the open (`curator_stores.rs`); a successful re-open also
+rebuilds the consolidation service.
 
 ### Ingestion semaphore
 
@@ -305,8 +329,8 @@ with the recall path for the SQLite pool. Pinned by
 
 ### Memory Ingest Sequence
 
-The write side, end to end — from a completed thread turn to stored h_mems
-plus a stored prompt embedding in `curator.db`:
+The write side, end to end — from a completed thread turn to stored chunk
+h_mems plus per-chunk embeddings in `curator.db`:
 
 ```mermaid
 sequenceDiagram
@@ -316,9 +340,8 @@ sequenceDiagram
     participant Sem as ingest_semaphore
     participant Write as ingest::write_turn
     participant Curator as CuratorStore<br/>(self-healing, curator.db)
-    participant Tokio as tokio runtime
+    participant Tag as global InferencePort<br/>(classifier model)
     participant EmbedPort as LanguageModelEmbeddingPort
-    participant EmbedProvider as Embedding API<br/>(DeepInfra/Qwen3-Embedding-0.6B)
 
     Thread->>+Bridge: ingest_turn(TurnRecord)
     Bridge->>+Real: ingest_turn(record)
@@ -329,33 +352,29 @@ sequenceDiagram
     Write->>Curator: get() — re-attempt open if down<br/>(rebuild consolidation if healed)
 
     rect rgb(245, 248, 252)
-        Note over Write,Curator: Phase 1 — h_mems (curator.db)
+        Note over Write,Curator: Phase 1 — Goal events (single shared copy)
+        Write->>Curator: store(goal h_mem)<br/>curator:goal:{goal_id}, tool_name, Shared
+    end
 
-        alt is_curator_turn (agent_id == "Curator")
-            Write->>Curator: store(curator h_mem)<br/>chat:thread:{id}, "chatted", Private,<br/>curator_webid, PKO process ontology
-            Curator-->>-Write: Ok
-        end
-
-        Write->>Curator: store(shared copy)<br/>curator:thread:{id}, "turn", Shared,<br/>DC state ontology
-        Curator-->>-Write: Ok
+    rect rgb(248, 252, 245)
+        Note over Write,Curator: Phase 2 — Clean + chunk + tag
+        Write->>Write: clean_turn_text — role prefixes,<br/>base64-noise lines stripped
+        Write->>Write: hkask_memory::chunk_text<br/>30–400 words per chunk
+        Write->>+Tag: generate_with_model(tag prompt,<br/>classifier model) — one batched call
+        Tag-->>-Write: JSON array of content tags<br/>(what/why, subjects, domain, expertise)<br/>failure → structural-only + warn
     end
 
     rect rgb(252, 245, 245)
-        Note over Write,EmbedProvider: Phase 2 — Prompt embedding (every turn, non-fatal)
+        Note over Write,EmbedPort: Phase 3 — Batch embed (every chunk, non-fatal)
+        Write->>+EmbedPort: embed(model, [chunk texts])
+        EmbedPort-->>-Write: Vec<f32> per chunk<br/>failure → warn, keyword-only recall
+    end
 
-        Write->>Write: embedding_entity = curator_entity.clone()<br/>"curator:thread:{thread_id}"
-        Write->>+Tokio: spawn(embed(model, [user_input]))
-        Tokio->>+EmbedPort: embed(model, [user_input])
-        EmbedPort->>+EmbedProvider: POST /embeddings
-        EmbedProvider-->>-EmbedPort: Vec<f32> (1024-dim default)
-        EmbedPort-->>-Tokio: Ok(vector)
-        Tokio-->>-Write: Ok(Ok(vector))
-
-        alt embedding succeeded
-            Write->>Curator: store_embedding(curator:thread:{id},<br/>vector, model)
-            Curator-->>-Write: Ok
-        else embedding failed / no port
-            Write-->>Write: tracing::warn (non-fatal)<br/>keyword recall still works
+    rect rgb(245, 248, 252)
+        Note over Write,Curator: Phase 4 — Write chunks + embeddings
+        loop each chunk
+            Write->>Curator: store(chunk h_mem)<br/>curator:thread:{id}, chunk:{index}, Shared,<br/>structural ∪ content ontology, 0.5 floor
+            Write->>Curator: store_embedding(entity, vector,<br/>passage_text = chunk text)
         end
     end
 
@@ -367,35 +386,37 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-INGEST
-verified_date: 2026-08-28
-verified_against: kask/crates/kask_bridge/src/memory.rs:454-497 (trait impl + semaphore), kask/crates/kask_bridge/src/memory/ingest.rs:58-235 (write_turn: heal 79-95, curator h_mem 100-130, shared copy 132-154, embedding 156-225, entity clone at 168), kask/crates/kask_bridge/src/memory/curator_stores.rs:104-160 (CuratorStore self-heal), kask/crates/hkask-inference/src/model_constants.rs:35 (embedding model)
+verified_date: 2026-09-04
+verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn: semaphore + WriteContext), kask/crates/kask_bridge/src/memory/ingest.rs (write_turn: heal/rebuild, goal events, clean_turn_text, chunk_text, tag_chunks_with_llm, batch embed, chunk writes + store_embedding with passage_text), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
 status: VERIFIED
 -->
 
 #### Key invariants (write side)
 
-1. **The embedding's `entity_ref` equals the shared copy's `entity`**
-   (`curator:thread:{thread_id}`) — the shared copy is written for every
-   turn, so the join key always resolves. An embedding under
-   `chat:thread:{id}` would orphan every zed-agent turn's embedding
-   (`ingest.rs:160-168`). See [the entity_ref invariant](#the-entity_ref-invariant).
-2. **All writes go to the curator's `curator.db`.** There is no user
-   memory store — `RealMemoryPort` holds only the `CuratorStore`
-   (`memory.rs:74-119`). Zed-agent turns get the shared copy only; the
-   curator-perspective h_mem is curator turns only (`ingest.rs:68`,
-   `:100-130`).
-3. **Embedding failure is non-fatal.** The h_mems are pure SQL and don't
-   need embeddings; recall degrades to keyword-only for that turn with a
-   `tracing::warn!` (`ingest.rs:156-159`, `:202-217`).
+1. **The embedding's `entity_ref` equals the chunk h_mem's `entity`**
+   (`curator:thread:{thread_id}`) and its `passage_text` equals the chunk's
+   value text — the KNN join always resolves and pinpoints the matched
+   chunk. A vector that cannot name its passage injects nothing (no
+   whole-entity fallback — that was the 500KB-blob behavior the pipeline
+   replaces). See [the entity_ref invariant](#the-entity_ref-invariant).
+2. **All writes go to the curator's `curator.db`, one copy per turn.** There
+   is no user memory store and no perspective duplicate — `RealMemoryPort`
+   holds only the `CuratorStore`. Goal events are single-keyed under
+   `curator:goal:{goal_id}`.
+3. **Embedding and tagging failures are non-fatal.** The h_mems are pure
+   SQL; recall degrades to keyword-only (embedding) or structural-only
+   tags (classifier) with a `tracing::warn!` — never silently.
 4. **Curator-store failures are non-fatal and self-healing.** A failed
    initial open leaves the store `None`; every `get()` re-attempts the
-   open, and a successful re-open rebuilds the consolidation service
-   (`curator_stores.rs:104-160`, `ingest.rs:79-95`). Persistent failure
-   warns once per healing attempt — never silently
-   (`curator_stores.rs:148-158`).
+   open, and a successful re-open rebuilds the consolidation service.
+   Persistent failure warns once per healing attempt — never silently.
 5. **Consolidation is decoupled.** It runs on the background timer
-   (`start_consolidation_timer`, `memory.rs:236-287`), never in the
-   ingestion path.
+   (`start_consolidation_timer`), never in the ingestion path. Write-time
+   LLM tagging is creation metadata, not consolidation — it does not
+   modify existing h_mems (the sovereignty line).
+6. **Every write enters at the 0.5 confidence floor** — chunks and goal
+   events alike. `HMem::new`'s 1.0 default starves recall ranking and the
+   cleanup consolidator.
 
 ## 5. Recall
 
@@ -414,14 +435,15 @@ status: VERIFIED
 ### The two legs
 
 1. **Semantic (embedding KNN):** Embed the query → `search_similar` → for
-   each neighbor, `query_deduped_untouched(entity_ref)` → h_mem text.
-   Relevance = `1.0 - cosine_distance` (`memory.rs:673-752`).
+   each neighbor, inject only the h_mem whose value text equals the
+   vector's `passage_text` — the chunk the vector embedded. A vector with
+   no `passage_text` injects nothing (no whole-entity fallback).
+   Relevance = `1.0 - cosine_distance`.
 
-2. **Keyword (prefix + word overlap):** Load `chat:thread:*` h_mems for the
-   curator's perspective in a single prefix query (capped at
+2. **Keyword (prefix + word overlap):** Load `curator:thread:*` chunk
+   h_mems in a single perspective-free prefix query (capped at
    `limit × 10`, minimum 50) → filter by query-word substring overlap
-   (words > 3 chars, first 5 words) → relevance = `0.5` constant
-   (`memory.rs:754-819`).
+   (words > 3 chars, first 5 words) → relevance = `0.5` constant.
 
 ### Merge, rank, inject
 
@@ -441,8 +463,7 @@ absence message (the hypocognition guard, `context_injector.rs:285-311`).
 
 `inject_context` also calls `recall_thread_curator(thread_id)` on every
 turn (fresh, not session-cached), which recalls by exact entity match —
-`chat:thread:{id}` perspective-scoped plus `curator:thread:{id}` — not
-embedding KNN (`memory.rs:884-991`).
+`curator:thread:{id}`, the single shared copy — not embedding KNN.
 
 ### Memory Recall Flow
 
@@ -455,10 +476,10 @@ flowchart TD
     Gate -- "No" --> Empty["Return empty"]
     Gate -- "Yes" --> Embed["Embed query via<br/>LanguageModelEmbeddingPort<br/>(tokio spawn → HTTP)"]
     Embed --> KNN["search_similar(query_vector, limit)<br/>sqlite-vec cosine KNN"]
-    KNN --> Join["For each KNN neighbor:<br/>query_deduped_untouched(entity_ref)<br/>→ h_mem text"]
+    KNN --> Join["For each KNN neighbor:<br/>inject only the h_mem whose text<br/>equals the vector's passage_text"]
     Join --> SemanticCandidates["Semantic candidates<br/>relevance = 1.0 - distance"]
 
-    SemanticCandidates --> LoadPrefix["Load chat:thread:* h_mems<br/>by prefix, perspective-scoped<br/>(recall_budget = limit × 10, min 50)"]
+    SemanticCandidates --> LoadPrefix["Load curator:thread:* chunk h_mems<br/>by prefix, perspective-free<br/>(recall_budget = limit × 10, min 50)"]
     LoadPrefix --> Keyword["Filter by query-word<br/>substring overlap (words > 3 chars, first 5)"]
     Keyword --> KeywordCandidates["Keyword candidates<br/>relevance = 0.5<br/>(skip texts already present)"]
 
@@ -478,8 +499,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-RECALL
-verified_date: 2026-08-28
-verified_against: kask/crates/kask_bridge/src/context_injector.rs:38-42 (prompt gate), :85-90 (should_recall), :213-217 (auto_inject gate), :240-243 & :266-269 (confidence filters), :285-311 (absence message), :56-77 (data-boundary markers); kask/crates/kask_bridge/src/memory.rs:655-882 (recall_from: KNN leg 673-752, keyword leg 754-819, sort 821-850, touch 852-867), :499-519 (trait no-ops)
+verified_date: 2026-09-04
+verified_against: kask/crates/kask_bridge/src/context_injector.rs (prompt gate, should_recall, auto_inject gate, confidence filters, absence message, data-boundary markers); kask/crates/kask_bridge/src/memory.rs (recall_from: KNN passage_text pinpointing, keyword leg curator:thread: prefix via query_deduped_untouched_by_prefix, sort, touch; recall_thread_from: single-entity)
 status: VERIFIED
 -->
 
@@ -604,12 +625,14 @@ age grace keeps recent conversations recallable. Time-based and
 distillation-gated, never count-based (budgets are deprecated, operator
 ruling 2026-09-04).
 
-- **Scope:** shared copies only (`curator:thread:{id}`). The
-  curator-perspective originals (`chat:thread:`) are untouched — they
-  carry no embeddings (no semantic-recall impact) and are the curator's
-  sovereign record. Watermarks are never expired (idempotence markers).
-  A never-distilled thread is never forgotten (no watermark, no proof
-  of extraction). Pinned by
+- **Scope:** shared copies only (`curator:thread:{id}`). Since the
+  2026-09-04 single-copy ruling there is no separate perspective original
+  to preserve — a turn's content lives only in its shared chunks, so
+  forgetting the shared copies forgets the turn (the lessons stay). The
+  legacy `chat:thread:` rows that predate the ruling were expired by the
+  therapy hygiene pass, not by this pass. Watermarks are never expired
+  (idempotence markers). A never-distilled thread is never forgotten (no
+  watermark, no proof of extraction). Pinned by
   `forgetting_expires_only_aged_distilled_shared_turns`.
 - **Idempotent:** expired turns stay expired; a thread counts as
   forgotten only when work was done. Pinned by `forgetting_is_idempotent`.
@@ -680,14 +703,14 @@ third embedding call site appears (YAGNI).
 
 ### Why the embedding lives under the shared-copy entity
 
-The embedding is stored under `curator:thread:{thread_id}` — the shared
-copy's entity — not `chat:thread:{thread_id}`
-(`kask/crates/kask_bridge/src/memory/ingest.rs:160-168`). The shared copy
-h_mem is written for **every** turn, while the `chat:thread:` h_mem only
-exists for curator turns. An embedding under `chat:thread:` for a
-zed-agent turn would join to no h_mem — an orphan the KNN recall path
-could never resolve, making every zed-agent turn invisible to semantic
-recall. The join key must point at a row that always exists.
+The embedding is stored under `curator:thread:{thread_id}` — the same
+entity as every chunk h_mem of the turn. The chunk rows are written for
+**every** turn, curator and zed-agent alike, so the join key always
+resolves; and since the 2026-09-04 single-copy ruling there is no other
+copy the embedding could live under. The vector's `passage_text` names
+the exact chunk it embedded, so the KNN leg injects that chunk — not
+every h_mem under the entity (the 500KB-blob behavior the chunk pipeline
+replaces).
 
 ### Why two recall legs?
 
@@ -884,10 +907,11 @@ sovereignty:
   recall globally (`context_injector.rs:213-217`).
 
 - **The user controls what the curator remembers.** All turns are ingested
-  (shared copies), but only curator-panel turns produce
-  curator-perspective h_mems — the curator's private memory of its own
-  turns (`ingest.rs:100-130`). The user decides what enters the curator's
-  private memory by choosing to work in the curator panel.
+  identically — shared chunk h_mems under `curator:thread:{id}` (the
+  2026-09-04 single-copy ruling retired the curator's private-perspective
+  copy). The user decides what the curator observes by choosing which
+  agent to work with; the curator's durable memory of a conversation is
+  its distilled lessons, not a private transcript copy.
 
 - **The user can purge memory.** The `memory_resolve_contradiction` tool
   allows the user to expire, de-confidence, or delete any
@@ -963,7 +987,7 @@ share one passphrase architecture:
   `kask/crates/hkask-keystore/src/keychain.rs:357`). The username-independent
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
   `build_mcp_server_env` at MCP launch time so servers get a passphrase
-  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:771`).
+  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:780`).
   There is no swarm-memory provisioning step: the separate
   `HKASK_SWARM_MEMORY_PASSPHRASE` and its spawn site were removed — the
   swarm memory DB opens with the ONE shared passphrase, resolved inside
@@ -1018,7 +1042,7 @@ override (`curator_stores.rs:225-233`).
 | Variable                          | Default                               | Description                            |
 | --------------------------------- | ------------------------------------- | -------------------------------------- |
 | `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`memory.rs:326-331`) |
-| `HKASK_EMBEDDING_MODEL`            | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | Embedding model (`kask/crates/hkask-inference/src/model_constants.rs:35`, `:78-80`) |
+| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:647`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:25-35`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
 | `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`hkask-keystore/src/keychain.rs:321`) |

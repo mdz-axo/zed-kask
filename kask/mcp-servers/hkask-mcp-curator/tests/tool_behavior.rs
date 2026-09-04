@@ -1136,15 +1136,6 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         WebID::new(),
     );
     memory.store(shared_turn).expect("seed shared turn");
-    let perspective_turn = hkask_storage::HMem::new(
-        "chat:thread:backfill-test",
-        "chatted",
-        serde_json::Value::String("perspective original".to_string()),
-        WebID::new(),
-    );
-    memory
-        .store(perspective_turn)
-        .expect("seed perspective turn");
     let watermark = hkask_storage::HMem::new(
         "curator:distilled:backfill-test",
         "distilled_through",

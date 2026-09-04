@@ -359,7 +359,7 @@ impl MemoryStore {
         Ok(deduped)
     }
 
-    /// Query by entity prefix for a perspective, without touching
+    /// Query by entity prefix for a specific perspective, without touching
     /// `recalled_at`. Caps rows via SQL LIMIT.
     pub fn query_for_deduped_untouched_by_prefix(
         &self,
@@ -371,6 +371,29 @@ impl MemoryStore {
         let mut filtered: Vec<HMem> = h_mems
             .into_iter()
             .filter(|t| t.access.perspective == Some(perspective))
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect();
+        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
+        Ok(crate::recall_dedup::dedup_h_mems(filtered))
+    }
+
+    /// Query by entity prefix, perspective-free — the shared-copy recall
+    /// counterpart of [`Self::query_for_deduped_untouched_by_prefix`]. Shared
+    /// h_mems carry no perspective, so keyword recall over the shared thread
+    /// prefix must not scope by one. Without touching `recalled_at`; caps
+    /// rows via SQL LIMIT.
+    pub fn query_deduped_untouched_by_prefix(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix, limit)?;
+        let mut filtered: Vec<HMem> = h_mems
+            .into_iter()
             .map(|mut t| {
                 let days_since = crate::bayesian::days_since(t.recalled_at);
                 t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);

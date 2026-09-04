@@ -12,11 +12,12 @@
 //! A thread's shared-copy turns are expired — and their embeddings
 //! deleted — once the thread's newest distillation watermark has aged
 //! past the forgetting threshold. The watermark proves the lessons were
-//! extracted; the age grace keeps recent conversations recallable. The
-//! curator-perspective originals (`chat:thread:`) are untouched: they
-//! carry no embeddings (no semantic-recall impact) and are the
-//! curator's sovereign record — forgetting them is a separate, later
-//! policy decision.
+//! extracted; the age grace keeps recent conversations recallable. Since
+//! the 2026-09-04 single-copy ruling there is no separate
+//! curator-perspective original to preserve: a turn's content lives only
+//! in its shared-copy chunks, so forgetting the shared copies forgets the
+//! turn (the lessons stay). The legacy `chat:thread:` rows that predate
+//! the ruling were expired by the 2026-09-04 therapy hygiene pass.
 //!
 //! The pass also sweeps vector rows orphaned from their metadata (KNN's
 //! inner join already ignores them; the sweep reclaims the space).
@@ -285,7 +286,7 @@ mod tests {
                 .expect("query")
                 .len(),
             1,
-            "the private original is untouched — sovereign curator record"
+            "the pass never touches the retired perspective prefix — legacy rows there were expired by the therapy hygiene pass, not here"
         );
         assert_eq!(
             memory

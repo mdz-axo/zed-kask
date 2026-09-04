@@ -1,15 +1,15 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-08-28
-version: "2.0.0"
+last_updated: 2026-09-04
+version: "2.1.0"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
 ---
 
 This document consolidates the two surfaces that instruct the zed-kask agent:
-the system prompt (base template + three overlays, and its divergences from
+the system prompt (base template + four overlays, and its divergences from
 upstream Zed) and the skill system (SKILL.md body injection, composition
 principles, testing). Formerly two documents — `AGENT_SYSTEM_PROMPT.md` and
 `explanation/skills-and-composition.md` — folded 2026-08-28 during the docs
@@ -38,19 +38,20 @@ was made[^nygard-adr]. Prompts are especially prone to this because their
 ## 2. The four prompt surfaces
 
 Upstream Zed renders **one** system prompt. zed-kask renders that same prompt
-plus **three overlays**, all delivered through a single channel.
+plus **four overlays**, all delivered through a single channel.
 
 | # | Surface | Location | Size | Scope |
 |---|---------|----------|------|-------|
-| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 24,156 B / 330 lines | Every thread |
-| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37-68` (`CURATOR_STATIC_CONTEXT`) | ~1.7 KB | Curator threads |
-| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs:155-313` (`steer_system_prompt`) | ~9.8 KB | Swarm panel, Steer mode |
-| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs:311-351` (`steer_system_prompt`) | ~2.4 KB | Kanban panel, Steer mode |
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 26,309 B / 361 lines | Every thread |
+| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37` (`CURATOR_STATIC_CONTEXT`) | ~1.7 KB | Curator threads |
+| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | ~9.8 KB | Swarm panel, Steer mode |
+| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | ~3.2 KB | Kanban panel, Steer mode |
+| 5 | Portfolio Steer overlay | `crates/portfolio_panel/src/portfolio_panel.rs:175` (`steer_system_prompt`) | ~1.1 KB | Portfolio panel, Steer mode (added 2026-08-28) |
 
-Upstream's base template is 19,815 B, so zed-kask carries **+2.4 KB** of
+Upstream's base template is 19,815 B, so zed-kask carries **+6.5 KB** of
 fork-specific instruction in the base plus up to ~9.8 KB more when an overlay is
 active. The swarm overlay is the largest single instruction block in the system —
-roughly 44 % of the base prompt's size.
+roughly 38 % of the base prompt's size.
 
 Overlays are **appended, never substituted**: the Zed coding instructions remain
 intact and the overlay adds role and scope on top. `CuratorAgentServer` documents
@@ -90,7 +91,7 @@ verified_against: crates/agent/src/templates.rs:37-69 (SystemPromptTemplate, TEM
 status: VERIFIED
 -->
 
-The overlay path is the load-bearing detail: **all three overlays converge on
+The overlay path is the load-bearing detail: **all four overlays converge on
 the single `agent_static_context` field** (on `KaskThreadState`, accessed via
 `thread.kask.static_context()`), so a defect in that one field disables all
 three at once. That is exactly what happened (§5.1).
@@ -104,15 +105,17 @@ cannot honour[^parnas-1972].
 
 | Guard | Line | Effect when false |
 |-------|------|-------------------|
-| `(gt (len available_tools) 0)` | `:34` | Entire tool-use half is replaced by a no-tools instruction (`:140-146`) |
-| `(contains available_tools 'grep')` | `:64` | Drops the grep/find_path search guidance |
-| `(contains available_tools 'spawn_agent')` | `:118` | Drops `## Multi-agent delegation` |
-| `sandboxing` + `(contains available_tools 'terminal')` | `:160-161` | Drops `## Terminal sandbox` entirely |
-| `is_linux` / `is_windows` | `:167`, `:174`, `:191` | Selects the platform-correct writable-temp and network story |
-| `model_name` | `:218` | Drops `## Model Information` |
-| `has_skills` | `:224` | Drops `## Agent Skills` and the `<available_skills>` catalog |
-| `(or user_agents_md has_rules)` | `:252` | Drops `## User's Custom Instructions` |
-| `static_context` | `:293` | Drops `## Session Context` |
+| `(gt (len available_tools) 0)` | `:34` | Entire tool-use half is replaced by a no-tools instruction |
+| `(gt mcp_tools_hidden 0)` | `:49` | Drops the hidden-tools visibility marker (D44) — the count of registered-but-filtered MCP tools, with the `list_mcp_tools` recovery path |
+| `(contains available_tools 'grep')` | `:67` | Drops the grep/find_path search guidance |
+| `(contains available_tools 'spawn_agent')` | `:121` | Drops `## Multi-agent delegation` |
+| `sandboxing` + `(contains available_tools 'terminal')` | `:163-164` | Drops `## Terminal sandbox` entirely |
+| `is_linux` / `is_windows` | `:170`, `:177`, `:194` | Selects the platform-correct writable-temp and network story |
+| `model_name` | `:221` | Drops `## Model Information` |
+| `has_skills` | `:227` | Drops `## Agent Skills` and the `<available_skills>` catalog |
+| `(or user_agents_md has_rules)` | `:255` | Drops `## User's Custom Instructions` |
+| `(contains available_tools 'kanban_goal_create')` | `:332` | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
+| `static_context` | `:352` | Drops `## Session Context` |
 
 ## 4. Section inventory
 
@@ -126,32 +129,32 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 |---------|------|---------------------|
 | Communication | `:3` | Identical |
 | Formatting Responses | `:13` | **Modified** (§5.3, §5.4) |
-| Tool Use | `:35` | **Modified** (structured tool-call bullet, `:39`) |
-| Task Execution | `:50` | **Modified** (§5.2) |
-| Searching and Reading | `:57` | Identical |
-| Making Code Changes | `:70` | Identical |
-| Ambition vs. Precision | `:83` | Identical |
-| Validation | `:89` | Identical |
-| Fixing Diagnostics | `:97` | Identical |
-| Debugging | `:102` | Identical |
-| Calling External APIs | `:111` | Identical |
-| Multi-agent delegation | `:119` | Identical |
-| Final Message | `:134` | Identical |
-| System Information | `:148` | Identical |
-| Terminal sandbox | `:162` | Identical |
-| Model Information | `:219` | Identical |
-| Agent Skills | `:225` | **Modified** — em-dash only (§5.5) |
-| User's Custom Instructions | `:253` | Identical |
-| → Personal `AGENTS.md` | `:258` | Identical |
-| → Project Rules | `:268` | Identical |
-| Tool failure-mode warnings (kask) | `:286` | **New section** (§5.1) |
-| Division of Responsibilities (kask) | `:294` | **New section** (§5.7, D40) |
-| Session Context | `:294` | **New section** (§5.1) |
+| Tool Use | `:35` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:49-50`) |
+| Task Execution | `:53` | **Modified** (§5.2, §5.7) |
+| Searching and Reading | `:60` | Identical |
+| Making Code Changes | `:73` | Identical |
+| Ambition vs. Precision | `:86` | **Modified** (§5.7, D40 — "creative touches when scope is vague" replaced with "resolve the vagueness with the user") |
+| Validation | `:92` | Identical |
+| Fixing Diagnostics | `:100` | Identical |
+| Debugging | `:105` | Identical |
+| Calling External APIs | `:114` | Identical |
+| Multi-agent delegation | `:122` | Identical |
+| Final Message | `:137` | **Modified** (§5.7, D40 — functional-outcome-first bullet) |
+| System Information | `:151` | Identical |
+| Terminal sandbox | `:165` | Identical |
+| Model Information | `:222` | Identical |
+| Agent Skills | `:228` | **Modified** — em-dash only (§5.5) |
+| User's Custom Instructions | `:256` | Identical |
+| → Personal `AGENTS.md` | `:261` | Identical |
+| → Project Rules | `:271` | Identical |
+| Tool failure-mode warnings (kask) | `:288` | **New section** (§5.1) |
+| Division of Responsibilities (kask) | `:296` | **New section** (§5.7, D40) |
+| Session Context | `:353` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
 
 `git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs` reports
-**25 insertions, 2 deletions across 5 hunks**. Each is catalogued below with its
+**73 insertions, 2 deletions across 7 hunks** (verified 2026-09-04). Each is catalogued below with its
 D-seam and its pinning test, except the structured tool-call bullet (`:39`, a
 single added line in `## Tool Use` instructing the model to emit tool calls via
 the structured tool-call mechanism rather than narrating parameters as text).
@@ -232,7 +235,7 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 - **Upstream** has neither bullet.
 - **Why load-bearing:** the media block *renderer* lives in
   `hkask_viz_core::block_renderer()` (wired at
-  `crates/agent_ui/src/conversation_view.rs:3539`), so the prompt bullets
+  `crates/agent_ui/src/conversation_view.rs:3546`), so the prompt bullets
   remain live for any tool that emits the ` ```media ` fenced block.
 
 ### 5.5 `## Agent Skills` — body injection (D1)
@@ -340,7 +343,7 @@ composition is now driven by the **skill-bundler** skill (see Part II,
 
 ## 6. Divergence-free sections
 
-Fourteen of the eighteen upstream `##` sections are byte-identical, including all
+Twelve of the eighteen upstream `##` sections are byte-identical, including all
 of `## Terminal sandbox` (`:162-216`) with its platform matrix. This is
 deliberate: the fork's leverage is in skill execution and context injection, not
 in re-litigating upstream's coding guidance. Keeping unrelated sections identical
@@ -361,7 +364,7 @@ sync:
 
 1. Merge normally. Conflicts will land in the five hunks of §5.
 2. Re-apply each §5 divergence. The pinning tests are the checklist — run
-   `cargo test -p agent --lib templates::` (19 tests) and
+   `cargo test -p agent --lib templates::` (26 tests) and
    `cargo test -p markdown --lib mermaid` (21 tests). A dropped divergence fails a
    named test rather than silently reverting.
 3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,
@@ -378,19 +381,19 @@ it[^popper-1959].
 
 ```sh
 # Structure and size
-wc -c crates/agent/src/templates/system_prompt.hbs          # 22277
+wc -c crates/agent/src/templates/system_prompt.hbs          # 26309
 git show upstream/main:crates/agent/src/templates/system_prompt.hbs | wc -c  # 19815
 
 # The complete divergence
 git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs
 
 # The pinning tests
-cargo test -p agent --lib templates::                        # 16 pass
+cargo test -p agent --lib templates::                        # 26 pass
 cargo test -p agent --lib read_file_tool                     # 25 pass
 cargo test -p markdown --lib mermaid                         # 21 pass
 
-# The skill count (65 SKILL.md directories in .agents/skills/)
-ls .agents/skills/ | wc -l                                    # 65
+# The skill count (76 SKILL.md directories in .agents/skills/)
+ls .agents/skills/ | wc -l                                    # 76
 ```
 
 ## References
@@ -426,7 +429,7 @@ ls .agents/skills/ | wc -l                                    # 65
 
 Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
 
-This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtins inside the editor and are launched as child processes over stdio by zed's `context_server` host (D3); the standalone `kask mcp start <id>` CLI is deleted.
+This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers are launched as child processes over stdio by the in-process governed `McpRuntime` (D3 — single spawn authority since 2026-08-29; kask servers are no longer registered with zed's per-project `ContextServerStore`); the standalone `kask mcp start <id>` CLI is deleted.
 
 ---
 
@@ -459,7 +462,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 | Tool | Location | Purpose |
 |------|----------|---------|
 | `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
-| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `crates/zed/src/main.rs:711`. |
+| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `crates/zed/src/main.rs:716`. |
 
 ### PDCA Loops Are Model-Coordinated
 
@@ -604,7 +607,7 @@ When a skill is invoked in-process:
 2. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`) wraps the body in a structured envelope.
 3. **Return to agent** — The envelope is returned as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:263`).
 4. **Agent follows instructions** — The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
-5. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
+5. **Regulation span** — skill feedback is recorded through the unified skill namespace: `reg.skill.<skill-id>.<phase>` via `RegulationRuntime::record_skill_span` (`kask/crates/hkask-regulation/src/runtime.rs:779`; PRINCIPLES §9.2).
 
 ### Convergence (Model-Coordinated)
 
@@ -740,7 +743,7 @@ Four-phase pipeline: **detect-gap** (classify gaps: coverage, feature, automatio
 
 ## Building MCP Servers
 
-zed-kask hosts 11 MCP servers as child processes over stdio via zed's `context_server` host (companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as built-in context servers inside the editor (D1–D3): the `context_server` host launches them as child processes over stdio, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
+zed-kask hosts 11 MCP servers as child processes over stdio via zed's `context_server` host (companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, the in-process governed `McpRuntime` (D3) launches the servers as child processes over stdio — single spawn authority since 2026-08-29, no `ContextServerStore` registration — and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Prerequisites
 
