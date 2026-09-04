@@ -609,7 +609,11 @@ impl MediaServer {
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "describe_image", async {
-            validate_tool_url_with_dns(&image_url).await?;
+            // Gallery asset paths are local files; the SSRF validator is for
+            // network URLs (see `is_local_media_path`).
+            if !crate::is_local_media_path(&image_url) {
+                validate_tool_url_with_dns(&image_url).await?;
+            }
 
             let style_str = style.as_deref().unwrap_or("descriptive");
             let mut vars = HashMap::new();

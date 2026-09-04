@@ -1113,8 +1113,9 @@ async fn resolve_contradiction_finds_target_by_id() {
 
 /// `curator_memory_backfill_embeddings` must embed knowledge-layer h_mems
 /// whose entities have no embedding, while excluding turn-storage entities
-/// (their embeddings live under the shared copy by design) and distillation
-/// watermarks (process markers). The tool exists because h_mems inserted
+/// — both prefixes, `curator:thread:` (shared) and the retired
+/// `chat:thread:` (legacy rows persist) — and distillation watermarks
+/// (process markers). The tool exists because h_mems inserted
 /// before the 2026-09-04 embedding contract are invisible to semantic
 /// search. Also pins dry-run (embeds nothing) and idempotence (a second
 /// run finds no candidates).
@@ -1136,6 +1137,15 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         WebID::new(),
     );
     memory.store(shared_turn).expect("seed shared turn");
+    let retired_turn = hkask_storage::HMem::new(
+        "chat:thread:backfill-test",
+        "chatted",
+        serde_json::Value::String("retired perspective turn".to_string()),
+        WebID::new(),
+    );
+    memory
+        .store(retired_turn)
+        .expect("seed retired-perspective turn");
     let watermark = hkask_storage::HMem::new(
         "curator:distilled:backfill-test",
         "distilled_through",
@@ -1204,6 +1214,76 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         second["candidate_count"].as_u64(),
         Some(0),
         "entities with embeddings are skipped — the pass is idempotent — got: {second}",
+    );
+}
+
+/// `curator_memory_prune` must default to turn-storage scope: aged turn
+/// rows are hard-deleted while aged knowledge-layer rows survive.
+/// `all_layers=true` is the explicit full-store opt-in. (therapy
+/// 2026-09-04, P3 — the valve must fail closed on knowledge rows.)
+#[tokio::test]
+async fn curator_memory_prune_defaults_to_turn_storage_scope() {
+    let (server, memory) = make_server_with_embeddings();
+
+    let mut aged_turn = hkask_storage::HMem::new(
+        "curator:thread:prune-tool-test",
+        "turn",
+        serde_json::Value::String("aged turn".to_string()),
+        WebID::new(),
+    );
+    aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+    memory.store(aged_turn).expect("seed aged turn");
+
+    let mut aged_ruling = hkask_storage::HMem::new(
+        "zed-kask/prune-scope-test-ruling",
+        "operator_ruling",
+        serde_json::Value::String("durable ruling".to_string()),
+        WebID::new(),
+    );
+    aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+    memory.store(aged_ruling).expect("seed aged ruling");
+
+    // Default scope: turn storage only — the ruling survives.
+    let scoped = parse(
+        &server
+            .curator_memory_prune(Parameters(MemoryPruneRequest {
+                max_age_days: 50,
+                spare_recalled_within_days: None,
+                all_layers: None,
+            }))
+            .await
+            .expect("scoped prune ok"),
+    );
+    assert_eq!(scoped["all_layers"].as_bool(), Some(false));
+    assert_eq!(scoped["deleted_count"].as_u64(), Some(1));
+    assert_eq!(
+        memory
+            .h_mems_by_entity_prefix("zed-kask/prune-scope-test-ruling")
+            .expect("query ruling")
+            .len(),
+        1,
+        "knowledge row must survive the default scope — got: {scoped}",
+    );
+
+    // Explicit opt-in: full store — the ruling is now deleted.
+    let full = parse(
+        &server
+            .curator_memory_prune(Parameters(MemoryPruneRequest {
+                max_age_days: 50,
+                spare_recalled_within_days: None,
+                all_layers: Some(true),
+            }))
+            .await
+            .expect("full prune ok"),
+    );
+    assert_eq!(full["all_layers"].as_bool(), Some(true));
+    assert_eq!(full["deleted_count"].as_u64(), Some(1));
+    assert!(
+        memory
+            .h_mems_by_entity_prefix("zed-kask/prune-scope-test-ruling")
+            .expect("query ruling")
+            .is_empty(),
+        "all_layers=true must reach knowledge rows — got: {full}",
     );
 }
 

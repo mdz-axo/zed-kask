@@ -137,16 +137,48 @@ impl MediaServer {
     }
 }
 
+/// Split a provider-prefixed model name into (prefixed_name, label) — the
+/// label (everything after the first `/`) is for logs and tool results.
+fn split_model_label(prefixed: String) -> (String, String) {
+    let label = prefixed
+        .split_once('/')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_else(|| prefixed.clone());
+    (prefixed, label)
+}
+
+/// Pure core of the env-configured vision model resolution: `Some(value)`
+/// resolves to (prefixed, label), `None`/blank values resolve to `None`
+/// (the registry heuristic then picks).
+fn configured_vision_model_from(env_value: Option<String>) -> Option<(String, String)> {
+    env_value
+        .filter(|m| !m.trim().is_empty())
+        .map(split_model_label)
+}
+
+/// The env-configured vision model (`HKASK_MEDIA_VISION_MODEL`, injected
+/// from the settings default or an operator override), or `None` when
+/// unset.
+fn configured_vision_model() -> Option<(String, String)> {
+    configured_vision_model_from(crate::models::vision_model())
+}
+
 impl MediaServer {
-    /// Resolve the best available vision model.
-    /// Picks the first OpenRouter vision model the registry reports.
-    /// Returns (model_name, label) or None if no vision provider is configured.
+    /// Resolve the vision model for the tagging pipelines.
     ///
-    /// The returned name is the registry's own — the former hardcoded
-    /// fallback ("OpenRouter/qwen/qwen-2.5-vl-72b-instruct") was a frozen
-    /// literal that rotted out of the catalog and, before the fail-closed
-    /// resolver, silently rerouted every vision call to a text model.
+    /// The env-configured model (settings default or operator override,
+    /// injected as `HKASK_MEDIA_VISION_MODEL`) wins — deterministic. The
+    /// registry heuristic below is the fallback for direct-CLI runs without
+    /// injected env: it picks the first OpenRouter vision model the registry
+    /// reports, which is whatever the catalog lists first — the live gap
+    /// 2026-09-04 resolved to a reasoning-mandatory model that rejected
+    /// every non-reasoning tagging call ("Reasoning is mandatory for this
+    /// endpoint and cannot be disabled").
     pub(crate) async fn resolve_vision_model(&self) -> Option<(String, String)> {
+        if let Some(configured) = configured_vision_model() {
+            return Some(configured);
+        }
+
         let models = match self.vision_port.list_vision_models().await {
             Ok(models) => models,
             Err(e) => {
@@ -165,14 +197,7 @@ impl MediaServer {
             // standalone MediaRouter is media-only and returns no chat models).
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
             if prefix.eq_ignore_ascii_case("openrouter") {
-                // The label (the model part after the provider prefix) is for
-                // logs and tool results.
-                let label = model
-                    .prefixed_name
-                    .split_once('/')
-                    .map(|(_, rest)| rest.to_string())
-                    .unwrap_or_else(|| model.prefixed_name.clone());
-                return Some((model.prefixed_name.clone(), label));
+                return Some(split_model_label(model.prefixed_name.clone()));
             }
         }
 
@@ -481,5 +506,31 @@ impl MediaServer {
         } else {
             serde_json::Value::Object(fields)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The configured model wins over the registry heuristic and splits
+    /// into (prefixed, label) — the label feeds logs and tool results.
+    /// Pins the deterministic-resolution fix: before it, the registry
+    /// heuristic picked the catalog's first vision model, which was
+    /// reasoning-mandatory and rejected every tagging call.
+    #[test]
+    fn configured_vision_model_splits_prefix_and_label() {
+        let (name, label) =
+            configured_vision_model_from(Some("OpenRouter/openai/gpt-4o-mini".to_string()))
+                .expect("configured model resolves");
+        assert_eq!(name, "OpenRouter/openai/gpt-4o-mini");
+        assert_eq!(label, "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn configured_vision_model_none_when_unset_or_blank() {
+        assert!(configured_vision_model_from(None).is_none());
+        assert!(configured_vision_model_from(Some(String::new())).is_none());
+        assert!(configured_vision_model_from(Some("  ".to_string())).is_none());
     }
 }

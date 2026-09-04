@@ -525,11 +525,14 @@ pub struct KaskTrainingSettings {
 /// Media MCP server configuration.
 ///
 /// Model overrides for the media server's TTS, STT, vision, image
-/// generation, and video generation pipelines. When empty, the media
-/// server falls back to `hkask_inference::model_constants` defaults
-/// (resolved at startup via `std::env::var` → `DEFAULT_*_MODEL`). All
-/// are provider-prefixed strings.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+/// generation, and video generation pipelines. STT and vision carry
+/// settings-layer defaults (`hkask_inference::model_constants::
+/// DEFAULT_MEDIA_*`) — the media server has no in-server fallback, so
+/// without an injected value those pipelines fail visibly (NotConfigured).
+/// An explicitly empty string in settings.json clears a default: the env
+/// var is not injected and the pipeline fails closed. All values are
+/// provider-prefixed strings.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMediaSettings {
     /// TTS model override (env `HKASK_MEDIA_TTS_MODEL`).
     pub tts_model: String,
@@ -541,6 +544,20 @@ pub struct KaskMediaSettings {
     pub image_gen_model: String,
     /// Video generation model override (env `HKASK_MEDIA_VIDEO_MODEL`).
     pub video_model: String,
+}
+
+impl Default for KaskMediaSettings {
+    fn default() -> Self {
+        Self {
+            // TTS/image/video generation stay operator-set (no ratified
+            // default); empty = not configured, the tools fail visibly.
+            tts_model: String::new(),
+            stt_model: hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL.to_string(),
+            vision_model: hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL.to_string(),
+            image_gen_model: String::new(),
+            video_model: String::new(),
+        }
+    }
 }
 
 /// Kask-wide model configuration.
@@ -987,6 +1004,31 @@ impl From<KaskSettingsContent> for KaskSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The media server has no in-server model fallback — the settings
+    // default is the only thing that feeds HKASK_MEDIA_STT_MODEL /
+    // HKASK_MEDIA_VISION_MODEL into the server child. Before 2026-09-04 both
+    // fields defaulted to empty and the transcribe + gallery-analysis
+    // pipelines shipped dead (NotConfigured on every call). This test pins
+    // the wiring: STT and vision carry the model_constants defaults;
+    // generation models stay operator-set.
+    #[test]
+    fn media_settings_default_carries_stt_and_vision_models() {
+        let default = KaskMediaSettings::default();
+        assert_eq!(
+            default.stt_model,
+            hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL,
+            "default stt_model must carry the settings-layer constant"
+        );
+        assert_eq!(
+            default.vision_model,
+            hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL,
+            "default vision_model must carry the settings-layer constant"
+        );
+        assert!(default.tts_model.is_empty());
+        assert!(default.image_gen_model.is_empty());
+        assert!(default.video_model.is_empty());
+    }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user
     // setting `embedding_dim: 0` in their settings file would construct a

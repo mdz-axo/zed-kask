@@ -192,7 +192,12 @@ impl MediaServer {
         }): Parameters<TranscribeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
-            validate_tool_url_with_dns(&audio_url).await?;
+            // Local recordings and fetched media are the primary transcript
+            // sources; the SSRF validator is for network URLs (see
+            // `is_local_media_path`).
+            if !crate::is_local_media_path(&audio_url) {
+                validate_tool_url_with_dns(&audio_url).await?;
+            }
 
             let media_params = hkask_types::MediaGenerateParams {
                 audio_url: Some(audio_url.clone()),
@@ -373,7 +378,9 @@ impl MediaServer {
         }): Parameters<AudioTrimRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_trim", async {
-            validate_tool_url_with_dns(&audio_url).await?;
+            if !crate::is_local_media_path(&audio_url) {
+                validate_tool_url_with_dns(&audio_url).await?;
+            }
             let ffmpeg = self.require_ffmpeg()?;
             if start_sec < 0.0 || end_sec <= start_sec {
                 return Err(McpToolError::invalid_argument(
@@ -412,7 +419,9 @@ impl MediaServer {
                 ));
             }
             for url in &audio_urls {
-                validate_tool_url_with_dns(url).await?;
+                if !crate::is_local_media_path(url) {
+                    validate_tool_url_with_dns(url).await?;
+                }
             }
             let ffmpeg = self.require_ffmpeg()?;
             let output = ffmpeg

@@ -238,16 +238,12 @@ impl DeepInfraMediaProvider {
         language: Option<&str>,
         model: &str,
     ) -> Result<Value, InferenceError> {
-        // Download the audio file from the URL.
-        let audio_bytes = self
-            .client
-            .get(audio_url)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("audio download failed: {e}")))?
-            .bytes()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("audio read failed: {e}")))?;
+        // Shared helper: HTTP(S) download OR direct local-file read —
+        // recordings and fetched media reach the STT path as local paths
+        // (the OpenRouter STT path already serves them via the same helper;
+        // a raw client.get here silently broke local-path transcription on
+        // this provider).
+        let audio_bytes = download_audio_bytes(&self.client, audio_url).await?;
 
         let format = detect_audio_format(audio_url);
         let filename = format!("audio.{format}");

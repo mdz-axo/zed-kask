@@ -1426,7 +1426,7 @@ impl CuratorServer {
     /// confidence decay (lowers weight, never deletes) and confidence-based
     /// consolidation (deletes low-confidence).
     #[tool(
-        description = "Prune curator h_mems older than max_age_days. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
+        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:/chat:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
     )]
     pub async fn curator_memory_prune(
         &self,
@@ -1442,14 +1442,32 @@ impl CuratorServer {
                 ));
             }
 
-            let outcome = memory
-                .prune_by_age(req.max_age_days, req.spare_recalled_within_days)
-                .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?;
+            let all_layers = req.all_layers.unwrap_or(false);
+            // Fail-closed scope: the default valve touches turn storage
+            // only — knowledge-layer rows (rulings, verified status,
+            // lessons) are destroyed only by explicit opt-in.
+            let outcome = if all_layers {
+                memory
+                    .prune_by_age(req.max_age_days, req.spare_recalled_within_days)
+                    .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?
+            } else {
+                memory
+                    .prune_by_age_in_prefixes(
+                        &[
+                            thread_turns::SHARED_TURN_PREFIX,
+                            thread_turns::RETIRED_TURN_PREFIX,
+                        ],
+                        req.max_age_days,
+                        req.spare_recalled_within_days,
+                    )
+                    .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?
+            };
 
             RegulationSpan::Curation.emit("memory_pruned");
 
             Ok(json!({
                 "pruned": true,
+                "all_layers": all_layers,
                 "max_age_days": req.max_age_days,
                 "spare_recalled_within_days": req.spare_recalled_within_days,
                 "candidates": outcome.candidates,
@@ -1544,6 +1562,7 @@ impl CuratorServer {
 
             let is_excluded = |entity: &str| {
                 entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
+                    || entity.starts_with(thread_turns::RETIRED_TURN_PREFIX)
                     || entity.starts_with(distillation::WATERMARK_PREFIX)
             };
 

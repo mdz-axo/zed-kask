@@ -110,6 +110,27 @@ pub mod models {
     }
 }
 
+/// Whether a tool input names a local media file rather than a network URL.
+///
+/// The SSRF URL validator rejects anything without an `http(s)` scheme —
+/// including the local files this server's own tools produce (`video_fetch`
+/// downloads, `audio_capture` recordings, gallery asset paths). Those are
+/// the primary inputs of the local analysis pipelines, and the downstream
+/// layers (ffmpeg, `download_audio_bytes`, `load_image_as_png_base64`)
+/// read local paths directly, so an existing local file is a valid input
+/// that simply is not a URL. Anything that is not an existing local file
+/// falls through to URL validation, which fails closed on malformed input.
+pub(crate) fn is_local_media_path(input: &str) -> bool {
+    if let Some(path) = input.strip_prefix("file://") {
+        return std::path::Path::new(path).exists();
+    }
+    if input.contains("://") {
+        // A network URL (http, https, or any other scheme) — not a local path.
+        return false;
+    }
+    std::path::Path::new(input).exists()
+}
+
 /// Lock-free snapshot of gallery state — safe to hold across .await points.
 struct GalleryAccess {
     gallery_id: String,
@@ -2553,6 +2574,41 @@ mod tool_behavior_tests {
             matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
             "gallery-not-initialized is a caller-fixable error, got {:?}",
             error.kind
+        );
+    }
+
+    /// `is_local_media_path` gates the SSRF URL validation: local files this
+    /// server's own tools produce must reach the ffmpeg/provider layers,
+    /// while anything URL-shaped or nonexistent still fails closed through
+    /// the validator. Pins the local-analysis seam fix (2026-09-04):
+    /// `transcribe_bundle` on a `video_fetch` download previously died at
+    /// "No scheme separator '://' found".
+    #[test]
+    fn is_local_media_path_accepts_existing_files_only() {
+        let existing = std::env::temp_dir().join("is-local-media-path-test.txt");
+        std::fs::write(&existing, b"fixture").expect("fixture write");
+        let existing_str = existing.to_str().expect("utf-8 path");
+
+        assert!(is_local_media_path(existing_str), "existing file path");
+        assert!(
+            is_local_media_path(&format!("file://{existing_str}")),
+            "file:// URI over an existing file"
+        );
+        assert!(
+            !is_local_media_path("/nonexistent/path/audio.wav"),
+            "missing local path falls through to URL validation"
+        );
+        assert!(
+            !is_local_media_path("file:///nonexistent/path/audio.wav"),
+            "missing file:// target falls through to URL validation"
+        );
+        assert!(
+            !is_local_media_path("https://example.com/audio.wav"),
+            "network URLs are never local paths"
+        );
+        assert!(
+            !is_local_media_path("not a url at all"),
+            "free text is not a local path"
         );
     }
 }

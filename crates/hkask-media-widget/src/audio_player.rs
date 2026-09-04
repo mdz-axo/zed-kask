@@ -75,6 +75,49 @@ impl AudioPlayer {
         Ok(())
     }
 
+    /// Load audio from raw bytes WITHOUT starting playback — the widget's
+    /// no-unsolicited-audio policy: audio assets load paused and the
+    /// operator presses play. Stops any current playback.
+    pub fn load_bytes_paused(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        let mut inner = self.inner.lock();
+
+        // Lazily initialize the audio output device.
+        if inner.device_sink.is_none() {
+            let mut device_sink = DeviceSinkBuilder::open_default_sink()
+                .map_err(|error| anyhow::anyhow!("failed to open audio output stream: {error}"))?;
+            device_sink.log_on_drop(false);
+            inner.device_sink = Some(device_sink);
+        }
+
+        let device_sink = inner
+            .device_sink
+            .as_ref()
+            .context("audio device not initialized")?;
+        let mixer = device_sink.mixer();
+
+        let cursor = Cursor::new(bytes);
+        let source = Decoder::try_from(cursor)
+            .map_err(|error| anyhow::anyhow!("failed to decode audio: {error}"))?;
+
+        let duration = source.total_duration().unwrap_or(Duration::ZERO);
+
+        // Pause BEFORE appending so the queued source never sounds: rodio
+        // starts a newly appended source immediately, so an append-then-pause
+        // would emit a sub-frame blip — exactly the unsolicited audio this
+        // method exists to prevent.
+        let player = rodio::Player::connect_new(mixer);
+        player.set_volume(inner.volume);
+        player.pause();
+        player.append(source);
+
+        inner.player = Some(player);
+        inner.duration = duration;
+        inner.is_playing = false;
+        drop(inner);
+
+        Ok(())
+    }
+
     pub fn pause(&self) {
         let inner = self.inner.lock();
         if let Some(player) = &inner.player {

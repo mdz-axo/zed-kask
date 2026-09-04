@@ -28,6 +28,12 @@ use hkask_storage::HMem;
 /// The shared-copy turn prefix — every turn, the complete set.
 pub(crate) const SHARED_TURN_PREFIX: &str = "curator:thread:";
 
+/// The retired curator-perspective turn prefix. The single-copy ruling
+/// (2026-09-04) stopped new writes under it, but legacy rows persist —
+/// surfaces that scope or exclude turn storage must treat both prefixes
+/// as turn storage.
+pub(crate) const RETIRED_TURN_PREFIX: &str = "chat:thread:";
+
 /// One thread's turns as extraction presents them: the shared copies
 /// (legacy whole-turn rows and chunk rows alike).
 pub(crate) fn thread_turns(

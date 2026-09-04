@@ -218,6 +218,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
             "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
             "HKASK_MEMORY_FORGETTING_DAYS",
+            // Embedding model — read by `embed_for_semantic_recall` and the
+            // semantic-recall tools (`hkask_mcp_curator.rs`) via
+            // `hkask_inference::model_constants::embedding_model()`. Without
+            // this entry the per-server filter drops it and every semantic
+            // recall degrades to exact-entity lookup with "no embedding
+            // model configured" — the exact gap observed live 2026-09-04
+            // (the allowlist must align with actual env-var reads).
+            "HKASK_EMBEDDING_MODEL",
         ]),
     },
     BuiltinMcpServer {
@@ -376,6 +384,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SWARM_EVENTS_PATH",
             "HKASK_SWARM_BODY_RETENTION_HOURS",
             "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
+            // Embedding model — read by `local_knowledge.rs`
+            // (`ingest_turn` / `recall_turns`) via
+            // `hkask_inference::model_constants::embedding_model()`. Without
+            // this entry the per-server filter drops it and swarm KNN recall
+            // fails with "no embedding model configured".
+            "HKASK_EMBEDDING_MODEL",
         ]),
     },
     BuiltinMcpServer {
@@ -458,6 +472,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_IMAGE_GEN_MODEL",
             "HKASK_MEDIA_VIDEO_MODEL",
+            // Embedding model — read by `embed_text` via
+            // `hkask_inference::model_constants::embedding_model()`. Without
+            // this entry the per-server filter drops it and media embedding
+            // fails with "no embedding model configured".
+            "HKASK_EMBEDDING_MODEL",
         ]),
     },
 ];
@@ -1199,6 +1218,16 @@ mod tests {
             !s.config_env.unwrap().is_empty(),
             "curator config_env should not be empty — the server reads SMTP host/port \
              and curator settings from it"
+        );
+        // The embedding model must be allowlisted: `embed_for_semantic_recall`
+        // and the semantic-recall tools read HKASK_EMBEDDING_MODEL via the env
+        // accessor with no fallback — an unallowlisted entry is silently
+        // dropped by the per-server filter and every semantic recall degrades
+        // (the live gap observed 2026-09-04).
+        let s = server_by_id("curator");
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_EMBEDDING_MODEL"),
+            "curator must receive HKASK_EMBEDDING_MODEL for semantic recall"
         );
     }
 

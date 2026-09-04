@@ -255,6 +255,12 @@ pub struct MemoryPruneRequest {
     /// recalled recently stays even if it is old — the decay clock was reset,
     /// so it is still active in the recall path.
     pub spare_recalled_within_days: Option<i64>,
+    /// Prune ALL layers including knowledge-layer rows (operator rulings,
+    /// verified status, reified lessons). Opt-in: the default scope is turn
+    /// storage only — the episodic forgetting valve without the power to
+    /// destroy durable knowledge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_layers: Option<bool>,
 }
 
 /// Deduplicate h_mems by normalized string value.

@@ -54,3 +54,28 @@ pub fn rerank_model() -> Option<String> {
         .ok()
         .filter(|m| !m.trim().is_empty())
 }
+
+// ── Media pipeline defaults ───────────────────────────────────────────────
+//
+// The media server has no in-server model fallback (its accessors return
+// `None` when the env var is unset and callers fail visibly). These
+// constants are the SETTINGS layer's defaults: `KaskMediaSettings::default()`
+// carries them, settings.json overrides them, and `mcp_env()` injects the
+// resolved value as `HKASK_MEDIA_*_MODEL` into the media server child
+// (operator ruling 2026-09-04 — settings layers carry the code defaults).
+
+/// Default STT model for the transcribe pipeline (env `HKASK_MEDIA_STT_MODEL`
+/// via `KaskMediaSettings::stt_model`). OpenRouter's transcriptions endpoint
+/// serves this model with word-level timestamps — the educt layer system
+/// anchors to word indices, so a segments-only STT response cannot back a
+/// reel. Verified 2026-09-04: a 62-minute talk transcribes in a single call
+/// (~$0.04) with 8.5K word timings.
+pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-turbo";
+
+/// Default vision model for gallery analysis and image description (env
+/// `HKASK_MEDIA_VISION_MODEL` via `KaskMediaSettings::vision_model`). The
+/// tagging pipelines send non-reasoning requests; reasoning-mandatory models
+/// reject those ("Reasoning is mandatory for this endpoint and cannot be
+/// disabled"). This model is non-reasoning, vision-capable, and cheap — the
+/// tagging workload's shape.
+pub const DEFAULT_MEDIA_VISION_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";

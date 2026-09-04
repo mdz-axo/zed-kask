@@ -740,6 +740,12 @@ impl MemoryStore {
     /// Prune h_mems older than `max_age_days`, optionally sparing h_mems
     /// recalled within the last `spare_recalled_within_days` days.
     ///
+    /// Full-store scope — every entity is a candidate, including
+    /// knowledge-layer rows (operator rulings, verified status, reified
+    /// lessons). The curator's forgetting valve uses
+    /// [`prune_by_age_in_prefixes`] instead, so durable knowledge survives
+    /// episodic turnover.
+    ///
     /// Returns the count of deleted h_mems. Failures on individual deletes
     /// are counted but do not abort the batch — a single stale row must not
     /// block pruning of the rest.
@@ -750,10 +756,47 @@ impl MemoryStore {
     ) -> Result<PruneOutcome, MemoryStoreError> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
         let candidates = self.h_mem_store.query_older_than(&cutoff, 100_000)?;
-
         let spare_cutoff = spare_recalled_within_days
             .map(|days| chrono::Utc::now() - chrono::Duration::days(days));
+        Ok(self.prune_candidates(max_age_days, candidates, spare_cutoff))
+    }
 
+    /// Prune aged h_mems scoped to entity prefixes — the safe default for
+    /// the curator's forgetting valve. Turn storage (the `curator:thread:`
+    /// and `chat:thread:` prefixes) is episodic and prunable by age;
+    /// knowledge-layer rows outside the prefixes outlive episodic turnover
+    /// unless the caller explicitly opts into full-store [`prune_by_age`].
+    pub fn prune_by_age_in_prefixes(
+        &self,
+        prefixes: &[&str],
+        max_age_days: i64,
+        spare_recalled_within_days: Option<i64>,
+    ) -> Result<PruneOutcome, MemoryStoreError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
+        let candidates = self
+            .h_mem_store
+            .query_older_than(&cutoff, 100_000)?
+            .into_iter()
+            .filter(|h_mem| {
+                prefixes
+                    .iter()
+                    .any(|prefix| h_mem.entity.starts_with(prefix))
+            })
+            .collect();
+        let spare_cutoff = spare_recalled_within_days
+            .map(|days| chrono::Utc::now() - chrono::Duration::days(days));
+        Ok(self.prune_candidates(max_age_days, candidates, spare_cutoff))
+    }
+
+    /// Delete each prune candidate, sparing ones recalled more recently
+    /// than `spare_cutoff`. Individual delete failures are counted, not
+    /// propagated — one stuck row must not block pruning of the rest.
+    fn prune_candidates(
+        &self,
+        max_age_days: i64,
+        candidates: Vec<HMem>,
+        spare_cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> PruneOutcome {
         let mut deleted_count = 0usize;
         let mut spared_count = 0usize;
         let mut failed_count = 0usize;
@@ -790,12 +833,12 @@ impl MemoryStore {
             "Age-based prune complete"
         );
 
-        Ok(PruneOutcome {
+        PruneOutcome {
             candidates: candidates.len(),
             deleted_count,
             spared_count,
             failed_count,
-        })
+        }
     }
 
     // ── Near-duplicate value dedup ─────────────────────────────────
@@ -1021,6 +1064,65 @@ mod tests {
             .query_by_entity("company:AAPL")
             .expect("query");
         assert!(old_remaining.is_empty(), "old h_mem was pruned");
+    }
+
+    #[test]
+    fn prune_by_age_in_prefixes_spares_knowledge_rows() {
+        // The forgetting valve is turn-scoped by default: aged episodic
+        // rows are deleted while knowledge-layer rows (rulings, verified
+        // status, lessons) survive regardless of age. Pinning this guards
+        // the valve against silently widening to full-store.
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        let mut aged_turn = hkask_storage::HMem::new(
+            "curator:thread:prune-scope-test",
+            "turn",
+            serde_json::Value::String("aged turn".to_string()),
+            webid,
+        );
+        aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store
+            .h_mem_store
+            .insert(&aged_turn)
+            .expect("insert aged turn");
+
+        let mut aged_ruling = hkask_storage::HMem::new(
+            "zed-kask/provider_budget_blocks",
+            "operator_ruling",
+            serde_json::Value::String("do not touch the provider files".to_string()),
+            webid,
+        );
+        aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store
+            .h_mem_store
+            .insert(&aged_ruling)
+            .expect("insert aged ruling");
+
+        let outcome = store
+            .prune_by_age_in_prefixes(&["curator:thread:", "chat:thread:"], 50, None)
+            .expect("scoped prune succeeds");
+        assert_eq!(outcome.candidates, 1, "only the turn row is in scope");
+        assert_eq!(outcome.deleted_count, 1);
+
+        let ruling = store
+            .h_mem_store
+            .query_by_entity("zed-kask/provider_budget_blocks")
+            .expect("query ruling");
+        assert_eq!(ruling.len(), 1, "knowledge row survives the scoped valve");
+
+        let turn = store
+            .h_mem_store
+            .query_by_entity("curator:thread:prune-scope-test")
+            .expect("query turn");
+        assert!(turn.is_empty(), "aged turn row was pruned");
+
+        // Explicit full-store opt-in does reach knowledge rows.
+        let outcome = store.prune_by_age(50, None).expect("full prune succeeds");
+        assert_eq!(
+            outcome.deleted_count, 1,
+            "the aged knowledge row is deleted"
+        );
     }
 
     #[test]

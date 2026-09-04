@@ -300,7 +300,9 @@ impl MediaServer {
         }): Parameters<VideoClipRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_clip", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
 
             if start_sec < 0.0 || end_sec <= 0.0 {
                 return Err(McpToolError::invalid_argument(
@@ -358,7 +360,9 @@ impl MediaServer {
         }): Parameters<VideoToGifRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_to_gif", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
 
             self.require_ffmpeg()?;
 
@@ -476,7 +480,9 @@ impl MediaServer {
         }): Parameters<VideoAddCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_add_caption", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
 
             self.require_ffmpeg()?;
 
@@ -530,7 +536,9 @@ impl MediaServer {
         }): Parameters<VideoRemixRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_remix", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
 
             if start_sec >= end_sec {
                 return Err(McpToolError::invalid_argument(
@@ -671,7 +679,9 @@ impl MediaServer {
             }
 
             for url in &video_urls {
-                validate_tool_url_with_dns(url).await?;
+                if !crate::is_local_media_path(url) {
+                    validate_tool_url_with_dns(url).await?;
+                }
             }
 
             self.require_ffmpeg()?;
@@ -707,7 +717,9 @@ impl MediaServer {
         Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_caption", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
 
             let style_str = style.as_deref().unwrap_or("descriptive");
             self.require_ffmpeg()?;
@@ -789,7 +801,9 @@ impl MediaServer {
         }): Parameters<VideoExtractFramesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_extract_frames", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             self.require_ffmpeg()?;
 
             let frames = self
@@ -960,7 +974,9 @@ impl MediaServer {
         Parameters(VideoInfoRequest { video_url }): Parameters<VideoInfoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_info", async {
-            validate_tool_url_with_dns(&video_url).await?;
+            if !crate::is_local_media_path(&video_url) {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             let ffmpeg = self.require_ffmpeg()?;
             let info = ffmpeg.probe(&video_url).await.map_err(map_media_error)?;
             serde_json::to_value(&info)

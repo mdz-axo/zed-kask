@@ -173,12 +173,19 @@ pub(crate) fn emit_corpus_embedding_env(
     // default. Resolved once by `effective_embedding_model` so the
     // emission cannot drift from the documented precedence. See its
     // doc comment and the `mcp_env_models_embedding_model_overrides_corpus` test.
-    if effective_embedding_model != corpus_default.embedding_model {
-        env.insert(
-            "HKASK_EMBEDDING_MODEL".to_string(),
-            effective_embedding_model.to_string(),
-        );
-    }
+    //
+    // Emitted UNCONDITIONALLY: the former default-equality suppression
+    // assumed "MCP servers have their own fallback defaults for unset env
+    // vars" — they do not (every consumer of HKASK_EMBEDDING_MODEL fails
+    // visibly on unset env), and once the corpus default became a real
+    // model (operator ruling 2026-09-04: defaults in code), an explicit
+    // setting equal to the default was silently suppressed — the exact
+    // live gap observed 2026-09-04. The value is always meaningful; emit
+    // it always.
+    env.insert(
+        "HKASK_EMBEDDING_MODEL".to_string(),
+        effective_embedding_model.to_string(),
+    );
 }
 
 pub(crate) fn emit_corpus_ocr_env(
@@ -512,7 +519,11 @@ mod tests {
     // `HKASK_SCENARIOS_DATA`, `HKASK_PREDICTION_MARKETS_DATA`) are kask-wide
     // critical paths resolved from `data_dir` / the artifacts dir per the
     // Standardized Artifact Storage layout — they are NOT suppressed for
-    // default settings. See the `mcp_env_always_emits_*` tests for those.
+    // default settings. Model defaults (`HKASK_EMBEDDING_MODEL`,
+    // `HKASK_MEDIA_STT_MODEL`, `HKASK_MEDIA_VISION_MODEL`) are also always
+    // emitted: their consuming servers have no fallback for unset env, so
+    // suppressing a default-equal value starves the pipeline. See the
+    // `mcp_env_always_emits_*` tests for those.
     #[test]
     fn mcp_env_emits_nothing_for_default_settings() {
         let settings = KaskSettings::default();
@@ -531,9 +542,42 @@ mod tests {
         // HKASK_TEMPLATE_ROOT is now always emitted (resolved from data_dir),
         // so it's no longer suppressed for default settings — see
         // `mcp_env_always_emits_template_root`.
+        //
+        // HKASK_EMBEDDING_MODEL is also always emitted: servers have no
+        // fallback for unset env (they fail visibly), so suppressing a
+        // default-equal value starved them (live gap 2026-09-04). The
+        // default itself is a real model — emit it.
         assert!(
-            !env.contains_key("HKASK_EMBEDDING_MODEL"),
-            "default embedding_model must not be emitted — the `is_empty()` check was a drift bug; the default is non-empty"
+            env.contains_key("HKASK_EMBEDDING_MODEL"),
+            "the embedding model must always be emitted — servers have no fallback for unset env"
+        );
+        assert_eq!(
+            env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
+            Some("ollama/qwen3-embedding:0.6b"),
+            "default settings emit the code-default embedding model"
+        );
+        // Media model defaults are emitted for the same reason as the
+        // embedding model: the media server has no fallback for unset env,
+        // and suppressing a default-equal value starved the STT and vision
+        // pipelines (live gap 2026-09-04 — transcription and gallery
+        // analysis both failed NotConfigured on every call).
+        assert!(
+            env.contains_key("HKASK_MEDIA_STT_MODEL"),
+            "default stt_model must be emitted — the media server has no fallback"
+        );
+        assert_eq!(
+            env.get("HKASK_MEDIA_STT_MODEL").map(String::as_str),
+            Some(hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL),
+            "default settings emit the code-default STT model"
+        );
+        assert!(
+            env.contains_key("HKASK_MEDIA_VISION_MODEL"),
+            "default vision_model must be emitted — the media server has no fallback"
+        );
+        assert_eq!(
+            env.get("HKASK_MEDIA_VISION_MODEL").map(String::as_str),
+            Some(hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL),
+            "default settings emit the code-default vision model"
         );
         assert!(
             !env.contains_key("HKASK_CONDENSE_SALIENCY_WINDOW"),
