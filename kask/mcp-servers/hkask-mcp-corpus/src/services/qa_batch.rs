@@ -17,7 +17,9 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferencePort;
 use serde_json::json;
 
-use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
+use crate::batch::{
+    ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
+};
 use crate::helpers::{map_corpus_io_error, read_jsonl};
 use crate::services::qa_pipeline;
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
@@ -89,8 +91,8 @@ impl QaBatchService {
             }
         }
 
-        // Concurrent processing with configurable semaphore
-        let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
+        // Concurrent processing with the adaptive limiter (AIMD ramp — see batch.rs)
+        let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
 
         // Output file writer (with incremental flush every 10 completions)
@@ -107,14 +109,14 @@ impl QaBatchService {
         let mut handles = Vec::with_capacity(total);
         for prompt in prompts_vec {
             let router = Arc::clone(&router);
-            let sem = Arc::clone(&sem);
+            let limiter = limiter.clone();
             let selected_model = selected_model.clone();
             let output_writer = Arc::clone(&output_writer);
             let write_count = Arc::clone(&write_count);
             let failed_count = Arc::clone(&failed_count);
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await;
+                let slot = limiter.acquire().await;
 
                 let params = qa_pipeline::qa_llm_parameters();
                 let levels = prompt
@@ -143,8 +145,12 @@ impl QaBatchService {
                 )
                 .await
                 {
-                    Ok(resp) => resp,
+                    Ok(resp) => {
+                        slot.report_success();
+                        resp
+                    }
                     Err(e) => {
+                        slot.report_failure();
                         let result = json!({"chunk_id": prompt.chunk_id, "error": format!("LLM failed after {} retries: {}", MAX_RETRIES, e)});
                         failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         write_qa_result(&result, &output_writer, &write_count);

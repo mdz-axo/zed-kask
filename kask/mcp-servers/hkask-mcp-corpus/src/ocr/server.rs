@@ -28,6 +28,13 @@ impl PipelineExecutor {
     pub fn llm_breaker_open(&self) -> bool {
         self.llm_ocr.breaker_open()
     }
+
+    /// Adaptive LLM concurrency allowance at call time — the ramp level the
+    /// run reached, stamped into tool results so the operator can watch the
+    /// AIMD ramp (floor → ceiling on success, halved on failure) across runs.
+    pub fn llm_adaptive_concurrency(&self) -> usize {
+        self.llm_ocr.adaptive_concurrency()
+    }
 }
 
 #[async_trait]

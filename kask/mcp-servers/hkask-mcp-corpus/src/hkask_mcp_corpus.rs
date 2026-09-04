@@ -525,6 +525,66 @@ mod smoke {
         );
     }
 
+    /// `chunk_directory` must surface sources that yield zero passages in
+    /// `zero_chunk_files` — never silently drop them. The v2 corpus run
+    /// lost 13 of 133 sources this way while total_documents reported all
+    /// of them; the coverage audit caught it post-hoc, but the tool result
+    /// itself must carry the loss so the caller can halt on it.
+    #[tokio::test]
+    async fn chunk_directory_surfaces_zero_chunk_files() {
+        use crate::tools::document::ChunkRequest;
+
+        let dir = std::path::Path::new("target/test-chunk-zero");
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).expect("create scratch src dir");
+        std::fs::write(
+            src.join("real.txt"),
+            "This is a real source document. ".repeat(50),
+        )
+        .expect("write real source");
+        std::fs::write(src.join("tiny.txt"), "near-empty").expect("write tiny source");
+
+        let server = make_server();
+        let response = server
+            .corpus_chunk(Parameters(ChunkRequest {
+                text: None,
+                path: None,
+                input_dir: Some(src.to_string_lossy().into_owned()),
+                output: Some(dir.join("out.jsonl").to_string_lossy().into_owned()),
+                entity_ref_prefix: "test-zero".into(),
+                max_tokens: Some(512),
+                overlap_tokens: Some(64),
+                strip_gutenberg: None,
+                multi_tier: Some(false),
+                coarse_max_tokens: None,
+                medium_max_tokens: None,
+                fine_max_tokens: None,
+                index: false,
+                target_pages: None,
+            }))
+            .await
+            .expect("directory chunk call succeeds");
+
+        let content =
+            hkask_types::tool_response::parse_tool_response(&response).expect("parse response");
+        let zero = content
+            .get("zero_chunk_files")
+            .expect("zero_chunk_files present in result");
+        assert_eq!(
+            zero.as_array().map(Vec::len),
+            Some(1),
+            "the near-empty source must be surfaced in zero_chunk_files, got: {zero}"
+        );
+        assert!(
+            content
+                .get("total_chunks")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                > 0,
+            "the real source must produce chunks"
+        );
+    }
+
     /// The build_prompts KNN scaffold honors the caller's entity-ref prefix
     /// (the 2026-09-03 fix): embeddings stored under "corpus:custom:" reach
     /// the scaffold only when prefix="corpus:custom:" is passed. Pre-fix the

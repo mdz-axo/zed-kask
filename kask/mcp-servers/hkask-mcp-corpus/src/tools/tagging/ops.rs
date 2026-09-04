@@ -5,7 +5,9 @@
 //! and expertise level. Uses LLM-based extraction via a Jinja2 template.
 //! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 
-use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
+use crate::batch::{
+    ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
+};
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
     extract_json_from_response, json, normalize_concept, read_jsonl_stream,
@@ -238,7 +240,7 @@ impl CorpusServer {
                 }));
             }
 
-            let sem = Arc::new(tokio::sync::Semaphore::new(req.concurrency.max(1)));
+            let limiter = AdaptiveLimiter::new(req.concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
             let router = Arc::clone(&self.inference_router);
             let model_override = classifier_model();
             let batch_size = req.tag_batch_size.max(1);
@@ -282,7 +284,7 @@ impl CorpusServer {
 
             for (batch_idx, (start_idx, batch_chunks)) in batches.into_iter().enumerate() {
                 let router = Arc::clone(&router);
-                let sem = Arc::clone(&sem);
+                let limiter = limiter.clone();
                 let results = Arc::clone(&results);
                 let completed = Arc::clone(&completed);
                 let failed = Arc::clone(&failed);
@@ -290,7 +292,7 @@ impl CorpusServer {
                 let batch_len = batch_chunks.len();
 
                 let handle = tokio::spawn(async move {
-                    let _permit = sem.acquire().await;
+                    let slot = limiter.acquire().await;
 
                     // Render the batch tagging prompt from the Jinja2 template.
                     // The template handles the system prompt, passage formatting,
@@ -355,8 +357,12 @@ impl CorpusServer {
                     )
                     .await
                     {
-                        Ok(resp) => Some(resp),
+                        Ok(resp) => {
+                            slot.report_success();
+                            Some(resp)
+                        }
                         Err(e) => {
+                            slot.report_failure();
                             // An inference failure must not silently read as
                             // "chunks tagged with fallback" — warn so the
                             // operator can distinguish the two.

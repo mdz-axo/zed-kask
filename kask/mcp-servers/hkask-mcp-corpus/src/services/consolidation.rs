@@ -12,6 +12,7 @@ use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
+use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter};
 use crate::tools::semantic::configured_qa_model;
 use crate::{normalize_concept, render_docproc_template};
 
@@ -111,14 +112,14 @@ impl ConsolidationService {
             (0..all_clusters.len()).map(|_| None).collect(),
         ));
 
-        let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
+        let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
         let model_override = configured_qa_model(None);
 
         let mut handles = Vec::with_capacity(multi_indices.len());
         for &ci in &multi_indices {
             let router = Arc::clone(&router);
-            let sem = Arc::clone(&sem);
+            let limiter = limiter.clone();
             let results = Arc::clone(&results);
             let model_override = model_override.clone();
             let cluster = &all_clusters[ci];
@@ -136,7 +137,7 @@ impl ConsolidationService {
                 .collect();
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await;
+                let slot = limiter.acquire().await;
 
                 let mut passages = String::new();
                 for (i, text) in texts.iter().enumerate() {
@@ -180,11 +181,13 @@ impl ConsolidationService {
                     .await
                 {
                     Ok(response) => {
+                        slot.report_success();
                         let text = response.text.trim().to_string();
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some(text);
                     }
                     Err(_) => {
+                        slot.report_failure();
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some("__FALLBACK__".to_string());
                     }

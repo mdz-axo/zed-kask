@@ -1320,13 +1320,13 @@ impl KanbanServer {
             },
             Err(_) => 50,
         };
-        let credits = 10_u32.min(ceiling);
-
         let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
             McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
         })?;
+        // No funding gesture — local agents run on the operator's own
+        // substrate. The per-dispatch ceiling alone bounds the spawn.
         let result = runtime
-            .delegate(agent, &task_text, credits, ceiling)
+            .delegate(agent, &task_text, None, ceiling)
             .await
             .map_err(|e| {
                 hkask_mcp_server::server::McpToolError::unavailable(format!(
@@ -1842,11 +1842,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string_lossy()
                         .to_string()
                     });
-                let local_runtime =
-                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
-
                 // Local agent registry — same dir resolution as hkask-mcp-swarm
                 // (relative paths resolve under the hKask data dir, not CWD).
+                // Resolved BEFORE the runtime so the per-agent stats store
+                // (shared with hkask-mcp-swarm's recording/surfacing) loads
+                // from the same dir.
                 let local_agents_dir = std::env::var("HKASK_LOCAL_AGENTS_DIR")
                     .ok()
                     .filter(|s| !s.trim().is_empty())
@@ -1861,6 +1861,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string_lossy()
                         .to_string()
                     };
+                let agent_stats = Arc::new(hkask_mcp_swarm::agent_stats::AgentStatsStore::load(
+                    &local_agents_dir,
+                ));
+                let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
+                    ledger_path,
+                    agent_stats,
+                ));
+
                 let local_registry = Arc::new(LocalAgentRegistry::new(local_agents_dir));
                 if let Err(error) = local_registry.load() {
                     tracing::warn!(

@@ -16,7 +16,7 @@ use hkask_types::Visibility;
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
-use crate::batch::{MAX_RETRIES, retry_with_backoff};
+use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
     abstract_namespace_tag_key, assertion_confidence, predicate_to_dimension,
@@ -138,7 +138,7 @@ impl AssertionsService {
         // Namespace is fixed to "doc" for corpus chunk extraction (no longer a request field).
         let ns = "doc".to_string();
 
-        let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
+        let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
         let succeeded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -147,7 +147,7 @@ impl AssertionsService {
         let mut handles = Vec::with_capacity(total_chunks);
         for (entity_ref, chunk_text) in chunks {
             let router = Arc::clone(&router);
-            let sem = Arc::clone(&sem);
+            let limiter = limiter.clone();
             let store = Arc::clone(&store);
             let classifier = classifier.clone();
             let ns = ns.clone();
@@ -158,7 +158,7 @@ impl AssertionsService {
             let namespace_map = Arc::clone(&namespace_map);
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await;
+                let slot = limiter.acquire().await;
 
                 // Build prompt from registry template
                 let ontology_context = ontology_map.get(&entity_ref).cloned().unwrap_or_default();
@@ -234,8 +234,12 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 )
                 .await
                 {
-                    Ok(resp) => resp,
+                    Ok(resp) => {
+                        slot.report_success();
+                        resp
+                    }
                     Err(_) => {
+                        slot.report_failure();
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         return;
                     }

@@ -179,7 +179,9 @@ fn steer_system_prompt(
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger`) with no \
          ABW round-trips. Local delegation needs NO funding and NO consent — it \
-         runs on the operator's own substrate, so there is nothing to authorize. \
+         runs on the operator's own substrate, so there is nothing to authorize: \
+         omit `credits_authorized` entirely on local delegations (the \
+         per-dispatch ceiling alone bounds a runaway call). \
          The local ledger is accounting only: it records spend so \
          `swarm_balance_local` and `swarm_local_history` can reconcile it, and a \
          negative balance is accumulated local spend, not an error. Do NOT call \
@@ -3059,6 +3061,7 @@ mod tests {
             cloud_swarm_id: Some("efra_communication".into()),
             accepts: vec![],
             produces: vec![],
+            execution_stats: None,
         };
 
         let mut entries = vec![cloud];

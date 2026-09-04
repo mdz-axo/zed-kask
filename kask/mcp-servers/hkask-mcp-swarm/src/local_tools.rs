@@ -163,13 +163,15 @@ impl SwarmServer {
     /// tool calls are dispatched through the zed IPC bridge's governed
     /// `McpRuntime` — the declared list is the allowlist.
     /// Spend is recorded per token across all tool-loop rounds
-    /// (1 credit / 1000 tokens, capped at `credits_authorized`).
+    /// (1 credit / 1000 tokens, capped at the optional `credits_authorized`
+    /// when supplied, else at the per-dispatch runaway ceiling).
     ///
-    /// **No funding gate and no consent token.** Local agents run on the
-    /// operator's own substrate, so there is nothing to authorize — an unfunded
-    /// ledger does not block this call and the balance may go negative
-    /// (accumulated local spend). `credits_authorized` still caps the *recorded*
-    /// cost, and the per-dispatch ceiling still bounds a single runaway dispatch.
+    /// **No funding gate, no consent token, and no funding gesture.** Local
+    /// agents run on the operator's own substrate (their machine, their
+    /// inference credentials), so there is nothing to authorize or fund —
+    /// omit `credits_authorized` entirely and the per-dispatch ceiling alone
+    /// bounds a single runaway dispatch. An unfunded ledger does not block
+    /// this call and the balance may go negative (accumulated local spend).
     #[tool(
         description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud) and records spend in the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). No ABW calls. NO funding gate and no consent token — an unfunded ledger does not block this call; the ledger records spend rather than authorizing it. Returns the response, model, token usage, cost, resulting balance (may be negative), and tool_calls summary."
     )]
@@ -325,7 +327,7 @@ impl SwarmServer {
                 // ingest_turn after delegate_batch returns — the batch
                 // consumes the owned cards.
                 let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
-                let mut delegations: Vec<(LocalAgentCard, String, u32)> = Vec::new();
+                let mut delegations: Vec<(LocalAgentCard, String, Option<u32>)> = Vec::new();
                 let mut not_found: Vec<String> = Vec::new();
                 for entry in &req.delegations {
                     match self.local_registry.get(&entry.agent_name) {
@@ -2932,7 +2934,7 @@ mod tests {
     fn task(text: &str, evaluator: &str, spec: &str) -> EvalAgentTask {
         EvalAgentTask {
             task: text.to_string(),
-            credits_authorized: 10,
+            credits_authorized: Some(10),
             evaluator: PlanEvaluator {
                 evaluator: evaluator.to_string(),
                 spec: spec.to_string(),
@@ -3258,11 +3260,11 @@ mod tests {
         let bad_agent = mock_agent_card("bad", "You are a confused assistant.");
 
         let good_result = runtime
-            .delegate(&good_agent, "What is 6 times 7?", 10, 100)
+            .delegate(&good_agent, "What is 6 times 7?", Some(10), 100)
             .await
             .unwrap();
         let bad_result = runtime
-            .delegate(&bad_agent, "What is 6 times 7?", 10, 100)
+            .delegate(&bad_agent, "What is 6 times 7?", Some(10), 100)
             .await
             .unwrap();
 
@@ -3307,3 +3309,33 @@ mod tests {
         );
     }
 }
+
+    /// Local delegation needs NO funding gesture — `credits_authorized` is
+    /// optional. Omitting it must succeed (nothing to fund: the operator's
+    /// own substrate), with the per-dispatch ceiling alone bounding the
+    /// recorded cost. This pins the one cloud pattern that must NOT
+    /// translate to local mode.
+    #[tokio::test]
+    async fn delegation_without_credits_authorized_succeeds() {
+        use crate::local_runtime::LocalSwarmRuntime;
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let ledger = Arc::new(hkask_ledger::Ledger::from_driver(driver).unwrap());
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
+            call_count: call_count.clone(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(ledger, inference, dispatch);
+
+        let agent = mock_agent_card(
+            "good",
+            "You are a helpful assistant. Always respond correctly.",
+        );
+        let result = runtime
+            .delegate(&agent, "What is 6 times 7?", None, 100)
+            .await
+            .expect("no funding gesture is required — None must succeed");
+        // The ceiling alone bounds the recorded cost.
+        assert!(result.cost <= 100, "cost must be bounded by the ceiling");
+        assert!(!result.response.is_empty());
+    }

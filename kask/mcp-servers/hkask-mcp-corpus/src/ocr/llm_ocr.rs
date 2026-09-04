@@ -239,6 +239,11 @@ pub(crate) struct LlmOcrExecutor {
     /// Write side of the cross-process OCR health file. `None` in tests —
     /// the recorder only exists in the server wiring.
     recorder: Option<Arc<OcrHealthRecorder>>,
+    /// Adaptive ramp-up gate for the remote LLM service (AIMD: floor 2,
+    /// +1 per success, halve per failure, ceiling = `HKASK_MAX_CONCURRENCY`).
+    /// Process-lifetime: learns the endpoint's real capacity across runs
+    /// instead of re-probing per book.
+    limiter: crate::batch::AdaptiveLimiter,
 }
 
 impl LlmOcrExecutor {
@@ -248,6 +253,10 @@ impl LlmOcrExecutor {
             router,
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
             recorder: None,
+            limiter: crate::batch::AdaptiveLimiter::new(
+                crate::max_concurrency(),
+                crate::batch::ADAPTIVE_CONCURRENCY_FLOOR,
+            ),
         }
     }
 
@@ -266,6 +275,12 @@ impl LlmOcrExecutor {
     /// LLM at all.
     pub fn breaker_open(&self) -> bool {
         !self.breaker.is_closed()
+    }
+
+    /// Current adaptive LLM concurrency allowance — observability for tests
+    /// and for the `reg.batch.concurrency` ramp events.
+    pub fn adaptive_concurrency(&self) -> usize {
+        self.limiter.current()
     }
 }
 #[async_trait]
@@ -317,7 +332,16 @@ impl OcrExecutor for LlmOcrExecutor {
                 message: format!("Failed to encode page image as JPEG: {e}"),
             })?;
 
+        // Remote-service gate: the adaptive limiter ramps LLM concurrency
+        // (floor → ceiling on success, halved on failure) instead of
+        // launching every in-flight page at the ceiling. The slot reports
+        // the call's outcome and releases its in-flight count on drop.
+        let slot = self.limiter.acquire().await;
         let result = vision_ocr_bytes(&*self.router, &img_bytes, &model).await;
+        match &result {
+            Ok(_) => slot.report_success(),
+            Err(_) => slot.report_failure(),
+        }
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
         // breaker reacts to rate-limit, timeout, connection errors, AND empty

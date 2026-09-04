@@ -55,11 +55,10 @@ impl AgentExecutionStats {
             "failed_executions": self.failed_executions,
             "total_cost_credits": self.total_cost_credits,
             "tokens_used": self.total_tokens_used,
-            "avg_execution_time_ms": if self.total_executions == 0 {
-                0
-            } else {
-                self.total_latency_ms / self.total_executions
-            },
+            "avg_execution_time_ms": self
+                .total_latency_ms
+                .checked_div(self.total_executions)
+                .unwrap_or(0),
             "last_executed_at": self.last_executed_at,
             "source": "local_stats_file",
         })

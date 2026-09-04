@@ -338,20 +338,45 @@ fn is_boilerplate_page(page: &str) -> bool {
         return true;
     }
 
-    // Copyright / publisher pages
-    if lower.contains("all rights reserved")
-        || lower.contains("copyright")
-        || lower.contains("printed in")
-        || lower.contains("isbn")
+    // A page larger than any real front/back-matter page is content. The
+    // heuristics below are calibrated for small pages; applied to a whole
+    // form-feed-free document (OCR outputs, HTML extractions are a single
+    // "page" to the caller) they nuke entire books — observed live: 8
+    // OCR'd sources, each one 170K-530K-char "page" of prose whose long
+    // lines carry >5 sentence periods, tripping the TOC dot-leader rule
+    // at a 41% line ratio.
+    if char_count > 3000 {
+        return false;
+    }
+
+    // Copyright / publisher pages. Size-gated like the contents/index rule
+    // below: these notices live on small front/back-matter pages. Without
+    // the gate, any document that MENTIONS "copyright" or an ISBN anywhere
+    // (OCR'd books, Project Gutenberg texts) is a single form-feed-free
+    // "page" to the caller and the whole document is silently classified
+    // as boilerplate — observed live: 17 of 138 corpus sources (four
+    // freshly-OCR'd books among them) vanished from a chunk run while
+    // total_documents still reported 138.
+    if char_count < 2000
+        && (lower.contains("all rights reserved")
+            || lower.contains("copyright")
+            || lower.contains("printed in")
+            || lower.contains("isbn"))
     {
         return true;
     }
 
-    // Table of contents: dot leaders (.... ) or repeated "N. Title    page" patterns
+    // Table of contents: dot leaders (.... ) or repeated "N. Title    page" patterns.
+    // Line-length bounded like the sibling TOC rule: a dot-leader line is a
+    // short "1. Introduction ..... 3" entry, not a page of prose whose
+    // sentence periods alone exceed the dot count.
     let lines: Vec<&str> = trimmed.lines().collect();
     let dot_leader_count = lines
         .iter()
-        .filter(|l| l.contains("...") || l.matches('.').count() > 5)
+        .filter(|l| {
+            let l = l.trim();
+            l.len() < 100 && (l.contains("...") || l.matches('.').count() > 5)
+        })
         .count();
     if lines.len() > 3 && dot_leader_count as f64 / lines.len() as f64 > 0.4 {
         return true;
@@ -409,6 +434,50 @@ mod tests {
     fn sanitize_replaces_control_chars_with_space() {
         let input = "hello\x01world\x06test\x0eend";
         assert_eq!(sanitize_text(input), "hello world test end");
+    }
+
+    /// A whole document that MENTIONS "copyright" (an OCR'd book, a
+    /// Project Gutenberg text) is a single form-feed-free "page" to
+    /// `filter_boilerplate_pages`. The keyword rule must be size-gated or
+    /// the entire document is silently classified as one giant boilerplate
+    /// page — observed live: 17 of 138 corpus sources vanished from a chunk
+    /// run while the tool reported total_documents=138.
+    #[test]
+    fn whole_document_mentioning_copyright_is_not_boilerplate() {
+        let body = "The hedgehog knows one big thing. ".repeat(200); // ~6K chars
+        let document = format!("{body}All rights reserved by the publisher. {body}");
+        let filtered = filter_boilerplate_pages(&document);
+        assert!(
+            !filtered.trim().is_empty(),
+            "a whole document mentioning copyright must survive filtering"
+        );
+    }
+
+    /// A whole OCR'd document is few very long lines of prose — each line
+    /// carries >5 sentence periods, which the dot-leader TOC rule counted
+    /// as "dot leaders" at a 41% line ratio, classifying entire books as
+    /// tables of contents. The page-size ceiling must keep it.
+    #[test]
+    fn whole_ocr_document_with_long_prose_lines_is_not_boilerplate() {
+        let page = "This is a sentence that ends with a period. ".repeat(40); // ~1.8K chars
+        let document = format!("{page}\n{page}\n{page}"); // ~5.4K chars, 3 long lines
+        let filtered = filter_boilerplate_pages(&document);
+        assert!(
+            !filtered.trim().is_empty(),
+            "a whole OCR'd document of long prose lines must survive filtering"
+        );
+    }
+
+    /// A real copyright/colophon page is small — the size gate must still
+    /// drop it.
+    #[test]
+    fn small_copyright_page_is_still_dropped() {
+        let page = "Copyright © 2005 Vigyan Prasar. All rights reserved. ISBN 81-7480-1234-5. Printed in India.";
+        let filtered = filter_boilerplate_pages(page);
+        assert!(
+            filtered.trim().is_empty(),
+            "a small copyright page must still be classified as boilerplate"
+        );
     }
 
     #[test]

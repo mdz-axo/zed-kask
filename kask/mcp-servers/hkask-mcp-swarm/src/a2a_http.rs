@@ -38,11 +38,6 @@ use a2a::{
     SendMessageRequest, SendMessageResponse,
 };
 
-/// Loopback credits authorized per external `SendMessage`. External A2A clients
-/// do not carry a budget; the local ledger still gates the actual spend, and
-/// the per-dispatch ceiling (`max_credits_per_dispatch`) clamps this.
-const A2A_HTTP_CREDITS: u32 = 20;
-
 pub struct A2aHttpServer {
     port: u16,
 }
@@ -346,8 +341,11 @@ fn handle_jsonrpc(
             let context_id = sm_req.message.context_id;
             let result = tokio_handle.block_on(async {
                 let runtime = runtime.get_or_init().await?;
+                // No funding gesture for external callers — local agents run
+                // on the operator's substrate; the per-dispatch ceiling
+                // alone bounds each dispatch.
                 runtime
-                    .delegate(&agent, &text, A2A_HTTP_CREDITS, max_credits_per_dispatch)
+                    .delegate(&agent, &text, None, max_credits_per_dispatch)
                     .await
             });
             match result {

@@ -423,10 +423,15 @@ pub struct DelegateLocalRequest {
     /// The task text to send to the agent. Leading @mentions are stripped
     /// (defense-in-depth, mirrors ABW delegate).
     pub task: String,
-    /// The maximum credits the operator authorizes for this call. The actual
-    /// cost is `min(1 credit per 1000 tokens, credits_authorized)`. Must not
-    /// exceed the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50).
-    pub credits_authorized: u32,
+    /// Optional per-call cost cap. Local agents run on the operator's own
+    /// substrate (their machine, their inference credentials), so NO funding
+    /// gesture is required — omit this and the per-dispatch runaway ceiling
+    /// (`HKASK_ABW_MAX_CREDITS`, default 50) alone bounds the dispatch. When
+    /// supplied, the recorded cost is `min(1 credit per 1000 tokens,
+    /// credits_authorized)` and must not exceed the ceiling. Funding gates
+    /// belong to CLOUD delegation, where credits buy someone else's compute.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
 }
 
 // ── Local mode request types (v2 §15 Slice 11) ─────────────────────────────
@@ -565,7 +570,11 @@ pub struct FanoutLocalRequest {
 pub struct FanoutEntry {
     pub agent_name: String,
     pub task: String,
-    pub credits_authorized: u32,
+    /// Optional per-call cost cap — see `DelegateLocalRequest`. Local
+    /// delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds the dispatch.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
 }
 
 /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm Plan
@@ -843,8 +852,11 @@ pub struct PipelineStep {
     /// previous step's response text. For the first step, `{prev_output}`
     /// is left as-is (there is no previous output).
     pub task: String,
-    /// Maximum credits authorized for this step.
-    pub credits_authorized: u32,
+    /// Optional per-step cost cap — see `DelegateLocalRequest`. Local
+    /// delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds the step.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
 }
 
 /// Delegate a task to an ABW agent and poll `swarm_run_status` until the agent
@@ -905,8 +917,11 @@ pub struct A2aSendRequest {
     pub agent_name: String,
     /// The message text to send to the agent.
     pub message: String,
-    /// The maximum credits the operator authorizes for this call.
-    pub credits_authorized: u32,
+    /// Optional per-call cost cap — see `DelegateLocalRequest`. Local
+    /// delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds the dispatch.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
     /// Optional A2A context ID for grouping related tasks. If omitted, a new
     /// context is generated. Pass the same context_id across multiple
     /// `swarm_a2a_send` calls to group them in a conversation.
@@ -937,8 +952,11 @@ pub struct A2aBroadcastRequest {
     pub swarm_id: String,
     /// The message text to broadcast to every member.
     pub message: String,
-    /// The maximum credits the operator authorizes per-member dispatch.
-    pub credits_authorized: u32,
+    /// Optional per-member cost cap — see `DelegateLocalRequest`. Local
+    /// delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds each dispatch.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
     /// Optional A2A context ID for grouping related tasks. If omitted, a new
     /// context is generated and shared across all member dispatches in this
     /// broadcast.
@@ -1100,8 +1118,11 @@ pub struct PlanDelegation {
     pub agent_name: String,
     /// The task text to send to the agent.
     pub task: String,
-    /// Maximum credits authorized for this delegation.
-    pub credits_authorized: u32,
+    /// Optional per-delegation cost cap — see `DelegateLocalRequest`.
+    /// Local delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds the delegation.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
     /// Optional deterministic evaluator. When provided, the tool runs the
     /// check after the delegation and stamps `task_success` onto the result.
     /// When absent, `task_success` is left null (open task, no oracle).
@@ -1187,8 +1208,11 @@ pub struct EvalSuiteCase {
 pub struct EvalAgentTask {
     /// The task text to send to the agent.
     pub task: String,
-    /// Maximum credits authorized per rollout of this task.
-    pub credits_authorized: u32,
+    /// Optional per-rollout cost cap — see `DelegateLocalRequest`. Local
+    /// delegation needs no funding gesture; omitted means the runaway
+    /// ceiling bounds each rollout.
+    #[serde(default)]
+    pub credits_authorized: Option<u32>,
     /// The deterministic evaluator run against each rollout's response.
     pub evaluator: PlanEvaluator,
 }

@@ -121,3 +121,275 @@ where
         }
     }
 }
+
+// ─── Adaptive concurrency (AIMD ramp-up) ──────────────────────────────────
+
+/// Floor for adaptive remote-LLM concurrency: the ramp starts here, never at
+/// the ceiling. Remote LLM work probes a service's real capacity instead of
+/// launching at max — the 2026-09-03 RunPod incident (96 concurrent page
+/// requests at a 32-worker endpoint, instant rejections collapsed to
+/// "empty output") was the motivating failure.
+pub(crate) const ADAPTIVE_CONCURRENCY_FLOOR: usize = 2;
+
+/// AIMD adaptive concurrency limiter for remote LLM work.
+///
+/// Starts at `floor`, grows additively (+1 per success) toward `ceiling`, and
+/// backs off multiplicatively (halve per failure, floor-bounded). A service
+/// with lower capacity than the ceiling is discovered by probing, not by
+/// stampede. Local work (Tesseract, file IO) is NOT gated here — a static
+/// bound is correct for a local resource; adaptation is for remote services.
+///
+/// Backoff needs no permit recall: the acquire check (`in_flight < current`)
+/// is the authority, so shrinking `current` simply makes the next acquires
+/// wait until in-flight work drains naturally.
+pub(crate) struct AdaptiveLimiter {
+    inner: std::sync::Arc<AdaptiveLimiterInner>,
+}
+
+impl Clone for AdaptiveLimiter {
+    fn clone(&self) -> Self {
+        Self {
+            inner: std::sync::Arc::clone(&self.inner),
+        }
+    }
+}
+
+struct AdaptiveLimiterInner {
+    ceiling: usize,
+    floor: usize,
+    state: std::sync::Mutex<AdaptiveLimiterState>,
+    /// Wakes waiters when a slot may have opened (growth or in-flight
+    /// release). `notify_one` stores a permit when no waiter is registered,
+    /// so a notify between a waiter's check and its await is never lost;
+    /// spurious wakeups are absorbed by the acquire loop's re-check.
+    slot_open: tokio::sync::Notify,
+}
+
+struct AdaptiveLimiterState {
+    current: usize,
+    in_flight: usize,
+}
+
+impl AdaptiveLimiter {
+    /// `ceiling` is the never-exceeded bound (`HKASK_MAX_CONCURRENCY`);
+    /// `floor` is the ramp's starting allowance. Both are normalized to ≥ 1
+    /// with `floor ≤ ceiling` — a zero ceiling would otherwise deadlock every
+    /// acquire (the `Semaphore::new(0)` trap this replaces).
+    pub(crate) fn new(ceiling: usize, floor: usize) -> Self {
+        let ceiling = ceiling.max(1);
+        let floor = floor.clamp(1, ceiling);
+        Self {
+            inner: std::sync::Arc::new(AdaptiveLimiterInner {
+                ceiling,
+                floor,
+                state: std::sync::Mutex::new(AdaptiveLimiterState {
+                    current: floor,
+                    in_flight: 0,
+                }),
+                slot_open: tokio::sync::Notify::new(),
+            }),
+        }
+    }
+
+    /// Current concurrency allowance — observability for logs and tests.
+    pub(crate) fn current(&self) -> usize {
+        self.inner
+            .state
+            .lock()
+            .expect("adaptive limiter state mutex poisoned")
+            .current
+    }
+
+    /// Acquire an execution slot, waiting while in-flight work is at the
+    /// current allowance. Cancellation-safe: `in_flight` is only incremented
+    /// when a slot is granted, so a dropped acquire future leaks nothing.
+    pub(crate) async fn acquire(&self) -> AdaptiveSlot {
+        loop {
+            let notified = self.inner.slot_open.notified();
+            {
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("adaptive limiter state mutex poisoned");
+                if state.in_flight < state.current {
+                    state.in_flight += 1;
+                    return AdaptiveSlot {
+                        limiter: self.clone(),
+                    };
+                }
+            }
+            notified.await;
+        }
+    }
+
+    fn report_success(&self) {
+        let grew = {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("adaptive limiter state mutex poisoned");
+            if state.current < self.inner.ceiling {
+                state.current += 1;
+                true
+            } else {
+                false
+            }
+        };
+        if grew {
+            tracing::debug!(
+                target: "reg.batch.concurrency",
+                current = self.current(),
+                ceiling = self.inner.ceiling,
+                "Adaptive limiter grew on success"
+            );
+            self.inner.slot_open.notify_one();
+        }
+    }
+
+    fn report_failure(&self) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("adaptive limiter state mutex poisoned");
+        let backed_off = (state.current / 2).max(self.inner.floor);
+        if backed_off != state.current {
+            state.current = backed_off;
+            tracing::warn!(
+                target: "reg.batch.concurrency",
+                current = backed_off,
+                floor = self.inner.floor,
+                "Adaptive limiter backed off on failure"
+            );
+        }
+    }
+}
+
+/// One acquired execution slot. The gated call reports its outcome
+/// (`report_success` / `report_failure`); `Drop` releases the in-flight
+/// count and wakes a waiter.
+pub(crate) struct AdaptiveSlot {
+    limiter: AdaptiveLimiter,
+}
+
+impl AdaptiveSlot {
+    /// The gated call succeeded — grow the allowance (additive, +1).
+    pub(crate) fn report_success(&self) {
+        self.limiter.report_success();
+    }
+
+    /// The gated call failed — back off (multiplicative, halve, floor-bounded).
+    pub(crate) fn report_failure(&self) {
+        self.limiter.report_failure();
+    }
+}
+
+impl Drop for AdaptiveSlot {
+    fn drop(&mut self) {
+        let mut state = self
+            .limiter
+            .inner
+            .state
+            .lock()
+            .expect("adaptive limiter state mutex poisoned");
+        state.in_flight = state.in_flight.saturating_sub(1);
+        drop(state);
+        self.limiter.inner.slot_open.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod adaptive_limiter_tests {
+    use super::*;
+
+    #[test]
+    fn limiter_starts_at_floor_not_ceiling() {
+        let limiter = AdaptiveLimiter::new(96, 2);
+        assert_eq!(limiter.current(), 2, "the ramp must start at the floor");
+    }
+
+    #[test]
+    fn zero_ceiling_is_normalized_not_a_deadlock() {
+        let limiter = AdaptiveLimiter::new(0, 0);
+        assert_eq!(limiter.current(), 1);
+    }
+
+    #[test]
+    fn success_grows_additively_bounded_by_ceiling() {
+        let limiter = AdaptiveLimiter::new(4, 2);
+        limiter.report_success();
+        assert_eq!(limiter.current(), 3);
+        limiter.report_success();
+        assert_eq!(limiter.current(), 4);
+        limiter.report_success();
+        assert_eq!(limiter.current(), 4, "growth must stop at the ceiling");
+    }
+
+    #[test]
+    fn failure_halves_with_floor_bound() {
+        let limiter = AdaptiveLimiter::new(96, 2);
+        for _ in 0..30 {
+            limiter.report_success();
+        }
+        assert_eq!(limiter.current(), 32);
+        limiter.report_failure();
+        assert_eq!(limiter.current(), 16);
+        limiter.report_failure();
+        assert_eq!(limiter.current(), 8);
+        let low = AdaptiveLimiter::new(96, 2);
+        low.report_failure();
+        assert_eq!(low.current(), 2, "backoff must stop at the floor");
+    }
+
+    #[tokio::test]
+    async fn acquire_blocks_at_current_and_unblocks_on_release() {
+        let limiter = AdaptiveLimiter::new(4, 2);
+        let first = limiter.acquire().await;
+        let second = limiter.acquire().await;
+
+        // current=2, both slots held: a third acquire must not be granted.
+        let blocked =
+            tokio::time::timeout(std::time::Duration::from_millis(50), limiter.acquire()).await;
+        assert!(
+            blocked.is_err(),
+            "acquire must block at the current allowance"
+        );
+
+        // Releasing a slot must unblock the next acquire.
+        drop(second);
+        let third = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            limiter.clone().acquire().await
+        })
+        .await;
+        assert!(
+            third.is_ok(),
+            "a released slot must unblock a waiting acquire"
+        );
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn success_growth_unblocks_a_waiting_acquire() {
+        let limiter = AdaptiveLimiter::new(4, 2);
+        let first = limiter.acquire().await;
+        let second = limiter.acquire().await;
+
+        let waiter = tokio::spawn({
+            let limiter = limiter.clone();
+            async move { limiter.acquire().await }
+        });
+
+        // Give the waiter a chance to park, then grow the allowance.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        first.report_success();
+
+        let granted = tokio::time::timeout(std::time::Duration::from_secs(1), waiter).await;
+        assert!(
+            granted.is_ok(),
+            "growth must unblock a waiting acquire without any slot release"
+        );
+        drop(second);
+    }
+}

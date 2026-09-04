@@ -24,6 +24,7 @@ use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
+use hkask_mcp_swarm::agent_stats::AgentStatsStore;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};
@@ -74,7 +75,7 @@ fn make_server_with_shared_driver() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path)),
+        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(idempotency),
@@ -159,6 +160,17 @@ async fn board_count(server: &KanbanServer) -> usize {
 /// This is the regression for the duplicate-create hazard: an interrupted call
 /// has an unknown outcome, so the client must be able to retry it. Before replay
 /// protection, that retry produced a second task.
+/// A throwaway per-agent stats store for tests — these tests exercise
+/// idempotent creates, not delegation, so the store is never written.
+fn throwaway_stats() -> Arc<AgentStatsStore> {
+    let dir = std::env::temp_dir().join(format!(
+        "kanban-idem-stats-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    Arc::new(AgentStatsStore::load(&dir.to_string_lossy()))
+}
+
 #[tokio::test]
 async fn replayed_task_create_yields_one_task() {
     let server = make_server();
@@ -382,6 +394,7 @@ async fn replay_is_absorbed_across_processes() {
                 .join(format!("kanban-idem-b-{}.db", std::process::id()))
                 .to_string_lossy()
                 .to_string(),
+            throwaway_stats(),
         )),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
@@ -423,7 +436,7 @@ async fn non_durable_protection_is_labelled_in_the_response() {
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path)),
+        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
@@ -503,6 +516,7 @@ async fn goal_replay_protection_does_not_survive_a_restart() {
                 .join(format!("kanban-idem-goal-b-{}.db", std::process::id()))
                 .to_string_lossy()
                 .to_string(),
+            throwaway_stats(),
         )),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),

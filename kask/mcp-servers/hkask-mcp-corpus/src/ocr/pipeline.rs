@@ -180,19 +180,19 @@ async fn run_pipeline_parallel(
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
-    // OCR runs in a subprocess (`hkask-mcp-corpus` binary) whose `OnceLock` is
-    // distinct from the zed main process. The global concurrency limiter is
-    // never wired here — `global_concurrency_limiter()` always returns `None`
-    // in this process. Use a local per-pipeline semaphore bounded by
-    // `max_concurrency` (from `HKASK_MAX_CONCURRENCY`, the system-wide
-    // concurrency ceiling from KaskGeneralSettings). The process-wide
-    // limiter lives in the zed process and gates skill execution + MCP tool
-    // calls there; OCR's concurrency is bounded locally.
-    //
-    // If a future change embeds the corpus server in-process (no subprocess),
-    // re-evaluate: the global limiter could then be shared, but `on_throttle`
-    // would need wiring (currently OCR has no throttle backoff because
-    // `PipelineError` doesn't carry the inner `InferenceError`).
+    // Concurrency is two layers with different jobs:
+    // - This semaphore is the STATIC total-page bound: it caps in-flight
+    //   page execution (local Tesseract subprocesses plus LLM tasks waiting
+    //   on the adaptive gate) at `max_concurrency` (`HKASK_MAX_CONCURRENCY`,
+    //   the KaskGeneralSettings ceiling). Local resources don't need
+    //   adaptation — a fixed bound is correct for them.
+    // - The REMOTE bound is adaptive and lives in `LlmOcrExecutor`: an AIMD
+    //   limiter (floor 2, +1 per success, halve per failure, same ceiling)
+    //   gates each vision call, so LLM concurrency ramps instead of
+    //   launching at max. See `batch.rs::AdaptiveLimiter` and the README's
+    //   Concurrency section.
+    // There is no process-wide global limiter; these two layers are the
+    // whole concurrency surface for OCR.
     let semaphore = Arc::new(Semaphore::new(max_concurrency));
 
     // Pre-score and route all pages (synchronous, cheap)

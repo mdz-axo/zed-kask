@@ -14,7 +14,9 @@ pub(crate) mod batch_api;
 mod ontology_io;
 pub(crate) mod qa;
 
-use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
+use crate::batch::{
+    ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
+};
 use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
@@ -292,14 +294,14 @@ impl CorpusServer {
             chunks.chunks(batch).map(|c| c.to_vec()).collect();
         let num_batches = batches.len();
 
-        // Concurrent embedding: spawn one task per batch, gated by a semaphore.
-        // The concurrency limit comes from HKASK_MAX_CONCURRENCY, which is
-        // injected from KaskGeneralSettings.max_concurrency (default 96,
-        // configurable via the settings UI General page). This is the
-        // system-wide concurrency ceiling — the same value the zed-side
-        // inference port uses.
-        let embed_concurrency = crate::max_concurrency();
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(embed_concurrency));
+        // Concurrent embedding: one task per batch, gated by the ADAPTIVE
+        // limiter (AIMD: floor 2, +1 per success, halve per failure). The
+        // ceiling is HKASK_MAX_CONCURRENCY — injected from
+        // KaskGeneralSettings.max_concurrency (default 96, configurable via
+        // the settings UI General page), the same ceiling the zed-side
+        // inference port uses. The ramp means an embedding provider with
+        // lower capacity is probed, not stampeded.
+        let limiter = AdaptiveLimiter::new(crate::max_concurrency(), ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
         let store = Arc::new(store);
         let model_name = Arc::new(model_name.clone());
@@ -315,7 +317,7 @@ impl CorpusServer {
         let mut join_set = tokio::task::JoinSet::new();
 
         for (batch_idx, chunk_batch) in batches.into_iter().enumerate() {
-            let sem = Arc::clone(&semaphore);
+            let limiter = limiter.clone();
             let router = Arc::clone(&router);
             let store = Arc::clone(&store);
             let model_name = Arc::clone(&model_name);
@@ -325,7 +327,7 @@ impl CorpusServer {
             let batch_len = chunk_batch.len();
 
             join_set.spawn(async move {
-                let _permit = sem.acquire().await;
+                let slot = limiter.acquire().await;
 
                 let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
                 let vectors = match retry_with_backoff(
@@ -336,8 +338,12 @@ impl CorpusServer {
                 )
                 .await
                 {
-                    Ok(v) => v,
+                    Ok(v) => {
+                        slot.report_success();
+                        v
+                    }
                     Err(e) => {
+                        slot.report_failure();
                         tracing::warn!(
                             target: "hkask.mcp.docproc.embed",
                             batch = batch_idx,
@@ -410,7 +416,7 @@ impl CorpusServer {
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
-            total, embedded, failed, num_batches, embed_concurrency,
+            total, embedded, failed, num_batches, ceiling = crate::max_concurrency(),
             "Embedding complete"
         );
 

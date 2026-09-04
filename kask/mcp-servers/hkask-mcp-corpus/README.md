@@ -63,6 +63,29 @@ corpus/
 runtime/              — Section classifier + provider intelligence + adaptive monitor
 ```
 
+## Concurrency
+
+Remote LLM work **ramps; it never launches at the ceiling.** The motivating
+failure (2026-09-03): a 412-page OCR run fired 96 concurrent page requests at
+a 32-worker RunPod endpoint — instant rejections collapsed to "empty output"
+and the whole book silently degraded to Tesseract.
+
+- **Adaptive remote gate** — `batch.rs::AdaptiveLimiter` (AIMD): start at
+  floor 2, +1 per success, halve per failure, ceiling = `HKASK_MAX_CONCURRENCY`
+  (`KaskGeneralSettings.max_concurrency`, default 96). A service with lower
+  capacity is discovered by probing, not by stampede. Gates every remote LLM
+  call site: the OCR vision executor (process-lifetime — capacity learning
+  persists across runs) and the batch services (assertions, consolidation,
+  QA batch, embedding, tagging — per-request).
+- **Static local bound** — the OCR pipeline's page semaphore caps total
+  in-flight pages (local Tesseract execution + LLM tasks waiting on the
+  adaptive gate). Local resources don't need adaptation.
+- **Circuit breaker stays subordinate** (`ocr/llm_ocr.rs`) — the limiter adapts
+  to capacity; the breaker hard-quarantines a dead endpoint.
+- **Outcome signal** — the LLM call's own result: `Ok` grows the allowance,
+  `Err` (including typed `EmptyOcrOutput`) backs it off. Quality-only issues
+  (JSON parse failures after a successful call) stay neutral.
+
 ## Tools (25)
 
 ### Gather (2)

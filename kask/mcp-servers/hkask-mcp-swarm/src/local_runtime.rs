@@ -507,20 +507,29 @@ impl LocalSwarmRuntime {
         &self,
         agent: &LocalAgentCard,
         task: &str,
-        credits_authorized: u32,
+        credits_authorized: Option<u32>,
         max_credits_per_dispatch: u32,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
 
-        // Check the per-dispatch ceiling.
-        if credits_authorized > max_credits_per_dispatch {
+        // `credits_authorized` is an OPTIONAL per-call cost cap, not a
+        // funding gesture: local agents run on the operator's own substrate
+        // (their machine, their inference credentials), so there is nothing
+        // to fund — the cloud's credit authorization does not translate
+        // here. When supplied, it caps this dispatch's recorded cost and
+        // must sit under the runaway ceiling. When omitted, the ceiling
+        // alone bounds the dispatch.
+        if let Some(credits) = credits_authorized
+            && credits > max_credits_per_dispatch
+        {
             return Err(LocalSwarmError::InvalidInput(format!(
-                "credits_authorized {credits_authorized} exceeds per-dispatch ceiling \
+                "credits_authorized {credits} exceeds per-dispatch ceiling \
                  {max_credits_per_dispatch} (raise HKASK_ABW_MAX_CREDITS to authorize)"
             )));
         }
+        let cost_cap = credits_authorized.unwrap_or(max_credits_per_dispatch);
 
         // NO balance gate. Local agents run on the operator's own substrate
         // (their machine, their inference credentials), so there is nothing for
@@ -554,7 +563,7 @@ impl LocalSwarmRuntime {
         let mut result = self.debit_and_build(
             raw,
             &agent.agent_id,
-            credits_authorized,
+            cost_cap,
             started.elapsed().as_millis().min(u64::MAX as u128) as u64,
         );
         // Contract checks (the local analog of fermi's verification gates):
@@ -576,10 +585,13 @@ impl LocalSwarmRuntime {
     /// a raw delegate result. Shared by `delegate` (sequential) and
     /// `delegate_batch` (parallel) so the debit logic stays in one place.
     ///
-    /// `cost` stays capped at `credits_authorized` — the operator's declared
-    /// budget and what the ledger charges. The cap makes the recorded figure
-    /// under-state real spend on overruns; `cost_uncapped` is carried alongside
-    /// so the gap is visible, and a bounded overrun is warned about rather
+    /// `cost_cap` is the effective per-dispatch cap — the caller's optional
+    /// `credits_authorized` when supplied, else the runaway ceiling. Local
+    /// delegation needs no funding gesture (the operator's own substrate), so
+    /// the cap is a cost-amplification bound, not an authorization. The cap
+    /// makes the recorded figure under-state real spend on overruns;
+    /// `cost_uncapped` is carried alongside so the gap is visible, and a
+    /// bounded overrun is warned about rather than swallowed.
     /// than swallowed.
     ///
     /// `balance` stays `None` when it could not be measured. It must NOT fall
@@ -674,7 +686,7 @@ impl LocalSwarmRuntime {
     /// ceiling is enforced per delegation.
     pub async fn delegate_batch(
         &self,
-        delegations: Vec<(LocalAgentCard, String, u32)>,
+        delegations: Vec<(LocalAgentCard, String, Option<u32>)>,
         max_credits_per_dispatch: u32,
     ) -> Vec<Result<LocalDelegateResult, LocalSwarmError>> {
         let ceiling = max_credits_per_dispatch;
@@ -684,7 +696,7 @@ impl LocalSwarmRuntime {
             .iter()
             .map(|(a, _, _)| a.agent_id.clone())
             .collect();
-        let credits: Vec<u32> = delegations.iter().map(|(_, _, c)| *c).collect();
+        let credits: Vec<Option<u32>> = delegations.iter().map(|(_, _, c)| *c).collect();
         // Contract snapshots and cleaned tasks, collected before the cards
         // are moved into the spawned tasks — phase 2 stamps the contract
         // checks with them, keeping batch parity with `delegate`'s checks.
@@ -708,13 +720,17 @@ impl LocalSwarmRuntime {
         // delegations after join (JoinSet does not preserve submission order).
         let mut join_set = tokio::task::JoinSet::new();
         for (index, (agent, task, credits_authorized)) in delegations.into_iter().enumerate() {
-            // Enforce the per-dispatch ceiling before running.
-            if credits_authorized > ceiling {
+            // Enforce the per-dispatch ceiling before running — only when
+            // the caller supplied an optional per-call cap (local delegation
+            // needs no funding gesture; see `delegate`).
+            if let Some(credits) = credits_authorized
+                && credits > ceiling
+            {
                 join_set.spawn(async move {
                     (
                         index,
                         Err(LocalSwarmError::InvalidInput(format!(
-                            "credits_authorized {credits_authorized} exceeds per-dispatch \
+                            "credits_authorized {credits} exceeds per-dispatch \
                              ceiling {ceiling} (raise HKASK_ABW_MAX_CREDITS to authorize)"
                         ))),
                     )
@@ -769,7 +785,7 @@ impl LocalSwarmRuntime {
 
         // Phase 2: debit the ledger sequentially (TOCTOU-safe).
         let mut results = Vec::with_capacity(total);
-        for (index, (raw_result, (agent_id, credits_authorized))) in raw_results
+        for (index, (raw_result, (agent_id, _credits_authorized))) in raw_results
             .into_iter()
             .zip(agent_ids.iter().zip(credits.iter()))
             .enumerate()
@@ -782,14 +798,17 @@ impl LocalSwarmRuntime {
                     // refusal, which rejected the request before any
                     // execution and is not a failed execution (fermi does
                     // not count never-started requests as failed episodes).
-                    if credits[index] <= ceiling {
+                    // An omitted cap (None) is never a refusal.
+                    let refused = matches!(credits[index], Some(v) if v > ceiling);
+                    if !refused {
                         self.stats.record_failure(&agent_ids[index]);
                     }
                     results.push(Err(e));
                     continue;
                 }
             };
-            let mut built = self.debit_and_build(raw, agent_id, *credits_authorized, 0);
+            let cost_cap = credits[index].unwrap_or(ceiling);
+            let mut built = self.debit_and_build(raw, agent_id, cost_cap, 0);
             // Contract checks — batch parity with `delegate` (see the note
             // there). `index` is the delegation's submission index: the
             // fill-missing pass guarantees one sorted entry per index, so

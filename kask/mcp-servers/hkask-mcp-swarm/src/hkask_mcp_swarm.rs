@@ -85,7 +85,7 @@ mod a2a_tools;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
-mod agent_stats;
+pub mod agent_stats;
 mod cloud_swarm;
 mod cloud_swarm_tools;
 mod config;
@@ -521,7 +521,7 @@ mod smoke_tests {
         let consent = Arc::new(ConsentStore::default());
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
-        let agent_stats = Arc::new(agent_stats::AgentStatsStore::load(&stats_dir));
+        let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
         let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
             ledger_path,
             agent_stats.clone(),

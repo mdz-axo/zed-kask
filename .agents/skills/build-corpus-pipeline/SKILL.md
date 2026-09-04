@@ -448,6 +448,12 @@ corpora (≤ 500 files), a single `corpus_chunk` call is sufficient.
    tiered passages. The two artifacts serve different consumers: the
    JSONL feeds tagging and QA generation; the index serves `corpus_query`.
 
+   The result carries `zero_chunk_files`: sources that yielded zero
+   passages after processing (boilerplate misclassification, empty
+   extraction). A non-empty list is silent data loss SURFACED — halt and
+   investigate those files before proceeding; the source-coverage
+   reconciliation in step 4 is the hard gate that catches any residue.
+
 2. **Parallel subagent dispatch** (if `parallel_subagents` is true and
    extracted file count > 500): split the extracted directory into
    sub-directories of ~100 files each, then spawn subagents with the

@@ -522,6 +522,7 @@ impl<'a> ConvertService<'a> {
                     "degraded_pages": &outcome.report.degraded_pages,
                     "backends": &outcome.backends,
                     "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+                    "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
                     "error_count": outcome.errors.len(),
                 });
                 return Ok(result);
@@ -581,6 +582,7 @@ impl<'a> ConvertService<'a> {
                             "degraded_pages": &outcome.report.degraded_pages,
                             "backends": &outcome.backends,
                             "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
                             "error_count": outcome.errors.len(),
                         });
                         return Ok(result);
@@ -725,6 +727,7 @@ impl<'a> ConvertService<'a> {
                             "degraded_pages": &outcome.report.degraded_pages,
                             "backends": &outcome.backends,
                             "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
                             "error_count": outcome.errors.len(),
                         });
                         return Ok(result);
@@ -793,6 +796,7 @@ impl<'a> ConvertService<'a> {
                             "degraded_pages": &outcome.report.degraded_pages,
                             "backends": &outcome.backends,
                             "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
+                            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
                             "error_count": outcome.errors.len(),
                             "cross_validations": outcome.cross_validations.len(),
                         });
@@ -959,6 +963,11 @@ impl<'a> ConvertService<'a> {
         let mut writer = std::io::BufWriter::new(file);
         let mut total_chunks = 0usize;
         let mut indexed = 0usize;
+        // A source that yields zero passages is data loss presented as
+        // progress — the v2 corpus run lost 13 of 133 sources this way with
+        // no error. Surfaced in the result (never silently dropped) so the
+        // caller's coverage gate can halt on it.
+        let mut zero_chunk_files: Vec<String> = Vec::new();
 
         let (max_words, min_words) = chunk_word_bounds(max_tokens, overlap_tokens);
 
@@ -979,6 +988,9 @@ impl<'a> ConvertService<'a> {
             let source_text = std::fs::read_to_string(source).map_err(|e| {
                 map_corpus_io_error(e, &format!("Failed to read '{}'", source.display()))
             })?;
+            // Captured before `source_text` is moved into `processed` — the
+            // zero-chunk warn below reports the pre-processing size.
+            let source_word_count = source_text.split_whitespace().count();
 
             // Apply Gutenberg stripping if requested
             let processed = if strip_gutenberg.unwrap_or(false) {
@@ -992,6 +1004,16 @@ impl<'a> ConvertService<'a> {
             let processed = filter_boilerplate_pages(&processed);
 
             let passages = chunk_text(&processed, &source_prefix, min_words, max_words, ".!? ");
+
+            if passages.is_empty() {
+                zero_chunk_files.push(file_name.to_string());
+                tracing::warn!(
+                    target: "reg.pipeline.chunk",
+                    file = %file_name,
+                    source_words = source_word_count,
+                    "source produced zero chunks after processing — surfacing, not skipping"
+                );
+            }
 
             // Index if requested
             if index {
@@ -1040,6 +1062,7 @@ impl<'a> ConvertService<'a> {
             "output": output_path.display().to_string(),
             "total_documents": sources.len(),
             "total_chunks": total_chunks,
+            "zero_chunk_files": zero_chunk_files,
             "indexed": indexed,
         }))
     }
@@ -1471,6 +1494,58 @@ mod ocr_guards {
         }
     }
 
+    /// Mock port whose `generate_vision` returns the current value of a
+    /// shared cell — lets one executor observe success-then-failure
+    /// transitions for the adaptive-limiter wiring test.
+    struct MutableVisionPort {
+        vision_text: std::sync::Mutex<String>,
+    }
+
+    impl InferencePort for MutableVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async {
+                Err(InferenceError::VisionUnsupported(
+                    "mock port has no text generate".to_string(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let text = self
+                .vision_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let result = InferenceResult {
+                text,
+                model: "mock".to_string(),
+                usage: InferenceUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                },
+                finish_reason: "stop".to_string(),
+                tool_calls: vec![],
+                reasoning: None,
+                cost_usd: None,
+            };
+            Box::pin(async { Ok(result) })
+        }
+    }
+
     /// Mock page executor returning a fixed text per page.
     struct FixedTextExecutor {
         text: String,
@@ -1680,6 +1755,51 @@ mod ocr_guards {
         let snapshot: hkask_types::ocr_health::OcrHealthSnapshot =
             serde_json::from_str(&contents).expect("health file must parse");
         assert_eq!(snapshot.silent_failure_timestamps.len(), 1);
+    }
+
+    /// The executor's vision calls must be gated by the adaptive limiter:
+    /// successes grow the allowance, an empty-output failure backs it off.
+    /// Pins the ramp-up spec — remote LLM work never launches at the ceiling
+    /// (the 2026-09-03 RunPod incident: 96 concurrent page requests at a
+    /// 32-worker endpoint).
+    #[tokio::test]
+    async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
+        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let backend = OcrBackend::LlmOcr("mock-model".to_string());
+        let port = Arc::new(MutableVisionPort {
+            vision_text: std::sync::Mutex::new("extracted page text".to_string()),
+        });
+        let executor = LlmOcrExecutor::new(Arc::clone(&port) as Arc<dyn InferencePort>);
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            2,
+            "the ramp starts at the floor"
+        );
+
+        // Two successes grow the allowance additively: 2 → 3 → 4.
+        executor
+            .execute(0, &backend, &image, false)
+            .await
+            .expect("non-empty vision output must succeed");
+        executor
+            .execute(1, &backend, &image, false)
+            .await
+            .expect("non-empty vision output must succeed");
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            4,
+            "successes must grow the allowance"
+        );
+
+        // An empty-output failure backs off multiplicatively: 4 → 2.
+        *port.vision_text.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        let result = executor.execute(2, &backend, &image, false).await;
+        assert!(result.is_err(), "empty output must stay an error");
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            2,
+            "failure must halve the allowance"
+        );
     }
 
     #[tokio::test]

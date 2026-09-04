@@ -171,16 +171,21 @@ pub(crate) struct LocalAgentInfo {
 }
 
 /// The execution-stats object the swarm server attaches to every local
-/// agent (fermi's `build_agent_json` shape).
+/// agent (fermi's `build_agent_json` shape). The browse merge reads
+/// `total_executions`; the rest are retained for detail-view enrichment
+/// (the same pattern as `AgentCard.executions`/`updated_at`).
 #[derive(Debug, Deserialize)]
 pub(crate) struct LocalExecStats {
     #[serde(default)]
     pub(crate) total_executions: u64,
     #[serde(default)]
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) successful_executions: u64,
     #[serde(default)]
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) failed_executions: u64,
     #[serde(default)]
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) avg_execution_time_ms: u64,
 }
 
