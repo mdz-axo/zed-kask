@@ -1,7 +1,7 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-08-30
+last_updated: 2026-09-04
 version: "1.2.0"
 status: "Active"
 domain: "agent interaction"
@@ -55,6 +55,18 @@ medium. The fix must change the *structure of the interaction*, not the
 
 The agent interprets the functional requirement; it never revises it.
 The user keeps authorship; the agent demonstrates comprehension.
+
+*Operationalization (2026-09-04, operator-ratified):* each side of this
+division now has a skill as its working rubric — the `program-manager`
+skill for the agent's side (spec recovery, design-before-coding,
+definition of done, closure ledger) and the `product-manager` skill for
+the user's side (the intake contract: requirement, spec provenance,
+acceptance criteria, constraints, decisions, confirmation). The system
+prompt's Division of Responsibilities section names both and routes
+underspecified intake to the product-manager skill rather than
+improvisation. The skills do not change the division — they make each
+side's deliverables explicit so the collaboration fails less often at
+the handoff points.
 
 ## 3. Design principles (with the reasoning chain)
 

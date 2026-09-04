@@ -345,6 +345,34 @@ mod tests {
             rendered.contains("to interpret it, not to revise it"),
             "the agent interprets the functional requirement; it never revises it"
         );
+        assert!(
+            rendered.contains("`program-manager` skill"),
+            "the division section must point at the program-manager rubric for the agent's side"
+        );
+        assert!(
+            rendered.contains("`product-manager` skill"),
+            "the division section must point at the product-manager intake contract for the user's side"
+        );
+        assert!(
+            rendered.contains("do not improvise the requirement"),
+            "underspecified intake routes through the product-manager skill, not improvisation"
+        );
+    }
+
+    #[test]
+    fn test_division_skill_references_resolve_on_disk() {
+        // The Division of Responsibilities names two skills as the operational
+        // rubrics for its two roles. A prompt reference to a skill that does
+        // not exist is a ghost instruction — this pins that both resolve.
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for skill in ["program-manager", "product-manager"] {
+            let path = repo_root.join(format!(".agents/skills/{skill}/SKILL.md"));
+            assert!(
+                path.exists(),
+                "the system prompt references the {skill} skill; {} must exist",
+                path.display()
+            );
+        }
     }
 
     #[test]

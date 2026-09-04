@@ -319,8 +319,18 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   Move 3 → `kanban_goal_judge`, Move 4 → `kanban_goal_score`) when the
   kata-kanban server is connected, and vanishes when it isn't (§3.1: never
   advertise a capability the turn doesn't have).
+- **Skill rubrics (2026-09-04):** a paragraph after the four moves names
+  each side's operational rubric — the `program-manager` skill (the
+  agent's side: spec recovery, design-before-coding, definition of done,
+  closure ledger) and the `product-manager` skill (the user's side: what
+  to deliver at intake, decision points, and confirmation) — and directs
+  underspecified intake to the product-manager skill rather than
+  improvisation.
 - **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
-  (section + all four moves + the authority boundary),
+  (section + all four moves + the authority boundary + both skill
+  references + the no-improvisation directive),
+  `test_division_skill_references_resolve_on_disk` (the named skills
+  exist — a prompt reference to a missing skill is a ghost instruction),
   `test_system_prompt_autonomy_bullet_includes_experience_trigger`,
   `test_system_prompt_autonomy_bullet_reframes_prematurely`,
   `test_system_prompt_vagueness_resolved_with_user`,
