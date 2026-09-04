@@ -536,15 +536,6 @@ impl RealMemoryPort {
         })
     }
 
-    /// Get a clone of the curator's `MemoryStore` if available.
-    ///
-    /// Used by the `MemoryHealthSource` implementation to read memory metrics
-    /// for the cybernetics loop. Returns `None` if the store is unavailable
-    /// (self-healing will re-attempt on the next access).
-    pub fn curator_memory_store(&self) -> Option<Arc<MemoryStore>> {
-        self.curator_store.get()
-    }
-
     /// The configured memory life in days.
     pub fn memory_life_days(&self) -> f64 {
         self.curator_store

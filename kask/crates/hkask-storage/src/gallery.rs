@@ -148,14 +148,6 @@ pub struct AlbumRecord {
     pub created_at: String,
 }
 
-/// Membership record linking an asset to an album.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlbumMemberRecord {
-    pub album_id: String,
-    pub image_id: String,
-    pub added_at: String,
-}
-
 /// Generation lineage for a gallery image — the full context that produced
 /// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored op+params)
 /// and `gallery_variants` (re-run with a new seed). Anti-lock-in: this is the
@@ -591,42 +583,6 @@ impl GalleryStore {
             &[DbValue::Text(image_id.to_string())],
             Self::tag_from_row,
         )?)
-    }
-    /// Get gallery record by ID.
-    /// Get a gallery by ID.
-    ///
-    /// expect: "The system provides durable storage for gallery data"
-    /// \[P3\] Motivating: Generative Space — get gallery by ID
-    /// pre:  gallery_id is valid
-    /// post: returns Gallery if found
-    #[must_use = "result must be used"]
-    pub fn get_gallery(
-        &self,
-        gallery_id: &str,
-    ) -> std::result::Result<GalleryRecord, GalleryStoreError> {
-        query_row(
-            &*self.driver,
-            "SELECT id, root_path, mode, image_count, total_size_bytes, created_at, updated_at
-             FROM galleries WHERE id = ?1",
-            &[DbValue::Text(gallery_id.to_string())],
-            |row| {
-                Ok(GalleryRecord {
-                    id: row.get_str(0)?.to_string(),
-                    root_path: row.get_str(1)?.to_string(),
-                    mode: row.get_str(2)?.to_string(),
-                    image_count: row.get_int(3)? as u32,
-                    total_size_bytes: row.get_int(4)? as u64,
-                    created_at: row.get_str(5)?.to_string(),
-                    updated_at: row.get_str(6)?.to_string(),
-                })
-            },
-        )?
-        .ok_or_else(|| {
-            GalleryStoreError::NotFound(NotFound {
-                entity_type: "gallery".to_string(),
-                id: gallery_id.to_string(),
-            })
-        })
     }
     /// Get all tags for all images in a gallery.
     ///

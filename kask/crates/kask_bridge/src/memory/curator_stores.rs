@@ -227,9 +227,10 @@ fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<Memo
         // override — a deliberate design decision: the curator must shed
         // low-utility/low-saliency memories rather than grow unbounded. The
         // default budget is the Ashby attenuator that forces consolidation
-        // to prune. The user store reads HKASK_MEMORY_STORAGE_BUDGET; the
-        // curator intentionally does not, so an operator cannot raise the
-        // curator's cap without changing the default constant.
+        // to prune. The storage budget is currently hard-coded —
+        // HKASK_MEMORY_STORAGE_BUDGET is not yet wired anywhere, so an
+        // operator cannot raise any store's cap without changing the
+        // default constant.
         let base = MemoryStore::new(h_mem_store, embedding_store);
         // Wire the `reg.memory.encode` span sink on the curator's own DB —
         // mirrors the user-store wiring in `RealMemoryPort::new`. The

@@ -1,8 +1,9 @@
 //! Provider-learning regulator — Beta(α+1, β+1) reliability tracking and
 //! temporal-staleness detection for the dual-provider (FMP / EODHD) routing.
 //!
-//! Extracted from the crate root so the server composition (`lib.rs`) holds
-//! dispatch and forecast-store responsibilities only. The regulator models
+//! Extracted from the crate root so the server composition
+//! (`hkask_mcp_companies.rs`) holds dispatch and forecast-store
+//! responsibilities only. The regulator models
 //! each (symbol, provider) pair as a Beta posterior; a provider is bypassed
 //! when its success probability falls below the flaky threshold with
 //! sufficient observations, or when its latest filing is older than the

@@ -317,30 +317,6 @@ impl Ledger {
         Ok(balance)
     }
 
-    /// REQ: P9-ledger-transaction-count
-    /// expect: "I can count how many transactions reference a specific account" \[P9\]
-    /// pre:  destination is a valid account ID
-    /// post: returns count of unique transactions with a posting to that account
-    /// inv:  read-only
-    /// \[P9\] Constraining: Observability — transaction volume is queryable
-    pub fn transaction_count(&self, destination: &str) -> Result<u64, LedgerError> {
-        let row = self.driver.query_optional(
-            "SELECT COUNT(DISTINCT transaction_id) FROM postings WHERE destination = ?1",
-            &[DbValue::Text(destination.to_string())],
-        )?;
-        // No row → no transactions for this account → count is legitimately 0.
-        // A get_int error on a present row must propagate rather than read as
-        // a zero count.
-        let count = match row {
-            Some(r) => r.get_int(0)?,
-            None => 0,
-        };
-        Ok(u64::try_from(count).unwrap_or_else(|_| {
-            tracing::warn!(target: "ledger", count, "Negative transaction count from database — clamping to 0");
-            0
-        }))
-    }
-
     /// REQ: P9-ledger-query
     /// expect: "I can query transactions by time range and filter by account or asset" \[P9\]
     /// pre:  range.start <= range.end (ISO 8601 strings)

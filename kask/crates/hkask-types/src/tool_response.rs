@@ -65,8 +65,9 @@ pub fn unwrap_tool_envelope(value: Value) -> Value {
 /// Detect a server-side tool error envelope in a raw tool output string.
 ///
 /// `McpToolError::to_json_string` serializes an error as
-/// `{"error": <message>, "kind": <kind display>}` (pinned by golden tests in
-/// `hkask-mcp-server/src/server/mod.rs`). This helper parses that shape and
+/// `{"error": <message>, "kind": <kind display>}` (the shape is pinned by that
+/// implementation alone — it is not yet pinned by a test). This helper parses
+/// that shape and
 /// returns the typed envelope, so a consumer in the `Ok(output)` branch of
 /// `invoke_tool` can route the error through the same classification it uses
 /// for the `Err(_)` branch instead of falling into "Failed to parse …".

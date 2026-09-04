@@ -387,20 +387,14 @@ pub fn purge_legacy_hkask_entries() -> Result<usize, KeychainError> {
 /// Resolution priority:
 /// 1. `Env` — read from environment variable
 /// 2. `Keychain` — read from OS keychain at `kask://credentials/<key>`
-/// 3. `Derived` — look up master key (env → keychain), then HKDF-SHA256 derive sub-key
-/// 4. `Generated` — random bytes (⚠️ not reproducible; debug builds only)
 ///
 /// expect: "My keys are generated, stored, and rotated under my sovereignty"
 /// pre:  secret_ref is a valid SecretRef variant
 /// post: all returned secrets wrapped in Zeroizing
 pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
-    let start = std::time::Instant::now();
     let variant = match secret_ref {
         SecretRef::Env(_) => "env",
         SecretRef::Keychain(_) => "keychain",
-        SecretRef::Derived { .. } => "derived",
-        #[cfg(debug_assertions)]
-        SecretRef::Generated(_) => "generated",
     };
     info!(target: "reg.keystore", operation = "resolve", variant = variant, "REG");
 
@@ -420,40 +414,6 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
             let secret = keychain.retrieve_by_key(key_name)?;
             info!(target: "reg.keystore", operation = "resolve_keychain", key_name = %key_name, "REG");
             Ok(Zeroizing::new(secret.as_bytes().to_vec()))
-        }
-        SecretRef::Derived {
-            master_key_env,
-            context,
-        } => {
-            info!(target: "reg.keystore", operation = "resolve_derived", master_key_env = %master_key_env, context = %context, "REG");
-            // Resolve master key: env var first, then keychain
-            let master_key_bytes = resolve(&SecretRef::Env(master_key_env.clone()))
-                .or_else(|_| resolve(&SecretRef::Keychain(master_key_env.clone())))
-                .map_err(|_| {
-                    KeychainError::NotFound(NotFound {
-                        entity_type: "secret".to_string(),
-                        id: format!(
-                            "Master key '{}' not found in environment or keychain; \
-                     set {} or ensure the zed-kask composition root has provisioned the keystore",
-                            master_key_env, master_key_env
-                        ),
-                    })
-                })?;
-
-            let master_key_bytes = normalize_master_key_bytes(master_key_bytes)?;
-
-            // HKDF-SHA256 derive sub-key
-            let sub_key = crate::master_key::derive_sub_key(&master_key_bytes, context);
-            info!(target: "reg.keystore", operation = "derive_sub_key", latency_ms = start.elapsed().as_millis(), "REG");
-            Ok(sub_key)
-        }
-        #[cfg(debug_assertions)]
-        SecretRef::Generated(length) => {
-            let bytes: Vec<u8> = (0..*length as usize)
-                .map(|_| rand::random::<u8>())
-                .collect();
-            tracing::warn!(target: "reg.keystore", operation = "resolve_generated", length = *length, "REG");
-            Ok(Zeroizing::new(bytes))
         }
     }
 }

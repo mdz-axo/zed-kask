@@ -578,36 +578,6 @@ impl CyberneticsLoop {
         self.context_server_health_source = Some(source);
     }
 
-    /// Wire a memory health source at construction time.
-    ///
-    /// The bridge implements `MemoryHealthSource` and passes an
-    /// `Arc<dyn MemoryHealthSource>` here. The `MemoryHealthSensor` emits
-    /// signals for `TripleCount`, `LowConfidenceCount`,
-    /// `ConsolidationCandidates`, `StorageUsage`, and `MemoryLife` —
-    /// closing 5 regulation loops that previously had policy rules but no
-    /// sensor (dead policy).
-    ///
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_memory_health_source(
-        self,
-        source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
-        set_points: &crate::set_points::SetPoints,
-    ) -> Self {
-        self.sensor_registry
-            .register(Arc::new(crate::sensor_provider::MemoryHealthSensor::new(
-                source,
-                set_points.triple_count_max,
-                set_points.low_confidence_max,
-                set_points.low_confidence_threshold,
-                set_points.consolidation_floor,
-                set_points.consolidation_candidates_max,
-                set_points.storage_usage_max_ratio,
-                set_points.memory_life_min_days,
-            )));
-        self
-    }
-
     /// Wire a memory health source after construction.
     ///
     /// Used by the composition root to lazily wire the sensor after the
@@ -949,21 +919,5 @@ impl CyberneticsLoop {
             self.emit_regulation_span(SpanKind::LoopMetricsTelemetry, observation)
                 .await;
         }
-    }
-}
-
-impl CyberneticsLoop {
-    /// Return a snapshot of the most recent loop-quality telemetry.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub async fn loop_quality(&self) -> LoopMetrics {
-        *self.loop_quality.read().await
-    }
-
-    /// Return a reference to the current set-points (read-only).
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub fn set_points(&self) -> &SetPoints {
-        &self.set_points
     }
 }

@@ -7,7 +7,7 @@
 //! - `ontology_io` — tagged-chunks JSONL readers
 //!
 //! The `#[tool_router]` macro requires all `#[tool]` methods to be on a single
-//! `impl CorpusServer` block, so the tool methods stay here in `mod.rs`.
+//! `impl CorpusServer` block, so the tool methods stay here in `semantic.rs`.
 
 mod assertions;
 pub(crate) mod batch_api;

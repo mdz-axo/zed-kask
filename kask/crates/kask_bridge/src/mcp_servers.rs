@@ -116,7 +116,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Corpus — document corpus and QA generation",
         credentials: Some(&[
             // DB encryption passphrase — read by default_corpus_passphrase() in
-            // semantic/mod.rs. Without this, the DB is silently encrypted with
+            // helpers.rs. Without this, the DB is silently encrypted with
             // the hardcoded dev passphrase under governed launch.
             "HKASK_DB_PASSPHRASE",
         ]),
@@ -147,7 +147,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_QA_MODEL",
             // Model cache TTL — read by model_cache.rs, falls back to 4h default.
             "HKASK_MODEL_CACHE_TTL_SECS",
-            // Content guard toggle — read by semantic/mod.rs, defaults to true.
+            // Content guard toggle — read by guard_content() in
+            // hkask_mcp_corpus.rs, defaults to true.
             "HKASK_ENABLE_CONTENT_GUARD",
             // OCR triage thresholds — read by ocr/config.rs, fall back to TriageConfig::default().
             "HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN",
@@ -418,7 +419,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "RUNPOD_DOCKER_IMAGE",
             "RUNPOD_DOCKER_ARGS",
             "HKASK_PODS_FILE",
-            // Nebius operator overrides — read by providers/mod.rs and nebius.rs.
+            // Nebius operator overrides — read by providers.rs and nebius.rs.
             "NEBIUS_GPU_PLATFORM",
             "NEBIUS_GPU_PRESET",
             "NEBIUS_IMAGE_FAMILY",

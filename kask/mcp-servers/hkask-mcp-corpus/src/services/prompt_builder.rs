@@ -1,6 +1,6 @@
 //! Prompt builder service — KNN + concept graph + knowledge graph + QA prompts.
 //!
-//! Extracted from `CorpusServer::corpus_build_prompts` in `tools/corpus/mod.rs`.
+//! Extracted from `CorpusServer::corpus_build_prompts` in `tools/corpus.rs`.
 //! Builds QA generation prompts with source-scoped KNN context, ontology context,
 //! and h_mem knowledge graph sections.
 

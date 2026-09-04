@@ -93,22 +93,6 @@ pub enum RegulationData {
 }
 
 impl RegulationData {
-    /// Extract `remaining_ratio` if this variant carries one.
-    pub fn remaining_ratio(&self) -> Option<f64> {
-        match self {
-            RegulationData::EnergyBudgetLow {
-                remaining_ratio, ..
-            }
-            | RegulationData::BudgetGuardEscalation {
-                remaining_ratio, ..
-            }
-            | RegulationData::EnergyDepletionAutoAdjust {
-                remaining_ratio, ..
-            } => Some(*remaining_ratio),
-            _ => None,
-        }
-    }
-
     /// The rollout this action's impact should be verified against, and the
     /// event position marking "before the action" (event-substrate phase 6).
     /// `None` for actions that don't target a rollout — those take the

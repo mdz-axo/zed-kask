@@ -1,6 +1,6 @@
 //! QA generation helpers — response parsing, error types, batch writer.
 //!
-//! Used by `corpus_generate_qa` and `corpus_generate_qa_batch` in `mod.rs`.
+//! Used by `corpus_generate_qa` and `corpus_generate_qa_batch` in `semantic.rs`.
 
 use crate::{Arc, Mutex};
 use serde::{Deserialize, Serialize};

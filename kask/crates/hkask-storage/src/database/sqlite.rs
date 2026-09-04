@@ -136,11 +136,6 @@ impl SqliteDriver {
         }
     }
 
-    /// Get a reference to the pool (for stores that need it).
-    pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
-        &self.pool
-    }
-
     /// Raw query execution without Regulation span emission.
     /// Called by `query` and `query_optional` which each emit their own spans.
     fn query_raw(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {

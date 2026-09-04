@@ -1,6 +1,6 @@
 //! QA record parsing — flat and envelope format support.
 //!
-//! Used by `corpus_ingest_qa` in `mod.rs` to parse generated QA JSONL.
+//! Used by `corpus_ingest_qa` in `tools/corpus.rs` to parse generated QA JSONL.
 
 /// A parsed QA record from a JSONL line. Handles both flat and envelope formats.
 pub(crate) struct ParsedQa {

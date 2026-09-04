@@ -235,8 +235,8 @@ pub struct MemoryResolveContradictionRequest {
 // The consolidation service handles confidence-based cleanup and budget
 // pruning. These tools add the two missing axes: age-based hard-delete
 // (memory_life_days is used for decay, never for deletion) and
-// near-duplicate string dedup (find_existing_by_eav does exact EAV
-// matching for Bayesian combination, not fuzzy value dedup).
+// near-duplicate string dedup (recall-time dedup is an exact-EAV hash
+// filter, not fuzzy value dedup).
 // Both are deterministic, non-LLM, and operator-invoked.
 
 /// Prune h_mems older than a specified age.
@@ -263,7 +263,7 @@ pub struct MemoryPruneRequest {
 /// normalized_value). For each group with 2+ near-duplicate values, the
 /// highest-confidence h_mem is kept and the rest are expired (soft-delete
 /// via `valid_to`). Non-string values are skipped — structural dedup is
-/// the EAV path's job (`find_existing_by_eav` + Bayesian combination).
+/// the recall-time exact-EAV filter's job.
 ///
 /// Normalization: lowercase, strip punctuation, collapse whitespace.
 /// "AAPL." and "aapl" are treated as duplicates.

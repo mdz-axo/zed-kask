@@ -120,18 +120,6 @@ impl TranscriptBundle {
             .iter()
             .find(|w| w.start_ms <= ms && ms < w.end_ms)
     }
-
-    /// Get the segment containing a given millisecond position.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  ms is any u64 millisecond offset
-    /// post: returns Some(&TranscriptSegment) if a segment spans ms
-    ///       (start_ms <= ms < end_ms); returns None otherwise
-    pub fn segment_at_ms(&self, ms: u64) -> Option<&TranscriptSegment> {
-        self.segments
-            .iter()
-            .find(|s| s.start_ms <= ms && ms < s.end_ms)
-    }
 }
 
 #[cfg(test)]

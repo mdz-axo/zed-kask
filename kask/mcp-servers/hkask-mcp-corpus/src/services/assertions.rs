@@ -1,6 +1,6 @@
 //! Assertion extraction service — concurrent h_mem extraction from corpus chunks.
 //!
-//! Extracted from `CorpusServer::extract_passages_batch` in `tools/semantic/mod.rs`.
+//! Extracted from `CorpusServer::extract_passages_batch` in `tools/semantic.rs`.
 //! Opens the DB once, shares it across concurrent tasks, and stores assertions as
 //! h_mems with ontology-aware confidence capping.
 

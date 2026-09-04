@@ -17,7 +17,7 @@
 //! composition procedure.
 
 use crate::cmp::CmpMethod;
-use crate::types::{MarketRecord, ReliabilityTier};
+use crate::types::ReliabilityTier;
 
 // ── Configuration (all passed variables) ────────────────────────────────────
 
@@ -304,19 +304,6 @@ pub fn materiality_level(
 }
 
 // ── Eligibility ─────────────────────────────────────────────────────────────
-
-/// A contract presented for eligibility, with the semantic fields the
-/// classifier needs. Extracted from `MarketRecord` + the semantic mapping.
-#[derive(Debug, Clone)]
-pub struct EligibilityInput<'a> {
-    pub record: &'a MarketRecord,
-    /// The contract's predicted level (strike) in base units, if extractable.
-    pub predicted_level: Option<f64>,
-    /// Whether the contract predicts the factor ends above its strike.
-    pub direction_up: bool,
-    /// Days from observation to the contract's expiration.
-    pub days_to_expiration: Option<f64>,
-}
 
 /// Why a contract was excluded — surfaced, never silent.
 #[derive(Debug, Clone, serde::Serialize)]

@@ -734,7 +734,7 @@ impl Sensor for OcrHealthSensor {
 ///
 /// The regulation crate cannot depend on `hkask-memory` (it would create a
 /// cycle), so the bridge implements this trait and passes an
-/// `Arc<dyn MemoryHealthSource>` to `CyberneticsLoop::with_memory_health_source`.
+/// `Arc<dyn MemoryHealthSource>` to `CyberneticsLoop::set_memory_health_source`.
 ///
 /// Without this sensor, 5 memory regulation loops are blind — their policy
 /// rules (`TripleCount`, `LowConfidenceCount`, `ConsolidationCandidates`,

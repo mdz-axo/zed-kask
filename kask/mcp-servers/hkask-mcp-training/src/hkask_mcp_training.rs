@@ -314,7 +314,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Host selection: auto-detect from env vars, or use HKASK_TRAINING_HOST.
     // Nebius is used when NEBIUS_PROJECT_ID is set (H100 at $3.85/hr).
     // Runpod is the fallback when RUNPOD_API_KEY is set (H100 at $2.39/hr).
-    // This matches TrainingHostConfig::default() in providers/mod.rs.
+    // This matches TrainingHostConfig::default() in providers.rs.
     let host_id = std::env::var("HKASK_TRAINING_HOST")
         .ok()
         .and_then(|h| TrainingHostId::from_str(&h))

@@ -2,7 +2,7 @@
 //!
 //! `cluster_within_source` groups chunks by cosine similarity within a source
 //! file, sorted by salience descending. Used by `corpus_dedup_chunks` and
-//! `corpus_consolidate_chunks` in `mod.rs`.
+//! `corpus_consolidate_chunks` in `tools/corpus.rs`.
 
 use crate::{McpToolError, read_jsonl_lenient};
 use hkask_types::corpus::TaggedChunk;

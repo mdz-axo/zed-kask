@@ -16,8 +16,8 @@
 //! - `query_by_perspective()` — filter by who wrote the memory (the swarm
 //!   hive uses this to scope by agent)
 //! - Embedding operations (store, search, centroid, purge)
-//! - Consolidation helpers (find_existing_by_eav, update_confidence,
-//!   consolidation_candidates, expire_h_mem)
+//! - Consolidation helpers (update_confidence, consolidation_candidates,
+//!   expire_h_mem)
 //!
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
 //! at recall time.
@@ -135,12 +135,11 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     /// The default per-agent storage budget (max shared h_mems before
-    /// consolidation prunes). Exposed so callers (`RealMemoryPort::new`)
-    /// can fall back to it when `HKASK_MEMORY_STORAGE_BUDGET` is unset or
-    /// malformed, keeping the default in one place (the `.rules` "Kask
-    /// settings defaults must live in `Default` impls" trap — though this
-    /// is a `const`, not a settings struct, the single-source principle
-    /// still applies).
+    /// consolidation prunes). Not yet wired — `HKASK_MEMORY_STORAGE_BUDGET`
+    /// is not read anywhere; the store always uses this hard-coded default
+    /// (the `.rules` "Kask settings defaults must live in `Default` impls"
+    /// trap — though this is a `const`, not a settings struct, the
+    /// single-source principle still applies).
     pub fn default_storage_budget() -> usize {
         DEFAULT_STORAGE_BUDGET
     }
@@ -215,8 +214,9 @@ impl MemoryStore {
     /// Set the storage budget (max shared h_mems before consolidation prunes).
     /// The budget is enforced inside `MemoryConsolidator::consolidate` as the
     /// default `max_h_mems` cap when the caller omits one — the
-    /// Ashby attenuator for unbounded memory growth. `RealMemoryPort::new`
-    /// wires this from `HKASK_MEMORY_STORAGE_BUDGET` (default 10_000).
+    /// Ashby attenuator for unbounded memory growth. Not yet wired —
+    /// `HKASK_MEMORY_STORAGE_BUDGET` is not read anywhere; the store always
+    /// uses the hard-coded default.
     pub fn with_storage_budget(mut self, budget: usize) -> Self {
         self.storage_budget = budget;
         self
@@ -620,45 +620,6 @@ impl MemoryStore {
 
     // ── Consolidation helpers ─────────────────────────────────────────────
 
-    /// Find an existing h_mem with the same EAV as the given h_mem.
-    ///
-    /// Used by the consolidation bridge and the curator's therapy process
-    /// to detect when a memory being promoted or examined matches a fact
-    /// already in the store, enabling Bayesian evidence combination rather
-    /// than duplicate insertion, and contradiction detection for therapy.
-    pub fn find_existing_by_eav(&self, h_mem: &HMem) -> Option<HMem> {
-        let candidate_hash = crate::recall_dedup::eav_hash(h_mem);
-        let existing = match self
-            .h_mem_store
-            .query_by_entity_attribute(&h_mem.entity, &h_mem.attribute)
-        {
-            Ok(rows) => rows
-                .into_iter()
-                .find(|t| crate::recall_dedup::eav_hash(t) == candidate_hash),
-            Err(error) => {
-                tracing::warn!(
-                    target: "reg.consolidation",
-                    %error,
-                    entity = %h_mem.entity,
-                    attribute = %h_mem.attribute,
-                    "find_existing_by_eav: query failed, returning None (may seed duplicate)"
-                );
-                return None;
-            }
-        };
-
-        if existing.is_some() {
-            tracing::debug!(
-                target: "reg.consolidation",
-                entity = %h_mem.entity,
-                attribute = %h_mem.attribute,
-                "Found existing h_mem for EAV — will combine confidences"
-            );
-        }
-
-        existing
-    }
-
     /// Update an existing h_mem's confidence via the bitemporal update path.
     pub fn update_confidence(
         &self,
@@ -719,20 +680,6 @@ impl MemoryStore {
             "h_mem expired (soft-delete via valid_to)"
         );
         Ok(())
-    }
-
-    pub fn consolidation_candidate_count(&self, perspective: &WebID) -> usize {
-        match self.consolidation_candidates(*perspective, usize::MAX) {
-            Ok(candidates) => candidates.len(),
-            Err(error) => {
-                tracing::warn!(
-                    target: "reg.consolidation",
-                    %error,
-                    "consolidation_candidate_count: signal stale, returning 0"
-                );
-                0
-            }
-        }
     }
 
     // ── Budget / cleanup ──────────────────────────────────────────────────
@@ -832,14 +779,12 @@ impl MemoryStore {
         })
     }
 
-    // ── Near-duplicate value dedup ─────────────────────────────────────
+    // ── Near-duplicate value dedup ─────────────────────────────────
     //
-    // Three existing dedup layers do NOT cover this case:
+    // The existing dedup layers do NOT cover this case:
     // 1. `recall_dedup::dedup_h_mems` — recall-time exact-EAV hash filter
     //    (first-seen wins, no store mutation, no fuzzy matching).
-    // 2. `find_existing_by_eav` — exact-EAV write-time detection (not wired
-    //    into `store()`; available as a helper for Bayesian combination).
-    // 3. Therapy skill — LLM-driven semantic contradiction resolution
+    // 2. Therapy skill — LLM-driven semantic contradiction resolution
     //    (operator-in-the-loop, handles divergent values, not near-duplicates).
     //
     // This pass is the missing fourth layer: deterministic fuzzy string

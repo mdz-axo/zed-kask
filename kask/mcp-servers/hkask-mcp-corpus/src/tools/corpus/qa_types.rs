@@ -1,6 +1,6 @@
 //! QA type helpers — Bloom taxonomy distribution and instructions.
 //!
-//! Used by `corpus_build_prompts` in `mod.rs` to generate QA prompts at
+//! Used by `corpus_build_prompts` in `tools/corpus.rs` to generate QA prompts at
 //! consecutive Bloom levels.
 
 /// QA type corresponding to Bloom's taxonomy levels.

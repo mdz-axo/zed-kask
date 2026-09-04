@@ -99,7 +99,7 @@ const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// Mirrors the `PodDeploySpec` pattern: keeps `RunpodHost::new` under clippy's
 /// argument-count limit while making the operator-accepted deployment settings
 /// (GPU type, disk, image) explicit and self-documenting. All fields are
-/// resolved keychain-first in `lib.rs` and flowed through
+/// resolved keychain-first in `hkask_mcp_training.rs` and flowed through
 /// `TrainingHostConfig` → `create_host` → here.
 pub(crate) struct RunpodHostInit {
     pub api_key: String,

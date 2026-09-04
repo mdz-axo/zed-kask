@@ -1,6 +1,6 @@
 //! Consolidation service — cluster + LLM-synthesize + re-embed chunks.
 //!
-//! Extracted from `CorpusServer::corpus_consolidate_chunks` in `tools/corpus/mod.rs`.
+//! Extracted from `CorpusServer::corpus_consolidate_chunks` in `tools/corpus.rs`.
 //! 5-phase pipeline: cluster → concurrent LLM consolidation → build TaggedChunks
 //! with ontology merging → re-embed → write.
 

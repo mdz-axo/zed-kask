@@ -13,7 +13,6 @@
 //! checkpoint), not assumed by the registry.
 
 use crate::cmp_portfolio::{MaterialitySetting, MaterialityType};
-use crate::types::MarketRecord;
 
 /// A systematic factor family CMP indices are built over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -201,27 +200,15 @@ pub struct EconomicContext {
     pub rationale: String,
 }
 
-/// Match a market record to a base event by semantic signature over its
-/// question, description, series, and category. Returns the first matching
-/// family, or None when the record is not a base-event contract.
+/// Match a market to a base event by semantic signature over its question,
+/// description, series, and category. Returns the first matching family, or
+/// None when the record is not a base-event contract.
 ///
 /// Matching is case-insensitive substring over the concatenated text. This is
 /// the semantic-match substrate; the FIBO subject mapping (a future
 /// refinement) can tighten it, but the signature is deliberately readable and
-/// auditable so eligibility decisions are explainable.
-pub fn classify_base_event(record: &MarketRecord) -> Option<BaseEvent> {
-    classify_base_event_text(
-        &record.question,
-        &record.description,
-        &record.series,
-        &record.category,
-    )
-}
-
-/// Text-only base-event classification. Same matching as
-/// [`classify_base_event`] but without constructing a full [`MarketRecord`] —
-/// for call sites that have the raw text fields (e.g. a Kalshi market's
-/// title/subtitle/series) and don't need the full annotated record.
+/// auditable so eligibility decisions are explainable. Takes the raw text
+/// fields directly — call sites don't need a full annotated market record.
 pub fn classify_base_event_text(
     question: &str,
     description: &str,

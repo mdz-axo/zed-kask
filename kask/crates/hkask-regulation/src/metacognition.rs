@@ -603,11 +603,6 @@ impl MetacognitionLoop {
         }
     }
 
-    /// Get the last health snapshot (if any).
-    pub async fn last_snapshot(&self) -> Option<HealthSnapshot> {
-        self.last_snapshot.read().clone()
-    }
-
     /// Get the last health snapshot synchronously (blocking RwLock read).
     ///
     /// Uses `parking_lot::RwLock::read()` which parks the current thread

@@ -1,6 +1,6 @@
 //! Assertion extraction helper — RDF predicate → 5W1H dimension mapping.
 //!
-//! Used by `corpus_extract_assertions` in `mod.rs`.
+//! Used by `corpus_extract_assertions` in `semantic.rs`.
 
 use hkask_bridge_ontology::dc_bibo;
 use hkask_bridge_ontology::golem;

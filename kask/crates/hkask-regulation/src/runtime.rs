@@ -763,22 +763,6 @@ impl RegulationLedger {
         state.tracker.session_reset();
     }
 
-    /// Synchronous version of variety_for_domain — uses blocking_read() on the
-    /// internal tokio RwLock. This enables sync contexts (e.g., metric collectors,
-    /// CLI closures) to query Regulation variety counters without requiring async.
-    /// Get variety for a domain (blocking).
-    ///
-    /// expect: "I can access Regulation observability synchronously — preserving generative capability"
-    /// \[P3\] Motivating: Generative Space — sync access preserves generative capability
-    /// \[P7\] Constraining: Evolutionary Architecture — blocking variant emerged from real usage
-    /// \[P4\] Constraining: Clear Boundaries — must not be called from async context
-    /// pre:  domain is non-empty
-    /// post: returns variety count
-    pub fn blocking_variety_for_domain(&self, domain: &str) -> u64 {
-        let state = self.state.blocking_read();
-        state.tracker.variety_for_domain(domain)
-    }
-
     // ── Outcome Quality Tracking ──
 
     // ── Skill Feedback Span Storage ──

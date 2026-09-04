@@ -9,7 +9,7 @@
 //! `cmp_portfolio.rs`. It:
 //!
 //! 1. Reads the per-family JSONL files (Kalshi and Gamma schemas differ).
-//! 2. Adapts each record to an `EligibilityInput` (extracting strike,
+//! 2. Adapts each record to a `CatalogAdapter` (extracting strike,
 //!    direction, days-to-expiration, probability via `BaseEvent::extract_strike`).
 //! 3. Classifies orientation and builds `OrientedConstituent`s.
 //! 4. Calls `construct_cmp_index_set` to solve the portfolios.
@@ -25,8 +25,6 @@
 //!   weights, maturities, and reliability floor.
 //! - Errors propagate. Catalog parsing, JSON decoding, date parsing — all
 //!   return `Result` with `?`. No `unwrap_or(0)` on a signal.
-
-use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
@@ -476,7 +474,7 @@ fn parse_days_to_expiry(close_time: &str, now: &DateTime<Utc>) -> Option<f64> {
 /// record JSON strings.
 ///
 /// This is the C0.4 entry point. It takes the raw JSONL lines (already read
-/// from disk by the caller or the `read_catalog` helper), the target family,
+/// from disk by the caller), the target family,
 /// the venue, the economic context (reference + volatility), and the CMP
 /// config. Returns a `ProvenancedCmpIndexSet` with all solved indices and
 /// explicit withholding for buckets that couldn't be formed.
@@ -595,27 +593,6 @@ pub fn build_cmp_indices_from_lines(
         n_eligible: oriented.len(),
         rejection_sample: rejections.into_iter().take(5).collect(),
     })
-}
-
-/// Read a per-family catalog file from disk and return its lines.
-///
-/// Path layout: `<catalogs_dir>/<family_label>/<venue_stem>.jsonl`
-pub fn read_catalog(
-    catalogs_dir: &Path,
-    family: BaseEconomicObject,
-    venue: Venue,
-) -> Result<Vec<String>, CmpError> {
-    let family_dir = catalogs_dir.join(family.label());
-    let path = family_dir.join(format!("{}.jsonl", venue.catalog_stem()));
-    let contents = std::fs::read_to_string(&path).map_err(|e| CmpError::IoError {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-    Ok(contents
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.to_string())
-        .collect())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

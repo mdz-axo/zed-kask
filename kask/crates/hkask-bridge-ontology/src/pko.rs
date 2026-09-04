@@ -216,20 +216,6 @@ pub fn corpus_stage_to_pko_step(stage: &str) -> Option<PkoConcept> {
     }
 }
 
-/// Map a research workflow stage to a PKO concept.
-pub fn research_stage_to_pko(stage: &str) -> Option<PkoConcept> {
-    match stage.to_lowercase().as_str() {
-        "hypothesis" | "question" => Some(USER_QUESTION_OCCURRENCE),
-        "search" | "discover" => Some(ACTION),
-        "extract" | "read" => Some(ACTION),
-        "evaluate" | "assess" => Some(STEP_VERIFICATION),
-        "synthesize" | "summarize" => Some(PROCEDURE_EXECUTION),
-        "curate" | "organize" => Some(PROCEDURE),
-        "cite" | "reference" => Some(REFERENCES_RESOURCE),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

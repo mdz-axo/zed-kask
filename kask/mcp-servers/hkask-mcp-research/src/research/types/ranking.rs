@@ -243,7 +243,7 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 //    while restoring single-request economics.
 //
 // Canonical-pattern interactions:
-// - RRF fusion (providers/mod.rs): heuristic signals remain the base scoring;
+// - RRF fusion (research/providers.rs): heuristic signals remain the base scoring;
 //   this stage reorders on top. On total failure the RRF order is kept.
 // - Inference IPC bridge: the rerank call routes through
 //   `InferenceMethod::Rerank` to the zed side, which holds the OpenRouter key

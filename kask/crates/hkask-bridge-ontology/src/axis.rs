@@ -422,10 +422,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         };
     }
     // Entity metadata → DC+BIBO dual-axis.
-    if ["file", "web", "registry", "wallet"]
-        .iter()
-        .any(|kw| matches_kw(kw))
-    {
+    if ["file", "web", "registry"].iter().any(|kw| matches_kw(kw)) {
         return OntologyAnchor::DualAxis {
             axis: OntologyAxis::DcBibo,
             concept: dc_bibo::TEXT.to_string(),
