@@ -96,6 +96,7 @@ impl SwarmServer {
                 &req.query,
                 limit,
                 agent_scope,
+                hkask_inference::model_constants::embedding_model().as_deref(),
             )
             .await
             {

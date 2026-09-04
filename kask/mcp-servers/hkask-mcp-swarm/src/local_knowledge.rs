@@ -323,7 +323,9 @@ pub(crate) async fn record_delegation(
 /// h_mem write, or embedding is logged with `tracing::warn!` and never fails
 /// the delegation (memory is an enhancement, not a dependency). A turn
 /// stored without an embedding is still in the KB but not the KNN index —
-/// entity-reachable, not similarity-reachable.
+/// entity-reachable, not similarity-reachable. An unconfigured embedding
+/// model (`None`) degrades the same way — the turn lands in the KB without a
+/// KNN embedding, and the warn names the setting (no hidden default).
 pub(crate) async fn ingest_turn(
     memory: &LazyLocalMemory,
     inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
@@ -331,6 +333,7 @@ pub(crate) async fn ingest_turn(
     task: &str,
     response: &str,
     model: &str,
+    embedding_model: Option<&str>,
 ) {
     let store = match memory.get().await {
         Ok(store) => store,
@@ -391,12 +394,22 @@ pub(crate) async fn ingest_turn(
     // embedding is stored under the same entity as the h_mem, so
     // `search_similar` → `query_deduped_untouched(entity_ref)` recovers the
     // full turn text. A failed embed degrades the turn to entity-only recall.
-    let embedding_model = hkask_inference::model_constants::embedding_model();
-    match inference.embed(&embedding_model, &[task.to_string()]).await {
+    let embedding_model = match embedding_model {
+        Some(model) => model,
+        None => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                agent = %agent_id,
+                "no embedding model configured — set kask.models.embedding_model (injected as \
+                 HKASK_EMBEDDING_MODEL); turn is in the KB but not the KNN index (non-fatal)"
+            );
+            return;
+        }
+    };
+    match inference.embed(embedding_model, &[task.to_string()]).await {
         Ok(vectors) => match vectors.into_iter().next() {
             Some(vector) => {
-                if let Err(error) = store.store_embedding(&entity, &vector, &embedding_model, None)
-                {
+                if let Err(error) = store.store_embedding(&entity, &vector, embedding_model, None) {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         error = %error,
@@ -452,7 +465,8 @@ pub struct RecalledTurn {
 /// Returns turns ranked by similarity (most similar first). Only episodic
 /// turns carry embeddings (the stigmergy triples from `record_delegation`
 /// have none), so every KNN hit resolves to a turn. Degrades to an error when
-/// the store is unavailable or the query cannot be embedded — callers
+/// the store is unavailable, no embedding model is configured, or the query
+/// cannot be embedded — callers
 /// surface a `memory_unconfigured` note rather than fabricating empty hits
 /// (the `.rules` unwrap_or(0) trap: a failed recall is not "no memory").
 pub(crate) async fn recall_turns(
@@ -461,11 +475,18 @@ pub(crate) async fn recall_turns(
     query: &str,
     limit: usize,
     agent_filter: Option<&str>,
+    embedding_model: Option<&str>,
 ) -> Result<Vec<RecalledTurn>, LocalSwarmError> {
     let store = memory.get().await?;
-    let embedding_model = hkask_inference::model_constants::embedding_model();
+    let embedding_model = embedding_model.ok_or_else(|| {
+        LocalSwarmError::Unavailable(
+            "no embedding model configured — set kask.models.embedding_model (injected as \
+             HKASK_EMBEDDING_MODEL); kask never falls back to a hidden code constant"
+                .to_string(),
+        )
+    })?;
     let vectors = inference
-        .embed(&embedding_model, &[query.to_string()])
+        .embed(embedding_model, &[query.to_string()])
         .await
         .map_err(|error| {
             LocalSwarmError::Unavailable(format!("embedding the recall query failed: {error}"))
@@ -667,12 +688,20 @@ mod tests {
             "analyze the market",
             "the market is up",
             "test-model",
+            Some("test-embed-model"),
         )
         .await;
 
-        let turns = recall_turns(&memory, &inference, "market", 10, None)
-            .await
-            .expect("recall succeeds on a configured store");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "market",
+            10,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("recall succeeds on a configured store");
         assert_eq!(turns.len(), 1, "the ingested turn is the only KNN hit");
         assert_eq!(turns[0].agent_id, "market_analyst");
         let parsed: serde_json::Value =
@@ -700,14 +729,22 @@ mod tests {
             "shared research task",
             "shared finding",
             "m",
+            Some("test-embed-model"),
         )
         .await;
 
         // `recall_turns` takes no agent argument — it spans the whole KB. A
         // turn `agent_alpha` produced is retrievable here ("by" any agent).
-        let turns = recall_turns(&memory, &inference, "anything", 10, None)
-            .await
-            .expect("recall succeeds");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "anything",
+            10,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("recall succeeds");
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].agent_id, "agent_alpha");
     }
@@ -732,12 +769,71 @@ mod tests {
             Arc::new(EmbedStubInference { dim: test_dim() });
 
         // Must not panic and must not fail the call (memory is non-fatal).
-        ingest_turn(&memory, &inference, "agent", "task", "response", "m").await;
+        ingest_turn(
+            &memory,
+            &inference,
+            "agent",
+            "task",
+            "response",
+            "m",
+            Some("test-embed-model"),
+        )
+        .await;
 
-        let recall_error = recall_turns(&memory, &inference, "q", 10, None).await;
+        let recall_error =
+            recall_turns(&memory, &inference, "q", 10, None, Some("test-embed-model")).await;
         assert!(
             recall_error.is_err(),
             "recall surfaces unavailability, not empty hits"
+        );
+    }
+
+    /// No embedding model configured (`None`): `ingest_turn` still stores the
+    /// turn h_mem (KB-reachable) but skips the KNN embedding, and
+    /// `recall_turns` errors naming the setting — fail-visible, never a
+    /// hidden default (the no-hidden-models spec).
+    #[tokio::test]
+    async fn unconfigured_embedding_model_degrades_ingest_and_fails_recall() {
+        let memory = temp_memory();
+        let inference: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(EmbedStubInference { dim: test_dim() });
+
+        // Ingest without a model: the turn must still land in the KB.
+        ingest_turn(&memory, &inference, "agent", "task", "response", "m", None).await;
+
+        // The turn is entity-reachable but not similarity-reachable: a
+        // model-configured recall succeeds and finds no KNN hits.
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "task",
+            10,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("recall succeeds with a model configured");
+        assert_eq!(
+            turns.len(),
+            0,
+            "no embedding was stored, so semantic recall finds nothing"
+        );
+
+        // Recall without a model errors naming the setting (surfaced, not
+        // fabricated empty hits).
+        let recall_error = recall_turns(&memory, &inference, "q", 10, None, None).await;
+        assert!(
+            recall_error.is_err(),
+            "recall without an embedding model must error, not return empty hits"
+        );
+        let message = recall_error.unwrap_err().to_string();
+        assert!(
+            message.contains("no embedding model configured"),
+            "the error names the missing setting: {message}"
+        );
+        assert!(
+            message.contains("HKASK_EMBEDDING_MODEL"),
+            "the error names the env var: {message}"
         );
     }
 
@@ -755,6 +851,7 @@ mod tests {
             "task one",
             "response one",
             "m",
+            Some("test-embed-model"),
         )
         .await;
         ingest_turn(
@@ -764,6 +861,7 @@ mod tests {
             "task two",
             "response two",
             "m",
+            Some("test-embed-model"),
         )
         .await;
         ingest_turn(
@@ -773,12 +871,20 @@ mod tests {
             "task three",
             "response three",
             "m",
+            Some("test-embed-model"),
         )
         .await;
 
-        let turns = recall_turns(&memory, &inference, "query", 50, None)
-            .await
-            .expect("recall succeeds");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "query",
+            50,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("recall succeeds");
         assert_eq!(
             turns.len(),
             3,
@@ -852,6 +958,7 @@ mod tests {
             "analyze market trends",
             "market is bullish",
             "test-model",
+            Some("test-embed-model"),
         )
         .await;
         record_delegation(
@@ -864,9 +971,16 @@ mod tests {
         .await;
 
         // Episodic turn memory: retrievable by semantic recall.
-        let turns = recall_turns(&memory, &inference, "market", 10, None)
-            .await
-            .expect("recall succeeds");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "market",
+            10,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("recall succeeds");
         assert_eq!(turns.len(), 1, "ingest_turn wrote a retrievable turn");
         assert_eq!(turns[0].agent_id, "parallel_agent");
 
@@ -897,6 +1011,7 @@ mod tests {
             "market analysis task",
             "market is bullish",
             "test-model",
+            Some("test-embed-model"),
         )
         .await;
         ingest_turn(
@@ -906,6 +1021,7 @@ mod tests {
             "market analysis task",
             "market is bearish",
             "test-model",
+            Some("test-embed-model"),
         )
         .await;
         ingest_turn(
@@ -915,21 +1031,36 @@ mod tests {
             "market analysis task",
             "market is sideways",
             "test-model",
+            Some("test-embed-model"),
         )
         .await;
 
         // Scoped to alpha_agent: only its turn — not beta_agent's, and not
         // alpha_agent_fan's (the delimiter makes the prefix exact).
-        let turns = recall_turns(&memory, &inference, "market", 10, Some("alpha_agent"))
-            .await
-            .expect("scoped recall succeeds");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "market",
+            10,
+            Some("alpha_agent"),
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("scoped recall succeeds");
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].agent_id, "alpha_agent");
 
         // Unscoped: the shared knowledgebase spans all agents.
-        let turns = recall_turns(&memory, &inference, "market", 10, None)
-            .await
-            .expect("unscoped recall succeeds");
+        let turns = recall_turns(
+            &memory,
+            &inference,
+            "market",
+            10,
+            None,
+            Some("test-embed-model"),
+        )
+        .await
+        .expect("unscoped recall succeeds");
         assert_eq!(turns.len(), 3);
     }
 }

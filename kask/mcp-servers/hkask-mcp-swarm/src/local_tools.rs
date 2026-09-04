@@ -274,6 +274,7 @@ impl SwarmServer {
                 &req.task,
                 &result.response,
                 &result.model,
+                hkask_inference::model_constants::embedding_model().as_deref(),
             )
             .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
@@ -379,6 +380,7 @@ impl SwarmServer {
                                 &entry.task,
                                 &r.response,
                                 &r.model,
+                                hkask_inference::model_constants::embedding_model().as_deref(),
                             )
                             .await;
                             total_cost += r.cost;
@@ -456,6 +458,7 @@ impl SwarmServer {
                             &entry.task,
                             &r.response,
                             &r.model,
+                            hkask_inference::model_constants::embedding_model().as_deref(),
                         )
                         .await;
                         total_cost += r.cost;
@@ -574,6 +577,7 @@ impl SwarmServer {
                             &task,
                             &r.response,
                             &r.model,
+                            hkask_inference::model_constants::embedding_model().as_deref(),
                         )
                         .await;
                         prev_output = r.response.clone();
@@ -2330,6 +2334,7 @@ impl SwarmServer {
                             &entry.task,
                             &r.response,
                             &r.model,
+                            hkask_inference::model_constants::embedding_model().as_deref(),
                         )
                         .await;
                         // Record on the task board.
@@ -2574,6 +2579,7 @@ impl SwarmServer {
                                 &entry.task,
                                 &r.response,
                                 &r.model,
+                                hkask_inference::model_constants::embedding_model().as_deref(),
                             )
                             .await;
                             // Record on the task board when a swarm_id is set.

@@ -62,11 +62,11 @@ impl std::fmt::Display for OcrBackend {
 
 // ── Thresholds Module ─────────────────────────────────────────────────────
 
-/// Default vision LLM model for OCR.
-/// Uses OLMOCR-2 on RunPod serverless (endpoint `kask-ocr`), routed through
-/// the inference port (the port handles provider credentials — not `RUNPOD_*`
-/// env vars read in this crate).
-/// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
+// LLM-OCR model resolution: the `HKASK_OCR_MODEL` env var or the `llm_model`
+// pipeline parameter, routed through the inference port (the port handles
+// provider credentials — no `RUNPOD_*` env vars are read in this crate).
+// There is no built-in default: unset means complex pages route to local
+// Tesseract with a visible warn (the no-hidden-models spec).
 
 /// Configurable OCR complexity thresholds.
 ///

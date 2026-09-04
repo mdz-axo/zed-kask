@@ -8736,7 +8736,6 @@ dependencies = [
  "async-std",
  "hkask-types",
  "oo7",
- "rand 0.9.4",
  "thiserror 2.0.17",
  "tracing",
  "zeroize",
@@ -9192,7 +9191,6 @@ name = "hkask-services-core"
 version = "0.39.0"
 dependencies = [
  "dirs",
- "hkask-inference",
  "hkask-types",
  "serde",
  "serde_json",
