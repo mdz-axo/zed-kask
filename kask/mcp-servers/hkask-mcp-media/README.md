@@ -2,9 +2,9 @@
 
 Media generation MCP server — image, video, audio, and 3D generation via the configured media providers.
 
-## Tools (79)
+## Tools (80)
 
-The full surface is pinned end-to-end by `tool_surface_is_exactly_79_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
+The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|

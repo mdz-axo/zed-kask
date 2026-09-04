@@ -819,9 +819,9 @@ mod smoke_tests {
 // impl block without `#[tool_router]`, or a sub-router missing from
 // `combined_router()`, silently registers nothing (`cargo check` passes on an
 // unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
-// `pub(crate) async fn swarm_*` signatures): 49 cloud (swarm_update_agent
-// added 2026-09-03, fermi API alignment; swarm_get_local_agent added
-// 2026-09-03, local parity with swarm_get_agent) + 26 local + 3 ledger +
+// `pub(crate) async fn swarm_*` signatures): 48 cloud (swarm_update_agent
+// added 2026-09-03, fermi API alignment) + 26 local (swarm_get_local_agent
+// added 2026-09-03, local parity with swarm_get_agent) + 3 ledger +
 // 4 knowledge + 3 a2a + 1 workflow = 85.
 #[cfg(test)]
 mod tool_surface_tests {
@@ -833,15 +833,24 @@ mod tool_surface_tests {
         assert_eq!(n, 85, "swarm registered tool surface changed; got {n}");
     }
 
-    // The generated const and the live router must agree — a `name =` override
-    // or an unrouted `swarm_*` fn makes them diverge.
+    // The generated const and the live router must agree by NAME — a `name =`
+    // override or an unrouted `swarm_*` fn makes them diverge. Name-set
+    // equality, not count equality: an override keeps counts equal while
+    // breaking every consumer that renders or dispatches by the fn name
+    // (the swarm panel's Steer prompt renders from TOOL_NAMES).
     #[test]
     fn tool_names_const_matches_registered_surface() {
-        let router = SwarmServer::combined_router();
+        let mut live: Vec<String> = SwarmServer::combined_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        live.sort();
+        let mut generated = crate::TOOL_NAMES.to_vec();
+        generated.sort();
         assert_eq!(
-            router.list_all().len(),
-            crate::TOOL_NAMES.len(),
-            "TOOL_NAMES const and combined_router() surface diverged"
+            generated, live,
+            "TOOL_NAMES (build.rs-generated) must match the live combined_router surface"
         );
     }
 

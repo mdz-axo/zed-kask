@@ -141,9 +141,10 @@ Open `kask/crates/hkask-types/src/ports/memory_port.rs:111`. The
 `memory_port.rs:116`) plus `recall_context` (`memory_port.rs:128`) and
 `recall_thread` (`memory_port.rs:146`), both default-implemented to return
 empty vecs — graceful degradation when no store is configured. The
-companion `TurnRecord` (`memory_port.rs:27`) carries the turn fields;
-`to_chat_turn_value` (`memory_port.rs:58`) serializes it to the h_mem
-`value` JSON schema. `MemoryFuture` is a `pub(crate)` alias
+companion `TurnRecord` (`memory_port.rs:27`) carries the turn fields; the
+bridge's write path (`kask_bridge/src/memory/ingest.rs`) cleans and chunks
+it into word-bounded passages — the h_mem `value` a turn produces is chunk
+text, not a whole-turn envelope. `MemoryFuture` is a `pub(crate)` alias
 (`memory_port.rs:98`) used in the trait signatures.
 
 ## Step 7: Compare the two patterns

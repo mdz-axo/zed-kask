@@ -414,6 +414,29 @@ mod tool_surface_tests {
         assert_eq!(n, 80, "media registered tool surface changed; got {n}");
     }
 
+    // Pins the generated TOOL_NAMES const against the live rmcp tool
+    // surface — a tool added/renamed/unrouted fails here instead of degrading
+    // to "tool not found" at dispatch. The Steer prompt's tool list is
+    // RENDERED from TOOL_NAMES (hkask_steer::render_grouped_tool_advertisement
+    // in media_panel), so this pin is the chain's integrity check: without it,
+    // an unrouted `#[tool]` fn would flow into the prompt as a dead name.
+    // Mirrors portfolio's `tool_names_match_live_router`.
+    #[test]
+    fn tool_names_match_live_router() {
+        let mut live: Vec<String> = MediaServer::combined_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        live.sort();
+        let mut generated = TOOL_NAMES.to_vec();
+        generated.sort();
+        assert_eq!(
+            generated, live,
+            "TOOL_NAMES (build.rs-generated) must match the live combined_router surface"
+        );
+    }
+
     // Coverage: every registered tool must map to an OMC concept. Catches
     // the silent-drop failure mode where a new tool is added to the router
     // without a corresponding arm in omc::tool_to_omc.

@@ -42,7 +42,7 @@ implementations of its own port traits, and must not depend on
 | `Arc<dyn InferencePort>` blanket impl | `kask/crates/hkask-types/src/ports/inference_port.rs:386` |
 | `ChatMessage` / `InferenceError` / `InferenceUsage` / `ChatToolDefinition` / `ChatToolFunction` / `StructuredToolCall` / `InferenceResult` / `InferenceStreamChunk` | `kask/crates/hkask-types/src/ports/inference_types.rs:15,39,64,74,84,95,104,132` |
 | `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:111` |
-| `TurnRecord` / `to_chat_turn_value` | `kask/crates/hkask-types/src/ports/memory_port.rs:27,58` |
+| `TurnRecord` | `kask/crates/hkask-types/src/ports/memory_port.rs:27` |
 | `MemorySnippet` / `MemoryError` / `MemoryFuture` (pub(crate)) | `kask/crates/hkask-types/src/ports/memory_port.rs:75,90,98` |
 | `ConsolidationRequest` / `ConsolidationOutcome` | `kask/crates/hkask-types/src/ports/regulation.rs:3,22` |
 | `EmbeddingGenerationError` | `kask/crates/hkask-types/src/ports/embedding.rs:3` |
