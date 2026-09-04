@@ -1,4 +1,9 @@
-#![forbid(unsafe_code)]
+// Test builds allow `unsafe` for the one-shot `env::set_var` in the
+// tool-behavior harness (HKASK_EMBEDDING_MODEL — the semantic paths
+// resolve it as an Option since the model_constants refactor). Production
+// still forbids unsafe outright. Same pattern as hkask-mcp-media,
+// hkask-email, hkask-inference, hkask-keystore.
+#![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
 // `tokio` is in [dependencies] for the bin target's `#[tokio::main]`; the lib
 // itself does not use it, so the unused_crate_dependencies lint fires on the
@@ -1257,18 +1262,22 @@ impl CuratorServer {
                     ))
                 })?;
 
-            // Fetch the existing h_mem to get its current value and confidence.
-            let existing = memory
-                .query_deduped_untouched(&h_mem_id.to_string())
-                .map_err(|e| {
-                    map_memory_store_error(e, "Failed to fetch h_mem for update")
+            // Fetch the existing h_mem to get its current value and confidence
+            // — by ID, not by entity ref. The previous entity-keyed lookup
+            // (`query_deduped_untouched` with the bare UUID) could never
+            // match — no entity is a bare UUID — so every update attempt
+            // returned not_found and the tool never updated anything (the
+            // same bug class memory_insert's evidence check and
+            // memory_resolve_contradiction were fixed for).
+            let existing_h_mem = memory
+                .get_by_id(&h_mem_id)
+                .map_err(|e| map_memory_store_error(e, "Failed to fetch h_mem for update"))?
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "h_mem '{id}' not found",
+                        id = req.h_mem_id
+                    ))
                 })?;
-            let existing_h_mem = existing.into_iter().next().ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "h_mem '{id}' not found",
-                    id = req.h_mem_id
-                ))
-            })?;
 
             // Bayesian-combine the new confidence with the existing one.
             let new_confidence_raw = hkask_types::Confidence::new(req.new_confidence);

@@ -134,7 +134,17 @@ impl AssertionsService {
         // Open DB once, share across concurrent tasks
         let store = Arc::new(crate::helpers::open_memory_store(&db_path, &passphrase)?);
         let webid = owner_webid(&owner);
-        let classifier = hkask_inference::model_constants::classifier_model();
+        // Fail-visible: no configured classifier model is a typed error
+        // naming the setting — never a hidden constant.
+        let classifier = hkask_inference::model_constants::classifier_model()
+            .ok_or_else(|| {
+                McpToolError::permission_denied(
+                    "no classifier model configured — set \\
+                     kask.models.classifier_model (injected as \\
+                     HKASK_CLASSIFIER_MODEL); kask never falls back to a \\
+                     hidden code constant",
+                )
+            })?;
         // Namespace is fixed to "doc" for corpus chunk extraction (no longer a request field).
         let ns = "doc".to_string();
 

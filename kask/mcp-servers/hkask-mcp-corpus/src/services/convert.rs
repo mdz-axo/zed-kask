@@ -58,6 +58,8 @@ pub enum PassageIndexError {
     },
     #[error("index mutex poisoned — the index may be corrupted by a prior panic")]
     IndexMutexPoisoned,
+    #[error("{0}")]
+    NotConfigured(String),
 }
 
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
@@ -453,7 +455,18 @@ impl<'a> ConvertService<'a> {
         }
 
         let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
-            .unwrap_or_else(|_| default_embedding_model().to_string());
+            .ok()
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| default_embedding_model())
+            .ok_or_else(|| {
+                // Fail-visible (operator spec): never a hidden constant.
+                PassageIndexError::NotConfigured(
+                    "no embedding model configured — set \\
+                     kask.models.embedding_model (injected as \\
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+                     hidden code constant".to_string(),
+                )
+            })?;
 
         let vectors = match self.inference_router.embed(&model_name, &texts).await {
             Ok(v) => v,

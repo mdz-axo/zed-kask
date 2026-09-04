@@ -24,7 +24,7 @@ pub(crate) fn render_media_page(
     let tts_input = kask_string_input(
         "kask-media-tts",
         "TTS Model",
-        kask_bridge::DEFAULT_TTS_MODEL,
+        "Provider/model-id (required — no hidden default)",
         media.tts_model,
         "media",
         "tts_model",
@@ -32,7 +32,7 @@ pub(crate) fn render_media_page(
     let stt_input = kask_string_input(
         "kask-media-stt",
         "STT Model",
-        kask_bridge::DEFAULT_STT_MODEL,
+        "Provider/model-id (required — no hidden default)",
         media.stt_model,
         "media",
         "stt_model",
@@ -40,7 +40,7 @@ pub(crate) fn render_media_page(
     let vision_input = kask_string_input(
         "kask-media-vision",
         "Vision Model",
-        kask_bridge::DEFAULT_VISION_MODEL,
+        "Provider/model-id (required — no hidden default)",
         media.vision_model,
         "media",
         "vision_model",
@@ -48,7 +48,7 @@ pub(crate) fn render_media_page(
     let image_gen_input = kask_string_input(
         "kask-media-image-gen",
         "Image Generation Model",
-        kask_bridge::DEFAULT_IMAGE_GEN_MODEL,
+        "Provider/model-id (required — no hidden default)",
         media.image_gen_model,
         "media",
         "image_gen_model",
@@ -56,7 +56,7 @@ pub(crate) fn render_media_page(
     let video_input = kask_string_input(
         "kask-media-video",
         "Video Generation Model",
-        kask_bridge::DEFAULT_VIDEO_MODEL,
+        "Provider/model-id (required — no hidden default)",
         media.video_model,
         "media",
         "video_model",

@@ -187,16 +187,21 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
 ) -> Result<(TOutput, String), PassError> {
     let resolved_model = model_override
         .map(str::to_string)
-        .unwrap_or_else(|| match mode {
-            PassMode::PromptSchema => hkask_inference::model_constants::resolve(
-                crate::models::PASS_ENV,
-                crate::models::PASS_DEFAULT,
-            ),
-            PassMode::Structured => hkask_inference::model_constants::resolve(
-                crate::models::STRUCTURED_PASS_ENV,
-                crate::models::STRUCTURED_PASS_DEFAULT,
-            ),
-        });
+        .or_else(|| match mode {
+            PassMode::PromptSchema => std::env::var(crate::models::PASS_ENV).ok(),
+            PassMode::Structured => std::env::var(crate::models::STRUCTURED_PASS_ENV).ok(),
+        })
+        .filter(|model| !model.trim().is_empty())
+        .ok_or_else(|| match mode {
+            PassMode::PromptSchema => PassError::NotConfigured {
+                kind: "transcript-pass",
+                env: crate::models::PASS_ENV,
+            },
+            PassMode::Structured => PassError::NotConfigured {
+                kind: "structured-pass",
+                env: crate::models::STRUCTURED_PASS_ENV,
+            },
+        })?;
 
     let prompt = render_pass_prompt(template_env, template_name, schema, request, words)?;
     let model_text = match mode {
@@ -450,12 +455,14 @@ pub async fn run_speaker_pass_audio(
     if bundle.words.is_empty() {
         return Err(PassError::NoWordTimings);
     }
-    let resolved_model = model_override.map(str::to_string).unwrap_or_else(|| {
-        hkask_inference::model_constants::resolve(
-            crate::models::AUDIO_CHAT_ENV,
-            crate::models::AUDIO_CHAT_DEFAULT,
-        )
-    });
+    let resolved_model = model_override
+        .map(str::to_string)
+        .or_else(|| std::env::var(crate::models::AUDIO_CHAT_ENV).ok())
+        .filter(|model| !model.trim().is_empty())
+        .ok_or(PassError::NotConfigured {
+            kind: "audio-chat",
+            env: crate::models::AUDIO_CHAT_ENV,
+        })?;
     let schema = serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput))
         .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;
     let prompt = render_pass_prompt(

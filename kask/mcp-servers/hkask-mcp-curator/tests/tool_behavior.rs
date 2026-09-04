@@ -94,11 +94,28 @@ fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
     Arc::new(FailingEmbedPort)
 }
 
+/// The semantic paths resolve the embedding model from
+/// `HKASK_EMBEDDING_MODEL` (an `Option` since the model_constants
+/// refactor — unset means degraded). The test binary sets it once so the
+/// semantic leg exercises; the write is one-shot and test-only (the
+/// crate root allows `unsafe` in test builds for exactly this pattern).
+fn ensure_embedding_model_env() {
+    static SET: std::sync::Once = std::sync::Once::new();
+    SET.call_once(|| {
+        if std::env::var("HKASK_EMBEDDING_MODEL").is_err() {
+            // SAFETY: test-only env write, executed once before any test
+            // body relies on it, always to the same value.
+            unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-embedding-model") };
+        }
+    });
+}
+
 /// Build a `CuratorServer` backed by a single shared in-memory driver, so all
 /// four stores see the same data (the production shape — one `curator.db`).
 /// Healing is disabled (no path, no passphrase) via `CuratorDb::from_stores`,
 /// so the self-heal loop never fires during a test.
 fn make_server() -> CuratorServer {
+    ensure_embedding_model_env();
     let driver = SqliteDriver::in_memory_driver();
 
     // Memory degrades independently — curator recall is entity/EAV based, so
@@ -129,6 +146,7 @@ fn make_server() -> CuratorServer {
 /// the semantic recall path needs. Returns the server plus its memory
 /// store handle so tests can seed h_mems and embeddings directly.
 fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStore>) {
+    ensure_embedding_model_env();
     let driver = SqliteDriver::in_memory_driver();
     let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
     let embedding_store =
@@ -1195,6 +1213,57 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         second["candidate_count"].as_u64(),
         Some(0),
         "entities with embeddings are skipped — the pass is idempotent — got: {second}",
+    );
+}
+
+/// `memory_update` must resolve its target by h_mem ID. The previous
+/// verification used the entity-keyed `query_deduped_untouched` with the
+/// bare UUID — and no entity is a bare UUID, so every update attempt
+/// returned not_found and the tool never updated anything (the same bug
+/// class memory_insert's evidence check and memory_resolve_contradiction
+/// were fixed for).
+#[tokio::test]
+async fn memory_update_finds_target_by_id() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed = hkask_storage::HMem::new(
+        "zed-kask/update-target",
+        "policy",
+        serde_json::Value::String("old value".to_string()),
+        WebID::new(),
+    );
+    let seed_id = seed.id.to_string();
+    memory.store(seed).expect("seed update target");
+
+    let response = parse(
+        &server
+            .memory_update(Parameters(MemoryUpdateRequest {
+                h_mem_id: seed_id,
+                new_confidence: 0.6,
+                new_value: Some(serde_json::Value::String("new value".to_string())),
+                reason: Some("test update".to_string()),
+            }))
+            .await
+            .expect("update must resolve by ID"),
+    );
+    assert_eq!(
+        response["updated"].as_bool(),
+        Some(true),
+        "update must resolve — got: {response}",
+    );
+
+    let updated = memory
+        .h_mems_by_entity_prefix("zed-kask/update-target")
+        .expect("query after update");
+    assert_eq!(updated.len(), 1);
+    assert_eq!(
+        updated[0].value,
+        serde_json::Value::String("new value".to_string()),
+        "new_value must replace the value"
+    );
+    assert!(
+        updated[0].confidence.value() > 0.5,
+        "the Bayesian combine must move the confidence off the floor — got {}",
+        updated[0].confidence.value(),
     );
 }
 

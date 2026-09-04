@@ -25,7 +25,7 @@ pub(crate) fn render_corpus_page(
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",
         "Embedding Model",
-        kask_bridge::DEFAULT_EMBEDDING_MODEL,
+        "Provider/model-id (required — no hidden default)",
         embedding_model,
         "corpus",
         "embedding_model",
@@ -128,7 +128,8 @@ pub(crate) fn render_corpus_page(
                 .gap_1()
                 .child(Label::new("Embedding Model"))
                 .child(
-                    Label::new("Override the embedding model. Leave empty for the default (DEFAULT_EMBEDDING_MODEL).")
+                    Label::new("The embedding model. Required — empty means not configured; \
+                         calls that need it fail with a visible error (no hidden default).")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )

@@ -586,6 +586,45 @@ so lessons survive the session without anyone choosing to save them.
   `HKASK_MEMORY_DISTILLATION_IDLE_SECS` with malformed values warned and
   defaulted.
 
+### Distillation-gated forgetting pass
+
+**Source:** `kask/mcp-servers/hkask-mcp-curator/src/forgetting.rs`,
+riding the distillation timer (`distillation.rs` — same cadence;
+cadence 0 disables both), started from the server factory alongside
+the distillation pass.
+
+The goldfish principle's automatic leg (operator ruling 2026-09-04;
+naming ruling the same day: one *forgets* memories — "retirement" was
+rejected as a workplace metaphor. Distinct from §7 decay, which is the
+confidence curve R(t) = exp(-t/S): two mechanisms, two names). A
+thread's shared-copy turns are expired — and their embeddings deleted
+— once the thread's newest distillation watermark is older than
+`forgetting_days`. The watermark proves the lessons were extracted; the
+age grace keeps recent conversations recallable. Time-based and
+distillation-gated, never count-based (budgets are deprecated, operator
+ruling 2026-09-04).
+
+- **Scope:** shared copies only (`curator:thread:{id}`). The
+  curator-perspective originals (`chat:thread:`) are untouched — they
+  carry no embeddings (no semantic-recall impact) and are the curator's
+  sovereign record. Watermarks are never expired (idempotence markers).
+  A never-distilled thread is never forgotten (no watermark, no proof
+  of extraction). Pinned by
+  `forgetting_expires_only_aged_distilled_shared_turns`.
+- **Idempotent:** expired turns stay expired; a thread counts as
+  forgotten only when work was done. Pinned by `forgetting_is_idempotent`.
+- **Orphan sweep:** each pass deletes vector rows whose metadata row is
+  gone (KNN's inner join already ignores them; the sweep reclaims space
+  and cleans up after therapy SQL passes that delete metadata without
+  vec access). Pinned by `forgetting_sweeps_orphaned_vectors`.
+- **Observable:** a per-pass `tracing::info!` summary and a
+  `RegulationSpan::Curation` "memory_forgotten" span.
+- **Configuration.** `kask.memory.forgetting_days` (default 7, 0 =
+  disabled) — same plumbing as the distillation settings (`settings.rs`
+  Default, `emit_curator_distillation_env`, allowlist), read from
+  `HKASK_MEMORY_FORGETTING_DAYS` with malformed values warned and
+  defaulted.
+
 ## 7. Decay
 
 **Source:** `kask/crates/hkask-memory/src/bayesian.rs:1-47`,

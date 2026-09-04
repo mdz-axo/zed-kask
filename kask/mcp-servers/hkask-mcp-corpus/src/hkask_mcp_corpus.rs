@@ -205,20 +205,25 @@ pub(crate) fn max_concurrency() -> usize {
     })
 }
 
-/// Default embedding model — env var first, then HkaskSettings from disk.
-/// Consolidates 6 hardcoded `DEFAULT_EMBEDDING_MODEL` references (Q3).
-/// Result is cached in a OnceLock to avoid repeated disk reads and eliminate
-/// the `String::leak` anti-pattern (BUG-1 fix, BUG-2 fix).
-pub(crate) fn default_embedding_model() -> &'static str {
+/// The configured embedding model — env var first, then HkaskSettings from
+/// disk. `None` = not configured: callers fail visibly naming the setting
+/// (the operator's no-hidden-models spec — no constant fallback). Result is
+/// cached in a OnceLock to avoid repeated disk reads.
+pub(crate) fn default_embedding_model() -> Option<String> {
     use std::sync::OnceLock;
-    static CACHED: OnceLock<String> = OnceLock::new();
+    static CACHED: OnceLock<Option<String>> = OnceLock::new();
 
     CACHED
         .get_or_init(|| {
             std::env::var("HKASK_EMBEDDING_MODEL")
-                .unwrap_or_else(|_| HkaskSettings::load().embedding_model)
+                .ok()
+                .filter(|m| !m.trim().is_empty())
+                .or_else(|| {
+                    let model = HkaskSettings::load().embedding_model;
+                    (!model.trim().is_empty()).then_some(model)
+                })
         })
-        .as_str()
+        .clone()
 }
 
 // ── Server struct ──────────────────────────────────────────────────────────

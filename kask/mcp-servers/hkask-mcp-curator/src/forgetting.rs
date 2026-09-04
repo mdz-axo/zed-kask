@@ -158,7 +158,10 @@ pub(crate) fn run_forgetting_pass(
         return ForgettingOutcome::default();
     };
     match forget_distilled_threads(memory, now, forgetting_days) {
-        Ok(outcome) => outcome,
+        Ok(outcome) => {
+            hkask_types::regulation::RegulationSpan::Curation.emit("memory_forgotten");
+            outcome
+        }
         Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.curator.forgetting",

@@ -285,7 +285,18 @@ impl CorpusServer {
             }
         }
 
-        let model_name = model.unwrap_or_else(|| default_embedding_model().to_string());
+        // Fail-visible: no configured embedding model is a typed error
+        // naming the setting — never a hidden constant.
+        let model_name = model
+            .or_else(|| default_embedding_model())
+            .ok_or_else(|| {
+                McpToolError::permission_denied(
+                    "no embedding model configured — set \\
+                     kask.models.embedding_model (injected as \\
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+                     hidden code constant",
+                )
+            })?;
 
         let store = crate::helpers::open_memory_store(db_path, passphrase)?;
 

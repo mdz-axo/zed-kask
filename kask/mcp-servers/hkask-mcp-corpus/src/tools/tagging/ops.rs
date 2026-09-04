@@ -242,7 +242,16 @@ impl CorpusServer {
 
             let limiter = AdaptiveLimiter::new(req.concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
             let router = Arc::clone(&self.inference_router);
-            let model_override = classifier_model();
+            // Fail-visible: no configured classifier model is a typed
+            // error naming the setting — never a hidden constant.
+            let model_override = classifier_model().ok_or_else(|| {
+                McpToolError::permission_denied(
+                    "no classifier model configured — set \\
+                     kask.models.classifier_model (injected as \\
+                     HKASK_CLASSIFIER_MODEL); kask never falls back to a \\
+                     hidden code constant",
+                )
+            })?;
             let batch_size = req.tag_batch_size.max(1);
 
             // Results: index → OntologyTags

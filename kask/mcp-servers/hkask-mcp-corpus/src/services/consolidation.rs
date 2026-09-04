@@ -359,37 +359,57 @@ impl ConsolidationService {
         let mut embedded_count = 0usize;
         let mut embed_failures = 0usize;
         if !reembed_texts.is_empty() {
-            let emb_model = hkask_inference::model_constants::embedding_model();
-
-            for batch in reembed_texts.chunks(50) {
-                let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
-                match self.inference_router.embed(&emb_model, &texts).await {
-                    Ok(vectors) => {
-                        for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                            if let Err(e) =
-                                store.store_embedding(entity_ref, vector, &emb_model, None)
-                            {
+            // Fail-visible: with no embedding model configured, the re-embed
+            // phase reports the gap as a failure count + warn instead of
+            // silently using a hidden constant (the operator's
+            // no-hidden-models spec). The chunks remain entity-reachable,
+            // not similarity-reachable.
+            match hkask_inference::model_constants::embedding_model() {
+                Some(emb_model) => {
+                    for batch in reembed_texts.chunks(50) {
+                        let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
+                        match self.inference_router.embed(&emb_model, &texts).await {
+                            Ok(vectors) => {
+                                for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
+                                    if let Err(e) =
+                                        store.store_embedding(entity_ref, vector, &emb_model, None)
+                                    {
+                                        tracing::warn!(
+                                            entity_ref = %entity_ref,
+                                            error = %e,
+                                            "Failed to store consolidated embedding"
+                                        );
+                                        embed_failures += 1;
+                                    } else {
+                                        embedded_count += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
                                 tracing::warn!(
-                                    entity_ref = %entity_ref,
+                                    model = %emb_model,
+                                    batch_len = batch.len(),
                                     error = %e,
-                                    "Failed to store consolidated embedding"
+                                    "Embedding call failed for consolidated chunk batch — \
+                                     these chunks will not be findable by semantic search"
                                 );
-                                embed_failures += 1;
-                            } else {
-                                embedded_count += 1;
+                                embed_failures += batch.len();
                             }
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            model = %emb_model,
-                            batch_len = batch.len(),
-                            error = %e,
-                            "Embedding call failed for consolidated chunk batch — \
-                             these chunks will not be findable by semantic search"
-                        );
-                        embed_failures += batch.len();
-                    }
+                }
+                None => {
+                    embed_failures += reembed_texts.len();
+                    tracing::warn!(
+                        reason = "no embedding model configured — set \
+                                  kask.models.embedding_model (injected as \
+                                  HKASK_EMBEDDING_MODEL); kask never falls \
+                                  back to a hidden code constant",
+                        chunks = reembed_texts.len(),
+                        "re-embed phase skipped — consolidated chunks are \
+                         not similarity-reachable until an embedding model \
+                         is set"
+                    );
                 }
             }
         }

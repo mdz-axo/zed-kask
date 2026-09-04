@@ -24,7 +24,7 @@ pub(crate) fn render_models_page(
     let default_model_input = kask_string_input(
         "kask-models-default",
         "Default Inference Model",
-        kask_bridge::DEFAULT_FALLBACK_MODEL,
+        "Provider/model-id (required — no hidden default)",
         default_model,
         "models",
         "default_model",
@@ -32,7 +32,7 @@ pub(crate) fn render_models_page(
     let embedding_model_input = kask_string_input(
         "kask-models-embedding",
         "Embedding Model",
-        kask_bridge::DEFAULT_EMBEDDING_MODEL,
+        "Provider/model-id (required — no hidden default)",
         embedding_model,
         "models",
         "embedding_model",
@@ -40,7 +40,7 @@ pub(crate) fn render_models_page(
     let classifier_model_input = kask_string_input(
         "kask-models-classifier",
         "Classifier Model",
-        kask_bridge::DEFAULT_CLASSIFIER_MODEL,
+        "Provider/model-id (required — no hidden default)",
         classifier_model,
         "models",
         "classifier_model",
@@ -48,7 +48,7 @@ pub(crate) fn render_models_page(
     let ocr_model_input = kask_string_input(
         "kask-models-ocr",
         "OCR Model",
-        kask_bridge::DEFAULT_OCR_MODEL,
+        "Provider/model-id (required — no hidden default)",
         ocr_model,
         "models",
         "ocr_model",
@@ -56,7 +56,7 @@ pub(crate) fn render_models_page(
     let rerank_model_input = kask_string_input(
         "kask-models-rerank",
         "Rerank Model",
-        kask_bridge::DEFAULT_RERANK_MODEL,
+        "Provider/model-id (required — no hidden default)",
         rerank_model,
         "models",
         "rerank_model",

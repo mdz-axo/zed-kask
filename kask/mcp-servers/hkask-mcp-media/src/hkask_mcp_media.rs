@@ -304,7 +304,17 @@ impl MediaServer {
     /// `ollama/nomic-embed-text`) and returns the first (only)
     /// embedding vector. Used by gallery similarity search.
     async fn embed_text(&self, text: &str) -> Result<Vec<f32>, McpToolError> {
-        let model = hkask_inference::model_constants::embedding_model();
+        // Fail-visible (the operator's no-hidden-models spec): no configured
+        // embedding model is a typed error naming the setting — never a
+        // hidden constant.
+        let model = hkask_inference::model_constants::embedding_model().ok_or_else(|| {
+            McpToolError::permission_denied(
+                "no embedding model configured — set \
+                     kask.models.embedding_model (injected as \
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \
+                     hidden code constant",
+            )
+        })?;
         let vectors = self
             .vision_port
             .embed(&model, std::slice::from_ref(&text.to_string()))

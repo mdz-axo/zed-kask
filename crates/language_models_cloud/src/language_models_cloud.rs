@@ -729,7 +729,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     self.model.max_output_tokens as u64,
                     if enable_thinking {
                         AnthropicModelMode::Thinking {
-                            budget_tokens: Some(4_096),
+                            // zed-kask: uncapped. The 4096 hardcode
+                            // silently killed reasoning-heavy turns
+                            // (stream ended finish_reason "length",
+                            // mapped to a silent MaxTokens stop). Budgets
+                            // are deprecated (operator ruling
+                            // 2026-09-04); reasoning depth is the
+                            // model's business. See DIVERGENCE.md D49.
+                            budget_tokens: None,
                         }
                     } else {
                         AnthropicModelMode::Default

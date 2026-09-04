@@ -67,7 +67,6 @@ impl std::fmt::Display for OcrBackend {
 /// the inference port (the port handles provider credentials — not `RUNPOD_*`
 /// env vars read in this crate).
 /// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
-pub(crate) const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
 
 /// Configurable OCR complexity thresholds.
 ///

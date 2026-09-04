@@ -61,9 +61,12 @@ fn load_cognition_config(
     Ok(config)
 }
 
-/// Build a `CognitionConfig` inline when no YAML config path is provided.
-fn inline_cognition_config(author: &str) -> crate::compose::CognitionConfig {
-    let embed_model = embedding_model();
+/// Build a `CognitionConfig` inline with the caller-validated embedding
+/// model (see `resolve_cognition_config` — the fail-visible gate).
+fn inline_cognition_config_with(
+    author: &str,
+    embed_model: String,
+) -> crate::compose::CognitionConfig {
     crate::compose::CognitionConfig {
         author: author.to_string(),
         jinja2_template: None,
@@ -80,14 +83,27 @@ fn inline_cognition_config(author: &str) -> crate::compose::CognitionConfig {
 }
 
 /// Resolve cognition config: load from YAML if config_path is provided,
-/// otherwise construct inline.
+/// otherwise construct inline. Fail-visible: an inline config REQUIRES a
+/// configured embedding model — empty is a typed error naming the setting,
+/// never a hidden constant (the operator's no-hidden-models spec).
 fn resolve_cognition_config(
     config_path: Option<&str>,
     author: &str,
 ) -> Result<crate::compose::CognitionConfig, McpToolError> {
     match config_path {
         Some(path) if !path.trim().is_empty() => load_cognition_config(path, author),
-        _ => Ok(inline_cognition_config(author)),
+        _ => {
+            let embed_model = embedding_model();
+            if embed_model.trim().is_empty() {
+                return Err(McpToolError::permission_denied(
+                    "no embedding model configured — set \
+                     kask.models.embedding_model (injected as \
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \
+                     hidden code constant",
+                ));
+            }
+            Ok(inline_cognition_config_with(author, embed_model))
+        }
     }
 }
 

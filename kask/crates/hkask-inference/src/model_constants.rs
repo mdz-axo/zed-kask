@@ -11,19 +11,6 @@
 //! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
 //! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
 
-/// Canonical classifier model for all classification surfaces (corpus
-/// pipeline, QA triage, convergence evaluation, h_mem extraction).
-/// GLM-5.2 via OpenRouter: strongest classification accuracy on the real
-/// hKask label-space eval (39/47; see kask/docs/review/classifier-model-review.md).
-///
-/// This is the single source of truth for the classifier model id. Every
-/// call site resolves it via [`classifier_model`] (env `HKASK_CLASSIFIER_MODEL`
-/// → this constant). Registry YAMLs in `registry/classify/` leave their
-/// `model:` field empty to defer to this path; `ClassifierConfig::from_def`
-/// passes the full provider-prefixed string to `InferencePort::generate_with_model`,
-/// and the `LanguageModelRegistry` resolves the `OpenRouter/` prefix to the provider.
-pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
-
 /// Default embedding model. Served by DeepInfra (OpenAI-compatible
 /// `/v1/embeddings` endpoint). The `DeepInfra/` prefix routes through
 /// `resolve_embedding_credentials` to `https://api.deepinfra.com/v1/openai`
@@ -35,70 +22,10 @@ pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 /// which works but is impractically slow on CPU for large corpora (33K+
 /// chunks). The cloud endpoint serves the same Qwen model at scale.
 pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
-
-/// Default OCR model for scanned PDF fallback.
-/// Uses OLMOCR-2 on RunPod serverless (endpoint `hsldzov6932wf5`, named `kask-ocr`
-/// in the RunPod console). The vLLM worker serves the model under its HuggingFace
-/// id `allenai/olmOCR-2-7B-1025`; the provider-prefixed name `RunPod/kask-ocr`
-/// resolves through Zed's `LanguageModelRegistry` via the dedicated `runpod`
-/// provider (D29), which carries each endpoint's per-model API URL and discovers
-/// endpoints via the RunPod GraphQL API.
-pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
-
-/// Fallback model for the audit-listed subsystem surfaces that still
-/// carry a constant default (see `KaskModelsSettings`'s default-model
-/// policy note). NOT the default inference model — the default-model chain
-/// is settings-driven only (`kask.models.default_model` → the zed default
-/// → typed error; never this constant). Prefixed with `OpenRouter/` so it
-/// routes to OpenRouter (which hosts this exact id).
-pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
-
-/// Default TTS model — Kokoro via DeepInfra.
-pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
-
-/// Default STT model — Whisper Large v3 via DeepInfra. The id includes the
-/// `openai/` namespace: `strip_prefix("DeepInfra/")` in the provider must
-/// yield DeepInfra's actual model id `openai/whisper-large-v3` — the former
-/// `DeepInfra/whisper-large-v3` default stripped to a bare `whisper-large-v3`
-/// that DeepInfra answered with 404 "Model is not available" on every
-/// transcription (observed live 2026-08-31; the OpenRouter fallback then
-/// absorbed the call at extra latency).
-pub const DEFAULT_STT_MODEL: &str = "DeepInfra/openai/whisper-large-v3";
-
-/// Default audio-input chat model — LLM reasoning over audio via
-/// `input_audio` content parts (the OpenAI audio-chat format) on
-/// `/v1/chat/completions`. Override via `HKASK_MEDIA_AUDIO_CHAT_MODEL`.
-/// Open-weight Voxtral Small 24B (Apache-2.0, audio-specialized) — no Qwen
-/// audio model exists on OpenRouter (verified against the live
-/// audio-input catalog 2026-08-31), so Voxtral is the open-weight pick.
-pub const DEFAULT_AUDIO_CHAT_MODEL: &str = "OpenRouter/mistralai/voxtral-small-24b-2507";
-
-/// Default structured-outputs pass model — provider-enforced JSON Schema
-/// (`response_format: json_schema`, strict) on `/v1/chat/completions`.
-/// Structured-output support is per-model (the provider listing carries a
-/// capability flag); the classifier default's support is unverified, so
-/// the structured path resolves its own known-capable default (the
-/// gpt-4o family is the canonical structured-outputs model class).
-/// Override via `HKASK_MEDIA_STRUCTURED_PASS_MODEL`.
-pub const DEFAULT_STRUCTURED_PASS_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";
-
-/// Default vision model for image analysis.
-pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
-
-/// Default image generation model — FLUX-2-klein-4B via DeepInfra.
-pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";
-
-/// Default video generation model — Wan2.2 via DeepInfra.
-pub const DEFAULT_VIDEO_MODEL: &str = "DeepInfra/Wan-AI/Wan2.2-T2V-A14B";
-
-/// Default rerank model for the research server's deep-strategy rerank stage
-/// (native relevance scoring over search candidates via the provider's rerank
-/// endpoint). Qwen3-Reranker-8B via OpenRouter's rerank router — a dedicated
-/// reranker whose entire training objective is query–document relevance
-/// judgment; override with `HKASK_RERANK_MODEL`. The `OpenRouter/` prefix
-/// routes the request to OpenRouter's `/api/v1/rerank` endpoint on the zed
-/// side of the inference IPC bridge (the prefix is stripped before the call).
-pub const DEFAULT_RERANK_MODEL: &str = "OpenRouter/qwen/qwen3-reranker-8b";
+// NOTE: the LAST remaining constant default — its single functional
+// consumer (kask_bridge/src/settings.rs `effective_embedding_model`) is in
+// the parallel session's in-flight file; delete both together when that
+// pass lands (the operator's no-hidden-models spec).
 
 // ── Resolved model accessors (env var → Option; None = not configured) ────
 //

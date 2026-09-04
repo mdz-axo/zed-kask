@@ -80,21 +80,19 @@ pub struct HkaskSettings {
 pub(crate) const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
-    // Single source of truth: hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.
-    // Do not duplicate the model id here — resolve via the canonical constant.
-    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
+    // Empty = not configured (the operator's no-hidden-models spec): no
+    // code-constant fallback — consumers fail visibly naming the setting.
+    String::new()
 }
 
 fn default_classifier_model() -> String {
-    // Single source of truth: hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL.
-    // Do not duplicate the model id here — resolve via the canonical constant.
-    hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL.to_string()
+    // Empty = not configured — consumers fail visibly naming the setting.
+    String::new()
 }
 
 fn default_ocr_model() -> String {
-    // Single source of truth: hkask_inference::model_constants::DEFAULT_OCR_MODEL.
-    // Do not duplicate the model id here — resolve via the canonical constant.
-    hkask_inference::model_constants::DEFAULT_OCR_MODEL.to_string()
+    // Empty = not configured — consumers fail visibly naming the setting.
+    String::new()
 }
 
 fn default_chunk_max_tokens() -> usize {
@@ -305,15 +303,11 @@ mod tests {
         let settings =
             HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
         assert_eq!(settings.ocr_model, "RunPod/kask-ocr-v2");
-        // Absent fields fall back to Default, not to a parse error.
-        assert_eq!(
-            settings.embedding_model,
-            hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL
-        );
-        assert_eq!(
-            settings.classifier_model,
-            hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL
-        );
+        // Absent fields fall back to Default (empty = not configured —
+        // consumers fail visibly naming the setting; never a hidden
+        // constant).
+        assert_eq!(settings.embedding_model, "");
+        assert_eq!(settings.classifier_model, "");
     }
 
     /// A file with no `kask` section at all (pure zed settings) yields pure

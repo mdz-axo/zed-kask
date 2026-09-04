@@ -15,56 +15,57 @@ use crate::*;
 fn build_model_list() -> Vec<MediaModelInfo> {
     use crate::models;
 
+    // Only CONFIGURED models are listed — an unset modality is absent, and
+    // calling it fails visibly with a NotConfigured error naming the env
+    // var (the operator's no-hidden-models spec: the list never shows a
+    // model the user did not choose).
     let image_model = models::image_gen_model();
-    let video_model = hkask_inference::model_constants::resolve(
-        "HKASK_MEDIA_VIDEO_MODEL",
-        hkask_inference::model_constants::DEFAULT_VIDEO_MODEL,
-    );
+    let video_model = models::video_model();
     let tts_model = models::tts_model();
     let stt_model = models::stt_model();
     let vision_model = models::vision_model();
 
-    vec![
+    let all = vec![
         MediaModelInfo {
-            id: image_model.clone(),
-            name: strip_provider_prefix(&image_model).to_string(),
-            provider: parse_provider(&image_model),
+            id: image_model.clone().unwrap_or_default(),
+            name: strip_provider_prefix(&image_model.clone().unwrap_or_default()).to_string(),
+            provider: parse_provider(&image_model.clone().unwrap_or_default()),
             modality: "image".to_string(),
             capabilities: vec!["generate_image".to_string(), "image_to_image".to_string()],
             is_default: true,
             description: Some("Image generation and transformation".to_string()),
         },
         MediaModelInfo {
-            id: video_model.clone(),
-            name: strip_provider_prefix(&video_model).to_string(),
-            provider: parse_provider(&video_model),
+            id: video_model.clone().unwrap_or_default(),
+            name: strip_provider_prefix(&video_model.clone().unwrap_or_default()).to_string(),
+            provider: parse_provider(&video_model.clone().unwrap_or_default()),
             modality: "video".to_string(),
             capabilities: vec!["generate_video".to_string(), "image_to_video".to_string()],
             is_default: true,
             description: Some("Text-to-video and image-to-video generation".to_string()),
         },
         MediaModelInfo {
-            id: tts_model.clone(),
-            name: strip_provider_prefix(&tts_model).to_string(),
-            provider: parse_provider(&tts_model),
+            id: tts_model.clone().unwrap_or_default(),
+            name: strip_provider_prefix(&tts_model.clone().unwrap_or_default()).to_string(),
+            provider: parse_provider(&tts_model.clone().unwrap_or_default()),
             modality: "audio".to_string(),
             capabilities: vec!["generate_speech".to_string()],
             is_default: true,
             description: Some("Text-to-speech voice synthesis".to_string()),
         },
         MediaModelInfo {
-            id: stt_model.clone(),
-            name: strip_provider_prefix(&stt_model).to_string(),
-            provider: parse_provider(&stt_model),
+            id: stt_model.clone().unwrap_or_default(),
+            name: strip_provider_prefix(&stt_model.clone().unwrap_or_default()).to_string(),
+            provider: parse_provider(&stt_model.clone().unwrap_or_default()),
             modality: "audio".to_string(),
             capabilities: vec!["transcribe".to_string()],
             is_default: true,
             description: Some("Speech-to-text transcription".to_string()),
         },
         MediaModelInfo {
-            id: vision_model.clone(),
-            name: strip_provider_prefix(&vision_model).to_string(),
-            provider: parse_provider(&vision_model),
+            id: vision_model.clone().unwrap_or_default(),
+            name: strip_provider_prefix(&vision_model.clone().unwrap_or_default()).to_string(),
+            provider: parse_provider(&vision_model.clone().unwrap_or_default()),
             modality: "vision".to_string(),
             capabilities: vec![
                 "describe_image".to_string(),
@@ -78,7 +79,22 @@ fn build_model_list() -> Vec<MediaModelInfo> {
                     .to_string(),
             ),
         },
-    ]
+    ];
+
+    // Keep only the entries whose model is configured (the entry order
+    // matches the model variables above).
+    let configured_flags = [
+        image_model.is_some(),
+        video_model.is_some(),
+        tts_model.is_some(),
+        stt_model.is_some(),
+        vision_model.is_some(),
+    ];
+    all.into_iter()
+        .zip(configured_flags)
+        .filter(|(_, configured)| *configured)
+        .map(|(entry, _)| entry)
+        .collect()
 }
 
 /// Extract the provider name from a prefixed model id (e.g. "DeepInfra/..." → "deepinfra").

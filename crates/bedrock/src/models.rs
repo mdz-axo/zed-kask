@@ -660,7 +660,12 @@ impl ConverseModel {
             }
         } else if self.supports_thinking() {
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096),
+                // zed-kask: uncapped. The 4096 hardcode silently killed
+                // reasoning-heavy turns (stream ended finish_reason
+                // "length", mapped to a silent MaxTokens stop). Budgets
+                // are deprecated (operator ruling 2026-09-04); reasoning
+                // depth is the model's business. See DIVERGENCE.md D49.
+                budget_tokens: None,
             }
         } else {
             BedrockModelMode::Default
@@ -1489,10 +1494,12 @@ mod tests {
         assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
         assert_eq!(BedrockAdaptiveReasoningEffort::XHigh.as_str(), "xhigh");
 
+        // zed-kask (D49): the thinking mode must be uncapped — the 4096
+        // hardcode silently killed reasoning-heavy turns.
         assert_eq!(
             ConverseModel::ClaudeSonnet4.thinking_mode(),
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096)
+                budget_tokens: None
             }
         );
         assert_eq!(
@@ -1504,7 +1511,7 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeHaiku4_5.thinking_mode(),
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096)
+                budget_tokens: None
             }
         );
     }

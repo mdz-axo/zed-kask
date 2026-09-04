@@ -340,10 +340,25 @@ pub(crate) async fn llm_rerank(
     results: &mut Vec<RankedResult>,
 ) -> RerankOutcome {
     let total = results.len();
-    // The rerank model is a named constant with an env override
-    // (`HKASK_RERANK_MODEL`) — resolved per call so an operator override
-    // takes effect without a server restart.
-    let rerank_model = hkask_inference::model_constants::rerank_model();
+    // The rerank model resolves from `HKASK_RERANK_MODEL` (injected from
+    // the visible `kask.models.rerank_model` setting) — `None` is a
+    // fail-visible outcome naming the setting, never a hidden constant
+    // (the operator's no-hidden-models spec).
+    let rerank_model = match hkask_inference::model_constants::rerank_model() {
+        Some(model) => model,
+        None => {
+            return RerankOutcome {
+                scored: 0,
+                failed: total,
+                first_error: Some(
+                    "no rerank model configured — set \
+                     kask.models.rerank_model (injected as HKASK_RERANK_MODEL); \
+                     kask never falls back to a hidden code constant"
+                        .to_string(),
+                ),
+            };
+        }
+    };
     let documents: Vec<String> = results.iter().map(build_rerank_document).collect();
 
     let scores = match inference_port

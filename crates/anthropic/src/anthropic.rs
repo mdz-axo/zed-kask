@@ -172,7 +172,12 @@ impl Model {
             AnthropicModelMode::AdaptiveThinking
         } else if supports_thinking {
             AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
+                // zed-kask: uncapped. The 4096 hardcode silently killed
+                // reasoning-heavy turns (stream ended finish_reason
+                // "length", mapped to a silent MaxTokens stop). Budgets
+                // are deprecated (operator ruling 2026-09-04); reasoning
+                // depth is the model's business. See DIVERGENCE.md D49.
+                budget_tokens: None,
             }
         } else {
             AnthropicModelMode::Default
@@ -1583,7 +1588,14 @@ mod tests {
         let model = Model::from_listed(entry);
         assert!(model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
-        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        // zed-kask (D49): the thinking mode must be uncapped — the 4096
+        // hardcode silently killed reasoning-heavy turns.
+        assert!(matches!(
+            model.mode,
+            AnthropicModelMode::Thinking {
+                budget_tokens: None
+            }
+        ));
     }
 
     #[test]

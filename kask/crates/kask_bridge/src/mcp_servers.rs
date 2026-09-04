@@ -1059,7 +1059,7 @@ mod tests {
         );
         config_env.insert(
             "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
-            hkask_inference::model_constants::DEFAULT_AGENT_MODEL.to_string(),
+            "test-agent-model".to_string(),
         );
         config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
         config_env.insert(

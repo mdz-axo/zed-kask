@@ -3,7 +3,7 @@
 //! Deterministic routing (no randomness) guarantees statistical properties
 //! without non-determinism. SamplingState is a transparent accumulator.
 
-use crate::ocr::{ComplexityScore, ComplexityTier, DEFAULT_LLM_OCR_MODEL, OcrBackend};
+use crate::ocr::{ComplexityScore, ComplexityTier, OcrBackend};
 
 /// Transparent accumulator for deterministic round-robin sampling.
 ///
@@ -73,7 +73,23 @@ pub(crate) fn route_page(
             filter_excluded(backends, exclude_backend)
         }
         ComplexityTier::Complex => {
-            let model = llm_model.unwrap_or(DEFAULT_LLM_OCR_MODEL);
+            // No configured LLM-OCR model → Tesseract (the local
+            // deterministic engine), with a visible warn naming the setting —
+            // never a hidden cloud model (the operator's no-hidden-models
+            // spec). Same shape as the degradation ladder below: a
+            // lower-quality extraction beats no extraction, and the warn
+            // makes the reason visible.
+            let Some(model) = llm_model else {
+                tracing::warn!(
+                    reason = "no OCR model configured — set \\
+                              kask.models.ocr_model (injected as \\
+                              HKASK_OCR_MODEL); complex pages route to \\
+                              local Tesseract instead of a hidden cloud \\
+                              model",
+                    "LLM-OCR unavailable — routing complex page to Tesseract"
+                );
+                return vec![OcrBackend::Tesseract];
+            };
             let preferred = OcrBackend::LlmOcr(model.to_string());
             if exclude_backend == Some(&preferred) {
                 // Degradation ladder: the preferred LLM backend failed or is
@@ -89,7 +105,11 @@ pub(crate) fn route_page(
         ComplexityTier::Moderate => {
             let should_sample = state.should_dual_route();
             if should_sample {
-                let model = llm_model.unwrap_or(DEFAULT_LLM_OCR_MODEL);
+                // Dual-route needs the LLM backend; with no configured model
+                // it is Tesseract-only (fail-visible, never a hidden model).
+                let Some(model) = llm_model else {
+                    return vec![OcrBackend::Tesseract];
+                };
                 let backends = vec![OcrBackend::Tesseract, OcrBackend::LlmOcr(model.to_string())];
                 filter_excluded(backends, exclude_backend)
             } else {
@@ -121,12 +141,22 @@ mod tests {
     }
 
     #[test]
-    fn complex_routes_to_llm_by_default() {
+    fn complex_routes_to_tesseract_without_a_configured_model() {
+        // The operator's no-hidden-models spec: with no LLM-OCR model
+        // configured, complex pages route to the local Tesseract engine —
+        // never a hidden cloud model.
         let mut state = SamplingState::default();
         let backends = route_page(complex_score(), &mut state, None, None);
+        assert_eq!(backends, vec![OcrBackend::Tesseract]);
+    }
+
+    #[test]
+    fn complex_routes_to_llm_when_configured() {
+        let mut state = SamplingState::default();
+        let backends = route_page(complex_score(), &mut state, None, Some("RunPod/kask-ocr"));
         assert_eq!(
             backends,
-            vec![OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string())]
+            vec![OcrBackend::LlmOcr("RunPod/kask-ocr".to_string())]
         );
     }
 
@@ -136,7 +166,7 @@ mod tests {
     #[test]
     fn complex_degrades_to_tesseract_when_llm_excluded() {
         let mut state = SamplingState::default();
-        let llm = OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string());
+        let llm = OcrBackend::LlmOcr("test-ocr-model".to_string());
         let backends = route_page(complex_score(), &mut state, Some(&llm), None);
         assert_eq!(backends, vec![OcrBackend::Tesseract]);
     }
@@ -155,7 +185,7 @@ mod tests {
         );
         assert_eq!(
             backends,
-            vec![OcrBackend::LlmOcr(DEFAULT_LLM_OCR_MODEL.to_string())]
+            vec![OcrBackend::LlmOcr("test-ocr-model".to_string())]
         );
     }
 }

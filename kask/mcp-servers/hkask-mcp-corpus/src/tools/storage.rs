@@ -126,7 +126,16 @@ impl CorpusServer {
                 };
 
             let k = k.clamp(1, 50);
-            let model_name = crate::default_embedding_model().to_string();
+            // Fail-visible: no configured embedding model is a typed error
+            // naming the setting — never a hidden constant.
+            let model_name = crate::default_embedding_model().ok_or_else(|| {
+                McpToolError::permission_denied(
+                    "no embedding model configured — set \\
+                     kask.models.embedding_model (injected as \\
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+                     hidden code constant",
+                )
+            })?;
 
             let query_embedding = match self
                 .inference_router

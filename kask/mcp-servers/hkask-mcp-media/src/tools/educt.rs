@@ -62,6 +62,10 @@ fn map_pass_error(error: PassError) -> McpToolError {
             McpToolError::internal(format!("prompt construction: {message}")) // rr0044-ok: own prompt construction
         }
         PassError::Inference(error) => classify_inference_error("transcript pass failed", error),
+        PassError::NotConfigured { kind, env } => McpToolError::permission_denied(format!(
+            "no {kind} model configured — set {env} or pass an explicit model; \
+             kask never falls back to a hidden code constant"
+        )),
     }
 }
 

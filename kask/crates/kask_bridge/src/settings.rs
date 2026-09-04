@@ -1172,6 +1172,7 @@ mod tests {
                 memory_life_days: None,
                 distillation_cadence_secs: None,
                 distillation_idle_secs: None,
+                forgetting_days: None,
             }),
             ..Default::default()
         };
