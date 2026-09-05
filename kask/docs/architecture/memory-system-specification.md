@@ -2,7 +2,7 @@
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-04
-version: "4.0.0"
+version: "5.0.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -23,6 +23,28 @@ mds_categories: [lifecycle, domain, curation, trust]
 > forgetting pass, not accommodated in code. Ratified package: inline LLM
 > tagging via the classifier model / single copy under `curator:thread:` /
 > rule-based clean / no migration of old rows.
+
+> **Design decision 2026-09-04 (operator ruling; supersedes the
+> expire/soft-delete concept everywhere it appeared):** there is no
+> "expired" state — memories age and are forgotten or deleted, and
+> forgotten means the row is deleted from the database. There is no
+> validity window or backward-compatibility shape. The `valid_to` column
+> is removed; the on-open migration
+> (`core/connection.rs`, `migrate_hmems_forgetting_spec`) deletes previously
+> soft-deleted rows and drops the column. Every removal path hard-deletes:
+> contradiction resolution (`forget`), normalized-value dedup, age prune,
+> the distillation-gated forgetting pass, value/confidence
+> update-replacement, and kanban task/board deletes. Decay (§7) remains a
+> separate confidence-weighting mechanism, not deletion.
+>
+> **Migration verification:** deletion and column removal commit together.
+> Before the first open with the rebuilt binary, take a fresh SQLCipher
+> `VACUUM INTO` backup of curator, kanban, and swarm memory DBs. The older
+> `curator.db.bak-therapy-2026-09-04` predates the hygiene pass and is not a
+> restore point for the current state. After restart, verify the column is
+> absent, retained-row counts match the pre-migration snapshot, and live
+> `curator_memory_recall` / `curator_semantic_search` work. Unit tests over
+> encrypted fixtures do not substitute for this operator restart gate.
 
 > **Scope:** `kask/crates/hkask-memory/` (unified store + consolidation),
 > `kask/crates/hkask-storage/` (`hmem.rs`, schema), and
@@ -165,7 +187,6 @@ creation (`hmem.rs:141-149`).
 | `attribute`   | TEXT    | The attribute (e.g., `turn`)                   |
 | `value`       | TEXT    | JSON string of the turn content               |
 | `valid_from`  | TEXT    | Creation timestamp (`observed_at`)            |
-
 | `recalled_at` | TEXT    | Last recall time (decay clock, `NOT NULL DEFAULT datetime('now')`) |
 | `confidence`  | REAL    | Confidence score (0.0–1.0, default 1.0)        |
 | `perspective` | TEXT    | The WebID of the agent who wrote this          |
@@ -589,7 +610,7 @@ so lessons survive the session without anyone choosing to save them.
   inserts lesson h_mems (Shared visibility, the 0.5 confidence floor,
   every cited evidence h_mem verified to exist — the same invariants
   `memory_insert` enforces) plus one Private watermark h_mem per
-  distilled thread. It never edits, expires, or deletes anything. Pinned
+  distilled thread. It never edits or deletes anything. Pinned
   by `distillation_pass_is_additive_only`.
 - **Idempotent by watermark.** Each thread carries
   `curator:distilled:{thread_id}` / `distilled_through` watermark h_mems;
@@ -809,16 +830,20 @@ floor — live in the curator server, pinned by
   recall finds it by meaning — embedding failure is non-fatal and surfaced
   in the output, via the shared insert-path contract
   `embed_for_semantic_recall` (`:1578`).
-- **`memory_update`** (`:1249`) — Bayesian combine (log-odds pooling),
-  never replace (`:1249-1253`).
+- **`memory_update`** — Bayesian-combines confidence (log-odds pooling),
+  rather than assigning the incoming confidence directly. Storage atomically
+  deletes the old row and inserts its replacement with the combined confidence
+  and optional new value; no superseded version remains.
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
-  dissonant h_mem; `update_confidence` reduces its importance. No `expire`
-  compatibility strategy is supported (operator reaffirmation 2026-09-04).
+  dissonant h_mem; `update_confidence` reduces its importance. These are the
+  only supported strategies (operator reaffirmation 2026-09-04).
 - **`curator_memory_prune`** (`:1424`) — deterministic bulk hygiene:
   delete curator h_mems older than `max_age_days`, optionally sparing
   those recalled within a recent window.
-- **`curator_memory_dedup`** (`:1463`) — deterministic bulk hygiene:
-  condense duplicate h_mems.
+- **`curator_memory_dedup`** — deterministic bulk hygiene: group by
+  (entity, attribute, normalized string value), keep the highest-confidence
+  h_mem, and delete the rest. Non-string values are skipped; the result
+  reports `deleted_count`.
 - **`curator_memory_extract`** (`:1507`) — on-demand reification-candidate
   extraction; inserts nothing automatically (`:1507-1511`).
 - **`curator_report_skill_use_issue`** (`:1045`) — skill-reported tool

@@ -554,21 +554,58 @@ fn task_record_delegation_rejects_non_owner() {
 
 #[test]
 fn board_delete_removes_board_and_tasks() {
-    // Slice 4: board_delete removes the board and all its tasks.
-    let (svc, board, owner) = make_service_with_board();
-    svc.task_create(board.id, TaskSpec::new("T1".into()), owner)
-        .unwrap();
-    svc.task_create(board.id, TaskSpec::new("T2".into()), owner)
-        .unwrap();
+    let store = make_store();
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service
+        .board_create(owner, "Board", &make_default_columns())
+        .expect("board");
+    service
+        .task_create(board.id, TaskSpec::new("T1".into()), owner)
+        .expect("first task");
+    service
+        .task_create(board.id, TaskSpec::new("T2".into()), owner)
+        .expect("second task");
+    assert_eq!(store.count().expect("row count"), 5);
 
-    let tasks_deleted = svc.board_delete(board.id).unwrap();
-    assert_eq!(tasks_deleted, 2, "should delete both tasks");
+    let tasks_deleted = service.board_delete(board.id).expect("delete board");
+    assert_eq!(tasks_deleted, 2);
+    assert!(service.board_get(board.id).expect("query board").is_none());
+    assert!(service.board_list(&owner).expect("board list").is_empty());
+    assert_eq!(
+        store.count().expect("row count"),
+        0,
+        "board, task and index rows must be deleted"
+    );
+}
 
-    // Board is gone.
-    assert!(svc.board_get(board.id).unwrap().is_none());
-    // Board list no longer includes it.
-    let boards = svc.board_list(&owner).unwrap();
-    assert!(boards.iter().all(|b| b.id != board.id));
+#[test]
+fn task_delete_removes_task_and_index_rows_but_preserves_board() {
+    let store = make_store();
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service
+        .board_create(owner, "Board", &make_default_columns())
+        .expect("board");
+    let task = service
+        .task_create(board.id, TaskSpec::new("Task".into()), owner)
+        .expect("task");
+    assert_eq!(store.count().expect("row count"), 3);
+
+    service.task_delete(task.id).expect("delete task");
+    assert!(service.task_get(task.id).expect("query task").is_none());
+    assert!(
+        service
+            .task_list(board.id, TaskFilter::all())
+            .expect("task list")
+            .is_empty()
+    );
+    assert!(service.board_get(board.id).expect("query board").is_some());
+    assert_eq!(
+        store.count().expect("row count"),
+        1,
+        "only the board row may remain"
+    );
 }
 
 #[test]

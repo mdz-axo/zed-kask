@@ -237,7 +237,7 @@ mod tests {
     /// and the watermarks themselves are untouched.
     #[test]
     fn forgetting_deletes_only_aged_distilled_shared_turns() {
-        let (memory, _driver) = store_with_driver();
+        let (memory, driver) = store_with_driver();
         let now = chrono::Utc::now();
         let old = now - chrono::Duration::days(10);
         let recent = now - chrono::Duration::days(1);
@@ -314,6 +314,16 @@ mod tests {
                 .len(),
             2,
             "watermarks are never deleted — they are the idempotence markers"
+        );
+        let stored_rows = driver
+            .query_optional("SELECT count(*) FROM hmems", &[])
+            .expect("raw row count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            stored_rows, 5,
+            "the two forgotten turns must be physically absent"
         );
     }
 

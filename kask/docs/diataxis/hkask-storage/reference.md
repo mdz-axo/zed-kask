@@ -278,9 +278,11 @@ clock, reset by `HMemStore::touch_recall` at `hmem.rs:501-507`),
 dual-axis anchoring — DC+BIBO state axis + PKO process axis + 5W1H +
 open-world domain tags; `hmem.rs:53-58`). Ontology queries reach into the
 blob with SQLite `json_extract`, guarded by `json_valid(ontology)`
-(`hmem.rs:586-700`). Forgetting physically deletes rows; there is no
-expired-row state or `close_by_id` compatibility API (operator decision
-2026-09-04).
+(`hmem.rs`, ontology query methods). Each memory is a uni-temporal triple
+with `valid_from`; forgotten rows are deleted from the database (operator
+ruling 2026-09-04). On open, `core/connection.rs::migrate_hmems_forgetting_spec`
+purges rows marked for removal by the former lifecycle and drops its marker
+column in one transaction. A failed migration rolls back both changes.
 
 The `embeddings` table (`schema.sql:5`) stores vector embeddings keyed by
 `entity_ref`, with a `vector` BLOB (little-endian f32), `dimensions`,

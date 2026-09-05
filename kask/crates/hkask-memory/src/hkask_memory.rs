@@ -27,7 +27,7 @@ pub mod salience;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;
-pub use memory_store::CentroidResult;
+
 pub use memory_store::{DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 

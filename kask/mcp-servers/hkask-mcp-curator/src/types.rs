@@ -201,8 +201,8 @@ pub struct MemoryUpdateRequest {
     /// The new confidence value (0.0–1.0). Will be Bayesian-combined with
     /// the existing confidence, not replaced.
     pub new_confidence: f64,
-    /// Optional: a new value to replace the existing one (bitemporal update —
-    /// the old version is closed, a new version is inserted).
+    /// Optional: a new value to replace the existing one. The old row is
+    /// deleted and its replacement inserted in one transaction.
     pub new_value: Option<serde_json::Value>,
     /// Optional: reason for the confidence update (e.g. "Brier score 0.12 on
     /// resolved forecast", "contradicted by newer observation").
@@ -224,7 +224,7 @@ pub struct MemoryResolveContradictionRequest {
     /// The h_mem IDs involved in the contradiction.
     pub h_mem_ids: Vec<String>,
     /// The resolution strategy: "forget" (delete the dissonant h_mem from
-    /// the database — memories are forgotten, not expired) or
+    /// the database) or
     /// "update_confidence" (lower confidence on the contradicted one).
     pub strategy: String,
     /// The h_mem ID to act on (the one to forget or update). For

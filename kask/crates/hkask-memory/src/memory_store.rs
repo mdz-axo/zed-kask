@@ -13,9 +13,9 @@
 //! - `store()` — accepts any h_mem (no visibility/perspective invariants; the
 //!   ontology blob classifies it)
 //! - `query_deduped()` / `query_deduped_untouched()` — recall with decay + dedup
-//! - `query_by_perspective()` — filter by who wrote the memory (the swarm
-//!   hive uses this to scope by agent)
-//! - Embedding operations (store, search, centroid, purge)
+//! - `query_for_deduped_untouched()` — filter by who wrote the memory (the
+//!   swarm hive uses this to scope by agent)
+//! - Embedding operations (store, search, purge)
 //! - Consolidation helpers (update_confidence, delete_h_mem)
 //!
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
@@ -37,16 +37,6 @@ pub enum MemoryStoreError {
     HMem(#[from] HMemError),
     #[error("Embedding error: {0}")]
     Embedding(#[from] EmbeddingError),
-    #[error("No embeddings found for centroid: {0}")]
-    NoEmbeddingsForCentroid(String),
-}
-
-/// Result of computing a style centroid over a prefix-scoped embedding set.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CentroidResult {
-    pub centroid: Vec<f32>,
-    pub passage_count: usize,
-    pub stored: bool,
 }
 
 /// Outcome of an age-based prune operation.
@@ -359,31 +349,8 @@ impl MemoryStore {
         Ok(deduped)
     }
 
-    /// Query by entity prefix for a specific perspective, without touching
-    /// `recalled_at`. Caps rows via SQL LIMIT.
-    pub fn query_for_deduped_untouched_by_prefix(
-        &self,
-        prefix: &str,
-        perspective: WebID,
-        limit: usize,
-    ) -> Result<Vec<HMem>, MemoryStoreError> {
-        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix, limit)?;
-        let mut filtered: Vec<HMem> = h_mems
-            .into_iter()
-            .filter(|t| t.access.perspective == Some(perspective))
-            .map(|mut t| {
-                let days_since = crate::bayesian::days_since(t.recalled_at);
-                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
-                t
-            })
-            .collect();
-        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
-        Ok(crate::recall_dedup::dedup_h_mems(filtered))
-    }
-
-    /// Query by entity prefix, perspective-free — the shared-copy recall
-    /// counterpart of [`Self::query_for_deduped_untouched_by_prefix`]. Shared
-    /// h_mems carry no perspective, so keyword recall over the shared thread
+    /// Query by entity prefix, perspective-free. Shared h_mems carry no
+    /// perspective, so keyword recall over the shared thread
     /// prefix must not scope by one. Without touching `recalled_at`; caps
     /// rows via SQL LIMIT.
     pub fn query_deduped_untouched_by_prefix(
@@ -551,79 +518,6 @@ impl MemoryStore {
         Ok(self.embedding.all_with_text()?)
     }
 
-    /// Compute the centroid (mean embedding vector) for embeddings matching a prefix.
-    pub fn compute_centroid(
-        &self,
-        prefix: &str,
-        exclude_prefix: &str,
-        exclude_ref: &str,
-        dim: usize,
-        store_as: Option<&str>,
-        model: Option<&str>,
-    ) -> Result<CentroidResult, MemoryStoreError> {
-        let matching_refs: Vec<String> = self
-            .embedding
-            .query_by_prefix(prefix)?
-            .into_iter()
-            .filter(|r| !r.starts_with(exclude_prefix) && r != exclude_ref)
-            .collect();
-
-        if matching_refs.is_empty() {
-            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
-                prefix.to_string(),
-            ));
-        }
-
-        let mut centroid = vec![0.0f32; dim];
-        let mut count = 0usize;
-        for entity_ref in &matching_refs {
-            match self.embedding.get(entity_ref) {
-                Ok(emb) => {
-                    for (i, v) in emb.vector.iter().enumerate() {
-                        if i < dim {
-                            centroid[i] += v;
-                        }
-                    }
-                    count += 1;
-                }
-                Err(e) => tracing::warn!(
-                    target: "hkask.memory",
-                    error = %e,
-                    entity_ref = %entity_ref,
-                    "Failed to fetch embedding for centroid computation"
-                ),
-            }
-        }
-
-        if count == 0 {
-            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
-                prefix.to_string(),
-            ));
-        }
-
-        let n = count as f32;
-        for v in centroid.iter_mut() {
-            *v /= n;
-        }
-
-        let stored = if let Some(ref_to_store) = store_as {
-            if let Some(m) = model {
-                let _id = self.embedding.store(ref_to_store, &centroid, m, None)?;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        Ok(CentroidResult {
-            centroid,
-            passage_count: count,
-            stored,
-        })
-    }
-
     pub fn purge_by_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
         let to_delete = self.embedding.query_by_prefix(prefix)?;
         let mut count = 0;
@@ -643,7 +537,8 @@ impl MemoryStore {
 
     // ── Consolidation helpers ─────────────────────────────────────────────
 
-    /// Update an existing h_mem's confidence via the bitemporal update path.
+    /// Replace an existing h_mem's value and confidence atomically,
+    /// deleting the prior row rather than retaining a superseded version.
     pub fn update_confidence(
         &self,
         existing_id: &hkask_storage::HMemId,
@@ -680,7 +575,7 @@ impl MemoryStore {
     }
 
     /// Delete every embedding under an entity — vectors and metadata.
-    /// The retirement pass uses this so a retired thread's turn
+    /// The forgetting pass uses this so a forgotten thread's turn
     /// embeddings stop dominating semantic recall.
     pub fn delete_embeddings_by_entity(&self, entity_ref: &str) -> Result<usize, MemoryStoreError> {
         Ok(self.embedding.delete_all_by_entity_ref(entity_ref)?)
@@ -1055,6 +950,8 @@ mod tests {
             .query_by_entity("company:AAPL")
             .expect("query");
         assert!(old_remaining.is_empty(), "old h_mem was pruned");
+        assert!(store.get_by_id(&old.id).expect("query pruned ID").is_none());
+        assert_eq!(store.h_mem_count().expect("row count"), 1);
     }
 
     #[test]
@@ -1288,57 +1185,44 @@ mod tests {
     }
 
     #[test]
-    fn h_mems_by_entity_prefix_finds_both_curator_and_shared_turns() {
-        // The curator_memory_extract tool queries both `chat:thread:<id>`
-        // (curator-perspective turns) and `curator:thread:<id>` (shared copies
-        // of all turns including non-curator). This test pins that both
-        // prefixes return results when h_mems are stored under them, so
-        // non-curator turns are not invisible to extraction.
+    fn h_mems_by_entity_prefix_scopes_shared_thread_chunks() {
+        // Curator and non-curator turns use the same shared-copy prefix;
+        // extraction scopes that prefix to one thread.
         let store = test_store();
         let webid = WebID::from_persona(b"curator");
 
-        // Store a curator-perspective turn under `chat:thread:`.
         let curator_turn = hkask_storage::HMem::new(
-            "chat:thread:test-thread",
-            "chatted",
+            "curator:thread:curator-thread",
+            "chunk:0",
             serde_json::Value::String("curator turn content".to_string()),
             webid,
         );
         store.store(curator_turn).expect("store curator turn");
 
-        // Store a shared (non-curator) turn under `curator:thread:`.
         let shared_turn = hkask_storage::HMem::new(
-            "curator:thread:test-thread",
-            "turn",
+            "curator:thread:agent-thread",
+            "chunk:0",
             serde_json::Value::String("shared turn content".to_string()),
             webid,
         );
         store.store(shared_turn).expect("store shared turn");
 
-        // Query the `chat:thread:` prefix — finds the curator turn.
-        let chat_results = store
-            .h_mems_by_entity_prefix("chat:thread:test-thread")
-            .expect("query chat prefix");
-        assert_eq!(
-            chat_results.len(),
-            1,
-            "chat:thread: prefix finds the curator-perspective turn"
-        );
-
-        // Query the `curator:thread:` prefix — finds the shared turn.
         let curator_results = store
-            .h_mems_by_entity_prefix("curator:thread:test-thread")
-            .expect("query curator prefix");
-        assert_eq!(
-            curator_results.len(),
-            1,
-            "curator:thread: prefix finds the shared turn"
-        );
+            .h_mems_by_entity_prefix("curator:thread:curator-thread")
+            .expect("query curator thread");
+        assert_eq!(curator_results.len(), 1);
 
-        // Neither prefix alone finds both — the tool must query both.
-        assert_ne!(
-            chat_results[0].entity, curator_results[0].entity,
-            "the two prefixes return different h_mems"
+        let agent_results = store
+            .h_mems_by_entity_prefix("curator:thread:agent-thread")
+            .expect("query agent thread");
+        assert_eq!(agent_results.len(), 1);
+        assert_ne!(curator_results[0].entity, agent_results[0].entity);
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:thread:")
+                .expect("query all threads")
+                .len(),
+            2
         );
     }
 }

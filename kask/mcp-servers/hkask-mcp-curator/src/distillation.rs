@@ -11,7 +11,7 @@
 //! Sovereignty contract (memory-system-specification.md §10): the pass is
 //! ADDITIVE-ONLY. It inserts lesson h_mems (Shared visibility, 0.5
 //! confidence floor, evidence-verified) plus one Private watermark h_mem
-//! per distilled thread. It never edits, expires, or deletes an existing
+//! per distilled thread. It never edits or deletes an existing
 //! h_mem — promotion, contradiction resolution, and pruning remain the
 //! user's tools (`memory_update`, `memory_resolve_contradiction`,
 //! therapy). Pinned by `distillation_pass_is_additive_only`.
@@ -228,8 +228,8 @@ pub(crate) struct DistillationOutcome {
 
 /// The distillation core, directly testable against a `MemoryStore`.
 ///
-/// Additive-only: the only store mutation is `store(h_mem)` — no update,
-/// expire, or delete call exists in this function.
+/// Additive-only: the only store mutation is `store(h_mem)` — no update
+/// or delete call exists in this function.
 pub(crate) async fn distill_store(
     memory: &hkask_memory::MemoryStore,
     inference_port: &dyn hkask_types::InferencePort,

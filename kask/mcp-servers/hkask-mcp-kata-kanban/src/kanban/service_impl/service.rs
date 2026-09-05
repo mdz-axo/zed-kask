@@ -643,7 +643,7 @@ impl KanbanService {
     /// Delete a task and its board index entry.
     ///
     /// pre:  task_id is valid
-    /// post: task h_mem and index h_mem are soft-deleted
+    /// post: task h_mem and index h_mem are deleted from the database
     #[must_use = "result must be used"]
     pub(crate) fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
         let task = self.require_task(task_id)?;
@@ -850,7 +850,7 @@ impl KanbanService {
     /// Delete a board and all its tasks.
     ///
     /// pre:  board_id is valid
-    /// post: board h_mem and all associated task/index h_mems are soft-deleted
+    /// post: board h_mem and all associated task/index h_mems are deleted from the database
     #[must_use = "result must be used"]
     pub(crate) fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
         let board = self.board_get(board_id)?.ok_or_else(|| {

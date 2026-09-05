@@ -275,8 +275,16 @@ impl super::CyberneticsLoop {
         // can review and clear reviewed entries before they are evicted unread.
         // The set-point is 0.0 — any positive value (1.0 = approaching cap) is
         // a deviation.
-        signals.push(Signal::new(LoopId::Cybernetics, SignalMetric::AlgedonicLogApproachingCap,
-            if self.ledger.read().await.alert_log_approaching_cap().await { 1.0 } else { 0.0 }, 0.0));
+        signals.push(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::AlgedonicLogApproachingCap,
+            if self.ledger.read().await.alert_log_approaching_cap().await {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
+        ));
 
         // Sense the algedonic log's population state: actionable events
         // (Warning or Critical — Info entries are healthy-range diagnostics
@@ -334,7 +342,11 @@ impl super::CyberneticsLoop {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::InferenceModelAvailable,
-                if self.inference_health_wired { 1.0 } else { 0.0 },
+                if self.inference_health_wired {
+                    1.0
+                } else {
+                    0.0
+                },
                 1.0,
             ));
         }
@@ -615,7 +627,10 @@ impl super::CyberneticsLoop {
         // a fallback. The RegulationArchive below remains as a
         // secondary fallback for restart durability when the live
         // channel is down.
-        let observation = action.metric_name.as_deref().and_then(SignalMetric::from_str_name)
+        let observation = action
+            .metric_name
+            .as_deref()
+            .and_then(SignalMetric::from_str_name)
             .and_then(|metric| self.observations.lock().get(&metric).cloned());
         self.persist_alert_to_queue(&alert, efferent_action, observation.as_ref());
 
@@ -1813,7 +1828,7 @@ mod tests {
     /// D-sensing (2026-08-30): the algedonic log's population state must be
     /// sensed — `AlgedonicEvents`, `PendingEscalations`, and
     /// `MetacognitionCriticalAlerts` were policy-only (rules that could never
-    /// fire) before this. A clean log emits none of the three; a critical
+    /// fire) before this. A clean log emits healthy zero observations; a critical
     /// outcome alert (0% success → Critical, escalated) emits all three with
     /// value 1.0 against set-point 0.0.
     #[test]
@@ -1823,28 +1838,23 @@ mod tests {
             let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
             let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
 
-            // Clean log: none of the three population signals.
+            // Healthy observations distinguish recovery from unavailable sensing.
             let signals = regulation_loop.sense().await;
-            assert!(
-                !signals
+            for metric in [
+                SignalMetric::AlgedonicEvents,
+                SignalMetric::PendingEscalations,
+                SignalMetric::MetacognitionCriticalAlerts,
+            ] {
+                let signal = signals
                     .iter()
-                    .any(|s| s.metric == SignalMetric::AlgedonicEvents),
-                "clean log must not emit AlgedonicEvents"
-            );
-            assert!(
-                !signals
-                    .iter()
-                    .any(|s| s.metric == SignalMetric::PendingEscalations),
-                "clean log must not emit PendingEscalations"
-            );
-            assert!(
-                !signals
-                    .iter()
-                    .any(|s| s.metric == SignalMetric::MetacognitionCriticalAlerts),
-                "clean log must not emit MetacognitionCriticalAlerts"
-            );
+                    .find(|signal| signal.metric == metric)
+                    .unwrap_or_else(|| panic!("{metric:?} must be observed"));
+                assert_eq!(signal.value, 0.0);
+                assert_eq!(signal.set_point, 0.0);
+                assert!(Deviation::from_signal(signal).is_none());
+            }
 
-            // An Info-only log must NOT emit AlgedonicEvents: Info entries
+            // An Info-only log must not create a deviation: Info entries
             // are healthy-range diagnostics (a variety check slightly below
             // expected), not review demands. Before the actionable-count
             // fix, any log population — including normal-use Info noise —
@@ -1862,12 +1872,13 @@ mod tests {
                 );
             }
             let signals = regulation_loop.sense().await;
-            assert!(
-                !signals
-                    .iter()
-                    .any(|s| s.metric == SignalMetric::AlgedonicEvents),
-                "an Info-only log must not emit AlgedonicEvents"
-            );
+            let signal = signals
+                .iter()
+                .find(|signal| signal.metric == SignalMetric::AlgedonicEvents)
+                .expect("Info-only log must remain observable");
+            assert_eq!(signal.value, 0.0);
+            assert_eq!(signal.set_point, 0.0);
+            assert!(Deviation::from_signal(signal).is_none());
 
             // A critical outcome alert: 0% success over 5 operations
             // (the minimum sample `check_outcome` evaluates) → Critical,
@@ -1893,6 +1904,7 @@ mod tests {
                     .unwrap_or_else(|| panic!("{metric:?} must be sensed"));
                 assert_eq!(signal.value, expected_value);
                 assert_eq!(signal.set_point, 0.0);
+                assert!(Deviation::from_signal(signal).is_some());
             }
         });
     }
@@ -1979,7 +1991,10 @@ mod tests {
             regulation_loop.set_inference_health_source(Arc::new(StubHealthSource));
             let signals = regulation_loop.sense().await;
             assert!(
-                !signals.iter().any(|s| s.metric == SignalMetric::InferenceModelAvailable && Deviation::from_signal(s).is_some()),
+                !signals
+                    .iter()
+                    .any(|s| s.metric == SignalMetric::InferenceModelAvailable
+                        && Deviation::from_signal(s).is_some()),
                 "wired source means the model resolved — no outage deviation"
             );
         });

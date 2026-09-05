@@ -489,7 +489,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
-| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign`, `HMemEntry`, `ExpectProposal` |
+| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign`, `ExpectProposal` |
 | `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |

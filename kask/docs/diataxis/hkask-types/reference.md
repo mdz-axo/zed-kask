@@ -23,8 +23,8 @@ implementations of its own port traits, and must not depend on
 |--------|----------|
 | Crate root, module list | `kask/crates/hkask-types/src/hkask_types.rs:6-38` |
 | `pub use ports::*` re-export | `kask/crates/hkask-types/src/hkask_types.rs:60` |
-| `HMemEntry` struct | `kask/crates/hkask-types/src/hkask_types.rs:63` |
-| `ExpectProposal` struct | `kask/crates/hkask-types/src/hkask_types.rs:83` |
+
+| `ExpectProposal` struct | `kask/crates/hkask-types/src/hkask_types.rs:70` |
 | `AGENTS_DIR` (pub(crate)) / `MCP_DIR` / `SKILLS_DIR` / `DEFAULT_DB_PATH` | `kask/crates/hkask-types/src/agent_paths.rs:31,35,39,44` |
 | `resolve_data_dir` | `kask/crates/hkask-types/src/agent_paths.rs:63` |
 | `resolve_under_data_dir` | `kask/crates/hkask-types/src/agent_paths.rs:99` |

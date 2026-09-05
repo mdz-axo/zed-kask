@@ -160,13 +160,13 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - Action: `memory_insert` with a new h_mem that synthesizes the contradiction, citing both contradicting h_mems as evidence.
    - Grounding: Festinger — "add consonant cognitions." Also Nelson & Shiffrin (2013) — "traces can accumulate information across events."
 
-   **Remove dissonant** (forget):
+   **Remove dissonant** (forget — delete):
    - Use when one memory is clearly wrong (e.g., old code status, pre-solution configuration).
-   - Action: `memory_resolve_contradiction` with strategy "forget" (deletes the dissonant h_mem — memories are forgotten or deleted, never expired; operator ruling 2026-09-04).
+   - Action: `memory_resolve_contradiction` with strategy "forget" (deletes the row from the database; operator ruling 2026-09-04).
    - Grounding: Festinger — "remove or change dissonant cognitions." Also Loftus (2005) — distorted traces should be corrected. Also the goldfish principle — don't let the past own the present.
 
    **For fragmentation** — propose:
-   - **Merge**: if an isolated h_mem is a duplicate of a connected one, forget the isolated one.
+   - **Merge**: if an isolated h_mem is a duplicate of a connected one, delete the isolated one.
    - **Link**: if an isolated h_mem is related but not linked, propose inserting a connecting h_mem.
    - **Keep**: if the isolation is intentional (a unique perspective), keep it but note it.
 

@@ -1374,7 +1374,7 @@ impl CuratorServer {
     /// in the memory store by forgetting or de-conflicting contradictory
     /// h_mems.
     #[tool(
-        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the h_mem from the database — memories are forgotten, not expired), 'update_confidence' (lower confidence). Requires a reason citing the contradiction."
+        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the h_mem from the database), 'update_confidence' (lower confidence). Requires a reason citing the contradiction."
     )]
     pub async fn memory_resolve_contradiction(
         &self,
@@ -1558,10 +1558,9 @@ impl CuratorServer {
         .await
     }
 
-    /// Extract candidate semantic memories from a thread's turn history.
     /// Backfill semantic embeddings for knowledge-layer h_mems whose
     /// entities have none. Deterministic and embeddings-table-only — no
-    /// h_mem is created, modified, or expired. Turn-storage entities
+    /// h_mem is created, modified, or deleted. Turn-storage entities
     /// (`chat:thread:` / `curator:thread:`) are excluded by design: their
     /// embeddings live under the shared copy written at ingest, and
     /// backfilling the perspective originals would duplicate the semantic

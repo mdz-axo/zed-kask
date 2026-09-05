@@ -221,21 +221,29 @@ impl Database {
     /// delete them, then drop the column. `CREATE TABLE IF NOT EXISTS`
     /// won't remove the column from an already-existing table, so
     /// `ALTER TABLE ... DROP COLUMN` is needed for DBs created before the
-    /// ruling. No index references `valid_to`, so the drop is safe.
+    /// ruling. Deletion and schema change commit together; a failed column
+    /// drop must not leave a partially migrated database.
     fn migrate_hmems_forgetting_spec(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {
-        let mut stmt = conn.prepare("PRAGMA table_info(hmems)")?;
-        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let has_column = has_column
-            .filter_map(|r| r.ok())
-            .any(|name| name == "valid_to");
-        if has_column {
-            let forgotten = conn.execute("DELETE FROM hmems WHERE valid_to IS NOT NULL", [])?;
-            conn.execute_batch("ALTER TABLE hmems DROP COLUMN valid_to;")?;
+        // Serialize inspection with mutation so concurrent openers cannot
+        // both decide to drop the column from the same schema version.
+        let transaction =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = transaction
+            .prepare("PRAGMA table_info(hmems)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if columns.iter().any(|column| column == "valid_to") {
+            let forgotten =
+                transaction.execute("DELETE FROM hmems WHERE valid_to IS NOT NULL", [])?;
+            transaction.execute_batch("ALTER TABLE hmems DROP COLUMN valid_to;")?;
+            transaction.commit()?;
             tracing::info!(
                 target: "reg.storage",
                 forgotten,
                 "Migration: forgetting spec applied — soft-deleted rows deleted, valid_to column dropped"
             );
+        } else {
+            transaction.commit()?;
         }
         Ok(())
     }
@@ -425,7 +433,8 @@ impl Drop for Database {
 /// \[P1\] Motivating: User Sovereignty — user data remains under the user's control.
 /// pre: `path` identifies a SQLCipher database and `passphrase` is non-empty.
 /// post: returns an opened database only when the passphrase verifies.
-/// inv: never deletes or modifies the database.
+/// inv: a failed passphrase check never deletes or modifies the database;
+///      a successful open applies schema migrations.
 /// \[P4\] Constraining: Clear Boundaries — recovery is an explicit operation, not an implicit side effect.
 ///
 /// With the native SQLCipher KDF there is no external key material to lose,
@@ -536,6 +545,104 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(format!("{db_path}-wal"));
         let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    }
+
+    fn create_hmem_migration_fixture(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "CREATE TABLE hmems (
+                id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
+                value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
+                recalled_at TEXT NOT NULL, confidence REAL NOT NULL, perspective TEXT,
+                visibility TEXT NOT NULL, owner_webid TEXT NOT NULL, ontology TEXT
+            );
+            INSERT INTO hmems VALUES
+                ('retained', 'entity', 'fact', '\"retained\"', '2026-09-01', NULL,
+                 '2026-09-03', 0.7, 'author', 'shared', 'owner', '{\"dc_type\":\"bibo:Note\"}'),
+                ('forgotten', 'entity', 'fact', '\"forgotten\"', '2026-09-01', '2026-09-04',
+                 '2026-09-03', 0.5, NULL, 'private', 'owner', NULL);",
+        )
+    }
+
+    #[test]
+    fn forgetting_migration_purges_rows_on_encrypted_open_and_is_idempotent() -> anyhow::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("memory.db");
+        let path = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 test path"))?;
+        {
+            let connection = rusqlite::Connection::open(path)?;
+            connection.execute_batch("PRAGMA key = 'test_passphrase';")?;
+            create_hmem_migration_fixture(&connection)?;
+        }
+
+        for _ in 0..2 {
+            let database = open_or_repair(path, "test_passphrase")?;
+            let pool = database.sqlite_pool()?;
+            let connection = pool.get()?;
+            let columns = connection
+                .prepare("PRAGMA table_info(hmems)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert_eq!(columns.len(), 11);
+            assert!(!columns.iter().any(|column| column == "valid_to"));
+            let count: i64 =
+                connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
+            assert_eq!(count, 1, "forgotten rows must be absent, not filtered");
+            let retained: bool = connection.query_row(
+                "SELECT id = 'retained' AND value = '\"retained\"' AND valid_from = '2026-09-01'
+                 AND recalled_at = '2026-09-03' AND confidence = 0.7 AND perspective = 'author'
+                 AND visibility = 'shared' AND owner_webid = 'owner'
+                 AND ontology = '{\"dc_type\":\"bibo:Note\"}' FROM hmems",
+                [],
+                |row| row.get(0),
+            )?;
+            assert!(retained, "migration must preserve every retained field");
+            let integrity: String =
+                connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            assert_eq!(integrity, "ok");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn forgetting_migration_drops_column_when_no_rows_are_forgotten() -> anyhow::Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        create_hmem_migration_fixture(&connection)?;
+        connection.execute("DELETE FROM hmems WHERE id = 'forgotten'", [])?;
+        Database::migrate_hmems_forgetting_spec(&connection)?;
+        let column_count: i64 = connection.query_row(
+            "SELECT count(*) FROM pragma_table_info('hmems') WHERE name = 'valid_to'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(column_count, 0);
+        let count: i64 =
+            connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn forgetting_migration_rolls_back_deletion_if_column_drop_fails() -> anyhow::Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        create_hmem_migration_fixture(&connection)?;
+        // A dependent index forces DROP COLUMN to fail after the DELETE.
+        connection.execute_batch("CREATE INDEX prevent_drop ON hmems(valid_to);")?;
+        assert!(Database::migrate_hmems_forgetting_spec(&connection).is_err());
+        let count: i64 =
+            connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
+        assert_eq!(
+            count, 2,
+            "failed migration must leave the original rows intact"
+        );
+        connection.execute_batch("DROP INDEX prevent_drop;")?;
+        Database::migrate_hmems_forgetting_spec(&connection)?;
+        let count: i64 =
+            connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
+        assert_eq!(count, 1, "migration must be retryable after failure");
+        Ok(())
     }
 
     #[test]

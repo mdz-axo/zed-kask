@@ -17,8 +17,8 @@
 //! The shared-copy prefix is therefore the complete set: a scan over it
 //! alone sees every turn of every thread. The former `chat:thread:`
 //! curator-perspective prefix was retired by the same ruling (its rows
-//! were byte-identical duplicates; the legacy rows were expired by the
-//! 2026-09-04 therapy hygiene pass).
+//! were byte-identical duplicates; the legacy rows were forgotten
+//! (deleted) by the 2026-09-04 therapy hygiene pass).
 
 use std::collections::HashMap;
 

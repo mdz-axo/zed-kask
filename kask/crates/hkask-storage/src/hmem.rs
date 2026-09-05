@@ -2,7 +2,7 @@
 
 use crate::database::value::{DbRow, DbValue};
 use chrono::{DateTime, Utc};
-use hkask_types::HMemEntry;
+
 use hkask_types::HMemOntology;
 use hkask_types::id::{HMemId, WebID};
 use hkask_types::time::now_rfc3339;
@@ -36,7 +36,7 @@ impl From<serde_json::Error> for HMemError {
         HMemError::Infra(InfrastructureError::from(e))
     }
 }
-/// Bitemporal h_mem
+/// A memory with observation and recall timestamps; forgetting deletes it.
 #[derive(Debug, Clone)]
 pub struct HMem {
     pub id: HMemId,
@@ -381,20 +381,7 @@ impl HMemStore {
             &[DbValue::Text(entity.to_string()), DbValue::Text(attribute.to_string())],
         )
     }
-    /// Query h_mems by perspective.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — query by perspective
-    /// pre:  perspective is valid
-    /// post: returns Vec of h_mems for this perspective
-    pub fn query_by_perspective(&self, perspective: &WebID) -> Result<Vec<HMem>, HMemError> {
-        self.query_rows(
-            &format!(
-                "SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective = ?1 ORDER BY valid_from DESC"
-            ),
-            &[DbValue::Text(perspective.to_string())],
-        )
-    }
+
     /// Query all h_mems with a given attribute, regardless of entity.
     /// Query h_mems by attribute.
     ///
@@ -777,33 +764,7 @@ impl HMemStore {
         })
     }
 }
-/// HMem -> HMemEntry: lossy (flattens access control for CAS storage).
-impl From<&HMem> for HMemEntry {
-    fn from(t: &HMem) -> Self {
-        Self {
-            id: t.id.to_string(),
-            entity: t.entity.clone(),
-            attribute: t.attribute.clone(),
-            value: t.value.clone(),
-            valid_from: t.observed_at.to_rfc3339(),
-            confidence: t.confidence.value(),
-            perspective: t
-                .access
-                .perspective
-                .map(|wid| wid.to_string())
-                .unwrap_or_default(),
-            visibility: t.access.visibility.as_str().to_string(),
-            dimension: t
-                .ontology
-                .as_ref()
-                .and_then(|ont| ont.dimensions.first().map(|s| s.clone())),
-            ontology: t
-                .ontology
-                .as_ref()
-                .and_then(|ont| ont.to_json_string().ok()),
-        }
-    }
-}
+
 struct HMemRow {
     id: HMemId,
     entity: String,
@@ -816,4 +777,104 @@ struct HMemRow {
     visibility: Visibility,
     owner_webid: WebID,
     ontology: Option<HMemOntology>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::sqlite::SqliteDriver;
+
+    #[test]
+    fn update_deletes_prior_row_and_preserves_metadata() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let original = HMem::new("entity", "fact", serde_json::json!("old"), WebID::new())
+            .with_perspective(WebID::new())
+            .with_visibility(Visibility::Shared)
+            .with_ontology(HMemOntology::from_json_str(r#"{"dc_type":"bibo:Note"}"#)?);
+        store.insert(&original)?;
+        store.update(&original.id, serde_json::json!("replacement"), 0.7)?;
+
+        assert!(store.get_by_id(&original.id)?.is_none());
+        assert_eq!(
+            store.count()?,
+            1,
+            "replacement must not retain prior versions"
+        );
+        let rows = store.query_all(10)?;
+        let replacement = rows
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing replacement"))?;
+        assert_ne!(replacement.id, original.id);
+        assert_eq!(replacement.entity, original.entity);
+        assert_eq!(replacement.attribute, original.attribute);
+        assert_eq!(replacement.value, serde_json::json!("replacement"));
+        assert_eq!(replacement.confidence, Confidence::new(0.7));
+        assert_eq!(replacement.access.perspective, original.access.perspective);
+        assert_eq!(replacement.access.visibility, original.access.visibility);
+        assert_eq!(replacement.access.owner_webid, original.access.owner_webid);
+        assert_eq!(
+            replacement
+                .ontology
+                .as_ref()
+                .map(HMemOntology::to_json_string)
+                .transpose()?,
+            original
+                .ontology
+                .as_ref()
+                .map(HMemOntology::to_json_string)
+                .transpose()?,
+        );
+        assert!(replacement.observed_at >= original.observed_at);
+        assert_eq!(replacement.recalled_at, replacement.observed_at);
+        Ok(())
+    }
+
+    #[test]
+    fn update_rolls_back_deletion_when_replacement_insert_fails() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let original = HMem::new("entity", "fact", serde_json::json!("old"), WebID::new());
+        store.insert(&original)?;
+        store.driver().execute_batch(
+            "CREATE TRIGGER reject_replacement BEFORE INSERT ON hmems
+             BEGIN SELECT RAISE(ABORT, 'injected replacement failure'); END;",
+        )?;
+
+        let error = store
+            .update(&original.id, serde_json::json!("replacement"), 0.7)
+            .expect_err("the injected insert failure must reach the caller");
+        assert!(error.to_string().contains("injected replacement failure"));
+        assert_eq!(store.count()?, 1);
+        let retained = store
+            .get_by_id(&original.id)?
+            .ok_or_else(|| anyhow::anyhow!("failed update deleted the original"))?;
+        assert_eq!(retained.value, original.value);
+        assert_eq!(retained.confidence, original.confidence);
+        assert_eq!(retained.observed_at, original.observed_at);
+        assert_eq!(retained.recalled_at, original.recalled_at);
+        Ok(())
+    }
+
+    #[test]
+    fn deletion_removes_rows_without_hiding_them() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let owner = WebID::new();
+        let first = HMem::new("thread:first", "chunk:0", serde_json::json!("one"), owner);
+        let second = HMem::new("thread:second", "chunk:0", serde_json::json!("two"), owner);
+        let retained = HMem::new("knowledge", "fact", serde_json::json!("lesson"), owner);
+        for memory in [&first, &second, &retained] {
+            store.insert(memory)?;
+        }
+        store.delete_by_id(&first.id)?;
+        assert!(store.get_by_id(&first.id)?.is_none());
+        assert_eq!(store.delete_by_entity_prefix("thread:")?, 1);
+        assert_eq!(store.delete_by_entity_prefix("thread:")?, 0);
+        let raw_count = store
+            .driver()
+            .query_optional("SELECT count(*) FROM hmems", &[])?
+            .ok_or_else(|| anyhow::anyhow!("missing count row"))?
+            .get_int(0)?;
+        assert_eq!(raw_count, 1);
+        assert!(store.get_by_id(&retained.id)?.is_some());
+        Ok(())
+    }
 }

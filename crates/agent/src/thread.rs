@@ -305,6 +305,29 @@ pub(crate) fn extract_goal_events(message: &AgentMessage) -> Vec<hkask_types::Go
         .collect()
 }
 
+/// Collect goal events from every agent message in the CURRENT turn —
+/// the messages after the last user message. Goal tool calls happen in
+/// intermediate tool rounds; the turn's final round is text-only, so
+/// extracting from the last agent message alone silently dropped every
+/// event that wasn't in the final round (observed live 2026-09-05: a
+/// `kanban_goal_create` in a turn's first round never reached the memory
+/// write path, leaving the Brier calibration with no prediction record
+/// to calibrate). A user message starts a new turn — events collected
+/// before it belong to a prior turn and are dropped.
+pub(crate) fn collect_goal_events_for_current_turn(
+    messages: &[Arc<Message>],
+) -> Vec<hkask_types::GoalEvent> {
+    let mut events = Vec::new();
+    for message in messages {
+        match &**message {
+            Message::User(_) => events.clear(),
+            Message::Agent(agent_msg) => events.extend(extract_goal_events(agent_msg)),
+            Message::Resume | Message::Compaction(_) => {}
+        }
+    }
+    events
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompactionInfo {
     Summary(SharedString),
@@ -3020,18 +3043,7 @@ impl Thread {
                                     .map(|m| m.name().0.to_string())
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
-                                goal_events: thread
-                                    .messages
-                                    .iter()
-                                    .rev()
-                                    .find_map(|msg| {
-                                        if let crate::thread::Message::Agent(agent_msg) = &**msg {
-                                            Some(extract_goal_events(agent_msg))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .unwrap_or_default(),
+                                goal_events: collect_goal_events_for_current_turn(&thread.messages),
                                 agent_id: thread.agent_id().cloned(),
                             });
                             if let Ok(record) = record {
@@ -8327,6 +8339,75 @@ mod tests {
         // event rather than dropping it.
         assert_eq!(events[1].tool_name, "kanban_goal_judge");
         assert!(events[1].output.is_string());
+    }
+
+    #[test]
+    fn collect_goal_events_for_current_turn_keeps_all_rounds_drops_prior_turns() {
+        // The turn-level contract (functional-interaction spec): every
+        // kanban_goal_* result in the turn is extracted. Goal calls happen
+        // in intermediate tool rounds — the final round is text-only — so
+        // last-message-only extraction silently dropped them (observed
+        // live 2026-09-05: a kanban_goal_create in a turn's first round
+        // never reached the memory write path, leaving the Brier
+        // calibration with no prediction record). Prior turns' events are
+        // dropped: each turn's record carries only its own events.
+        let mut prior_turn_create = AgentMessage::default();
+        prior_turn_create.content = vec![tool_use("old-1", "kanban_goal_create")];
+        prior_turn_create.tool_results.insert(
+            LanguageModelToolUseId::from("old-1"),
+            tool_result(
+                "old-1",
+                "kanban_goal_create",
+                Some(json!({"goal_id": "prior-goal", "prediction": 0.7})),
+            ),
+        );
+        let prior_turn_close = AgentMessage::default();
+
+        let mut this_turn_round_one = AgentMessage::default();
+        this_turn_round_one.content = vec![
+            tool_use("r1", "kanban_goal_create"),
+            tool_use("r2", "read_file"),
+        ];
+        this_turn_round_one.tool_results.insert(
+            LanguageModelToolUseId::from("r1"),
+            tool_result(
+                "r1",
+                "kanban_goal_create",
+                Some(json!({"goal_id": "g-current", "prediction": 0.75})),
+            ),
+        );
+        this_turn_round_one.tool_results.insert(
+            LanguageModelToolUseId::from("r2"),
+            tool_result("r2", "read_file", Some(json!({"ok": true}))),
+        );
+        let this_turn_final = AgentMessage::default();
+
+        let messages: Vec<Arc<Message>> = vec![
+            Arc::new(Message::User(UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from(vec![UserMessageContent::Text("turn one".into())]),
+            })),
+            Arc::new(Message::Agent(prior_turn_create)),
+            Arc::new(Message::Agent(prior_turn_close)),
+            Arc::new(Message::User(UserMessage {
+                id: ClientUserMessageId::new(),
+                content: Arc::from(vec![UserMessageContent::Text("turn two".into())]),
+            })),
+            Arc::new(Message::Agent(this_turn_round_one)),
+            Arc::new(Message::Agent(this_turn_final)),
+        ];
+
+        let events = collect_goal_events_for_current_turn(&messages);
+        assert_eq!(
+            events.len(),
+            1,
+            "the current turn's create event survives; the prior turn's does not"
+        );
+        assert_eq!(events[0].tool_name, "kanban_goal_create");
+        assert_eq!(
+            events[0].output.get("goal_id").and_then(|v| v.as_str()),
+            Some("g-current")
+        );
     }
 
     // ── Kask panel per-tab MCP scoping ──────────────────────────────────
