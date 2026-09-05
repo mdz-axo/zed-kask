@@ -108,6 +108,7 @@ fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
 /// - Rejects URLs with embedded credentials (user:pass@host)
 /// - Rejects private IPs unless explicitly permitted
 /// - Rejects loopback addresses unless explicitly permitted
+/// - Applies the same policy to IPv4 and IPv4-mapped IPv6
 pub(crate) fn validate_url(
     raw_url: &str,
     config: &UrlValidationConfig,
@@ -117,6 +118,7 @@ pub(crate) fn validate_url(
     let ip: Option<IpAddr> = hostname.parse().ok();
 
     if let Some(ip) = ip {
+        let ip = ip.to_canonical();
         if ip.is_loopback() && !config.allow_loopback {
             return Err(SecurityError::LoopbackNotAllowed(ip.to_string()));
         }
@@ -185,7 +187,7 @@ pub(crate) async fn validate_url_with_dns(
     }
 
     for addr in &resolved {
-        let ip = addr.ip();
+        let ip = addr.ip().to_canonical();
         if ip.is_loopback() && !config.allow_loopback {
             return Err(SecurityError::LoopbackNotAllowed(format!(
                 "{hostname} resolves to loopback {ip}"
@@ -202,7 +204,7 @@ pub(crate) async fn validate_url_with_dns(
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
+    match ip.to_canonical() {
         IpAddr::V4(v4) => {
             let octets = v4.octets();
             octets[0] == 10
@@ -256,6 +258,48 @@ pub fn validate_tool_url_permissive(url: &str) -> Result<(), McpToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "Untrusted URLs cannot reach private services by spelling IPv4 as IPv6" [P4]
+    #[tokio::test]
+    async fn strict_validation_rejects_mapped_private_destinations() {
+        for address in [
+            "::ffff:127.0.0.1",
+            "::ffff:10.1.2.3",
+            "::ffff:172.16.0.1",
+            "::ffff:192.168.1.1",
+            "::ffff:169.254.169.254",
+            "::ffff:7f00:1",
+        ] {
+            let url = format!("http://[{address}]/");
+            assert!(
+                validate_tool_url_with_dns(&url).await.is_err(),
+                "strict validation admitted {url}"
+            );
+            assert!(validate_tool_url_permissive(&url).is_ok());
+        }
+        assert!(
+            validate_tool_url_with_dns("https://[::ffff:8.8.8.8]/")
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn mapped_ipv4_preserves_the_native_address_policy() {
+        for first in 0..=255 {
+            for second in [0, 16, 31, 32, 168, 254] {
+                let address = format!("{first}.{second}.0.1");
+                let native = validate_tool_url_with_dns(&format!("http://{address}/")).await;
+                let mapped =
+                    validate_tool_url_with_dns(&format!("http://[::ffff:{address}]/")).await;
+                assert_eq!(
+                    native.is_err(),
+                    mapped.is_err(),
+                    "policy differed for {address}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn is_private_ip_flags_ipv4_rfc1918_and_link_local() {

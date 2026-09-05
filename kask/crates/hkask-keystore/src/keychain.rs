@@ -32,6 +32,53 @@ fn credential_url(key: &str) -> String {
     format!("{KASK_CREDENTIAL_NAMESPACE}/{key}")
 }
 
+#[cfg(not(test))]
+async fn open_keyring() -> Result<oo7::Keyring, KeychainError> {
+    Ok(oo7::Keyring::new().await?)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_KEYRING: std::sync::Arc<async_std::sync::RwLock<Option<oo7::file::Keyring>>> =
+        std::sync::Arc::new(async_std::sync::RwLock::new(None));
+    static TEST_ENVIRONMENT: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(test)]
+fn open_keyring() -> impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send {
+    // Capture the test thread's backend before block_on moves to its I/O thread.
+    // The temporary oo7 backend has no path and never consults Secret Service.
+    let backend = TEST_KEYRING.with(Clone::clone);
+    async move {
+        let mut keyring = backend.write().await;
+        if keyring.is_none() {
+            let temporary = oo7::file::UnlockedKeyring::temporary(
+                "hkask-test-only-keyring-secret-32-bytes".into(),
+            )
+            .await
+            .map_err(|error| KeychainError::Platform(error.to_string()))?;
+            *keyring = Some(oo7::file::Keyring::Unlocked(temporary));
+        }
+        drop(keyring);
+        Ok(oo7::Keyring::File(backend))
+    }
+}
+
+#[cfg(not(test))]
+use std::env::var as environment_variable;
+
+#[cfg(test)]
+fn environment_variable(name: &str) -> Result<String, std::env::VarError> {
+    TEST_ENVIRONMENT.with(|environment| {
+        environment
+            .borrow()
+            .get(name)
+            .cloned()
+            .ok_or(std::env::VarError::NotPresent)
+    })
+}
+
 /// Block on an async future from sync context.
 ///
 /// `oo7` uses `async-std` for I/O (`zbus/async-io`). Its reactor must be
@@ -100,8 +147,9 @@ impl Keychain {
         let url = credential_url(key);
         let key = key.to_string();
         let secret = secret.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             keyring
                 .create_item(
@@ -127,8 +175,9 @@ impl Keychain {
     pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
             for item in items {
@@ -160,8 +209,9 @@ impl Keychain {
     pub fn delete_by_key(&self, key: &str) -> Result<(), KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
             for item in items {
@@ -202,8 +252,9 @@ impl Keychain {
         let url = url.to_string();
         let username = username.to_string();
         let secret = secret.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             keyring
                 .create_item(
@@ -224,8 +275,9 @@ impl Keychain {
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
     pub fn retrieve_by_url(&self, url: &str) -> Result<Zeroizing<String>, KeychainError> {
         let url = url.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
             for item in items {
@@ -251,8 +303,9 @@ impl Keychain {
     /// post: secret removed (idempotent — no-op if absent)
     pub fn delete_by_url(&self, url: &str) -> Result<(), KeychainError> {
         let url = url.to_string();
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("url", url.as_str())]).await?;
             for item in items {
@@ -277,8 +330,9 @@ impl Keychain {
     ///
     /// Returns the count of deleted entries.
     pub fn purge_legacy_entries(&self) -> Result<usize, KeychainError> {
+        let keyring = open_keyring();
         block_on(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = keyring.await?;
             keyring.unlock().await?;
             let items = keyring.search_items(&[("service", "hkask")]).await?;
             let mut deleted = 0;
@@ -400,7 +454,7 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
 
     match secret_ref {
         SecretRef::Env(var_name) => {
-            let value = std::env::var(var_name).map_err(|_| {
+            let value = environment_variable(var_name).map_err(|_| {
                 KeychainError::NotFound(NotFound {
                     entity_type: "secret".to_string(),
                     id: format!("env var {} not set", var_name),
@@ -418,35 +472,43 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
     }
 }
 
-// ── Integration tests (live keychain; run with -- --ignored) ──────────────────
-//
-// These tests exercise the real OS keychain via `oo7`, not a mock. They
-// verify that:
-//   1. `store_by_key` → `retrieve_by_key` round-trips a value
-//   2. `delete_by_key` removes it (subsequent `retrieve_by_key` → NotFound)
-//   3. `resolve_db_passphrase_string` finds an entry written by `store_by_key`
-//      (proves the resolve path and the store path hit the same namespace)
-//   4. `purge_legacy_entries` deletes old `service=hkask` entries (security cleanup)
-//      unified `kask://credentials/*` namespace
-//
-// They use a sentinel key (`__hkask_test_round_trip__`) to avoid touching
-// real credentials. `#[ignore]` keeps them out of `cargo test` by default;
-// run with `cargo test -p hkask-keystore -- --ignored`.
+// These tests use the production credential operations against per-test-thread
+// temporary oo7 backends. Neither an ignored-test flag nor ambient credentials
+// can opt this unit-test binary into the operator's real keyring.
 
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+
+    /// expect: "Credential tests cannot open my real keyring or create a keyring file" [P1]
+    #[test]
+    fn unit_test_keyring_is_disposable() -> Result<(), KeychainError> {
+        let keyring = block_on(open_keyring())?;
+        let oo7::Keyring::File(backend) = keyring else {
+            panic!("unit tests must never use Secret Service");
+        };
+        block_on(async move {
+            let backend = backend.read().await;
+            assert!(
+                backend
+                    .as_ref()
+                    .is_some_and(|keyring| keyring.path().is_none())
+            );
+        });
+        Ok(())
+    }
 
     /// Sentinel key for round-trip tests. Never used by production code.
     const TEST_KEY: &str = "__hkask_test_round_trip__";
     const TEST_VALUE: &str = "test-value-not-a-real-secret-1234567890";
 
     fn cleanup() {
-        let _ = Keychain.delete_by_key(TEST_KEY);
+        Keychain
+            .delete_by_key(TEST_KEY)
+            .expect("clean temporary test key");
     }
 
     #[test]
-    #[ignore]
     fn store_retrieve_delete_round_trips() {
         cleanup();
         let kc = Keychain;
@@ -479,11 +541,7 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore]
     fn resolve_finds_entry_written_by_store_by_key() {
-        // Delete first — the migration test may have already written the
-        // real passphrase to kask://credentials/hkask_db_passphrase.
-        let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
         let kc = Keychain;
 
         // Write via the store path
@@ -500,42 +558,15 @@ mod integration_tests {
             "resolve_db_passphrase_string must return the same value that store_by_key wrote"
         );
 
-        // Cleanup: delete the test value. The next zed-kask startup will
-        // re-provision via the migration or the default "allostery".
-        let _ = kc.delete_by_key(KEY_DB_PASSPHRASE);
+        kc.delete_by_key(KEY_DB_PASSPHRASE)
+            .expect("delete temporary passphrase");
     }
 
-    /// The provisioning chain: absent entry → default stored + returned;
-    /// existing entry → returned unchanged. Snapshots and restores the
-    /// operator's real entry — a rotated passphrase must survive the test —
-    /// and restores BEFORE asserting so a failed assert cannot leave the
-    /// keychain without the real entry (every DB would be unopenable at
-    /// next startup).
+    /// expect: "First-run provisioning is stable without touching another user's key" [P1]
     #[test]
-    #[ignore]
     fn provision_stores_default_when_absent_and_is_stable_after() {
-        if std::env::var_os("HKASK_DB_PASSPHRASE").is_some() {
-            eprintln!(
-                "skipping: HKASK_DB_PASSPHRASE is set — the env tier would mask the keychain tiers"
-            );
-            return;
-        }
-        let original = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE).ok();
-        let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
-
         let first = provision_db_passphrase_string();
         let second = provision_db_passphrase_string();
-
-        match original.as_ref() {
-            Some(value) => {
-                Keychain
-                    .store_by_key(KEY_DB_PASSPHRASE, value.as_str())
-                    .expect("restore the operator's real passphrase entry");
-            }
-            None => {
-                let _ = Keychain.delete_by_key(KEY_DB_PASSPHRASE);
-            }
-        }
 
         let first = first.expect("provision with no entry must store the default and return it");
         assert_eq!(
@@ -551,34 +582,70 @@ mod integration_tests {
         );
     }
 
-    /// The empty-env guard: `HKASK_DB_PASSPHRASE=""` must fall through
-    /// to the keychain tier, never resolve to an empty passphrase
-    /// (SQLCipher would key every DB on an empty string). Runs by default
-    /// — no keychain writes; a machine with no entry resolves Err, which
-    /// the assert tolerates (the pinned property is "never Ok-and-empty").
     #[test]
-    fn empty_env_passphrase_falls_through_to_keychain() {
-        let prev = std::env::var("HKASK_DB_PASSPHRASE").ok();
-        unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", "") };
-        let resolved = resolve_db_passphrase();
-        match prev {
-            Some(value) => unsafe { std::env::set_var("HKASK_DB_PASSPHRASE", value) },
-            None => unsafe { std::env::remove_var("HKASK_DB_PASSPHRASE") },
+    fn empty_env_passphrase_falls_through_to_keychain() -> Result<(), KeychainError> {
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        for value in ["", " \t\n"] {
+            TEST_ENVIRONMENT.with(|environment| {
+                environment
+                    .borrow_mut()
+                    .insert("HKASK_DB_PASSPHRASE".into(), value.into());
+            });
+            assert_eq!(resolve_db_passphrase_string()?.as_str(), TEST_VALUE);
         }
-        assert!(
-            !matches!(&resolved, Ok(value) if value.iter().all(|byte| byte.is_ascii_whitespace())),
-            "an empty env value must never resolve to an empty passphrase — it must \
-             fall through to the keychain tier (entry found, or Err when none exists)"
-        );
+        Ok(())
     }
 
     #[test]
-    #[ignore]
+    fn environment_override_does_not_replace_stored_passphrase() -> Result<(), KeychainError> {
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        TEST_ENVIRONMENT.with(|environment| {
+            environment
+                .borrow_mut()
+                .insert("HKASK_DB_PASSPHRASE".into(), "override".into());
+        });
+        assert_eq!(provision_db_passphrase_string()?.as_str(), "override");
+        assert_eq!(
+            Keychain.retrieve_by_key(KEY_DB_PASSPHRASE)?.as_str(),
+            TEST_VALUE
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn destructive_test_operations_are_isolated_from_other_keyrings() -> Result<(), KeychainError> {
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        std::thread::spawn(|| -> Result<(), KeychainError> {
+            assert!(matches!(
+                Keychain.retrieve_by_key(KEY_DB_PASSPHRASE),
+                Err(KeychainError::NotFound(_))
+            ));
+            provision_db_passphrase_string()?;
+            Keychain.delete_by_key(KEY_DB_PASSPHRASE)?;
+            Ok(())
+        })
+        .join()
+        .expect("isolated test thread")?;
+        assert_eq!(provision_db_passphrase_string()?.as_str(), TEST_VALUE);
+        Ok(())
+    }
+
+    #[test]
     fn purge_legacy_entries_deletes_old_namespace() {
-        // This test verifies that `purge_legacy_entries` deletes ALL entries
-        // with the `service=hkask` attribute, regardless of key name.
-        // Run manually after confirming legacy entries exist:
-        //   secret-tool search --all service hkask
+        let keyring = open_keyring();
+        block_on(async move {
+            keyring
+                .await?
+                .create_item(
+                    KEYRING_LABEL,
+                    &[("service", "hkask")],
+                    TEST_VALUE.as_bytes(),
+                    true,
+                )
+                .await?;
+            Ok::<_, KeychainError>(())
+        })
+        .expect("seed temporary legacy entry");
         let deleted =
             purge_legacy_hkask_entries().expect("purge_legacy_hkask_entries should not error");
         assert!(
@@ -594,7 +661,6 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore]
     fn retrieve_missing_key_returns_not_found() {
         let result = Keychain.retrieve_by_key("__hkask_definitely_does_not_exist__");
         assert!(

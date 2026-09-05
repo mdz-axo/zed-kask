@@ -8759,6 +8759,7 @@ name = "hkask-lisp"
 version = "0.39.0"
 dependencies = [
  "serde_json",
+ "stacksafe",
  "thiserror 2.0.17",
 ]
 

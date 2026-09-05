@@ -51,10 +51,12 @@ pub enum LispError {
     Parse(String),
     #[error("runtime error: {0}")]
     Runtime(String),
-    #[error("evaluation exceeded max_steps ({0}) — possible infinite loop")]
+    #[error("Lisp work exceeded max_steps ({0}) — input, computation, or output is too large")]
     StepLimitExceeded(u64),
-    #[error("evaluation exceeded max_depth ({0}) — possible infinite recursion")]
+    #[error("Lisp exceeded max_depth ({0}) — input nesting or evaluation recursion is too deep")]
     DepthLimitExceeded(u64),
+    #[error("Lisp output exceeds the JSON nesting limit ({0})")]
+    OutputDepthLimitExceeded(u64),
     #[error("type error: expected {expected}, got {actual}")]
     TypeError { expected: String, actual: String },
     #[error("unbound symbol: {0}")]
@@ -90,6 +92,21 @@ pub enum LispValue {
 pub struct List {
     pub head: LispValue,
     pub tail: Option<Rc<List>>,
+}
+
+impl Drop for List {
+    #[stacksafe::stacksafe]
+    fn drop(&mut self) {
+        // Drop nested heads on a growable stack and flat tails iteratively.
+        drop(std::mem::replace(&mut self.head, LispValue::Nil));
+        let mut tail = self.tail.take();
+        while let Some(node) = tail {
+            match Rc::try_unwrap(node) {
+                Ok(mut node) => tail = node.tail.take(),
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 impl List {
@@ -150,9 +167,11 @@ impl List {
     }
 }
 
-pub type NativeFn = fn(&Rc<RefCell<Env>>, &[LispValue]) -> Result<LispValue, LispError>;
+pub type NativeFn =
+    fn(&Rc<RefCell<Env>>, &[LispValue], &mut EvalBudget) -> Result<LispValue, LispError>;
 
 impl PartialEq for LispValue {
+    #[stacksafe::stacksafe]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (LispValue::Nil, LispValue::Nil) => true,
@@ -218,12 +237,18 @@ impl Env {
 // ── Parser ─────────────────────────────────────────────────────────────────
 
 pub fn parse(source: &str) -> Result<Vec<LispValue>, LispError> {
+    parse_with_budget(source, &mut EvalBudget::new(100_000, 1024))
+}
+
+fn parse_with_budget(source: &str, budget: &mut EvalBudget) -> Result<Vec<LispValue>, LispError> {
+    // Refuse oversized input before tokenization allocates a copy of every token.
+    budget.charge(source.len())?;
     let tokens = tokenize(source);
     let tokens = expand_infix(&tokens);
     let mut forms = Vec::new();
     let mut rest: &[String] = &tokens;
     while !rest.is_empty() {
-        let (form, next) = parse_form(rest)?;
+        let (form, next) = parse_form(rest, budget)?;
         forms.push(form);
         rest = next;
     }
@@ -340,7 +365,12 @@ fn tokenize(source: &str) -> Vec<String> {
     tokens
 }
 
-fn parse_form(tokens: &[String]) -> Result<(LispValue, &[String]), LispError> {
+#[stacksafe::stacksafe]
+fn parse_form<'a>(
+    tokens: &'a [String],
+    budget: &mut EvalBudget,
+) -> Result<(LispValue, &'a [String]), LispError> {
+    budget.tick()?;
     if tokens.is_empty() {
         return Err(LispError::Parse("unexpected end of input".into()));
     }
@@ -348,6 +378,7 @@ fn parse_form(tokens: &[String]) -> Result<(LispValue, &[String]), LispError> {
     let rest = &tokens[1..];
 
     if tok == "(" {
+        budget.enter()?;
         let mut items = Vec::new();
         let mut remaining = rest;
         loop {
@@ -355,9 +386,10 @@ fn parse_form(tokens: &[String]) -> Result<(LispValue, &[String]), LispError> {
                 return Err(LispError::Parse("unbalanced parenthesis".into()));
             }
             if remaining[0] == ")" {
+                budget.exit();
                 return Ok((LispValue::List(List::from_vec(items)), &remaining[1..]));
             }
-            let (form, next) = parse_form(remaining)?;
+            let (form, next) = parse_form(remaining, budget)?;
             items.push(form);
             remaining = next;
         }
@@ -366,7 +398,9 @@ fn parse_form(tokens: &[String]) -> Result<(LispValue, &[String]), LispError> {
         return Err(LispError::Parse("unexpected ')'".into()));
     }
     if tok == "'" {
-        let (form, next) = parse_form(rest)?;
+        budget.enter()?;
+        let (form, next) = parse_form(rest, budget)?;
+        budget.exit();
         let quoted = LispValue::List(List::from_vec(vec![
             LispValue::Symbol("quote".into()),
             form,
@@ -439,18 +473,23 @@ impl EvalBudget {
     }
 
     fn tick(&mut self) -> Result<(), LispError> {
-        self.steps_used += 1;
-        if self.steps_used > self.max_steps {
+        self.charge(1)
+    }
+
+    fn charge(&mut self, work: usize) -> Result<(), LispError> {
+        let work = u64::try_from(work).map_err(|_| LispError::StepLimitExceeded(self.max_steps))?;
+        if work > self.max_steps.saturating_sub(self.steps_used) {
             return Err(LispError::StepLimitExceeded(self.max_steps));
         }
+        self.steps_used += work;
         Ok(())
     }
 
     fn enter(&mut self) -> Result<(), LispError> {
-        self.depth_current += 1;
-        if self.depth_current > self.max_depth {
+        if self.depth_current >= self.max_depth {
             return Err(LispError::DepthLimitExceeded(self.max_depth));
         }
+        self.depth_current += 1;
         Ok(())
     }
 
@@ -470,6 +509,7 @@ pub fn eval(env: Rc<RefCell<Env>>, form: &LispValue) -> Result<LispValue, LispEr
 /// Depth is checked only for compound forms (lists) — atoms don't recurse
 /// and don't consume stack frames. This prevents the depth budget from being
 /// exhausted by argument evaluation while still bounding actual recursion.
+#[stacksafe::stacksafe]
 pub fn eval_with_budget(
     env: Rc<RefCell<Env>>,
     form: &LispValue,
@@ -700,7 +740,10 @@ fn apply(
     budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     match func {
-        LispValue::NativeFunc(f) => f(&env, args),
+        LispValue::NativeFunc(f) => {
+            charge_native_arguments(args, budget)?;
+            f(&env, args, budget)
+        }
         LispValue::Lambda {
             params,
             body,
@@ -837,7 +880,11 @@ fn as_list(v: &LispValue) -> Result<Rc<List>, LispError> {
     }
 }
 
-fn add(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn add(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     let mut acc_int: Option<i64> = Some(0);
     let mut acc_float: f64 = 0.0;
     for a in args {
@@ -863,7 +910,11 @@ fn add(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
         .unwrap_or(LispValue::Float(acc_float)))
 }
 
-fn sub(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn sub(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.is_empty() {
         return Err(LispError::Arity("- expects at least 1 arg".into()));
     }
@@ -894,7 +945,11 @@ fn sub(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
         .unwrap_or(LispValue::Float(acc_float)))
 }
 
-fn mul(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn mul(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     let mut acc_int: Option<i64> = Some(1);
     let mut acc_float: f64 = 1.0;
     for a in args {
@@ -920,7 +975,11 @@ fn mul(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
         .unwrap_or(LispValue::Float(acc_float)))
 }
 
-fn div(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn div(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.is_empty() {
         return Err(LispError::Arity("/ expects at least 1 arg".into()));
     }
@@ -935,7 +994,11 @@ fn div(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
     Ok(LispValue::Float(acc))
 }
 
-fn num_eq(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn num_eq(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity("= expects at least 2 args".into()));
     }
@@ -945,7 +1008,11 @@ fn num_eq(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lisp
     ))
 }
 
-fn num_ne(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn num_ne(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity("!= expects at least 2 args".into()));
     }
@@ -955,7 +1022,11 @@ fn num_ne(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lisp
     ))
 }
 
-fn lt(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn lt(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity("< expects at least 2 args".into()));
     }
@@ -963,7 +1034,11 @@ fn lt(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErro
     Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] < w[1])))
 }
 
-fn le(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn le(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity("<= expects at least 2 args".into()));
     }
@@ -971,7 +1046,11 @@ fn le(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErro
     Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] <= w[1])))
 }
 
-fn gt(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn gt(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity("> expects at least 2 args".into()));
     }
@@ -979,7 +1058,11 @@ fn gt(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErro
     Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] > w[1])))
 }
 
-fn ge(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn ge(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity(">= expects at least 2 args".into()));
     }
@@ -987,7 +1070,11 @@ fn ge(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErro
     Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] >= w[1])))
 }
 
-fn car(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn car(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("car expects 1 arg".into()));
     }
@@ -998,7 +1085,11 @@ fn car(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
     Ok(list.head.clone())
 }
 
-fn cdr(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn cdr(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("cdr expects 1 arg".into()));
     }
@@ -1009,7 +1100,11 @@ fn cdr(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
     })
 }
 
-fn cons(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn cons(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("cons expects 2 args".into()));
     }
@@ -1017,11 +1112,19 @@ fn cons(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispEr
     Ok(LispValue::List(List::cons(args[0].clone(), tail)))
 }
 
-fn list_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn list_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     Ok(LispValue::List(List::from_vec(args.to_vec())))
 }
 
-fn length(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn length(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("length expects 1 arg".into()));
     }
@@ -1036,7 +1139,11 @@ fn length(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lisp
     }
 }
 
-fn nth(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn nth(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("nth expects 2 args".into()));
     }
@@ -1057,7 +1164,11 @@ fn nth(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispErr
     })
 }
 
-fn reverse(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn reverse(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("reverse expects 1 arg".into()));
     }
@@ -1066,7 +1177,11 @@ fn reverse(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
     Ok(LispValue::List(List::from_vec(items)))
 }
 
-fn is_null(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn is_null(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("is_null expects 1 arg".into()));
     }
@@ -1078,7 +1193,11 @@ fn is_null(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
 }
 
 /// Number predicate: `(numberp x)` returns true if x is an Int or Float.
-fn numberp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn numberp(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("numberp expects 1 arg".into()));
     }
@@ -1091,7 +1210,11 @@ fn numberp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
 /// List predicate: `(listp x)` returns true if x is a List or Nil.
 /// Used to guard `assoc` against non-list inputs (e.g., when a prior step
 /// returns a boolean instead of a JSON object).
-fn listp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn listp(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("listp expects 1 arg".into()));
     }
@@ -1116,7 +1239,11 @@ fn listp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispE
 /// existing `is_null` guards, which read it as the documented stable-0
 /// default. Explicit `listp` guards in manifests remain valid — they document
 /// intent — but are no longer load-bearing.
-fn assoc_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn assoc_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("assoc expects 2 args".into()));
     }
@@ -1125,11 +1252,27 @@ fn assoc_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Li
         Ok(alist) => alist,
         Err(_) => return Ok(LispValue::Nil),
     };
-    for pair in alist.to_vec() {
-        if let LispValue::List(pair_list) = &pair {
-            let pair_items = pair_list.to_vec();
-            if pair_items.len() == 2 && pair_items[0] == *key {
-                return Ok(pair_items[1].clone());
+    let mut cursor = Some(alist.as_ref());
+    while let Some(node) = cursor {
+        if node.is_nil() {
+            break;
+        }
+        cursor = node.tail.as_deref();
+        if let LispValue::List(pair) = &node.head {
+            let Some(value) = pair.tail.as_deref() else {
+                continue;
+            };
+            // Reject malformed candidates without cloning or walking their tail.
+            if value.is_nil() || !value.tail.as_deref().is_none_or(List::is_nil) {
+                continue;
+            }
+            charge_value(&pair.head, budget, 0)?;
+            charge_value(key, budget, 0)?;
+            if pair.head == *key {
+                if let LispValue::String(text) | LispValue::Symbol(text) = &value.head {
+                    budget.charge(text.len())?;
+                }
+                return Ok(value.head.clone());
             }
         }
     }
@@ -1139,7 +1282,11 @@ fn assoc_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Li
 /// List concatenation: `(append l1 l2 ...)` joins multiple lists into one.
 /// Nil arguments are treated as empty lists. Non-list, non-nil args error.
 /// Returns nil if all args are nil/empty.
-fn append_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn append_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     let mut combined: Vec<LispValue> = Vec::new();
     for arg in args {
         match arg {
@@ -1158,7 +1305,11 @@ fn append_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
 
 /// String equality: `(string= a b)` returns true iff both args are strings
 /// with equal content. Distinct from `=` which is numeric-only.
-fn string_eq_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn string_eq_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("string= expects 2 args".into()));
     }
@@ -1170,7 +1321,11 @@ fn string_eq_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue
 
 /// String concatenation: `(concat s1 s2 ...)` joins multiple strings.
 /// Non-string args error. Returns empty string if no args.
-fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn concat_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     let mut combined = String::new();
     for arg in args {
         match arg {
@@ -1192,7 +1347,11 @@ fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
 /// needle errors rather than returning true — in citation verification an
 /// empty needle would verify anything, and a check that fires on correct
 /// output is worse than no check.
-fn string_contains_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn string_contains_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("string-contains expects 2 args".into()));
     }
@@ -1224,7 +1383,11 @@ fn string_contains_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<Lis
 
 /// Absolute value: `(abs x)` returns the magnitude of a numeric arg.
 /// Preserves Int vs Float: `(abs -3)` → `3` (Int), `(abs -3.5)` → `3.5` (Float).
-fn abs_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn abs_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("abs expects 1 arg".into()));
     }
@@ -1241,7 +1404,11 @@ fn abs_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lisp
 /// Square root: `(sqrt x)` returns the principal root as a Float.
 /// Negative input errors (no complex numbers). Used by marker-space
 /// hypotenuse computations.
-fn sqrt_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn sqrt_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("sqrt expects 1 arg".into()));
     }
@@ -1257,17 +1424,27 @@ fn sqrt_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
 /// returns false for mismatched types — distinct from `=` (numeric, errors on
 /// non-numbers) and `string=` (string-only). Used by `cond` clauses comparing
 /// string verdicts where the author wants a single equality operator.
-fn eq_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn eq_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("eq expects 2 args".into()));
     }
+    charge_value(&args[0], budget, 0)?;
+    charge_value(&args[1], budget, 0)?;
     Ok(LispValue::Bool(args[0] == args[1]))
 }
 
 /// List membership: `(member x list)` returns true iff `x` is structurally
 /// equal to an element of `list`. Nil list returns false. Non-list second
 /// arg errors. Used by the GORILLA maturity-blocks check.
-fn member_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+fn member_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("member expects 2 args".into()));
     }
@@ -1276,6 +1453,8 @@ fn member_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
         return Ok(LispValue::Bool(false));
     }
     for item in list.to_vec() {
+        charge_value(&item, budget, 0)?;
+        charge_value(&args[0], budget, 0)?;
         if item == args[0] {
             return Ok(LispValue::Bool(true));
         }
@@ -1283,10 +1462,114 @@ fn member_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
     Ok(LispValue::Bool(false))
 }
 
+// Charge expansion, not just shared Rc nodes: a small DAG can serialize to an
+// exponentially large JSON tree. Validation happens before recursive copying.
+#[stacksafe::stacksafe]
+fn charge_value(value: &LispValue, budget: &mut EvalBudget, depth: u64) -> Result<(), LispError> {
+    if depth > budget.max_depth {
+        return Err(LispError::DepthLimitExceeded(budget.max_depth));
+    }
+    budget.tick()?;
+    match value {
+        LispValue::String(text) | LispValue::Symbol(text) => budget.charge(text.len())?,
+        LispValue::List(list) => {
+            let mut cursor = Some(list.as_ref());
+            while let Some(node) = cursor {
+                if node.is_nil() {
+                    break;
+                }
+                charge_value(&node.head, budget, depth.saturating_add(1))?;
+                cursor = node.tail.as_deref();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[stacksafe::stacksafe]
+fn charge_json(value: &Value, budget: &mut EvalBudget, depth: u64) -> Result<(), LispError> {
+    if depth > budget.max_depth {
+        return Err(LispError::DepthLimitExceeded(budget.max_depth));
+    }
+    budget.tick()?;
+    match value {
+        Value::String(text) => budget.charge(text.len())?,
+        Value::Array(values) => {
+            for value in values {
+                charge_json(value, budget, depth.saturating_add(1))?;
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                budget.charge(key.len().saturating_add(2))?;
+                charge_json(value, budget, depth.saturating_add(2))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn charge_native_arguments(args: &[LispValue], budget: &mut EvalBudget) -> Result<(), LispError> {
+    for value in args {
+        budget.tick()?;
+        match value {
+            LispValue::String(text) | LispValue::Symbol(text) => budget.charge(text.len())?,
+            LispValue::List(list) => {
+                let mut cursor = Some(list.as_ref());
+                while let Some(node) = cursor {
+                    if node.is_nil() {
+                        break;
+                    }
+                    budget.tick()?;
+                    // Nested Rc values clone cheaply; strings and symbols own bytes.
+                    if let LispValue::String(text) | LispValue::Symbol(text) = &node.head {
+                        budget.charge(text.len())?;
+                    }
+                    cursor = node.tail.as_deref();
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+// serde_json's default reader allows 128 nested containers. Stay below that
+// boundary so the ordinary Value returned to callers is safe to serialize/drop;
+// raising evaluation depth must not raise this wire-format boundary.
+const MAX_JSON_DEPTH: u64 = 128;
+
+#[stacksafe::stacksafe]
+fn charge_output_layout(
+    value: &LispValue,
+    budget: &mut EvalBudget,
+    depth: u64,
+) -> Result<(), LispError> {
+    if depth >= MAX_JSON_DEPTH {
+        return Err(LispError::OutputDepthLimitExceeded(MAX_JSON_DEPTH));
+    }
+    // Pretty-print indentation is work too, even when the value is a small DAG.
+    budget.charge((depth as usize) * 2)?;
+    if let LispValue::List(list) = value {
+        let mut cursor = Some(list.as_ref());
+        while let Some(node) = cursor {
+            if node.is_nil() {
+                break;
+            }
+            charge_output_layout(&node.head, budget, depth + 1)?;
+            cursor = node.tail.as_deref();
+        }
+    }
+    Ok(())
+}
+
 // ── JSON interop ────────────────────────────────────────────────────────────
 
 /// Convert a `serde_json::Value` into a `LispValue`.
 /// JSON objects become association lists: `{"a": 1, "b": 2}` → `(("a" . 1) ("b" . 2))`
+#[stacksafe::stacksafe]
 pub fn from_json(value: &Value) -> LispValue {
     match value {
         Value::Null => LispValue::Nil,
@@ -1326,6 +1609,7 @@ pub fn from_json(value: &Value) -> LispValue {
 /// data produced by lisp.eval compute steps — the alist is Lisp's native
 /// key-value representation, and downstream Jinja2 templates expect JSON
 /// objects for dot-path access.
+#[stacksafe::stacksafe]
 pub fn to_json(value: &LispValue) -> Value {
     match value {
         LispValue::Nil => Value::Null,
@@ -1399,7 +1683,9 @@ pub fn eval_sandboxed_with_budget(
     max_steps: u64,
     max_depth: u64,
 ) -> Result<Value, LispError> {
-    let parsed = parse(form)?;
+    let mut budget = EvalBudget::new(max_steps, max_depth);
+    let parsed = parse_with_budget(form, &mut budget)?;
+    charge_json(env_json, &mut budget, 0)?;
     if parsed.is_empty() {
         return Ok(Value::Null);
     }
@@ -1410,10 +1696,11 @@ pub fn eval_sandboxed_with_budget(
         }
     }
     let mut result = LispValue::Nil;
-    let mut budget = EvalBudget::new(max_steps, max_depth);
     for form in &parsed {
         result = eval_with_budget(env.clone(), form, &mut budget)?;
     }
+    charge_value(&result, &mut budget, 0)?;
+    charge_output_layout(&result, &mut budget, 0)?;
     Ok(to_json(&result))
 }
 
@@ -1426,6 +1713,155 @@ pub fn eval_sandboxed_with_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "Malformed or oversized Lisp work returns an error instead of killing the host" [P4]
+    #[test]
+    fn hostile_inputs_are_process_safe() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD_CASE: &str = "HKASK_LISP_SAFETY_TEST_CASE";
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            let empty = serde_json::json!({});
+            let result = match case.as_str() {
+                "nested" => eval_sandboxed_with_budget(
+                    &format!("'{}1{}", "(".repeat(20_000), ")".repeat(20_000)),
+                    &empty,
+                    100_000,
+                    32,
+                ),
+                "quotes" => eval_sandboxed_with_budget(
+                    &format!("{}1", "'".repeat(20_000)),
+                    &empty,
+                    100_000,
+                    32,
+                ),
+                "unclosed" => eval_sandboxed_with_budget(&"(".repeat(20_000), &empty, 100_000, 32),
+                "source" => eval_sandboxed_with_budget(
+                    &format!("\"{}\"", "x".repeat(10_000)),
+                    &empty,
+                    1_000,
+                    32,
+                ),
+                "environment" => {
+                    let nested = (0..200).fold(Value::Null, |value, _| Value::Array(vec![value]));
+                    eval_sandboxed_with_budget(
+                        "input",
+                        &serde_json::json!({"input": nested}),
+                        100_000,
+                        32,
+                    )
+                }
+                "strings" => eval_sandboxed_with_budget(
+                    "(define grow (lambda (n x) (if (= n 0) x (grow (- n 1) (concat x x))))) (grow 16 \"a\")",
+                    &empty,
+                    5_000,
+                    1024,
+                ),
+                "shared_lists" => eval_sandboxed_with_budget(
+                    "(define grow (lambda (n x) (if (= n 0) x (grow (- n 1) (list x x))))) (grow 16 '(1))",
+                    &empty,
+                    5_000,
+                    1024,
+                ),
+                "output_depth" => eval_sandboxed_with_budget(
+                    &format!("'{}1{}", "(".repeat(2_000), ")".repeat(2_000)),
+                    &empty,
+                    100_000,
+                    2_001,
+                ),
+                "malformed_pairs" => {
+                    let program = "(define double (lambda (n xs) (if (= n 0) xs (double (- n 1) (append xs xs))))) (define p (double 13 '(1))) (assoc \"absent\" (double 13 (list p)))";
+                    assert!(eval_sandboxed(program, &empty)?.is_null());
+                    return Ok(());
+                }
+                "json_lifecycle" => {
+                    let form = format!("'{}1{}", "(".repeat(100), ")".repeat(100));
+                    let output = eval_sandboxed(&form, &empty)?;
+                    let serialized = serde_json::to_string_pretty(&output)?;
+                    let reparsed: Value = serde_json::from_str(&serialized)?;
+                    drop(reparsed);
+                    drop(output);
+                    return Ok(());
+                }
+                "flat_list" => {
+                    let form = format!("'({})", "1 ".repeat(10_000));
+                    let output = eval_sandboxed(&form, &empty)?;
+                    assert_eq!(output.as_array().map(Vec::len), Some(10_000));
+                    let serialized = serde_json::to_string_pretty(&output)?;
+                    drop(output);
+                    assert_eq!(
+                        serde_json::from_str::<Value>(&serialized)?
+                            .as_array()
+                            .map(Vec::len),
+                        Some(10_000)
+                    );
+                    return Ok(());
+                }
+                _ => return Err("unknown subprocess case".into()),
+            };
+            assert!(result.is_err(), "{case} escaped the resource budget");
+            return Ok(());
+        }
+        for case in [
+            "nested",
+            "quotes",
+            "unclosed",
+            "source",
+            "environment",
+            "strings",
+            "shared_lists",
+            "output_depth",
+            "malformed_pairs",
+            "json_lifecycle",
+            "flat_list",
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "tests::hostile_inputs_are_process_safe",
+                    "--nocapture",
+                ])
+                .env(CHILD_CASE, case)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while child.try_wait()?.is_none() {
+                if std::time::Instant::now() >= deadline {
+                    child.kill()?;
+                    child.wait()?;
+                    return Err(format!("{case} exceeded subprocess deadline").into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = child.wait_with_output()?;
+            assert!(
+                output.status.success(),
+                "{case} failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn discarded_symbol_expansion_still_consumes_work_budget() {
+        let program = format!(
+            "(define double (lambda (n xs) (if (= n 0) xs (double (- n 1) (append xs xs))))) (begin (double 8 (list '{})) 0)",
+            "s".repeat(1_000)
+        );
+        assert!(matches!(
+            eval_sandboxed_with_budget(&program, &serde_json::json!({}), 5_000, 1024),
+            Err(LispError::StepLimitExceeded(_))
+        ));
+    }
+
+    #[test]
+    fn output_nesting_is_bounded_independently_of_evaluation_depth() {
+        let program = format!("'{}1{}", "(".repeat(256), ")".repeat(256));
+        assert!(
+            eval_sandboxed_with_budget(&program, &serde_json::json!({}), 100_000, 1024).is_err()
+        );
+    }
 
     #[test]
     fn arithmetic_evaluates() {
@@ -1490,7 +1926,7 @@ mod tests {
         let program = r#"
             (define count-verified
               (lambda (lst)
-                (if (lt (length lst) 1)
+                (if (< (length lst) 1)
                     0
                     (+ (if (string-contains "tool_verified" (assoc "provenance" (car lst))) 1 0)
                        (count-verified (cdr lst))))))
