@@ -79,7 +79,13 @@ pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
 struct RequestLifetime {
     _admission: tokio::sync::OwnedSemaphorePermit,
-    deadline: Option<gpui::Task<()>>,
+    deadline: Option<RequestDeadline>,
+}
+
+struct RequestDeadline {
+    expires_at: std::time::Instant,
+    executor: gpui::BackgroundExecutor,
+    timer: gpui::Task<()>,
 }
 
 struct InFlightGuard(Arc<std::sync::atomic::AtomicUsize>);
@@ -101,8 +107,8 @@ struct InferenceRequest {
     /// Provider-prefixed model name (e.g. "openrouter/z-ai/glm-5.2").
     /// When `Some`, the receiver resolves the model from
     /// `LanguageModelRegistry` and dispatches to it instead of the
-    /// default model. When `None` or resolution fails, the default
-    /// model is used.
+    /// default model. `None` selects the default; a failed explicit resolution
+    /// returns a typed error without substitution.
     model_override: Option<String>,
     reply: oneshot::Sender<Result<InferenceResult, InferenceError>>,
 }
@@ -116,10 +122,9 @@ struct StreamInferenceRequest {
     reply: tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
 }
 
-/// Shared accumulator for stream events — used by both `handle_non_streaming`
-/// (which builds an `InferenceResult` from the accumulated state) and
-/// `handle_streaming` (which forwards text/thinking deltas immediately but
-/// accumulates metadata for the final chunk).
+/// Shared accumulator for `collect_completion`: non-streaming calls collect
+/// all events; streaming calls forward text/thinking deltas immediately and
+/// accumulate metadata for the final chunk.
 ///
 /// `Text` and `Thinking` events are handled by the caller (collected or
 /// forwarded) — this struct handles `ToolUse`, `Stop`, and `UsageUpdate`,
@@ -271,7 +276,7 @@ impl LanguageModelInferencePort {
     /// inference requests. Drop the returned `Task` to stop it.
     ///
     /// `inference_timeout` bounds the wall-clock time for a single inference
-    /// call (stream establishment + event drain). A hung provider stalls the
+    /// call from admission (queue wait + model resolution + establishment + drain). A hung provider stalls the
     /// request indefinitely without this — the cybernetics variety check
     /// flagged this as a critical gap (disturbance class D2: provider timeout,
     /// no response). `Duration::ZERO` disables the timeout (legacy behavior).
@@ -459,17 +464,31 @@ impl LanguageModelInferencePort {
                 "inference admission capacity reached; request was not dispatched".into(),
             )
         })?;
-        let deadline = (!self.inference_timeout.is_zero())
-            .then(|| self.background_executor.timer(self.inference_timeout));
+        let deadline = (!self.inference_timeout.is_zero()).then(|| RequestDeadline {
+            expires_at: self.background_executor.now() + self.inference_timeout,
+            executor: self.background_executor.clone(),
+            timer: self.background_executor.timer(self.inference_timeout),
+        });
         Ok(RequestLifetime {
             _admission: permit,
             deadline,
         })
     }
 
-    async fn wait_deadline(deadline: Option<gpui::Task<()>>) {
+    async fn wait_deadline(deadline: Option<RequestDeadline>) {
         match deadline {
-            Some(deadline) => deadline.await,
+            // A timer task may not have run yet even when its clock has expired.
+            // The biased select must deny dispatch before polling work in that case.
+            Some(mut deadline) => {
+                futures::future::poll_fn(|context| {
+                    if deadline.executor.now() >= deadline.expires_at {
+                        std::task::Poll::Ready(())
+                    } else {
+                        deadline.timer.poll_unpin(context)
+                    }
+                })
+                .await
+            }
             None => futures::future::pending().await,
         }
     }
@@ -1159,6 +1178,44 @@ mod tests {
         );
         assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert_eq!(port.admission.available_permits(), 2);
+    }
+
+    /// expect: "Streaming deadlines start at admission, even before the receiver polls, and cover the drain" [P1]
+    #[gpui::test]
+    async fn streaming_deadline_covers_unpolled_queue_and_drain(cx: &mut gpui::TestAppContext) {
+        use futures_util::StreamExt;
+        for poll_receiver in [false, true] {
+            let model: Arc<dyn language_model::LanguageModel> =
+                Arc::new(FakeLanguageModel::default());
+            let fake = model.as_fake();
+            let (port, _receiver) = super::LanguageModelInferencePort::new(
+                model.clone(),
+                Duration::from_secs(2),
+                1,
+                cx.to_async(),
+            );
+            let mut stream = port.generate_stream("stream", &LLMParameters::default(), None);
+            assert_eq!(port.admission.available_permits(), 1);
+            if poll_receiver {
+                cx.run_until_parked();
+                assert_eq!(fake.completion_count(), 1);
+            }
+            // advance_clock runs ready tasks first; advance only the clock to
+            // exercise admission before the receiver's first poll.
+            cx.dispatcher
+                .scheduler()
+                .clock()
+                .advance(Duration::from_secs(3));
+            cx.run_until_parked();
+            assert!(matches!(
+                stream.next().await,
+                Some(Err(InferenceError::Timeout(_)))
+            ));
+            assert!(stream.next().await.is_none());
+            assert_eq!(fake.completion_count(), usize::from(poll_receiver));
+            assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
+            assert_eq!(port.admission.available_permits(), 2);
+        }
     }
 
     /// expect: "Disabled deadlines still allow cancellation to release active work" [P1]

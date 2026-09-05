@@ -248,7 +248,7 @@ pub struct KaskMemorySettings {
     pub distillation_idle_secs: u64,
 
     /// Distillation-gated forgetting age in days (0 = disabled). The
-    /// curator server's background pass forgets (expires) the
+    /// curator server's background pass forgets (deletes) the
     /// shared-copy turns of threads whose distillation watermark is
     /// older than this — the goldfish principle's automatic leg.
     /// Time-based and distillation-gated, never count-based: budgets

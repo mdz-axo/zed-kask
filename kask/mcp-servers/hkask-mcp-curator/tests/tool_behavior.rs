@@ -179,6 +179,139 @@ fn parse(output: &str) -> serde_json::Value {
         .unwrap_or_else(|| panic!("tool output must be valid JSON, got: {output}"))
 }
 
+/// expect: "Only confirmed human action starts advice review, once, and resolved advice remains visible" [P9]
+#[tokio::test]
+async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
+    let queue =
+        Arc::new(EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("queue"));
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::from_stores(CuratorStores {
+            escalation_queue: Some(queue.clone()),
+            regulation_store: None,
+            memory: None,
+        })),
+        failing_inference_port(),
+    );
+    let trigger = serde_json::json!({"source":"Cybernetics", "metric":"tool_reliability", "value":0.2, "set_point":0.8, "timestamp":chrono::Utc::now()});
+    // Use the real Signal serializer so this fixture follows its wire format.
+    let mut trigger = trigger;
+    trigger["source"] = serde_json::json!("cybernetics");
+    let trigger: hkask_regulation::Signal =
+        serde_json::from_value(trigger).expect("signal fixture");
+    let id = queue
+        .add(
+            hkask_types::TemplateID::new(),
+            hkask_types::BotID::new(),
+            "reliability".into(),
+            1.0,
+            0,
+            serde_json::json!({"recovery_signal":trigger}).to_string(),
+        )
+        .expect("add")
+        .to_string();
+    for (confirmed, note) in [(false, "repaired"), (true, "  ")] {
+        let error = server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: id.clone(),
+                operator_confirmed: confirmed,
+                action_note: note.into(),
+            }))
+            .await
+            .expect_err("confirmation required");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+    }
+    let missing = server
+        .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+            id: "absent".into(),
+            operator_confirmed: true,
+            action_note: "done".into(),
+        }))
+        .await
+        .expect_err("missing");
+    assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
+    for context in [
+        "{}",
+        "{\"recovery_signal\":{}}",
+        "{\"recovery_signal\":null}",
+    ] {
+        let invalid = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "unmeasurable".into(),
+                1.0,
+                0,
+                context.into(),
+            )
+            .expect("add");
+        let error = server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: invalid.to_string(),
+                operator_confirmed: true,
+                action_note: "done".into(),
+            }))
+            .await
+            .expect_err("unmeasurable");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+    }
+    let first = parse(
+        &server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: id.clone(),
+                operator_confirmed: true,
+                action_note: "repaired service".into(),
+            }))
+            .await
+            .expect("apply"),
+    );
+    let acknowledged = queue.get(&id).expect("get").expect("entry").error_context;
+    let again = parse(
+        &server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: id.clone(),
+                operator_confirmed: true,
+                action_note: "repeat".into(),
+            }))
+            .await
+            .expect("idempotent"),
+    );
+    assert_eq!(first, again);
+    assert_eq!(
+        queue.get(&id).expect("get").expect("entry").error_context,
+        acknowledged
+    );
+    assert_eq!(first["review"]["status"], "observation_window");
+    assert_eq!(first["review"]["causal_attribution"], "unverified");
+    let applied: chrono::DateTime<chrono::Utc> =
+        serde_json::from_value(first["applied_at"].clone()).expect("time");
+    let due: chrono::DateTime<chrono::Utc> =
+        serde_json::from_value(first["review_due_at"].clone()).expect("due");
+    assert_eq!(due - applied, chrono::Duration::days(7));
+    assert_eq!(
+        queue
+            .list_pending()
+            .expect("pending")
+            .iter()
+            .filter(|entry| entry.id.to_string() == id)
+            .count(),
+        1
+    );
+    queue.resolve(&id, "test").expect("resolve");
+    let reviews = parse(
+        &server
+            .curator_advice_reviews(Parameters(PingRequest {}))
+            .await
+            .expect("reviews"),
+    );
+    assert_eq!(reviews["reviews"].as_array().expect("array").len(), 1);
+    assert_eq!(reviews["reviews"][0]["status"], "resolved");
+    assert_eq!(
+        reviews["reviews"][0]["application"]["action_note"],
+        "repaired service"
+    );
+}
+
 // ── Liveness ──────────────────────────────────────────────────────────────
 
 /// `curator_ping` returns `status: "ok"` and reports all three stores as live

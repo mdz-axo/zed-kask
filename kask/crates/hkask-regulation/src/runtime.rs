@@ -127,8 +127,8 @@ impl SkillSpanStore {
 // Relocated from variety.rs (TASK 2 deletion test — VarietyMonitor only used
 // by RegulationLedger, so depth increases when co-located).
 
-/// Default variety counter window duration (1 minute).
-const DEFAULT_VARIETY_WINDOW_SECS: u64 = 60;
+/// Current observation window for variety, outcomes, and advice evidence (1 minute).
+pub const OBSERVATION_WINDOW_SECS: u64 = 60;
 
 /// Variety counter for tracking state diversity in a domain.
 ///
@@ -152,7 +152,7 @@ impl VarietyTracker {
         Self {
             counts: HashMap::new(),
             window_start: Instant::now(),
-            window_duration: Duration::from_secs(DEFAULT_VARIETY_WINDOW_SECS),
+            window_duration: Duration::from_secs(OBSERVATION_WINDOW_SECS),
             ema: 0.0,
         }
     }
@@ -262,7 +262,7 @@ impl OutcomeTracker {
             failures: 0,
             error_kinds: HashMap::new(),
             window_start: Instant::now(),
-            window_duration: Duration::from_secs(DEFAULT_VARIETY_WINDOW_SECS),
+            window_duration: Duration::from_secs(OBSERVATION_WINDOW_SECS),
         }
     }
 
@@ -997,7 +997,7 @@ mod tests {
         assert!(ledger.health().await.overall_deficit > 0);
         {
             let mut state = ledger.state.write().await;
-            let old = Instant::now() - Duration::from_secs(DEFAULT_VARIETY_WINDOW_SECS + 1);
+            let old = Instant::now() - Duration::from_secs(OBSERVATION_WINDOW_SECS + 1);
             state.tracker.counter("quiet").window_start = old;
             state
                 .outcome

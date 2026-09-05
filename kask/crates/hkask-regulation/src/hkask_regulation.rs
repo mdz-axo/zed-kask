@@ -34,7 +34,7 @@ pub use loops::{
 };
 pub use regulation_policy::alert_condition;
 pub use runtime::NoopEventSink;
-pub use runtime::RegulationLedger;
+pub use runtime::{OBSERVATION_WINDOW_SECS, RegulationLedger};
 pub use sensor_provider::ContextServerHealthSource;
 pub use sensor_provider::InferenceHealthSource;
 pub use sensor_provider::MemoryHealthSource;

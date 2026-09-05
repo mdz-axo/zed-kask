@@ -267,21 +267,20 @@ impl StagnationDetector {
     /// this (metric, action) pair has repeated enough times to indicate
     /// a plateau.
     ///
-    /// If the action's decision is Accept, the counter is reset.
-    /// If Stage or Block, the counter increments toward the threshold.
+    /// Only observed improvement resets the counter. Acceptance without
+    /// improvement still increments it; neither is evidence of causation.
     ///
     /// expect: "The system prevents regulation loop stagnation through cooldown dampening and substitution tracking"
     pub(crate) fn record_and_check(
         &self,
         metric_name: &str,
         action_type: &str,
-        accepted: bool,
+        improved: bool,
     ) -> bool {
         let key = (metric_name.to_string(), action_type.to_string());
         let mut history = self.history.lock();
 
-        if accepted {
-            // Action was accepted — reset the counter.
+        if improved {
             history.remove(&key);
             return false;
         }

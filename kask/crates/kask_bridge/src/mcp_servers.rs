@@ -622,6 +622,20 @@ pub async fn build_mcp_server_env(
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
     //    unfiltered map; the allowlist is what keeps the curator's email
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
+    // Update authority before credential awaits: an older env-building future
+    // must not re-grant access after a newer settings pass revoked it.
+    let tools = settings
+        .mcp
+        .delegated_tools
+        .get(server_id)
+        .filter(|_| {
+            settings.mcp.load_default && *settings.mcp.overrides.get(server_id).unwrap_or(&true)
+        })
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, tools) {
+        env.insert(crate::delegation_grants::GRANT_ENV.to_string(), grant);
+    }
 
     // 2. Credentials: resolve URLs, filter per-server, read from keychain.
     //    Shell overrides win (preserves the polarity the previous
@@ -712,16 +726,6 @@ pub async fn build_mcp_server_env(
                  the server will fail with permission_denied when it tries to use it"
             );
         }
-    }
-
-    let tools = settings
-        .mcp
-        .delegated_tools
-        .get(server_id)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, tools) {
-        env.insert(crate::delegation_grants::GRANT_ENV.to_string(), grant);
     }
 
     // 3. Inference IPC socket — not in any allowlist; every server may route
@@ -1586,6 +1590,79 @@ mod tests {
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    /// expect: "Only loaded children receive stable parent-held grants, and unload cannot remint authority" [P1]
+    #[tokio::test]
+    async fn delegated_grants_follow_settings_and_launch_lifecycle() {
+        let provider = MockCredentialsProvider {
+            secrets: crate::credential_urls_for_mcp()
+                .into_iter()
+                .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
+                .collect(),
+        };
+        let context = gpui::TestAppContext::single();
+        let cx = context.to_async();
+        let content: settings_content::KaskSettingsContent = serde_json::from_value(
+            serde_json::json!({"mcp":{"delegated_tools":{"swarm":["research/rss_search"]}}}),
+        )
+        .expect("settings");
+        let mut settings = crate::KaskSettings::from(content);
+        assert!(
+            crate::KaskSettings::default()
+                .mcp
+                .delegated_tools
+                .is_empty()
+        );
+        let schema = serde_json::to_value(schemars::schema_for!(
+            settings_content::KaskMcpSettingsContent
+        ))
+        .expect("schema");
+        assert!(schema["properties"]["delegated_tools"].is_object());
+        let first = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        let token = first
+            .get(crate::delegation_grants::GRANT_ENV)
+            .expect("token")
+            .to_string();
+        assert!(crate::delegation_grants::parent_allows(
+            Some(&token),
+            "research/rss_search"
+        ));
+        assert!(!crate::delegation_grants::parent_allows(
+            Some(&token),
+            "research/rss_fetch"
+        ));
+        let again = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        assert_eq!(
+            again.get(crate::delegation_grants::GRANT_ENV),
+            Some(token.as_str())
+        );
+        let other = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
+        assert!(other.get(crate::delegation_grants::GRANT_ENV).is_none());
+        settings.mcp.overrides.insert("swarm".into(), false);
+        crate::revoke_delegation_grant("swarm");
+        let unloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        assert!(
+            unloaded.get(crate::delegation_grants::GRANT_ENV).is_none(),
+            "observer env diff must not remint an unloaded grant"
+        );
+        assert!(!crate::delegation_grants::parent_allows(
+            Some(&token),
+            "research/rss_search"
+        ));
+        settings.mcp.overrides.insert("swarm".into(), true);
+        let reloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        assert_ne!(
+            reloaded.get(crate::delegation_grants::GRANT_ENV),
+            Some(token.as_str())
+        );
+        settings
+            .mcp
+            .delegated_tools
+            .insert("swarm".into(), vec!["research/*".into()]);
+        let invalid = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        assert!(invalid.get(crate::delegation_grants::GRANT_ENV).is_none());
+        crate::revoke_delegation_grant("swarm");
     }
 
     /// Pin the load-bearing filter order in `build_mcp_server_env`: config is

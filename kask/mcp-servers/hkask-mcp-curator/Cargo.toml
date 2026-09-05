@@ -9,6 +9,7 @@ description = "Curator MCP server — system observability, escalation managemen
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-storage.workspace = true
+hkask-regulation.workspace = true
 hkask-memory.workspace = true
 hkask-inference.workspace = true
 hkask-services-core.workspace = true

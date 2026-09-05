@@ -418,12 +418,19 @@ impl CuratorServer {
             let entry = queue.get(&req.id).map_err(|error| McpToolError::internal(error.to_string()))?
                 .ok_or_else(|| McpToolError::not_found("Escalation not found"))?;
             let mut context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid escalation context: {error}")))?;
-            if context.get("recovery_signal").is_none_or(|value| value.is_null()) {
+            let trigger: hkask_regulation::Signal = serde_json::from_value(context.get("recovery_signal").cloned().unwrap_or(serde_json::Value::Null))
+                .map_err(|_| McpToolError::failed_precondition("This escalation has no measurable triggering condition"))?;
+            if !trigger.is_recovery_trigger() {
                 return Err(McpToolError::failed_precondition("This escalation has no measurable triggering condition"));
             }
             if context.get("applied_at").is_none_or(|value| value.is_null()) {
                 let now = chrono::Utc::now();
-                context["applied_baseline"] = context.get("latest_observation").or_else(|| context.get("recovery_signal")).cloned().unwrap_or(serde_json::Value::Null);
+                // An unavailable latest reading must not fall back to an old trigger.
+                // Recording the action remains possible, but its evidence stays unknown.
+                let baseline = context.get("latest_observation").or_else(|| context.get("recovery_signal"))
+                    .and_then(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone()).ok())
+                    .filter(|signal| signal.metric == trigger.metric && signal.is_fresh_at(now));
+                context["applied_baseline"] = json!(baseline);
                 context["applied_at"] = json!(now);
                 context["review_due_at"] = json!(now + chrono::Duration::days(7));
                 context["action_note"] = json!(req.action_note);

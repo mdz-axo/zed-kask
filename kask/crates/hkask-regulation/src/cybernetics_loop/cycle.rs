@@ -924,8 +924,7 @@ impl super::CyberneticsLoop {
             let delta = after_val - before_val;
             // The per-metric direction table lives on
             // `SignalMetric::impact_direction`, colocated with the metric
-            // it describes. No direction = no verified impact path: any
-            // nonzero delta counts as a change.
+            // it describes. Unknown direction cannot establish improvement.
             let improved = match metric.impact_direction() {
                 Some(true) => delta > 0.0,
                 Some(false) => delta < 0.0,
@@ -1563,6 +1562,50 @@ mod tests {
                 },
             ),
         )
+    }
+
+    /// expect: "Accepted constant degradation/noise accumulates stagnation; only observed progress resets it" [P9]
+    #[tokio::test]
+    async fn accepted_noise_does_not_erase_stagnation_or_imply_progress() {
+        use crate::loops::core::{LoopMetrics, TriggerOrigin};
+        let source = Arc::new(MockRolloutEventSource::answering(0.2, 0.2));
+        let regulation = loop_with_source(source.clone());
+        let action = rollout_impact_check("trace", "tool_reliability");
+        for (index, after) in [0.2, 0.199, 0.2, 0.2].into_iter().enumerate() {
+            *source.before_after.lock().expect("source") = Ok(Some((0.2, after)));
+            let reports = regulation
+                .verify_impact(std::slice::from_ref(&action))
+                .await;
+            let report = reports.first().expect("verified");
+            assert_eq!(report.decision, ActionDecision::Accept);
+            assert!(!report.improved);
+            assert_eq!(
+                regulation
+                    .stagnation_detector
+                    .ineffective_count("tool_reliability", action.action_type.as_str()),
+                (index + 1) as u32
+            );
+            assert_eq!(
+                LoopMetrics::from_cycle(
+                    0,
+                    &[],
+                    std::slice::from_ref(&action),
+                    &reports,
+                    TriggerOrigin::Scheduled
+                )
+                .observed_progress_score,
+                0.0
+            );
+        }
+        *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.3)));
+        let reports = regulation.verify_impact(&[action]).await;
+        assert!(reports.first().expect("report").improved);
+        assert_eq!(
+            regulation
+                .stagnation_detector
+                .ineffective_count("tool_reliability", "Notify"),
+            0
+        );
     }
 
     /// S1 + happy path: a store-answered pass_rate regression writes a verdict

@@ -1015,6 +1015,56 @@ mod tests {
         serde_json::to_string(&resp).unwrap() + "\n"
     }
 
+    /// expect: "The IPC caller receives typed server lifetime errors, not a transport timeout or automatic replay" [P1]
+    #[tokio::test]
+    async fn ipc_client_receives_server_timeout_before_closing() {
+        for error in [
+            InferenceError::Timeout("admission deadline".into()),
+            InferenceError::Overloaded("not dispatched".into()),
+        ] {
+            let payload: hkask_types::inference_ipc::InferenceErrorPayload = error.into();
+            let expected = payload.code.clone();
+            let directory = tempfile::tempdir().expect("tempdir");
+            let path = directory.path().join("deadline.sock");
+            let listener = UnixListener::bind(&path).expect("listener");
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let mut request = String::new();
+                BufReader::new(&mut stream)
+                    .read_line(&mut request)
+                    .await
+                    .expect("request");
+                let request: InferenceRequest = serde_json::from_str(&request).expect("JSON");
+                // Short fixture deadline; production uses admission's configured timer.
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                stream
+                    .write_all(
+                        response_line(InferenceOutcome::Error { error: payload }, request.id)
+                            .as_bytes(),
+                    )
+                    .await
+                    .expect("response");
+            });
+            let client = InferenceIpcClient {
+                socket_path: Arc::new(path),
+                next_id: Arc::new(AtomicU64::new(1)),
+            };
+            let error = tokio::time::timeout(
+                IPC_READ_TIMEOUT_GRACE,
+                client.generate("hold", &LLMParameters::default(), None),
+            )
+            .await
+            .expect("server precedes grace")
+            .expect_err("server lifetime error");
+            assert!(matches!(
+                (&*expected, error),
+                ("Timeout", InferenceError::Timeout(_))
+                    | ("Overloaded", InferenceError::Overloaded(_))
+            ));
+            server.await.expect("server joined");
+        }
+    }
+
     #[test]
     fn strip_provider_prefix_strips_first_segment_only() {
         // The bug at the old inline `split('/').nth(1)`: this returned "z-ai".

@@ -71,31 +71,68 @@ impl BridgeAlertEscalationSink {
     pub fn new(queue: Arc<hkask_storage::EscalationQueue>) -> Self {
         Self { queue }
     }
-}
 
-impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
-    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+    fn reconcile_conditions_at(
+        &self,
+        observations: &[hkask_regulation::Signal],
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
         let entries = match self.queue.list_advice_observations() {
             Ok(entries) => entries,
-            Err(error) => { tracing::warn!(target: "reg.alert", %error, "Recovery reconciliation unavailable; alerts retained"); return; }
+            Err(error) => {
+                tracing::warn!(target: "reg.alert", %error, "Recovery reconciliation unavailable; alerts retained");
+                return;
+            }
         };
-        let now = chrono::Utc::now();
         for entry in entries {
             let mut context: serde_json::Value = match serde_json::from_str(&entry.error_context) {
                 Ok(context) => context,
-                Err(error) => { tracing::warn!(target: "reg.alert", %error, "Invalid escalation context"); continue; }
+                Err(error) => {
+                    tracing::warn!(target: "reg.alert", %error, "Invalid escalation context");
+                    continue;
+                }
             };
-            let Some(value) = context.get("recovery_signal").filter(|value| !value.is_null()) else { continue; };
+            let Some(value) = context
+                .get("recovery_signal")
+                .filter(|value| !value.is_null())
+            else {
+                continue;
+            };
             let trigger: hkask_regulation::Signal = match serde_json::from_value(value.clone()) {
                 Ok(signal) => signal,
-                Err(error) => { tracing::warn!(target: "reg.alert", %error, "Invalid recovery signal"); continue; }
+                Err(error) => {
+                    tracing::warn!(target: "reg.alert", %error, "Invalid recovery signal");
+                    continue;
+                }
             };
-            let current = observations.iter().find(|current| current.metric == trigger.metric);
-            if context.pointer("/advice_review/finalized").and_then(|value| value.as_bool()) != Some(true) {
-                let applied_at = context.get("applied_at").filter(|value| !value.is_null()).map(|value| serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone())).transpose();
-                let baseline = context.get("applied_baseline").filter(|value| !value.is_null()).map(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone())).transpose();
+            if !trigger.is_recovery_trigger() {
+                tracing::warn!(target: "reg.alert", "Unmeasurable recovery trigger; condition retained");
+                continue;
+            }
+            let current = observations
+                .iter()
+                .find(|current| current.metric == trigger.metric && current.is_fresh_at(now));
+            let mut observed_context = entry.error_context.clone();
+            if context
+                .pointer("/advice_review/finalized")
+                .and_then(|value| value.as_bool())
+                != Some(true)
+            {
+                let applied_at = context
+                    .get("applied_at")
+                    .filter(|value| !value.is_null())
+                    .map(|value| {
+                        serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone())
+                    })
+                    .transpose();
+                let baseline = context
+                    .get("applied_baseline")
+                    .filter(|value| !value.is_null())
+                    .map(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone()))
+                    .transpose();
                 let (Ok(applied_at), Ok(baseline)) = (applied_at, baseline) else {
-                    tracing::warn!(target: "reg.alert", "Invalid advice application metadata; review not performed"); continue;
+                    tracing::warn!(target: "reg.alert", "Invalid advice application metadata; review not performed");
+                    continue;
                 };
                 let status = trigger.advice_review(baseline.as_ref(), current, applied_at, now);
                 context["latest_observation"] = serde_json::json!(current);
@@ -103,16 +140,46 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                     "status": status, "observed_at": now, "causal_attribution": "unverified",
                     "finalized": !matches!(status, "awaiting_action" | "observation_window"),
                 });
-                match self.queue.update_advice_context(&entry.id.to_string(), &entry.error_context, &context.to_string()) {
-                    Ok(true) => {},
-                    Ok(false) => { tracing::debug!(target: "reg.alert", "Advice changed concurrently; retry on next tick"); continue; },
-                    Err(error) => { tracing::warn!(target: "reg.alert", %error, "Advice observation could not be saved"); continue; }
+                match self.queue.update_advice_context(
+                    &entry.id.to_string(),
+                    &entry.error_context,
+                    &context.to_string(),
+                ) {
+                    Ok(true) => {
+                        observed_context = context.to_string();
+                    }
+                    Ok(false) => {
+                        tracing::debug!(target: "reg.alert", "Advice changed concurrently; retry on next tick");
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "reg.alert", %error, "Advice observation could not be saved");
+                        continue;
+                    }
                 }
             }
             if current.is_some_and(|current| trigger.recovered_by(current)) {
-                self.auto_resolve_cleared(&entry.output, "Fresh observation satisfies the original triggering threshold");
+                match self.queue.resolve_observed_condition(
+                    &entry.id.to_string(),
+                    &observed_context,
+                    "cybernetics_loop:auto_resolve",
+                ) {
+                    Ok(true) => {
+                        tracing::info!(target: "reg.alert", "Resolved observed condition at its original threshold")
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(target: "reg.alert", %error, "Recovery could not be persisted; condition retained")
+                    }
+                }
             }
         }
+    }
+}
+
+impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
+    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+        self.reconcile_conditions_at(observations, chrono::Utc::now());
     }
 
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
@@ -244,6 +311,138 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn reliability(
+        value: f64,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> hkask_regulation::Signal {
+        serde_json::from_value(serde_json::json!({"source":"cybernetics", "metric":"tool_reliability", "value":value, "set_point":0.8, "timestamp":timestamp})).expect("signal")
+    }
+
+    /// expect: "Persisted advice is assessed after seven days, including after early resolution, without causal claims" [P9]
+    #[test]
+    fn persisted_advice_review_keeps_observing_after_recovery() {
+        let queue = Arc::new(
+            hkask_storage::EscalationQueue::from_driver(
+                hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+            )
+            .expect("queue"),
+        );
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+        let applied = chrono::Utc::now();
+        let trigger = reliability(0.2, applied);
+        let id = queue.add(hkask_types::TemplateID::new(), hkask_types::BotID::new(), "reliability — first".into(), 1.0, 0,
+            serde_json::json!({"recovery_signal":trigger, "applied_at":applied, "applied_baseline":trigger, "action_note":"fixed"}).to_string()).expect("add").to_string();
+        let context = || -> serde_json::Value {
+            serde_json::from_str(&queue.get(&id).expect("get").expect("entry").error_context)
+                .expect("context")
+        };
+        let early = applied + chrono::Duration::days(1);
+        sink.reconcile_conditions_at(&[reliability(1.0, early)], early);
+        let resolved_at = queue
+            .get(&id)
+            .expect("get")
+            .expect("entry")
+            .resolved_at
+            .expect("early recovery");
+        assert_eq!(context()["advice_review"]["status"], "observation_window");
+        assert_eq!(context()["advice_review"]["finalized"], false);
+        // A recurrence must not be resolved using the old alert's lower threshold.
+        let mut recurrence = reliability(0.85, early);
+        recurrence.set_point = 0.95;
+        let next = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "reliability — next".into(),
+                1.0,
+                0,
+                serde_json::json!({"recovery_signal":recurrence}).to_string(),
+            )
+            .expect("recurrence");
+        let due = applied + chrono::Duration::days(7);
+        sink.reconcile_conditions_at(&[reliability(0.9, due)], due);
+        assert_eq!(context()["advice_review"]["status"], "recovered");
+        assert_eq!(
+            context()["advice_review"]["causal_attribution"],
+            "unverified"
+        );
+        assert_eq!(
+            queue
+                .get(&next.to_string())
+                .expect("get")
+                .expect("entry")
+                .status,
+            hkask_storage::EscalationStatus::Pending
+        );
+        assert_eq!(
+            queue.get(&id).expect("get").expect("entry").resolved_at,
+            Some(resolved_at)
+        );
+        sink.reconcile_conditions_at(&[], due + chrono::Duration::days(1));
+        assert_eq!(
+            context()["advice_review"]["status"],
+            "recovered",
+            "completed assessment is retained"
+        );
+    }
+
+    /// expect: "Absent or stale advice evidence stays unknown and cannot resolve a pending condition" [P9]
+    #[test]
+    fn persisted_advice_review_evidence_matrix() {
+        let applied = chrono::Utc::now();
+        let due = applied + chrono::Duration::days(7);
+        for (baseline, current, status) in [
+            (
+                Some(reliability(0.2, applied)),
+                Some(reliability(0.3, due)),
+                "improved",
+            ),
+            (
+                Some(reliability(0.2, applied)),
+                Some(reliability(0.2, due)),
+                "no_improvement",
+            ),
+            (None, Some(reliability(0.3, due)), "insufficient_evidence"),
+            (
+                Some(reliability(0.2, applied - chrono::Duration::seconds(61))),
+                Some(reliability(0.3, due)),
+                "insufficient_evidence",
+            ),
+            (
+                Some(reliability(0.2, applied)),
+                None,
+                "insufficient_evidence",
+            ),
+            (
+                Some(reliability(0.2, applied)),
+                Some(reliability(1.0, due - chrono::Duration::seconds(61))),
+                "insufficient_evidence",
+            ),
+            (
+                Some(reliability(0.2, applied)),
+                Some(reliability(1.0, due + chrono::Duration::seconds(1))),
+                "insufficient_evidence",
+            ),
+        ] {
+            let queue = Arc::new(
+                hkask_storage::EscalationQueue::from_driver(
+                    hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+                )
+                .expect("queue"),
+            );
+            let id = queue.add(hkask_types::TemplateID::new(), hkask_types::BotID::new(), "reliability".into(), 1.0, 0,
+                serde_json::json!({"recovery_signal":reliability(0.2, applied), "applied_at":applied, "applied_baseline":baseline}).to_string()).expect("add");
+            let sink = BridgeAlertEscalationSink::new(queue.clone());
+            sink.reconcile_conditions_at(&current.into_iter().collect::<Vec<_>>(), due);
+            let entry = queue.get(&id.to_string()).expect("get").expect("entry");
+            let context: serde_json::Value =
+                serde_json::from_str(&entry.error_context).expect("context");
+            assert_eq!(context["advice_review"]["status"], status);
+            assert_eq!(context["advice_review"]["causal_attribution"], "unverified");
+            assert_eq!(entry.status, hkask_storage::EscalationStatus::Pending);
+        }
+    }
 
     struct Fleet {
         healthy: AtomicUsize,

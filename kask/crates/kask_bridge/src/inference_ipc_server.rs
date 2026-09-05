@@ -23,9 +23,10 @@
 //!
 //! ## Connection handling
 //!
-//! Each MCP server gets its own socket. The server accepts connections in a
-//! background task and handles each connection in its own task. Requests are
-//! processed sequentially per connection (the protocol is request-response).
+//! MCP children share the parent's listener and open a fresh connection per
+//! request. EOF cancels pending local dispatch; pipelining is refused. Cancellation
+//! cannot reverse work already accepted by a provider or tool, so no unknown-effect
+//! request is automatically replayed.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -584,9 +585,10 @@ async fn handle_connection(
             Err(e) => {
                 tracing::warn!(
                     target: "reg.inference",
-                    error = %e,
-                    line = %line,
-                    "Inference IPC parse failed — skipping"
+                    error_class = ?e.classify(),
+                    line_number = e.line(),
+                    column = e.column(),
+                    "Inference IPC parse failed — skipping (request payload withheld)"
                 );
                 continue;
             }
@@ -1341,12 +1343,22 @@ mod tests {
 
     struct RecordingToolPort(std::sync::atomic::AtomicUsize);
     impl ToolPort for RecordingToolPort {
-        fn invoke<'a>(&'a self, _server: &'a str, _tool: &'a str, _args: serde_json::Value, _agent: hkask_types::WebID) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async { Ok(serde_json::json!({"ok":true})) })
         }
-        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> { Box::pin(async { Vec::new() }) }
-        fn get_tool_info<'a>(&'a self, _: &'a str) -> ToolFuture<'a, Option<ToolInfo>> { Box::pin(async { None }) }
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(&'a self, _: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+            Box::pin(async { None })
+        }
     }
 
     /// expect: "A child cannot enlarge its parent-held grant or invoke tools with inference-only access" [P1]
@@ -1356,20 +1368,116 @@ mod tests {
         let recording = Arc::new(RecordingToolPort(std::sync::atomic::AtomicUsize::new(0)));
         let tools: Arc<dyn ToolPort> = recording.clone();
         let server = format!("grant-test-{}", uuid::Uuid::new_v4());
-        let token = crate::delegation_grants::grant_for_server(&server, &["kanban/read".into()]).expect("grant");
+        let token = crate::delegation_grants::grant_for_server(&server, &["kanban/read".into()])
+            .expect("grant");
         for grant in [None, Some(token.clone())] {
-            let mut request = make_tool_invoke_request("kanban", "write", Some(vec!["kanban/write".into()]));
+            let mut request =
+                make_tool_invoke_request("kanban", "write", Some(vec!["kanban/write".into()]));
             request.params.tool_grant = grant;
-            let outcome = dispatch(&port, None, Some(&tools), &make_list_models_tx(), None, &make_batch_credential_tx(), request).await;
-            let InferenceOutcome::Error { error } = outcome else { panic!("unauthorized dispatch succeeded"); };
+            let outcome = dispatch(
+                &port,
+                None,
+                Some(&tools),
+                &make_list_models_tx(),
+                None,
+                &make_batch_credential_tx(),
+                request,
+            )
+            .await;
+            let InferenceOutcome::Error { error } = outcome else {
+                panic!("unauthorized dispatch succeeded");
+            };
             assert_eq!(error.code, "Auth");
         }
         assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let mut request = make_tool_invoke_request("kanban", "read", Some(vec!["kanban/read".into()]));
+        let mut request =
+            make_tool_invoke_request("kanban", "read", Some(vec!["kanban/read".into()]));
         request.params.tool_grant = Some(token);
-        assert!(matches!(dispatch(&port, None, Some(&tools), &make_list_models_tx(), None, &make_batch_credential_tx(), request).await, InferenceOutcome::ToolResult { .. }));
+        assert!(matches!(
+            dispatch(
+                &port,
+                None,
+                Some(&tools),
+                &make_list_models_tx(),
+                None,
+                &make_batch_credential_tx(),
+                request
+            )
+            .await,
+            InferenceOutcome::ToolResult { .. }
+        ));
         assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 1);
         crate::revoke_delegation_grant(&server);
+    }
+
+    struct PendingInferencePort {
+        started: tokio::sync::Notify,
+        capacity: Arc<tokio::sync::Semaphore>,
+    }
+
+    impl InferencePort for PendingInferencePort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &LLMParameters,
+            _: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async move {
+                let _permit = self.capacity.acquire().await.expect("capacity open");
+                self.started.notify_one();
+                std::future::pending().await
+            })
+        }
+    }
+
+    /// expect: "Disconnecting an IPC caller drops in-progress dispatch and releases its capacity" [P1]
+    #[tokio::test]
+    async fn ipc_disconnect_drops_pending_dispatch() {
+        for pipeline in [false, true] {
+            let (mut client, server) = tokio::net::UnixStream::pair().expect("Unix socket pair");
+            let pending = Arc::new(PendingInferencePort {
+                started: tokio::sync::Notify::new(),
+                capacity: Arc::new(tokio::sync::Semaphore::new(1)),
+            });
+            let port: Arc<dyn InferencePort> = pending.clone();
+            let handler = tokio::spawn(handle_connection(
+                server,
+                port,
+                None,
+                None,
+                make_list_models_tx(),
+                None,
+                make_batch_credential_tx(),
+            ));
+            let request = InferenceRequest {
+                id: 1,
+                method: InferenceMethod::Generate,
+                params: InferenceParams {
+                    prompt: Some("hold".into()),
+                    ..Default::default()
+                },
+            };
+            let line = serde_json::to_string(&request).expect("request") + "\n";
+            client.write_all(line.as_bytes()).await.expect("write");
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                pending.started.notified(),
+            )
+            .await
+            .expect("dispatch started");
+            assert_eq!(pending.capacity.available_permits(), 0);
+            if pipeline {
+                client.write_all(line.as_bytes()).await.expect("pipeline");
+            } else {
+                drop(client);
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(2), handler)
+                .await
+                .expect("disconnect/pipeline cancels dispatch")
+                .expect("handler");
+            assert_eq!(pending.capacity.available_permits(), 1);
+        }
     }
 
     // ── CappedReader tests ─────────────────────────────────────────────
@@ -1578,7 +1686,10 @@ mod tests {
             Some(vec!["kanban/kanban_task_create".to_string()]),
         );
 
-        request.params.tool_grant = crate::delegation_grants::grant_for_server("allow-test", &["kanban/kanban_task_create".into()]);
+        request.params.tool_grant = crate::delegation_grants::grant_for_server(
+            "allow-test",
+            &["kanban/kanban_task_create".into()],
+        );
 
         let outcome = dispatch(
             &port,

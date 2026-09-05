@@ -383,8 +383,8 @@ impl EmbeddingStore {
 
     /// Delete every embedding under an entity — the vector rows AND the
     /// metadata rows, transactionally. `delete` resolves only the first
-    /// id for an entity; a thread entity holds one embedding per turn,
-    /// and the retirement pass must remove all of them.
+    /// id for an entity; a thread entity holds one embedding per chunk,
+    /// and the forgetting pass must remove all of them.
     pub fn delete_all_by_entity_ref(&self, entity_ref: &str) -> Result<usize, EmbeddingError> {
         let rows = self.query_driver(
             "SELECT id FROM embeddings WHERE entity_ref = ?",

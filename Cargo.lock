@@ -8853,6 +8853,7 @@ dependencies = [
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",
+ "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",
  "hkask-types",

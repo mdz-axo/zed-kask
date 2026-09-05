@@ -136,6 +136,20 @@ impl EscalationQueue {
             .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
         Ok(id)
     }
+    /// Resolve only the observed row and context, never a newer recurrence of
+    /// the same condition or a concurrently changed acknowledgement.
+    pub fn resolve_observed_condition(
+        &self,
+        id: &str,
+        context: &str,
+        resolved_by: &str,
+    ) -> Result<bool, EscalationError> {
+        self.driver.execute(
+            "UPDATE escalations SET status='resolved', resolved_at=?1, resolved_by=?2 WHERE id=?3 AND status='pending' AND error_context=?4",
+            &[DbValue::Text(now_rfc3339()), DbValue::Text(resolved_by.into()), DbValue::Text(id.into()), DbValue::Text(context.into())],
+        ).map(|count| count == 1).map_err(|error| EscalationError::Infra(InfrastructureError::from(error)))
+    }
+
     /// Retain applied advice after resolution until its assessment is visible.
     pub fn list_advice_observations(&self) -> Result<Vec<EscalationEntry>, EscalationError> {
         let rows = self.driver.query(
@@ -479,7 +493,8 @@ impl EscalationQueue {
     /// expect: "The system provides durable storage for escalation data"
     /// pre:  condition is non-empty
     /// post: the oldest matching pending escalation carries the latest
-    ///       output/context and an incremented retry_count
+    ///       output/context and an incremented retry_count. Original trigger and
+    ///       application/review fields survive; supersession is not a new action.
     #[must_use = "result must be used"]
     pub fn supersede_pending_by_condition(
         &self,
@@ -498,8 +513,19 @@ impl EscalationQueue {
         let affected = self
             .driver
             .execute(
-                r#"UPDATE escalations SET output = ?1, confidence = ?2, error_context = ?3, retry_count = retry_count + 1
-             WHERE status = 'pending' AND output = ?4"#,
+                r#"UPDATE escalations SET output = ?1, confidence = ?2,
+                error_context = CASE WHEN json_valid(error_context) AND json_valid(?3)
+                    THEN json_patch(?3, json_object(
+                        'recovery_signal', json_extract(error_context, '$.recovery_signal'),
+                        'applied_at', json_extract(error_context, '$.applied_at'),
+                        'applied_baseline', json_extract(error_context, '$.applied_baseline'),
+                        'action_note', json_extract(error_context, '$.action_note'),
+                        'review_due_at', json_extract(error_context, '$.review_due_at'),
+                        'advice_review', json_extract(error_context, '$.advice_review'),
+                        'latest_observation', json_extract(error_context, '$.latest_observation')))
+                    ELSE error_context END,
+                retry_count = retry_count + 1
+             WHERE id = (SELECT id FROM escalations WHERE status = 'pending' AND output = ?4 ORDER BY created_at LIMIT 1)"#,
                 &[
                     DbValue::Text(output.to_string()),
                     DbValue::Real(confidence),
@@ -645,6 +671,75 @@ mod tests {
             "variety_deficit_exceeded — value 2149 exceeds threshold 20"
         );
         assert_eq!(pending[0].retry_count, 1, "retry_count counts re-fires");
+    }
+
+    /// expect: "Repeated alerts and stale sensor writes cannot erase confirmed action or its original trigger" [P9]
+    #[test]
+    fn supersede_preserves_application_and_original_trigger() {
+        let queue = queue();
+        let original =
+            serde_json::json!({"recovery_signal":{"value":2,"set_point":8}, "detail":"original"});
+        let id = queue
+            .add(
+                TemplateID::new(),
+                BotID::new(),
+                "condition — first".into(),
+                1.0,
+                0,
+                original.to_string(),
+            )
+            .expect("insert");
+        let mut applied = original.clone();
+        applied["applied_at"] = serde_json::json!("2026-09-05T00:00:00Z");
+        applied["applied_baseline"] = serde_json::json!({"value":3});
+        applied["action_note"] = serde_json::json!("operator repaired service");
+        applied["review_due_at"] = serde_json::json!("2026-09-12T00:00:00Z");
+        applied["advice_review"] = serde_json::json!({"status":"observation_window"});
+        assert!(
+            queue
+                .update_advice_context(&id.to_string(), &original.to_string(), &applied.to_string())
+                .expect("acknowledge")
+        );
+        assert!(
+            !queue
+                .update_advice_context(&id.to_string(), &original.to_string(), "{}")
+                .expect("stale sensor CAS")
+        );
+        let next =
+            serde_json::json!({"recovery_signal":{"value":4,"set_point":9},"detail":"latest"});
+        assert!(
+            queue
+                .supersede_pending_by_condition(
+                    "condition",
+                    "condition — next",
+                    0.9,
+                    &next.to_string()
+                )
+                .expect("supersede")
+        );
+        let entry = queue.get(&id.to_string()).expect("get").expect("entry");
+        let context: serde_json::Value =
+            serde_json::from_str(&entry.error_context).expect("context");
+        for key in [
+            "recovery_signal",
+            "applied_at",
+            "applied_baseline",
+            "action_note",
+            "review_due_at",
+            "advice_review",
+        ] {
+            assert_eq!(context[key], applied[key], "must preserve {key}");
+        }
+        assert_eq!(context["detail"], "latest");
+        assert_eq!(entry.retry_count, 1);
+        queue.resolve(&id.to_string(), "test").expect("resolve");
+        assert!(
+            queue
+                .list_advice_observations()
+                .expect("advice")
+                .iter()
+                .any(|entry| entry.id == id)
+        );
     }
 
     /// Supersede returns false (no row touched) when no pending escalation

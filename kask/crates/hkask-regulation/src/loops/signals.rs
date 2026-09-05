@@ -332,6 +332,20 @@ pub struct Signal {
 }
 
 impl Signal {
+    /// Evidence must describe the current observation window, not an old sample
+    /// or a future timestamp. Missing data is represented by no Signal.
+    pub fn is_fresh_at(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.value.is_finite()
+            && self.set_point.is_finite()
+            && self.timestamp <= now
+            && self.timestamp
+                >= now - chrono::Duration::seconds(crate::OBSERVATION_WINDOW_SECS as i64)
+    }
+
+    pub fn is_recovery_trigger(&self) -> bool {
+        Deviation::from_signal(self).is_some()
+    }
+
     /// Seven-day post-application review, not a causal-effect estimate.
     pub fn advice_review(
         &self,
@@ -349,14 +363,11 @@ impl Signal {
         let (Some(baseline), Some(current)) = (baseline, current) else {
             return "insufficient_evidence";
         };
-        if baseline.metric != self.metric
+        if !self.is_recovery_trigger()
+            || baseline.metric != self.metric
             || current.metric != self.metric
-            || !baseline.value.is_finite()
-            || !current.value.is_finite()
-            || baseline.timestamp < applied_at - chrono::Duration::seconds(60)
-            || baseline.timestamp > applied_at
-            || current.timestamp < now - chrono::Duration::seconds(60)
-            || current.timestamp > now
+            || !baseline.is_fresh_at(applied_at)
+            || !current.is_fresh_at(now)
         {
             return "insufficient_evidence";
         }
@@ -374,7 +385,8 @@ impl Signal {
     /// Whether a fresh observation crosses this original trigger's threshold
     /// back toward health. Neither missing nor non-finite data proves recovery.
     pub fn recovered_by(&self, current: &Signal) -> bool {
-        self.metric == current.metric
+        self.is_recovery_trigger()
+            && self.metric == current.metric
             && current.timestamp >= self.timestamp
             && current.value.is_finite()
             && self.set_point.is_finite()
