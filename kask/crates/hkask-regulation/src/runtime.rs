@@ -163,7 +163,11 @@ impl VarietyTracker {
     }
 
     pub(crate) fn variety(&self) -> u64 {
-        self.counts.len() as u64
+        if self.window_start.elapsed() >= self.window_duration {
+            0
+        } else {
+            self.counts.len() as u64
+        }
     }
 
     /// Session-level exponential moving average of variety.
@@ -179,7 +183,7 @@ impl VarietyTracker {
         // variety loss (the OutcomeTracker::CONFIG_GAP_KINDS precedent
         // excludes environment gaps from success-rate math for the same
         // reason — a missing observation is not a negative one).
-        if self.counts.is_empty() {
+        if self.variety() == 0 {
             return 0;
         }
         expected_variety.saturating_sub(self.variety())
@@ -280,17 +284,18 @@ impl OutcomeTracker {
         *self.error_kinds.entry(error_kind.to_string()).or_insert(0) += 1;
     }
 
-    /// Success rate: 1.0 if no operations, successes/total otherwise.
-    pub(crate) fn success_rate(&self) -> f64 {
-        if self.total == 0 {
-            1.0
-        } else {
-            self.successes as f64 / self.total as f64
-        }
+    /// No current sample is not a success or a failure.
+    pub(crate) fn success_rate(&self) -> Option<f64> {
+        let total = self.total_operations();
+        (total > 0).then(|| self.successes as f64 / total as f64)
     }
 
     pub(crate) fn total_operations(&self) -> u64 {
-        self.total
+        if self.window_start.elapsed() >= self.window_duration {
+            0
+        } else {
+            self.total
+        }
     }
 
     fn check_window(&mut self) {
@@ -420,7 +425,7 @@ pub struct RegulationCycleEntry {
     pub staged: u64,
     pub blocked: u64,
     /// Accumulated regulation health at this point.
-    pub cumulative_effectiveness: f64,
+    pub cumulative_acceptance_rate: Option<f64>,
 }
 
 /// Regulation state shared between threads
@@ -856,7 +861,7 @@ impl RegulationLedger {
 
         let state = self.state.write().await;
         let mut mgr = state.algedonic.write();
-        mgr.check_outcome(domain, success_rate, total_ops).cloned()
+        mgr.check_outcome(domain, success_rate?, total_ops).cloned()
     }
 
     /// Get outcome success rate for a domain.
@@ -869,7 +874,7 @@ impl RegulationLedger {
     /// post: returns Some(rate) if domain tracked, None otherwise
     pub async fn outcome_success_rate(&self, domain: &str) -> Option<f64> {
         let state = self.state.read().await;
-        state.outcome.get(domain).map(|t| t.success_rate())
+        state.outcome.get(domain).and_then(|t| t.success_rate())
     }
 
     /// List all domains with recorded tool outcomes.
@@ -979,6 +984,39 @@ impl RegulationSink for NoopEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "Quiet domains stop contributing stale deficits or outcome samples" [P9]
+    #[tokio::test]
+    async fn observations_expire_without_another_write() {
+        let ledger = RegulationLedger::default();
+        ledger.increment_variety("quiet", "one-tool").await;
+        ledger
+            .record_outcome("quiet", false, Some("internal"))
+            .await;
+        assert_eq!(ledger.outcome_success_rate("quiet").await, Some(0.0));
+        assert!(ledger.health().await.overall_deficit > 0);
+        {
+            let mut state = ledger.state.write().await;
+            let old = Instant::now() - Duration::from_secs(DEFAULT_VARIETY_WINDOW_SECS + 1);
+            state.tracker.counter("quiet").window_start = old;
+            state
+                .outcome
+                .get_mut("quiet")
+                .expect("tracked domain")
+                .window_start = old;
+        }
+        assert_eq!(ledger.outcome_success_rate("quiet").await, None);
+        assert!(ledger.check_outcome("quiet").await.is_none());
+        assert_eq!(ledger.health().await.overall_deficit, 0);
+        ledger.record_outcome("active", true, None).await;
+        let mut rates = Vec::new();
+        for domain in ledger.tracked_outcome_domains().await {
+            if let Some(rate) = ledger.outcome_success_rate(&domain).await {
+                rates.push(rate);
+            }
+        }
+        assert_eq!(rates, vec![1.0]);
+    }
 
     /// expect: "My configured outcome thresholds control alerts from startup" [P9]
     #[tokio::test]

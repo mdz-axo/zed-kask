@@ -593,16 +593,20 @@ async fn handle_connection(
         };
 
         let id = request.id;
-        let outcome = dispatch(
-            &port,
-            embedding_port.as_ref(),
-            tool_port.as_ref(),
-            &list_models_tx,
-            worktree_spawn_tx.as_ref(),
-            &batch_credential_tx,
-            request,
-        )
-        .await;
+        // One in-flight request per connection. Monitor EOF while dispatch is
+        // pending so dropping a client cancels queued/provider work immediately.
+        let outcome = tokio::select! {
+            result = dispatch(&port, embedding_port.as_ref(), tool_port.as_ref(),
+                &list_models_tx, worktree_spawn_tx.as_ref(), &batch_credential_tx, request) => result,
+            next = reader.read_line() => {
+                match next {
+                    Ok(None) => tracing::debug!(target: "reg.inference", "IPC caller disconnected; local dispatch cancelled"),
+                    Ok(Some(_)) => tracing::warn!(target: "reg.inference", "Pipelined IPC requests are unsupported; closing connection"),
+                    Err(error) => tracing::warn!(target: "reg.inference", %error, "IPC read failed during dispatch"),
+                }
+                return;
+            }
+        };
 
         let response = InferenceResponse { id, outcome };
         let response_json = match serde_json::to_string(&response) {
@@ -826,6 +830,16 @@ async fn dispatch(
                     },
                 };
             }
+        }
+        if !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified) {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Auth".into(),
+                    message: format!(
+                        "Parent grant does not permit '{qualified}'. Configure kask.mcp.delegated_tools for the calling server; its request list cannot grant authority."
+                    ),
+                },
+            };
         }
         // Accounting identity for the call meter — not a credential.
         let webid = hkask_types::WebID::from_persona(b"kask-panel");
@@ -1325,6 +1339,39 @@ mod tests {
         }
     }
 
+    struct RecordingToolPort(std::sync::atomic::AtomicUsize);
+    impl ToolPort for RecordingToolPort {
+        fn invoke<'a>(&'a self, _server: &'a str, _tool: &'a str, _args: serde_json::Value, _agent: hkask_types::WebID) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(serde_json::json!({"ok":true})) })
+        }
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> { Box::pin(async { Vec::new() }) }
+        fn get_tool_info<'a>(&'a self, _: &'a str) -> ToolFuture<'a, Option<ToolInfo>> { Box::pin(async { None }) }
+    }
+
+    /// expect: "A child cannot enlarge its parent-held grant or invoke tools with inference-only access" [P1]
+    #[tokio::test]
+    async fn ipc_child_cannot_expand_parent_grant() {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let recording = Arc::new(RecordingToolPort(std::sync::atomic::AtomicUsize::new(0)));
+        let tools: Arc<dyn ToolPort> = recording.clone();
+        let server = format!("grant-test-{}", uuid::Uuid::new_v4());
+        let token = crate::delegation_grants::grant_for_server(&server, &["kanban/read".into()]).expect("grant");
+        for grant in [None, Some(token.clone())] {
+            let mut request = make_tool_invoke_request("kanban", "write", Some(vec!["kanban/write".into()]));
+            request.params.tool_grant = grant;
+            let outcome = dispatch(&port, None, Some(&tools), &make_list_models_tx(), None, &make_batch_credential_tx(), request).await;
+            let InferenceOutcome::Error { error } = outcome else { panic!("unauthorized dispatch succeeded"); };
+            assert_eq!(error.code, "Auth");
+        }
+        assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let mut request = make_tool_invoke_request("kanban", "read", Some(vec!["kanban/read".into()]));
+        request.params.tool_grant = Some(token);
+        assert!(matches!(dispatch(&port, None, Some(&tools), &make_list_models_tx(), None, &make_batch_credential_tx(), request).await, InferenceOutcome::ToolResult { .. }));
+        assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        crate::revoke_delegation_grant(&server);
+    }
+
     // ── CappedReader tests ─────────────────────────────────────────────
 
     #[tokio::test]
@@ -1525,11 +1572,13 @@ mod tests {
         let list_models_tx = make_list_models_tx();
         let batch_credential_tx = make_batch_credential_tx();
 
-        let request = make_tool_invoke_request(
+        let mut request = make_tool_invoke_request(
             "kanban",
             "kanban_task_create",
             Some(vec!["kanban/kanban_task_create".to_string()]),
         );
+
+        request.params.tool_grant = crate::delegation_grants::grant_for_server("allow-test", &["kanban/kanban_task_create".into()]);
 
         let outcome = dispatch(
             &port,

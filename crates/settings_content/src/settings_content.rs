@@ -1678,6 +1678,8 @@ pub struct KaskGeneralSettingsContent {
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskMcpSettingsContent {
+    /// Parent-owned tool grants by child server ID. Missing entries deny delegated tools.
+    pub delegated_tools: Option<HashMap<String, Vec<String>>>,
     pub load_default: Option<bool>,
     #[serde(default)]
     pub overrides: HashMap<String, bool>,

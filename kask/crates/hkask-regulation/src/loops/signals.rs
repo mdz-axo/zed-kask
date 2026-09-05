@@ -193,6 +193,53 @@ impl SignalMetric {
 mod tests {
     use super::*;
 
+    /// expect: "Advice is assessed seven days after confirmed action, with absent evidence kept unknown" [P9]
+    #[test]
+    fn weekly_advice_review_distinguishes_progress_from_acceptance() {
+        let applied = chrono::Utc::now();
+        let mut trigger = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.3, 0.8);
+        trigger.timestamp = applied;
+        let mut current = trigger.clone();
+        let now = applied + chrono::Duration::days(7);
+        current.timestamp = now;
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), Some(&current), None, now),
+            "awaiting_action"
+        );
+        assert_eq!(
+            trigger.advice_review(
+                Some(&trigger),
+                Some(&current),
+                Some(applied),
+                applied + chrono::Duration::days(6)
+            ),
+            "observation_window"
+        );
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            "no_improvement"
+        );
+        current.value = 0.4;
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            "improved"
+        );
+        current.value = 0.8;
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            "recovered"
+        );
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), None, Some(applied), now),
+            "insufficient_evidence"
+        );
+        current.timestamp = applied;
+        assert_eq!(
+            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            "insufficient_evidence"
+        );
+    }
+
     /// Pins the per-metric impact direction: energy remaining, fleet
     /// health, and tool reliability improve upward; variety deficit
     /// improves downward; everything else has no verified impact path
@@ -285,6 +332,61 @@ pub struct Signal {
 }
 
 impl Signal {
+    /// Seven-day post-application review, not a causal-effect estimate.
+    pub fn advice_review(
+        &self,
+        baseline: Option<&Signal>,
+        current: Option<&Signal>,
+        applied_at: Option<chrono::DateTime<chrono::Utc>>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> &'static str {
+        let Some(applied_at) = applied_at else {
+            return "awaiting_action";
+        };
+        if now < applied_at + chrono::Duration::days(7) {
+            return "observation_window";
+        }
+        let (Some(baseline), Some(current)) = (baseline, current) else {
+            return "insufficient_evidence";
+        };
+        if baseline.metric != self.metric
+            || current.metric != self.metric
+            || !baseline.value.is_finite()
+            || !current.value.is_finite()
+            || baseline.timestamp < applied_at - chrono::Duration::seconds(60)
+            || baseline.timestamp > applied_at
+            || current.timestamp < now - chrono::Duration::seconds(60)
+            || current.timestamp > now
+        {
+            return "insufficient_evidence";
+        }
+        if self.recovered_by(current) {
+            "recovered"
+        } else if (self.value < self.set_point && current.value > baseline.value)
+            || (self.value > self.set_point && current.value < baseline.value)
+        {
+            "improved"
+        } else {
+            "no_improvement"
+        }
+    }
+
+    /// Whether a fresh observation crosses this original trigger's threshold
+    /// back toward health. Neither missing nor non-finite data proves recovery.
+    pub fn recovered_by(&self, current: &Signal) -> bool {
+        self.metric == current.metric
+            && current.timestamp >= self.timestamp
+            && current.value.is_finite()
+            && self.set_point.is_finite()
+            && if self.value < self.set_point {
+                current.value >= self.set_point
+            } else if self.value > self.set_point {
+                current.value <= self.set_point
+            } else {
+                false
+            }
+    }
+
     pub fn new(source: LoopId, metric: SignalMetric, value: f64, set_point: f64) -> Self {
         Self {
             source,
@@ -306,8 +408,22 @@ pub struct Deviation {
 
 impl Deviation {
     pub fn from_signal(signal: &Signal) -> Option<Self> {
+        if !signal.value.is_finite() || !signal.set_point.is_finite() {
+            return None;
+        }
         let diff = signal.value - signal.set_point;
-        if diff.abs() < f64::EPSILON {
+        let healthy = match signal.metric {
+            SignalMetric::EnergyRemaining
+            | SignalMetric::ContextServerHealth
+            | SignalMetric::ToolReliability
+            | SignalMetric::TestCoverage
+            | SignalMetric::MutationScore
+            | SignalMetric::InferenceAvailable
+            | SignalMetric::InferenceModelAvailable => diff >= 0.0,
+            SignalMetric::VarietyDeficit | SignalMetric::OcrSilentFailures => diff <= 0.0,
+            _ => false,
+        };
+        if healthy || diff.abs() < f64::EPSILON {
             return None;
         }
         Some(Self {

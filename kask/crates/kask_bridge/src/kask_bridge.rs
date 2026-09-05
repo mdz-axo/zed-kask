@@ -24,9 +24,11 @@ mod condenser_bridge;
 mod context_injector;
 mod credentials;
 
+mod delegation_grants;
 mod identity;
 mod inference_chat;
 mod inference_edit_prediction;
+pub use delegation_grants::revoke_delegation_grant;
 mod inference_embedding;
 mod inference_ipc_server;
 mod inference_providers;

@@ -48,7 +48,7 @@ const DEFAULT_VARIETY_DEFICIT_THRESHOLD: u64 = 100;
 const DEFAULT_CRITICAL_ALERT_THRESHOLD: usize = 3;
 
 /// Default regulation effectiveness floor (below → self-calibrate).
-const DEFAULT_EFFECTIVENESS_FLOOR: f64 = 0.5;
+const DEFAULT_ACCEPTANCE_FLOOR: f64 = 0.5;
 
 /// A user-facing alert event forwarded by the metacognition loop.
 ///
@@ -91,7 +91,7 @@ pub struct HealthSnapshot {
     pub regulation_health: RegulationHealth,
     pub variety_deficit: u64,
     pub critical_alerts: usize,
-    pub regulation_effectiveness: f64,
+    pub regulation_acceptance_rate: Option<f64>,
     /// Number of escalation alerts produced by the most recent `compare`
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
@@ -117,7 +117,7 @@ pub struct EscalationAlert {
 pub enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
-    LowEffectiveness,
+    LowAcceptance,
     /// Operator feedback acceptance rate for a skill is declining over
     /// the rolling window — the skill's outputs may be drifting.
     FeedbackDrift {
@@ -131,7 +131,7 @@ pub struct MetacognitionConfig {
     pub tick_interval: Duration,
     pub variety_deficit_threshold: u64,
     pub critical_alert_threshold: usize,
-    pub effectiveness_floor: f64,
+    pub acceptance_floor: f64,
     /// Minimum number of outcome spans a skill must have before drift
     /// detection runs. Below this, there isn't enough data to trend.
     pub feedback_drift_min_samples: usize,
@@ -150,7 +150,7 @@ impl Default for MetacognitionConfig {
             tick_interval: DEFAULT_TICK_INTERVAL,
             variety_deficit_threshold: DEFAULT_VARIETY_DEFICIT_THRESHOLD,
             critical_alert_threshold: DEFAULT_CRITICAL_ALERT_THRESHOLD,
-            effectiveness_floor: DEFAULT_EFFECTIVENESS_FLOOR,
+            acceptance_floor: DEFAULT_ACCEPTANCE_FLOOR,
             feedback_drift_min_samples: 10,
             feedback_drift_window: 10,
             feedback_drift_decline_ratio: 0.8,
@@ -308,17 +308,8 @@ impl MetacognitionLoop {
             SenseReading::Empty
         };
 
-        // Outcome trust: does output carry the signal?
-        let outcome_trust = if total_verified == 0 {
-            OutcomeTrust::Unverified
-        } else {
-            let effectiveness = regulation_health.effectiveness();
-            if effectiveness >= 0.5 {
-                OutcomeTrust::Trusted
-            } else {
-                OutcomeTrust::Untrusted
-            }
-        };
+        // Observational acceptance is not causal evidence that advice worked.
+        let outcome_trust = OutcomeTrust::Unverified;
 
         crate::loops::LoopView::new(loop_model, panel_absence, outcome_trust, liveness_trust)
     }
@@ -336,7 +327,7 @@ impl MetacognitionLoop {
             timestamp: chrono::Utc::now(),
             variety_deficit: ledger_health.overall_deficit,
             critical_alerts: ledger_health.critical_count,
-            regulation_effectiveness: regulation_health.effectiveness(),
+            regulation_acceptance_rate: regulation_health.acceptance_rate(),
             loop_view: Self::compute_loop_view(&regulation_health),
             ledger_health,
             regulation_health,
@@ -493,16 +484,16 @@ impl MetacognitionLoop {
         }
 
         // Regulation effectiveness check
-        if snapshot.regulation_effectiveness < self.config.effectiveness_floor {
+        if let Some(rate) = snapshot.regulation_acceptance_rate.filter(|rate| *rate < self.config.acceptance_floor) {
             alerts.push(EscalationAlert {
-                trigger: EscalationTrigger::LowEffectiveness,
+                trigger: EscalationTrigger::LowAcceptance,
                 severity: EscalationSeverity::Warning,
-                value: snapshot.regulation_effectiveness,
-                threshold: self.config.effectiveness_floor,
+                value: rate,
+                threshold: self.config.acceptance_floor,
                 message: format!(
-                    "Regulation effectiveness {:.1}% below floor {:.1}%",
-                    snapshot.regulation_effectiveness * 100.0,
-                    self.config.effectiveness_floor * 100.0
+                    "Regulation observation acceptance {:.1}% below floor {:.1}%",
+                    rate * 100.0,
+                    self.config.acceptance_floor * 100.0
                 ),
             });
         }
@@ -521,7 +512,7 @@ impl MetacognitionLoop {
             target: "reg.curator.metacognition",
             variety_deficit = snapshot.variety_deficit,
             critical_alerts = snapshot.critical_alerts,
-            effectiveness = format!("{:.1}%", snapshot.regulation_effectiveness * 100.0),
+            acceptance_rate = ?snapshot.regulation_acceptance_rate,
             healthy = snapshot.ledger_health.healthy,
             alerts = alerts.len(),
             "Curator metacognition tick"

@@ -7,6 +7,14 @@ use serde::Deserialize;
 pub struct PingRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AdviceAppliedRequest {
+    pub id: String,
+    /// Describe the action the operator confirms actually occurred.
+    pub action_note: String,
+    pub operator_confirmed: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EscalationResolveRequest {
     pub id: String,
     pub resolution: String,

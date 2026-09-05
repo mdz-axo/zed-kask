@@ -74,6 +74,47 @@ impl BridgeAlertEscalationSink {
 }
 
 impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
+    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+        let entries = match self.queue.list_advice_observations() {
+            Ok(entries) => entries,
+            Err(error) => { tracing::warn!(target: "reg.alert", %error, "Recovery reconciliation unavailable; alerts retained"); return; }
+        };
+        let now = chrono::Utc::now();
+        for entry in entries {
+            let mut context: serde_json::Value = match serde_json::from_str(&entry.error_context) {
+                Ok(context) => context,
+                Err(error) => { tracing::warn!(target: "reg.alert", %error, "Invalid escalation context"); continue; }
+            };
+            let Some(value) = context.get("recovery_signal").filter(|value| !value.is_null()) else { continue; };
+            let trigger: hkask_regulation::Signal = match serde_json::from_value(value.clone()) {
+                Ok(signal) => signal,
+                Err(error) => { tracing::warn!(target: "reg.alert", %error, "Invalid recovery signal"); continue; }
+            };
+            let current = observations.iter().find(|current| current.metric == trigger.metric);
+            if context.pointer("/advice_review/finalized").and_then(|value| value.as_bool()) != Some(true) {
+                let applied_at = context.get("applied_at").filter(|value| !value.is_null()).map(|value| serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone())).transpose();
+                let baseline = context.get("applied_baseline").filter(|value| !value.is_null()).map(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone())).transpose();
+                let (Ok(applied_at), Ok(baseline)) = (applied_at, baseline) else {
+                    tracing::warn!(target: "reg.alert", "Invalid advice application metadata; review not performed"); continue;
+                };
+                let status = trigger.advice_review(baseline.as_ref(), current, applied_at, now);
+                context["latest_observation"] = serde_json::json!(current);
+                context["advice_review"] = serde_json::json!({
+                    "status": status, "observed_at": now, "causal_attribution": "unverified",
+                    "finalized": !matches!(status, "awaiting_action" | "observation_window"),
+                });
+                match self.queue.update_advice_context(&entry.id.to_string(), &entry.error_context, &context.to_string()) {
+                    Ok(true) => {},
+                    Ok(false) => { tracing::debug!(target: "reg.alert", "Advice changed concurrently; retry on next tick"); continue; },
+                    Err(error) => { tracing::warn!(target: "reg.alert", %error, "Advice observation could not be saved"); continue; }
+                }
+            }
+            if current.is_some_and(|current| trigger.recovered_by(current)) {
+                self.auto_resolve_cleared(&entry.output, "Fresh observation satisfies the original triggering threshold");
+            }
+        }
+    }
+
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
         // Supersede at the source: a pending escalation for the same
         // condition is updated in place (latest output/context,
@@ -196,5 +237,102 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Fleet {
+        healthy: AtomicUsize,
+        total: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl hkask_regulation::ContextServerHealthSource for Fleet {
+        async fn healthy_count(&self) -> usize {
+            self.healthy.load(Ordering::SeqCst)
+        }
+        async fn total_count(&self) -> usize {
+            self.total.load(Ordering::SeqCst)
+        }
+    }
+
+    /// expect: "Recovery on a later tick resolves exactly the original condition, not partial or absent data" [P9]
+    #[tokio::test]
+    async fn later_tick_reconciles_durable_conditions() {
+        let queue = Arc::new(
+            hkask_storage::EscalationQueue::from_driver(
+                hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+            )
+            .expect("queue"),
+        );
+        let sink = Arc::new(BridgeAlertEscalationSink::new(queue.clone()));
+        let fleet = Arc::new(Fleet {
+            healthy: AtomicUsize::new(2),
+            total: AtomicUsize::new(10),
+        });
+        let build = || {
+            let mut regulation = hkask_regulation::CyberneticsLoop::new(Arc::new(
+                tokio::sync::RwLock::new(hkask_regulation::RegulationLedger::default()),
+            ))
+            .with_context_server_health_source(fleet.clone());
+            regulation.set_alert_escalation_sink(Some(sink.clone()));
+            regulation
+        };
+        let regulation = build();
+        regulation.tick().await;
+        let original = queue
+            .list_pending()
+            .expect("pending")
+            .into_iter()
+            .find(|entry| entry.error_context.contains("context_server_health"))
+            .expect("fleet escalation");
+        fleet.healthy.store(3, Ordering::SeqCst);
+        regulation.tick().await;
+        assert!(
+            queue
+                .list_pending()
+                .expect("pending")
+                .iter()
+                .any(|entry| entry.id == original.id)
+        );
+        fleet.total.store(0, Ordering::SeqCst);
+        regulation.tick().await;
+        assert!(
+            queue
+                .list_pending()
+                .expect("pending")
+                .iter()
+                .any(|entry| entry.id == original.id)
+        );
+        // A rebuilt loop must reconcile the persisted condition as well.
+        drop(regulation);
+        let regulation = build();
+        fleet.total.store(10, Ordering::SeqCst);
+        fleet.healthy.store(10, Ordering::SeqCst);
+        regulation.tick().await;
+        assert!(
+            !queue
+                .list_pending()
+                .expect("pending")
+                .iter()
+                .any(|entry| entry.id == original.id)
+        );
+        let resolved_at = queue
+            .get(&original.id.to_string())
+            .expect("entry")
+            .expect("retained")
+            .resolved_at;
+        regulation.tick().await;
+        assert_eq!(
+            queue
+                .get(&original.id.to_string())
+                .expect("entry")
+                .expect("retained")
+                .resolved_at,
+            resolved_at
+        );
     }
 }

@@ -693,6 +693,7 @@ impl InferenceIpcClient {
             tool_name: Some(tool.to_string()),
             tool_args: Some(args),
             tool_allowlist: Some(allowed.to_vec()),
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
             ..Default::default()
         };
         let response = self.ipc_roundtrip(&method, params).await?;

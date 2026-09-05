@@ -27,6 +27,7 @@ pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
 
 pub use loops::CurationInput;
+pub use loops::signals::Signal;
 pub use loops::{
     DistinctionState, LivenessTrust, LoopFailureDistinctions, LoopModel, LoopView, OutcomeTrust,
     Reading, SenseReading, StageActions, TriggerOrigin,

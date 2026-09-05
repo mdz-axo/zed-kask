@@ -21,13 +21,17 @@ use std::sync::Arc;
 /// Each implementation senses a single `SignalMetric` from its data source.
 /// Fermi pattern: the `Extractor` trait takes a domain payload and produces
 /// a scalar; `Sensor` takes system state and produces an optional
-/// `Signal`. If the sensor has nothing to report (metric is healthy),
-/// it returns `None`.
+/// `Signal`. Healthy observations are returned too; `None` means unavailable.
+/// The compare phase, not the sensor, decides whether action is needed.
 #[async_trait::async_trait]
 pub(crate) trait Sensor: Send + Sync {
-    /// Sense the current state and produce a signal if the metric is
-    /// in a reportable state. Returns `None` if nothing to report.
-    async fn sense(&self) -> Option<Signal>;
+    /// Read the current state, including health. None is not evidence of recovery.
+    async fn observe(&self) -> Option<Signal>;
+
+    #[cfg(test)]
+    async fn sense(&self) -> Option<Signal> {
+        self.observe().await.filter(|signal| super::loops::Deviation::from_signal(signal).is_some())
+    }
 }
 
 /// Sensor bus for a single loop — actively walks sensors each tick.
@@ -58,7 +62,7 @@ impl SensorBus {
         let providers: Vec<Arc<dyn Sensor>> = { self.providers.lock().clone() }; // Lock dropped here — no .await while holding it.
         let mut signals = Vec::new();
         for provider in &providers {
-            if let Some(signal) = provider.sense().await {
+            if let Some(signal) = provider.observe().await {
                 signals.push(signal);
             }
         }
@@ -96,21 +100,14 @@ impl EnergyBudgetSensor {
 
 #[async_trait::async_trait]
 impl Sensor for EnergyBudgetSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let statuses = self.cap_manager.read().await.all_agent_statuses().await;
+        if statuses.is_empty() { return None; }
         // Use the worst remaining ratio as the aggregate signal.
         let worst = statuses
             .iter()
             .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
             .fold(1.0, f64::min);
-        // Only emit when energy is below the floor — healthy states produce
-        // no signal, matching TestCoverageSensor and ToolReliabilitySensor.
-        // Without this gate the sensor emits AboveSetPoint deviations for
-        // healthy energy levels, which no policy rule matches, leaving the
-        // loop open (gain=0, fidelity=0 every tick).
-        if worst >= self.set_point {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics, // placeholder — registry backfills
             SignalMetric::EnergyRemaining,
@@ -140,17 +137,9 @@ impl VarietySensor {
 
 #[async_trait::async_trait]
 impl Sensor for VarietySensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let ledger = self.ledger.read().await;
         let health = ledger.health().await;
-        // Only emit when deficit exceeds the max — healthy states produce no
-        // signal, matching TestCoverageSensor and ToolReliabilitySensor.
-        // Without this gate the sensor emits BelowSetPoint deviations for
-        // healthy variety levels, which no policy rule matches, leaving the
-        // loop open (gain=0, fidelity=0 every tick).
-        if health.overall_deficit as f64 <= self.set_point {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics, // placeholder — registry backfills
             SignalMetric::VarietyDeficit,
@@ -265,7 +254,7 @@ impl TestCoverageSensor {
 
 #[async_trait::async_trait]
 impl Sensor for TestCoverageSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let path = match latest_run_metrics(&self.trace_dir) {
             Ok(path) => path?,
             Err(error) => {
@@ -305,9 +294,6 @@ impl Sensor for TestCoverageSensor {
             Some(coverage) => coverage,
             None => return None,
         };
-        if coverage >= self.set_point {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::TestCoverage,
@@ -344,7 +330,7 @@ impl ToolReliabilitySensor {
 
 #[async_trait::async_trait]
 impl Sensor for ToolReliabilitySensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let ledger = self.ledger.read().await;
         // Aggregate success rate across all tracked domains. Each domain's
         // success rate is weighted equally (not by call count) so a single
@@ -363,9 +349,6 @@ impl Sensor for ToolReliabilitySensor {
             return None;
         }
         let aggregate = sum / count as f64;
-        if aggregate >= self.set_point {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::ToolReliability,
@@ -396,7 +379,7 @@ impl MutationScoreSensor {
 
 #[async_trait::async_trait]
 impl Sensor for MutationScoreSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let path = match latest_run_metrics(&self.trace_dir) {
             Ok(path) => path?,
             Err(error) => {
@@ -436,9 +419,6 @@ impl Sensor for MutationScoreSensor {
             Some(score) => score,
             None => return None,
         };
-        if score >= self.set_point {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::MutationScore,
@@ -510,7 +490,7 @@ impl InferenceHealthSensor {
 
 #[async_trait::async_trait]
 impl Sensor for InferenceHealthSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let in_flight = self.source.in_flight().await;
         let max_concurrency = self.source.max_concurrency().await;
         let recent_timeouts = self.source.recent_timeout_count().await;
@@ -537,11 +517,6 @@ impl Sensor for InferenceHealthSensor {
             1.0
         };
 
-        // Only emit when availability is below the set-point (1.0).
-        // Healthy states produce no signal, matching the other sensors.
-        if availability >= 1.0 {
-            return None;
-        }
 
         Some(Signal::new(
             LoopId::Cybernetics,
@@ -602,7 +577,7 @@ impl ContextServerHealthSensor {
 
 #[async_trait::async_trait]
 impl Sensor for ContextServerHealthSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let total = self.source.total_count().await;
         // No servers registered — nothing to report. Return None (not a
         // signal with value 1.0, which would mask a broken source as
@@ -616,11 +591,6 @@ impl Sensor for ContextServerHealthSensor {
         // 1.0 = all Running, 0.0 = none Running.
         let health_ratio = healthy as f64 / total as f64;
 
-        // Only emit when health is below the set-point (1.0).
-        // Healthy states produce no signal, matching the other sensors.
-        if health_ratio >= 1.0 {
-            return None;
-        }
 
         Some(Signal::new(
             LoopId::Cybernetics,
@@ -698,7 +668,7 @@ impl OcrHealthSensor {
 
 #[async_trait::async_trait]
 impl Sensor for OcrHealthSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         let count = match self.source.recent_silent_failures().await {
             Ok(count) => count,
             Err(error) => {
@@ -714,9 +684,6 @@ impl Sensor for OcrHealthSensor {
             }
         };
         // Healthy states produce no signal, matching the other sensors.
-        if count == 0 {
-            return None;
-        }
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::OcrSilentFailures,
@@ -816,7 +783,7 @@ impl MemoryHealthSensor {
 
 #[async_trait::async_trait]
 impl Sensor for MemoryHealthSensor {
-    async fn sense(&self) -> Option<Signal> {
+    async fn observe(&self) -> Option<Signal> {
         // MemoryLife is a configuration check — it doesn't need the store.
         // Report it first so a misconfigured memory life is caught even when
         // the store is unavailable.

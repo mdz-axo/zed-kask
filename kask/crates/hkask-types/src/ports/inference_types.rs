@@ -37,6 +37,10 @@ impl ChatMessage {
 /// Inference error types
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
+    #[error("Inference overloaded: {0}")]
+    Overloaded(String),
+    #[error("Inference timed out: {0}")]
+    Timeout(String),
     #[error("Connection error: {0}")]
     Connection(String),
     #[error("Model error: {0}")]

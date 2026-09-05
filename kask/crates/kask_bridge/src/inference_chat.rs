@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{FutureExt, StreamExt, TryFutureExt};
+use futures_util::{FutureExt, StreamExt};
 use gpui::AsyncApp;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
@@ -77,7 +77,26 @@ pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
 }
 
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
+struct RequestLifetime {
+    _admission: tokio::sync::OwnedSemaphorePermit,
+    deadline: Option<gpui::Task<()>>,
+}
+
+struct InFlightGuard(Arc<std::sync::atomic::AtomicUsize>);
+impl InFlightGuard {
+    fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(counter)
+    }
+}
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 struct InferenceRequest {
+    lifetime: RequestLifetime,
     request: LanguageModelRequest,
     /// Provider-prefixed model name (e.g. "openrouter/z-ai/glm-5.2").
     /// When `Some`, the receiver resolves the model from
@@ -91,6 +110,7 @@ struct InferenceRequest {
 /// Streaming request — forwards `InferenceStreamChunk`s as they arrive
 /// instead of collecting the full result. Used by `generate_stream`.
 struct StreamInferenceRequest {
+    lifetime: RequestLifetime,
     request: LanguageModelRequest,
     model_override: Option<String>,
     reply: tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
@@ -234,6 +254,9 @@ impl StreamAccumulator {
 /// trait object — both share the same `Arc`-backed health counters.
 #[derive(Clone)]
 pub struct LanguageModelInferencePort {
+    admission: Arc<Semaphore>,
+    background_executor: gpui::BackgroundExecutor,
+    inference_timeout: Duration,
     tx: tokio::sync::mpsc::UnboundedSender<InferenceRequest>,
     stream_tx: tokio::sync::mpsc::UnboundedSender<StreamInferenceRequest>,
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
@@ -274,7 +297,13 @@ impl LanguageModelInferencePort {
         let (stream_tx, mut stream_rx) =
             tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
         let model_for_task = model.clone();
-        let timeout_for_task = inference_timeout;
+        let admission = Arc::new(Semaphore::new(
+            max_concurrency
+                .max(1)
+                .saturating_mul(2)
+                .min(Semaphore::MAX_PERMITS),
+        ));
+        let background_executor = cx.background_executor().clone();
         let concurrency_semaphore = Arc::new(Semaphore::new(max_concurrency.max(1)));
         let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let max_concurrency_arc =
@@ -307,46 +336,56 @@ impl LanguageModelInferencePort {
                 tokio::select! {
                     Some(req) = rx.recv() => {
                         let model = model_for_task.clone();
-                        let timeout = timeout_for_task;
                         let semaphore = concurrency_semaphore.clone();
                         let in_flight = in_flight.clone();
                         let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
-                            let _permit = match semaphore.acquire().await {
-                                Ok(permit) => permit,
-                                Err(_) => {
-                                    tracing::warn!(
-                                        target: "hkask.inference",
-                                        "inference concurrency semaphore closed — request dropped"
-                                    );
-                                    return;
-                                }
+                            let InferenceRequest { request, model_override, mut reply, lifetime } = req;
+                            let RequestLifetime { _admission, deadline } = lifetime;
+                            let work = async {
+                                let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
+                                let _in_flight = InFlightGuard::new(in_flight);
+                                Self::collect_completion(request, model_override, &model, cx, None).await
                             };
-                            in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            Self::handle_non_streaming(req, &model, timeout, cx, &recent_timeouts).await;
-                            in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                            let result = tokio::select! {
+                                biased;
+                                _ = reply.closed() => return,
+                                _ = Self::wait_deadline(deadline) => {
+                                    recent_timeouts.lock().unwrap_or_else(|error| error.into_inner()).push(std::time::Instant::now());
+                                    Err(InferenceError::Timeout("inference admission-to-completion deadline exceeded".into()))
+                                },
+                                result = work => result,
+                            };
+                            if reply.send(result.map(StreamAccumulator::into_result)).is_err() {
+                                tracing::trace!(target: "hkask.inference", "inference caller cancelled");
+                            }
                         }).detach();
                     }
                     Some(req) = stream_rx.recv() => {
                         let model = model_for_task.clone();
-                        let timeout = timeout_for_task;
                         let semaphore = concurrency_semaphore.clone();
                         let in_flight = in_flight.clone();
                         let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
-                            let _permit = match semaphore.acquire().await {
-                                Ok(permit) => permit,
-                                Err(_) => {
-                                    tracing::warn!(
-                                        target: "hkask.inference",
-                                        "inference concurrency semaphore closed — stream request dropped"
-                                    );
-                                    return;
-                                }
+                            let StreamInferenceRequest { request, model_override, reply, lifetime } = req;
+                            let RequestLifetime { _admission, deadline } = lifetime;
+                            let work = async {
+                                let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
+                                let _in_flight = InFlightGuard::new(in_flight);
+                                Self::collect_completion(request, model_override, &model, cx, Some(&reply)).await
                             };
-                            in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            Self::handle_streaming(req, &model, timeout, cx, &recent_timeouts).await;
-                            in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                            let result = tokio::select! {
+                                biased;
+                                _ = reply.closed() => return,
+                                _ = Self::wait_deadline(deadline) => {
+                                    recent_timeouts.lock().unwrap_or_else(|error| error.into_inner()).push(std::time::Instant::now());
+                                    Err(InferenceError::Timeout("inference admission-to-completion deadline exceeded".into()))
+                                },
+                                result = work => result,
+                            };
+                            if reply.send(result.map(StreamAccumulator::into_final_chunk)).is_err() {
+                                tracing::trace!(target: "hkask.inference", "streaming caller cancelled");
+                            }
                         }).detach();
                     }
                     else => break,
@@ -357,6 +396,9 @@ impl LanguageModelInferencePort {
 
         (
             Self {
+                admission,
+                background_executor,
+                inference_timeout,
                 tx,
                 stream_tx,
                 in_flight,
@@ -411,246 +453,114 @@ impl LanguageModelInferencePort {
         }
     }
 
-    /// Handle a non-streaming inference request — collects the full stream
-    /// into a single `InferenceResult` before replying.
-    async fn handle_non_streaming(
-        req: InferenceRequest,
-        model_for_task: &Arc<dyn LanguageModel>,
-        inference_timeout: Duration,
-        cx: &AsyncApp,
-        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
-    ) {
-        let model =
-            match Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await {
-                Some(model) => model,
-                None => {
-                    let name = req.model_override.clone().unwrap_or_default();
-                    let result = Err(InferenceError::Model(format!(
-                        "model_override '{name}' not found in the LanguageModelRegistry — \
-                     not falling back to the default model (a vision override resolved to \
-                     a text model drops images silently). Ensure the model is configured \
-                     in Settings → AI → LLM Providers."
-                    )));
-                    if req.reply.send(result).is_err() {
-                        tracing::trace!(
-                            target: "hkask.inference",
-                            "inference reply dropped — caller cancelled"
-                        );
-                    }
-                    return;
-                }
-            };
-        let cx = cx.clone();
-        let request = req.request;
-        let result = async move {
-            let stream_future = model
-                .stream_completion(request, &cx)
-                .map_err(|e| InferenceError::Connection(e.to_string()));
+    fn admit(&self) -> Result<RequestLifetime, InferenceError> {
+        let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
+            InferenceError::Overloaded(
+                "inference admission capacity reached; request was not dispatched".into(),
+            )
+        })?;
+        let deadline = (!self.inference_timeout.is_zero())
+            .then(|| self.background_executor.timer(self.inference_timeout));
+        Ok(RequestLifetime {
+            _admission: permit,
+            deadline,
+        })
+    }
 
-            // Apply the wall-clock timeout if non-zero. A hung provider
-            // stalls the request indefinitely without this — the cybernetics
-            // variety check flagged this as a critical gap (D2: provider
-            // timeout, no response). `Duration::ZERO` disables (legacy).
-            //
-            // Uses `BackgroundExecutor::timer` (not `tokio::time::timeout`)
-            // because this future runs on the GPUI foreground executor, not
-            // the tokio runtime. `tokio::time::timeout` creates a
-            // `tokio::time::Sleep` that registers with the tokio reactor's
-            // timer wheel at poll time — if no tokio reactor is entered on
-            // the current thread (which is the case on the GPUI foreground
-            // executor), it panics with "there is no reactor running."
-            // `BackgroundExecutor::timer` uses the GPUI scheduler's clock,
-            // which is the same executor that polls this future.
-            let stream_result = if inference_timeout.is_zero() {
-                stream_future.await
-            } else {
-                let timer = cx.background_executor().timer(inference_timeout);
-                futures_util::pin_mut!(stream_future);
-                futures_util::pin_mut!(timer);
-                match futures_util::future::select(timer, stream_future).await {
-                    futures_util::future::Either::Left(_) => {
-                        tracing::warn!(
-                            target: "hkask.inference",
-                            timeout_secs = inference_timeout.as_secs(),
-                            "Inference stream establishment timed out — returning Connection error"
-                        );
-                        recent_timeouts
-                            .lock()
-                            .unwrap()
-                            .push(std::time::Instant::now());
-                        Err(InferenceError::Connection(format!(
-                            "inference timed out after {}s",
-                            inference_timeout.as_secs()
-                        )))
-                    }
-                    futures_util::future::Either::Right((result, _)) => result,
-                }
-            };
-
-            match stream_result {
-                Err(e) => Err(e),
-                Ok(mut stream) => {
-                    let mut acc = StreamAccumulator::new(model.name().0.to_string());
-                    while let Some(event) = stream.next().await {
-                        if let Err(e) = acc.process_event(event) {
-                            return Err(e);
-                        }
-                    }
-                    Ok(acc.into_result())
-                }
-            }
-        }
-        .await;
-
-        if let Err(result) = req.reply.send(result) {
-            tracing::trace!(target: "hkask.inference", "inference reply dropped — caller cancelled");
-            let _ = result;
+    async fn wait_deadline(deadline: Option<gpui::Task<()>>) {
+        match deadline {
+            Some(deadline) => deadline.await,
+            None => futures::future::pending().await,
         }
     }
 
-    /// Handle a streaming inference request — forwards `InferenceStreamChunk`s
-    /// as they arrive so the caller (skill execution) can emit live thinking
-    /// traces. The final chunk carries the accumulated `usage`, `cost_usd`,
-    /// and `finish_reason`.
-    async fn handle_streaming(
-        req: StreamInferenceRequest,
+    async fn collect_completion(
+        request: LanguageModelRequest,
+        model_override: Option<String>,
         model_for_task: &Arc<dyn LanguageModel>,
-        inference_timeout: Duration,
         cx: &AsyncApp,
-        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
-    ) {
-        let model = match Self::resolve_model(model_for_task, req.model_override.as_deref(), cx)
+        progress: Option<
+            &tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
+        >,
+    ) -> Result<StreamAccumulator, InferenceError> {
+        let model = Self::resolve_model(model_for_task, model_override.as_deref(), cx)
             .await
-        {
-            Some(model) => model,
-            None => {
-                let name = req.model_override.clone().unwrap_or_default();
-                let error = InferenceError::Model(format!(
-                    "model_override '{name}' not found in the LanguageModelRegistry — \
-                     not falling back to the default model (a vision override resolved to \
-                     a text model drops images silently). Ensure the model is configured \
-                     in Settings → AI → LLM Providers."
-                ));
-                if req.reply.send(Err(error)).is_err() {
-                    tracing::trace!(
-                        target: "hkask.inference",
-                        "streaming inference reply dropped — caller cancelled before first event"
-                    );
+            .ok_or_else(|| {
+                InferenceError::Model(format!(
+                    "model_override '{}' not found; no default substitution",
+                    model_override.as_deref().unwrap_or("")
+                ))
+            })?;
+        let mut stream = model
+            .stream_completion(request, cx)
+            .await
+            .map_err(|error| InferenceError::Connection(error.to_string()))?;
+        let model_name = model.name().0.to_string();
+        let mut accumulator = StreamAccumulator::new(model_name.clone());
+        while let Some(event) = stream.next().await {
+            let delta = match (progress, event) {
+                (Some(_), Ok(LanguageModelCompletionEvent::Text(text))) => {
+                    Some((text, String::new()))
                 }
-                return;
-            }
-        };
-        let cx = cx.clone();
-        let request = req.request;
-        let reply = req.reply;
-
-        async move {
-            let stream_future = model
-                .stream_completion(request, &cx)
-                .map_err(|e| InferenceError::Connection(e.to_string()));
-
-            // Apply the wall-clock timeout if non-zero. Same rationale as
-            // `handle_non_streaming` — a hung provider stalls the stream
-            // indefinitely without this. Uses `BackgroundExecutor::timer`
-            // (not `tokio::time::timeout`) because this future runs on the
-            // GPUI foreground executor — see `handle_non_streaming` for
-            // the full explanation.
-            let stream_result = if inference_timeout.is_zero() {
-                stream_future.await
-            } else {
-                let timer = cx.background_executor().timer(inference_timeout);
-                futures_util::pin_mut!(stream_future);
-                futures_util::pin_mut!(timer);
-                match futures_util::future::select(timer, stream_future).await {
-                    futures_util::future::Either::Left(_) => {
-                        tracing::warn!(
-                            target: "hkask.inference",
-                            timeout_secs = inference_timeout.as_secs(),
-                            "Streaming inference stream establishment timed out — returning Connection error"
-                        );
-                        recent_timeouts.lock().unwrap_or_else(|e| e.into_inner()).push(std::time::Instant::now());
-                        Err(InferenceError::Connection(format!(
-                            "inference timed out after {}s",
-                            inference_timeout.as_secs()
-                        )))
-                    }
-                    futures_util::future::Either::Right((result, _)) => result,
+                (Some(_), Ok(LanguageModelCompletionEvent::Thinking { text, .. })) => {
+                    Some((String::new(), text))
+                }
+                (_, other) => {
+                    accumulator.process_event(other)?;
+                    None
                 }
             };
-
-            match stream_result {
-                Err(e) => {
-                    // Send failure means the receiver dropped (caller cancelled
-                    // the stream). No point continuing — return early to stop
-                    // processing events for a dead consumer and avoid wasting
-                    // billed LLM tokens.
-                    if reply.send(Err(e)).is_err() {
-                        tracing::trace!(
-                            target: "hkask.inference",
-                            "streaming inference reply dropped — caller cancelled before first event"
-                        );
-                    }
-                }
-                Ok(mut stream) => {
-                    let model_name = model.name().0.to_string();
-                    let mut acc = StreamAccumulator::new(model_name.clone());
-                    while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(LanguageModelCompletionEvent::Text(delta)) => {
-                                if reply.send(Ok(InferenceStreamChunk {
-                                    text_delta: delta,
-                                    reasoning_delta: String::new(),
-                                    model: model_name.clone(),
-                                    finish_reason: None,
-                                    usage: None,
-                                    tool_calls: Vec::new(),
-                                    cost_usd: None,
-                                })).is_err() {
-                                    tracing::trace!(
-                                        target: "hkask.inference",
-                                        "streaming inference reply dropped — caller cancelled, stopping event processing"
-                                    );
-                                    return;
-                                }
-                            }
-                            Ok(LanguageModelCompletionEvent::Thinking {
-                                text: thinking, ..
-                            }) => {
-                                if reply.send(Ok(InferenceStreamChunk {
-                                    text_delta: String::new(),
-                                    reasoning_delta: thinking,
-                                    model: model_name.clone(),
-                                    finish_reason: None,
-                                    usage: None,
-                                    tool_calls: Vec::new(),
-                                    cost_usd: None,
-                                })).is_err() {
-                                    tracing::trace!(
-                                        target: "hkask.inference",
-                                        "streaming inference reply dropped — caller cancelled, stopping event processing"
-                                    );
-                                    return;
-                                }
-                            }
-                            Ok(other) => {
-                                if let Err(e) = acc.process_event(Ok(other)) {
-                                    let _ = reply.send(Err(e));
-                                    return;
-                                }
-                            }
-                            Err(e) => {
-                                let _ = reply.send(Err(InferenceError::Generation(e.to_string())));
-                                return;
-                            }
-                        }
-                    }
-
-                    // Final chunk carries the accumulated metadata.
-                    let _ = reply.send(Ok(acc.into_final_chunk()));
-                }
+            if let (Some(reply), Some((text_delta, reasoning_delta))) = (progress, delta) {
+                reply
+                    .send(Ok(InferenceStreamChunk {
+                        text_delta,
+                        reasoning_delta,
+                        model: model_name.clone(),
+                        finish_reason: None,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        cost_usd: None,
+                    }))
+                    .map_err(|_| {
+                        InferenceError::Connection("inference stream receiver closed".into())
+                    })?;
             }
         }
-        .await;
+        Ok(accumulator)
+    }
+
+    fn stream_request(
+        &self,
+        request: LanguageModelRequest,
+        model_override: Option<String>,
+    ) -> std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send>,
+    > {
+        let lifetime = match self.admit() {
+            Ok(lifetime) => lifetime,
+            Err(error) => return Box::pin(futures_util::stream::once(async { Err(error) })),
+        };
+        let (reply, receiver) = tokio::sync::mpsc::unbounded_channel();
+        if self
+            .stream_tx
+            .send(StreamInferenceRequest {
+                lifetime,
+                request,
+                model_override,
+                reply,
+            })
+            .is_err()
+        {
+            return Box::pin(futures_util::stream::once(async {
+                Err(InferenceError::Connection(
+                    "inference stream channel closed".into(),
+                ))
+            }));
+        }
+        Box::pin(futures_util::stream::unfold(
+            receiver,
+            |mut receiver| async move { receiver.recv().await.map(|chunk| (chunk, receiver)) },
+        ))
     }
 
     fn build_request(
@@ -799,6 +709,7 @@ impl InferencePort for LanguageModelInferencePort {
         async move {
             self.tx
                 .send(InferenceRequest {
+                    lifetime: self.admit()?,
                     request,
                     model_override,
                     reply: tx_reply,
@@ -836,6 +747,7 @@ impl InferencePort for LanguageModelInferencePort {
         async move {
             self.tx
                 .send(InferenceRequest {
+                    lifetime: self.admit()?,
                     request,
                     model_override,
                     reply: tx_reply,
@@ -875,36 +787,7 @@ impl InferencePort for LanguageModelInferencePort {
             ChatMessage::user("Execute the instructions above.".to_string()),
         ];
         let request = self.build_request(&messages, parameters, tools);
-        let (tx_stream, rx_stream) =
-            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
-
-        let stream_tx = self.stream_tx.clone();
-        let send_result = stream_tx.send(StreamInferenceRequest {
-            request,
-            model_override: None,
-            reply: tx_stream,
-        });
-
-        if send_result.is_err() {
-            return Box::pin(futures_util::stream::once(async {
-                Err(InferenceError::Connection(
-                    "inference stream channel closed".to_string(),
-                ))
-            }));
-        }
-
-        // Convert the tokio mpsc receiver into a futures_util::Stream by
-        // polling it asynchronously. This avoids adding a tokio-stream
-        // dependency.
-        Box::pin(futures_util::stream::unfold(
-            rx_stream,
-            |mut rx| async move {
-                match rx.recv().await {
-                    Some(chunk) => Some((chunk, rx)),
-                    None => None,
-                }
-            },
-        ))
+        self.stream_request(request, None)
     }
 
     /// Stream with optional model override.
@@ -937,30 +820,7 @@ impl InferencePort for LanguageModelInferencePort {
         ];
         let request = self.build_request(&messages, parameters, tools);
         let model_override = model_override.to_string();
-        let (tx_stream, rx_stream) =
-            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
-        let stream_tx = self.stream_tx.clone();
-        let send_result = stream_tx.send(StreamInferenceRequest {
-            request,
-            model_override: Some(model_override),
-            reply: tx_stream,
-        });
-        if send_result.is_err() {
-            return Box::pin(futures_util::stream::once(async {
-                Err(InferenceError::Connection(
-                    "inference stream channel closed".to_string(),
-                ))
-            }));
-        }
-        Box::pin(futures_util::stream::unfold(
-            rx_stream,
-            |mut rx| async move {
-                match rx.recv().await {
-                    Some(chunk) => Some((chunk, rx)),
-                    None => None,
-                }
-            },
-        ))
+        self.stream_request(request, Some(model_override))
     }
 
     /// F11: Streaming variant of `generate_with_messages`.
@@ -990,30 +850,7 @@ impl InferencePort for LanguageModelInferencePort {
     > {
         let request = self.build_request(messages, parameters, tools);
         let model_override = model_override.map(|s| s.to_string());
-        let (tx_stream, rx_stream) =
-            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
-        let stream_tx = self.stream_tx.clone();
-        let send_result = stream_tx.send(StreamInferenceRequest {
-            request,
-            model_override,
-            reply: tx_stream,
-        });
-        if send_result.is_err() {
-            return Box::pin(futures_util::stream::once(async {
-                Err(InferenceError::Connection(
-                    "inference stream channel closed".to_string(),
-                ))
-            }));
-        }
-        Box::pin(futures_util::stream::unfold(
-            rx_stream,
-            |mut rx| async move {
-                match rx.recv().await {
-                    Some(chunk) => Some((chunk, rx)),
-                    None => None,
-                }
-            },
-        ))
+        self.stream_request(request, model_override)
     }
 }
 
@@ -1101,8 +938,8 @@ mod tests {
     use hkask_types::ChatMessage;
     use hkask_types::ChatToolDefinition;
     use hkask_types::ChatToolFunction;
-    use hkask_types::InferencePort;
     use hkask_types::template::LLMParameters;
+    use hkask_types::{InferenceError, InferencePort};
     use language_model::fake_provider::FakeLanguageModel;
     use language_model_core::LanguageModelToolChoice;
     use std::sync::Arc;
@@ -1235,6 +1072,112 @@ mod tests {
              the released permit — expected 2 open streams, got {}",
             fake.completion_count()
         );
+    }
+
+    /// expect: "Cancelled queued requests never start the model and release admission capacity" [P1]
+    #[gpui::test]
+    async fn cancelled_queued_request_never_starts_model(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _receiver) =
+            super::LanguageModelInferencePort::new(model.clone(), Duration::ZERO, 1, cx.to_async());
+        let active = {
+            let port = port.clone();
+            cx.spawn(async move |_| {
+                port.generate("active", &LLMParameters::default(), None)
+                    .await
+            })
+        };
+        let queued = {
+            let port = port.clone();
+            cx.spawn(async move |_| {
+                port.generate("queued", &LLMParameters::default(), None)
+                    .await
+            })
+        };
+        cx.run_until_parked();
+        assert_eq!(fake.completion_count(), 1);
+        assert!(matches!(
+            port.generate("overflow", &LLMParameters::default(), None)
+                .await,
+            Err(InferenceError::Overloaded(_))
+        ));
+        drop(queued);
+        cx.run_until_parked();
+        assert_eq!(port.admission.available_permits(), 1);
+        let pending = fake
+            .pending_completions()
+            .into_iter()
+            .next()
+            .expect("active request");
+        fake.end_completion_stream(&pending);
+        cx.run_until_parked();
+        assert!(active.await.is_ok());
+        assert_eq!(
+            fake.completion_count(),
+            0,
+            "cancelled work must not dispatch after capacity frees"
+        );
+        assert_eq!(port.admission.available_permits(), 2);
+    }
+
+    /// expect: "Queue wait and stalled stream drain share the admission deadline" [P1]
+    #[gpui::test]
+    async fn queued_and_established_requests_share_deadline(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _receiver) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(2),
+            1,
+            cx.to_async(),
+        );
+        let first = {
+            let port = port.clone();
+            cx.spawn(async move |_| {
+                port.generate("first", &LLMParameters::default(), None)
+                    .await
+            })
+        };
+        let queued = {
+            let port = port.clone();
+            cx.spawn(async move |_| {
+                port.generate("queued", &LLMParameters::default(), None)
+                    .await
+            })
+        };
+        cx.run_until_parked();
+        assert_eq!(fake.completion_count(), 1);
+        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.run_until_parked();
+        assert!(matches!(first.await, Err(InferenceError::Timeout(_))));
+        assert!(matches!(queued.await, Err(InferenceError::Timeout(_))));
+        assert_eq!(
+            fake.completion_count(),
+            1,
+            "expired queued request must never dispatch"
+        );
+        assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(port.admission.available_permits(), 2);
+    }
+
+    /// expect: "Disabled deadlines still allow cancellation to release active work" [P1]
+    #[gpui::test]
+    async fn streaming_cancellation_releases_permits_with_disabled_deadline(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, _receiver) =
+            super::LanguageModelInferencePort::new(model, Duration::ZERO, 1, cx.to_async());
+        let stream = port.generate_stream("stream", &LLMParameters::default(), None);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(3600));
+        cx.run_until_parked();
+        assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 1);
+        drop(stream);
+        cx.run_until_parked();
+        assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(port.admission.available_permits(), 2);
     }
 
     /// expect: "An agent with ordinary tools can finish with an answer" [P3]

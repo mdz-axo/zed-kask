@@ -144,7 +144,12 @@ impl super::CyberneticsLoop {
     /// native Escalate actions. The field is included in the `error_context`
     /// JSON so the Curator's `curator_escalations` tool sees the recommended
     /// action as structured data, not just free-text in the message.
-    fn persist_alert_to_queue(&self, alert: &RuntimeAlert, efferent_action: Option<&str>) {
+    fn persist_alert_to_queue(
+        &self,
+        alert: &RuntimeAlert,
+        efferent_action: Option<&str>,
+        recovery_signal: Option<&Signal>,
+    ) {
         let Some(ref sink) = self.alert_escalation_sink else {
             return;
         };
@@ -163,6 +168,7 @@ impl super::CyberneticsLoop {
             "severity": alert.severity,
             "escalated": alert.escalated,
             "efferent_action": efferent_action,
+            "recovery_signal": recovery_signal,
             "timestamp": alert.timestamp.to_rfc3339(),
         })
         .to_string();
@@ -235,7 +241,7 @@ impl super::CyberneticsLoop {
                     actions.len()
                 ),
             };
-            self.persist_alert_to_queue(&alert, None);
+            self.persist_alert_to_queue(&alert, None, None);
             if let Some(ref tx) = self.alerts_tx {
                 if tx.send(CurationInput::Alert(alert)).is_err() {
                     tracing::warn!(target: "reg.alert", "Coherence alert send failed — channel closed");
@@ -269,14 +275,8 @@ impl super::CyberneticsLoop {
         // can review and clear reviewed entries before they are evicted unread.
         // The set-point is 0.0 — any positive value (1.0 = approaching cap) is
         // a deviation.
-        if self.ledger.read().await.alert_log_approaching_cap().await {
-            signals.push(Signal::new(
-                LoopId::Cybernetics,
-                SignalMetric::AlgedonicLogApproachingCap,
-                1.0,
-                0.0,
-            ));
-        }
+        signals.push(Signal::new(LoopId::Cybernetics, SignalMetric::AlgedonicLogApproachingCap,
+            if self.ledger.read().await.alert_log_approaching_cap().await { 1.0 } else { 0.0 }, 0.0));
 
         // Sense the algedonic log's population state: actionable events
         // (Warning or Critical — Info entries are healthy-range diagnostics
@@ -292,7 +292,7 @@ impl super::CyberneticsLoop {
                 ledger.critical_alerts().await.len(),
             )
         };
-        if actionable_count > 0 {
+        {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::AlgedonicEvents,
@@ -300,7 +300,7 @@ impl super::CyberneticsLoop {
                 0.0,
             ));
         }
-        if escalated_count > 0 {
+        {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::PendingEscalations,
@@ -308,7 +308,7 @@ impl super::CyberneticsLoop {
                 0.0,
             ));
         }
-        if critical_count > 0 {
+        {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::MetacognitionCriticalAlerts,
@@ -330,11 +330,11 @@ impl super::CyberneticsLoop {
         // the moment the source is wired.
         const MODEL_WIRING_GRACE_TICKS: usize = 3;
         let ticks_elapsed = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
-        if !self.inference_health_wired && ticks_elapsed >= MODEL_WIRING_GRACE_TICKS {
+        if self.inference_health_wired || ticks_elapsed >= MODEL_WIRING_GRACE_TICKS {
             signals.push(Signal::new(
                 LoopId::Cybernetics,
                 SignalMetric::InferenceModelAvailable,
-                0.0,
+                if self.inference_health_wired { 1.0 } else { 0.0 },
                 1.0,
             ));
         }
@@ -457,7 +457,7 @@ impl super::CyberneticsLoop {
                 // the queue is the primary durable path for alert review, not
                 // a fallback (the RegulationArchive below is the fallback for
                 // restart durability when the live channel is down).
-                self.persist_alert_to_queue(&alert, None);
+                self.persist_alert_to_queue(&alert, None, None);
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -615,7 +615,9 @@ impl super::CyberneticsLoop {
         // a fallback. The RegulationArchive below remains as a
         // secondary fallback for restart durability when the live
         // channel is down.
-        self.persist_alert_to_queue(&alert, efferent_action);
+        let observation = action.metric_name.as_deref().and_then(SignalMetric::from_str_name)
+            .and_then(|metric| self.observations.lock().get(&metric).cloned());
+        self.persist_alert_to_queue(&alert, efferent_action, observation.as_ref());
 
         // Primary path: live channel to Curator's inbox
         let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
@@ -912,7 +914,7 @@ impl super::CyberneticsLoop {
             let improved = match metric.impact_direction() {
                 Some(true) => delta > 0.0,
                 Some(false) => delta < 0.0,
-                None => delta.abs() > f64::EPSILON,
+                None => false,
             };
 
             // Classify the decision using per-metric worsening thresholds.
@@ -928,13 +930,13 @@ impl super::CyberneticsLoop {
                 block_worsening_ratio,
             );
 
-            // Report acceptance/rejection to stagnation detector.
-            let accepted = decision == ActionDecision::Accept;
+            // Tolerated noise is acceptable, but only observed improvement
+            // resets stagnation. Recommendations are not proof of intervention.
             let action_type_str = action.action_type.as_str();
             let plateau = self.stagnation_detector.record_and_check(
                 metric.as_str(),
                 action_type_str,
-                accepted,
+                improved,
             );
 
             if plateau {
@@ -966,13 +968,13 @@ impl super::CyberneticsLoop {
                     escalated: true,
                     timestamp: chrono::Utc::now(),
                     message: format!(
-                        "Regulatory plateau: {} via {:?} has been rejected for {threshold} consecutive cycles",
+                        "Regulatory plateau: {} via {:?} has shown no observed improvement for {threshold} consecutive cycles",
                         metric.as_str(),
                         action.action_type,
                     ),
                 };
                 // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert, None);
+                self.persist_alert_to_queue(&alert, None, None);
                 if let Some(ref tx) = self.alerts_tx {
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
@@ -1014,7 +1016,7 @@ impl super::CyberneticsLoop {
                     ),
                 };
                 // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert, None);
+                self.persist_alert_to_queue(&alert, None, None);
                 if let Some(ref tx) = self.alerts_tx {
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
@@ -1065,40 +1067,6 @@ impl super::CyberneticsLoop {
                         rollout = %rollout_id,
                         error = %error,
                         "impact verdict write-back failed — the loop's judgment is not persisted to the store"
-                    );
-                }
-            }
-
-            // Auto-resolve: when the triggering condition has cleared
-            // (Accept decision), resolve the pending escalation so the loop
-            // stops spinning on a stale deviation. This closes the stuck-loop
-            // pattern where a transient degradation self-resolves but the
-            // escalation sits in the queue until manual review.
-            if decision == ActionDecision::Accept && improved {
-                if let Some(ref sink) = self.alert_escalation_sink {
-                    // Reconstruct via the same helper route_action_as_alert
-                    // used to persist the message — auto_resolve_cleared
-                    // matches on the condition key (`alert_condition` strips
-                    // the per-cycle value), so the two sites must compose
-                    // from the same reason; both call `alert_message` so the
-                    // condition prefix is identical.
-                    let exact_msg = regulation_policy::alert_message(
-                        &action.parameters.data,
-                        &action.parameters.reason,
-                    );
-                    sink.auto_resolve_cleared(
-                        &exact_msg,
-                        &format!(
-                            "Auto-resolved by verify_impact: metric {} improved ({:.4} → {:.4}, delta {:+.4}). Triggering condition cleared.",
-                            metric.as_str(), before_val, after_val, delta
-                        ),
-                    );
-                    tracing::info!(
-                        target: "reg.cybernetics",
-                        metric = metric.as_str(),
-                        before = before_val,
-                        after = after_val,
-                        "Auto-resolved escalation — triggering condition cleared"
                     );
                 }
             }
@@ -1543,63 +1511,28 @@ mod tests {
         }
     }
 
-    /// Pins the byte-identity invariant between the two alert-message
-    /// sites: `route_action_as_alert` (persist) and `verify_impact`'s
-    /// `auto_resolve_cleared` (reconstruction). The reconstruction
-    /// dedup-matches the persisted string — any drift silently breaks
-    /// stuck-loop auto-resolution. Also pins the direction-aware verb for
-    /// a floor metric: energy remaining below its set-point must read
-    /// "fell below", never "exceeds".
-    #[test]
-    fn auto_resolve_reconstruction_matches_persisted_alert_message() {
-        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-        runtime.block_on(async {
-            let sink = Arc::new(RecordingEscalationSink::new());
-            let mut regulation_loop =
-                CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-            regulation_loop.set_alert_escalation_sink(Some(sink.clone()));
-
-            let action = RegulatoryAction::new(
-                LoopId::Curation,
-                ActionType::Escalate,
-                RegulatoryActionParams::with_data(
-                    "energy_budget_low",
-                    RegulationData::EnergyBudgetLow {
-                        remaining_ratio: 0.15,
-                        set_point: 0.20,
-                    },
-                ),
-            );
-
-            // Site 1: route the alert — persists the message to the queue.
-            regulation_loop.route_action_as_alert(&action).await;
-
-            // Site 2: verify the same action. The re-sensed energy (1.0 —
-            // no agents registered) improved over the before-value (0.15),
-            // so the Accept decision fires auto-resolve.
-            regulation_loop.verify_impact(&[action]).await;
-
-            let persisted = sink.persisted.lock().expect("persisted lock").clone();
-            let auto_resolved = sink
-                .auto_resolved
-                .lock()
-                .expect("auto_resolved lock")
-                .clone();
-            assert_eq!(persisted.len(), 1, "site 1 must persist exactly one alert");
-            assert_eq!(
-                auto_resolved.len(),
-                1,
-                "site 2 must auto-resolve exactly once (Accept + improved)"
-            );
-            assert_eq!(
-                persisted[0], auto_resolved[0],
-                "auto-resolve reconstruction must match the persisted message byte-for-byte"
-            );
-            assert_eq!(
-                persisted[0],
-                "energy_budget_low — value 15 fell below threshold 20"
-            );
-        });
+    /// expect: "Immediate acceptance of advice does not prove that an alert cleared" [P9]
+    #[tokio::test]
+    async fn accepted_observation_does_not_resolve_alert() {
+        let sink = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation_loop.set_alert_escalation_sink(Some(sink.clone()));
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "energy_budget_low",
+                RegulationData::EnergyBudgetLow {
+                    remaining_ratio: 0.15,
+                    set_point: 0.20,
+                },
+            ),
+        );
+        regulation_loop.route_action_as_alert(&action).await;
+        regulation_loop.verify_impact(&[action]).await;
+        assert_eq!(sink.persisted.lock().expect("persisted").len(), 1);
+        assert!(sink.auto_resolved.lock().expect("resolved").is_empty());
     }
 
     fn rollout_impact_check(rollout_id: &str, metric: &str) -> RegulatoryAction {
@@ -2046,10 +1979,8 @@ mod tests {
             regulation_loop.set_inference_health_source(Arc::new(StubHealthSource));
             let signals = regulation_loop.sense().await;
             assert!(
-                !signals
-                    .iter()
-                    .any(|s| s.metric == SignalMetric::InferenceModelAvailable),
-                "wired source means the model resolved — no outage signal"
+                !signals.iter().any(|s| s.metric == SignalMetric::InferenceModelAvailable && Deviation::from_signal(s).is_some()),
+                "wired source means the model resolved — no outage deviation"
             );
         });
     }

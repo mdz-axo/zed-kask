@@ -136,6 +136,45 @@ impl EscalationQueue {
             .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
         Ok(id)
     }
+    /// Retain applied advice after resolution until its assessment is visible.
+    pub fn list_advice_observations(&self) -> Result<Vec<EscalationEntry>, EscalationError> {
+        let rows = self.driver.query(
+            "SELECT id FROM escalations WHERE status='pending' OR (json_valid(error_context) AND json_extract(error_context,'$.applied_at') IS NOT NULL) ORDER BY created_at",
+            &[],
+        ).map_err(|error| EscalationError::Infra(InfrastructureError::from(error)))?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let id = row
+                .get_str(0)
+                .map_err(|error| EscalationError::Infra(InfrastructureError::from(error)))?;
+            if let Some(entry) = self.get(id)? {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Compare-and-swap prevents a sensor tick from overwriting an operator's
+    /// concurrently recorded application acknowledgement.
+    pub fn update_advice_context(
+        &self,
+        id: &str,
+        previous: &str,
+        updated: &str,
+    ) -> Result<bool, EscalationError> {
+        self.driver
+            .execute(
+                "UPDATE escalations SET error_context=?1 WHERE id=?2 AND error_context=?3",
+                &[
+                    DbValue::Text(updated.into()),
+                    DbValue::Text(id.into()),
+                    DbValue::Text(previous.into()),
+                ],
+            )
+            .map(|count| count == 1)
+            .map_err(|error| EscalationError::Infra(InfrastructureError::from(error)))
+    }
+
     /// List pending escalations.
     ///
     /// expect: "The system provides durable storage for escalation data"

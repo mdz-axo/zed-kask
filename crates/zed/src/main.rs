@@ -3502,6 +3502,7 @@ fn sync_kask_mcp_runtime_servers(
         let last_env = last_env.clone();
         gpui_tokio::Tokio::spawn(cx, async move {
             for server_id in to_stop {
+                kask_bridge::revoke_delegation_grant(server_id);
                 runtime.stop_server(server_id).await;
                 last_env
                     .lock()

@@ -51,6 +51,8 @@ use crate::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, LL
 
 /// Environment variable name for the Unix socket path.
 pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
+/// Opaque parent-owned delegated-tool grant, scoped to a launched MCP child.
+pub const TOOL_GRANT_ENV: &str = "HKASK_TOOL_GRANT";
 
 /// Environment variable name for the inference establishment timeout in
 /// seconds.
@@ -186,6 +188,8 @@ pub struct InferenceParams {
     /// protocol violation, never an implicit grant-all.
     #[serde(default)]
     pub tool_allowlist: Option<Vec<String>>,
+    /// Opaque reference to a parent-owned grant; never a caller-defined permission set.
+    pub tool_grant: Option<String>,
     // ── Worktree thread fields (for `InferenceMethod::CreateWorktreeThread`) ──
     /// The initial prompt for the new agent thread.
     #[serde(default)]
@@ -324,6 +328,8 @@ pub struct InferenceErrorPayload {
 impl From<InferenceError> for InferenceErrorPayload {
     fn from(e: InferenceError) -> Self {
         let (code, message) = match e {
+            InferenceError::Overloaded(m) => ("Overloaded", m),
+            InferenceError::Timeout(m) => ("Timeout", m),
             InferenceError::Connection(m) => ("Connection", m),
             InferenceError::Model(m) => ("Model", m),
             InferenceError::Generation(m) => ("Generation", m),
@@ -343,6 +349,8 @@ impl From<InferenceError> for InferenceErrorPayload {
 impl From<InferenceErrorPayload> for InferenceError {
     fn from(e: InferenceErrorPayload) -> Self {
         match e.code.as_str() {
+            "Overloaded" => InferenceError::Overloaded(e.message),
+            "Timeout" => InferenceError::Timeout(e.message),
             "Connection" => InferenceError::Connection(e.message),
             "Model" => InferenceError::Model(e.message),
             "Generation" => InferenceError::Generation(e.message),

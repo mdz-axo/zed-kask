@@ -86,6 +86,10 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
 /// sink never breaks the regulation loop. The sole caller is
 /// `CyberneticsLoop::act` / `verify_impact`, which runs inside `Tokio::spawn`.
 pub trait AlertEscalationSink: Send + Sync {
+    /// Compare durable triggering conditions with fresh observations each tick.
+    /// Missing observations must never resolve an escalation.
+    fn reconcile_conditions(&self, _observations: &[crate::loops::Signal]) {}
+
     /// Persist an alert to the reviewable escalation queue.
     ///
     /// `output` is the human-readable alert message; `error_context` is a
@@ -122,9 +126,9 @@ pub trait AlertEscalationSink: Send + Sync {
     /// Auto-resolve a pending escalation when the triggering condition has
     /// cleared.
     ///
-    /// Called by `verify_impact` when an `Accept` ImpactReport is produced for
-    /// a previously-escalated condition — the metric improved, so the
-    /// escalation is stale. The implementation should resolve pending
+    /// Called after a fresh measurement crosses the original trigger threshold
+    /// back toward health. An Accept decision or partial improvement alone
+    /// must not resolve the condition. The implementation should resolve pending
     /// escalations matching the condition key of `output` (`alert_condition`)
     /// with the provided resolution note. Condition matching (not exact
     /// output matching) is required because the persisted escalation's

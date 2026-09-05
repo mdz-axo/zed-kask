@@ -105,10 +105,10 @@ impl ImpactReport {
         decision: ActionDecision,
     ) -> Self {
         let delta = after - before;
-        let improved = match metric {
-            SignalMetric::EnergyRemaining => delta > 0.0,
-            SignalMetric::VarietyDeficit => delta < 0.0,
-            _ => delta.abs() > f64::EPSILON,
+        let improved = match metric.impact_direction() {
+            Some(true) => delta > 0.0,
+            Some(false) => delta < 0.0,
+            None => false,
         };
         Self {
             action_type,
@@ -169,7 +169,7 @@ pub struct LoopMetrics {
     /// impact reports) or no action had measurable impact. An operator seeing
     /// 0.0 must check whether verification was skipped (no data) or actions
     /// genuinely failed — the score does not conflate "unverified" with "success."
-    pub effectiveness_score: f64,
+    pub observed_progress_score: f64,
     /// What triggered this tick.
     pub trigger: TriggerOrigin,
 }
@@ -180,7 +180,7 @@ impl Default for LoopMetrics {
             delay_ms: 0,
             gain: 1.0,
             fidelity_score: 1.0,
-            effectiveness_score: 0.0,
+            observed_progress_score: 0.0,
             trigger: TriggerOrigin::Scheduled,
         }
     }
@@ -194,7 +194,7 @@ impl LoopMetrics {
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle
     /// post: returns LoopMetrics with gain, fidelity_score, and
-    ///       effectiveness_score computed from cycle data
+    ///       observed_progress_score computed from cycle data
     ///
     /// - `elapsed_ms`: wall-clock time from sense start to act end
     /// - `deviations`: deviations detected during compare
@@ -243,13 +243,10 @@ impl LoopMetrics {
         // effective"). Reporting 1.0 when unverified conflates "no data" with
         // "success" — the operator cannot distinguish a working loop from one
         // that never checks its own impact.
-        let effectiveness_score = if impact_reports.is_empty() {
+        let observed_progress_score = if impact_reports.is_empty() {
             0.0
         } else {
-            let accepted = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Accept)
-                .count() as f64;
+            let accepted = impact_reports.iter().filter(|r| r.improved).count() as f64;
             accepted / impact_reports.len() as f64
         };
 
@@ -257,7 +254,7 @@ impl LoopMetrics {
             delay_ms: elapsed_ms,
             gain,
             fidelity_score,
-            effectiveness_score,
+            observed_progress_score,
             trigger,
         }
     }
@@ -793,7 +790,7 @@ mod tests {
             "fidelity=1.0 when healthy (trivially matched)"
         );
         assert_eq!(
-            metrics.effectiveness_score, 0.0,
+            metrics.observed_progress_score, 0.0,
             "effectiveness=0.0 when unverified (not 1.0)"
         );
     }
@@ -827,15 +824,14 @@ mod tests {
             "1 matched / 2 deviations = 0.5"
         );
         assert_eq!(
-            metrics.effectiveness_score, 0.0,
+            metrics.observed_progress_score, 0.0,
             "no impact reports → unverified → 0.0"
         );
     }
 
-    /// Pins F3: effectiveness = accepted / total when impact reports exist.
-    /// Two reports, one Accept, one Block → effectiveness = 0.5.
+    /// Observed progress requires improvement, not just acceptance.
     #[test]
-    fn from_cycle_effectiveness_is_accepted_over_verified() {
+    fn from_cycle_progress_is_improved_over_verified() {
         let report_accept = ImpactReport::new(
             ActionType::Throttle,
             SignalMetric::EnergyRemaining,
@@ -858,8 +854,8 @@ mod tests {
             TriggerOrigin::Scheduled,
         );
         assert_eq!(
-            metrics.effectiveness_score, 0.5,
-            "1 accepted / 2 verified = 0.5"
+            metrics.observed_progress_score, 0.5,
+            "1 improved / 2 verified = 0.5"
         );
         // gain and fidelity are 1.0 because no deviations (healthy state).
         assert_eq!(metrics.gain, 1.0);

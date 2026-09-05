@@ -137,6 +137,8 @@ impl Default for KaskGeneralSettings {
 /// system deserializes `SettingsContent` and converts via `From`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMcpSettings {
+    /// Exact server/tool names each child server may invoke through IPC.
+    pub delegated_tools: HashMap<String, Vec<String>>,
     /// Whether to load the default MCP server set (`BUILT_IN_MCP_SERVERS`).
     /// Set to `false` to disable all kask MCP servers.
     pub load_default: bool,
@@ -150,6 +152,7 @@ impl Default for KaskMcpSettings {
         Self {
             load_default: true,
             overrides: HashMap::default(),
+            delegated_tools: HashMap::default(),
         }
     }
 }
@@ -775,6 +778,7 @@ impl From<KaskMcpSettingsContent> for KaskMcpSettings {
         Self {
             load_default: c.load_default.unwrap_or(default.load_default),
             overrides: c.overrides,
+            delegated_tools: c.delegated_tools.unwrap_or(default.delegated_tools),
         }
     }
 }
@@ -1239,6 +1243,7 @@ mod tests {
             mcp: Some(KaskMcpSettingsContent {
                 load_default: None,
                 overrides: HashMap::default(),
+                delegated_tools: None,
             }),
             curator: Some(KaskCuratorSettingsContent {
                 always_on: None,

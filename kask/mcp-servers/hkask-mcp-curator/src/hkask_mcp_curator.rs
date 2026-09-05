@@ -402,6 +402,61 @@ impl CuratorServer {
         .await
     }
 
+    #[tool(
+        description = "Record an operator-confirmed action taken on an escalation. Starts a seven-day observation window; does not resolve the alert or claim effectiveness. Requires explicit operator confirmation."
+    )]
+    pub async fn curator_advice_mark_applied(
+        &self,
+        Parameters(req): Parameters<AdviceAppliedRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "curator_advice_mark_applied", async {
+            if !req.operator_confirmed || req.action_note.trim().is_empty() {
+                return Err(McpToolError::failed_precondition("An operator-confirmed action and nonempty note are required"));
+            }
+            let stores = self.db.get();
+            let queue = stores.escalation_queue()?;
+            let entry = queue.get(&req.id).map_err(|error| McpToolError::internal(error.to_string()))?
+                .ok_or_else(|| McpToolError::not_found("Escalation not found"))?;
+            let mut context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid escalation context: {error}")))?;
+            if context.get("recovery_signal").is_none_or(|value| value.is_null()) {
+                return Err(McpToolError::failed_precondition("This escalation has no measurable triggering condition"));
+            }
+            if context.get("applied_at").is_none_or(|value| value.is_null()) {
+                let now = chrono::Utc::now();
+                context["applied_baseline"] = context.get("latest_observation").or_else(|| context.get("recovery_signal")).cloned().unwrap_or(serde_json::Value::Null);
+                context["applied_at"] = json!(now);
+                context["review_due_at"] = json!(now + chrono::Duration::days(7));
+                context["action_note"] = json!(req.action_note);
+                context["advice_review"] = json!({"status":"observation_window", "finalized":false, "causal_attribution":"unverified"});
+                if !queue.update_advice_context(&req.id, &entry.error_context, &context.to_string()).map_err(|error| McpToolError::internal(error.to_string()))? {
+                    return Err(McpToolError::unavailable("Escalation changed concurrently; retry confirmation"));
+                }
+            }
+            Ok(json!({"id":req.id, "applied_at":context["applied_at"], "review_due_at":context["review_due_at"], "review":context["advice_review"]}))
+        }).await
+    }
+
+    #[tool(
+        description = "Read observed progress reviews of operator-applied advice, including resolved alerts. Reviews distinguish recovery, improvement, no improvement, and insufficient evidence; causal attribution remains unverified."
+    )]
+    pub async fn curator_advice_reviews(
+        &self,
+        Parameters(_req): Parameters<PingRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "curator_advice_reviews", async {
+            let stores = self.db.get();
+            let entries = stores.escalation_queue()?.list_advice_observations().map_err(|error| McpToolError::internal(error.to_string()))?;
+            let mut reviews = Vec::new();
+            for entry in entries {
+                let context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid advice context: {error}")))?;
+                if context.get("applied_at").is_some_and(|value| !value.is_null()) {
+                    reviews.push(json!({"id":entry.id, "output":entry.output, "status":entry.status, "application":context}));
+                }
+            }
+            Ok(json!({"reviews":reviews}))
+        }).await
+    }
+
     #[tool(description = "Resolve an escalation by ID")]
     pub async fn curator_escalation_resolve(
         &self,

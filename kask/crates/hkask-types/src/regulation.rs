@@ -78,14 +78,10 @@ pub struct RegulationHealth {
 }
 
 impl RegulationHealth {
-    /// Ratio of accepted actions to total (0.0–1.0). 1.0 if no actions recorded.
-    pub fn effectiveness(&self) -> f64 {
+    /// Ratio of acceptable observations to total. None if no observations exist; not causal efficacy.
+    pub fn acceptance_rate(&self) -> Option<f64> {
         let total = self.accepted + self.staged + self.blocked;
-        if total == 0 {
-            1.0
-        } else {
-            self.accepted as f64 / total as f64
-        }
+        (total > 0).then(|| self.accepted as f64 / total as f64)
     }
 }
 

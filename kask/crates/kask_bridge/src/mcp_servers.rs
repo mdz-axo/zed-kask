@@ -714,6 +714,16 @@ pub async fn build_mcp_server_env(
         }
     }
 
+    let tools = settings
+        .mcp
+        .delegated_tools
+        .get(server_id)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, tools) {
+        env.insert(crate::delegation_grants::GRANT_ENV.to_string(), grant);
+    }
+
     // 3. Inference IPC socket — not in any allowlist; every server may route
     //    inference through zed's LanguageModelRegistry over the IPC bridge.
     if let Some(socket) = inference_socket {

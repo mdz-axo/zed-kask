@@ -191,6 +191,7 @@ pub struct CyberneticsLoop {
     stagnation_detector: Arc<StagnationDetector>,
     /// Pluggable metric sensors (Fermi Extractor pattern).
     sensor_registry: Arc<SensorBus>,
+    observations: parking_lot::Mutex<HashMap<crate::loops::SignalMetric, crate::loops::Signal>>,
     /// Statistical learner for per-tool cost distributions and reliability.
     /// Multi-model strategy evaluator (Fermi improvement-loop pattern).
     strategy_evaluator: Mutex<StrategyEvaluator>,
@@ -371,6 +372,7 @@ impl CyberneticsLoop {
             loop_quality: RwLock::new(LoopMetrics::default()),
             stagnation_detector,
             sensor_registry,
+            observations: parking_lot::Mutex::new(HashMap::new()),
 
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
             simulator: MovingAverageExtrapolator::new(10),
@@ -742,7 +744,7 @@ impl CyberneticsLoop {
     /// Full regulation cycle with loop-quality telemetry.
     ///
     /// Measures elapsed time and computes `LoopMetrics` metrics (delay_ms,
-    /// gain, fidelity_score, effectiveness_score) after each cycle. Calls
+    /// gain, fidelity_score, observed_progress_score) after each cycle. Calls
     /// `verify_impact` to close the feedback loop.
     pub async fn tick(&self) {
         let start = std::time::Instant::now();
@@ -750,6 +752,8 @@ impl CyberneticsLoop {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let signals = self.sense().await;
+        *self.observations.lock() = signals.iter().map(|signal| (signal.metric, signal.clone())).collect();
+        if let Some(sink) = &self.alert_escalation_sink { sink.reconcile_conditions(&signals); }
         // Emit a runtime-posture signal span so the runtime-posture-monitor
         // skill (and any downstream observer) has a production telemetry
         // substrate even when the skill cascade is not explicitly invoked.
@@ -845,7 +849,7 @@ impl CyberneticsLoop {
                 .filter(|r| r.decision == ActionDecision::Block)
                 .count() as u64;
             let ledger = self.ledger.read().await;
-            let cumulative = ledger.regulation_health().await.effectiveness();
+            let cumulative = ledger.regulation_health().await.acceptance_rate();
             ledger
                 .record_regulation_cycle(RegulationCycleEntry {
                     timestamp: chrono::Utc::now(),
@@ -856,7 +860,7 @@ impl CyberneticsLoop {
                     accepted,
                     staged,
                     blocked,
-                    cumulative_effectiveness: cumulative,
+                    cumulative_acceptance_rate: cumulative,
                 })
                 .await;
         }
@@ -877,7 +881,7 @@ impl CyberneticsLoop {
             delay_ms = quality.delay_ms,
             gain = quality.gain,
             fidelity = quality.fidelity_score,
-            effectiveness = quality.effectiveness_score,
+            effectiveness = quality.observed_progress_score,
             deviations = deviations.len(),
             actions = actions.len(),
             impact_reports = impact_reports.len(),
@@ -906,7 +910,7 @@ impl CyberneticsLoop {
                 "delay_ms": quality.delay_ms,
                 "gain": quality.gain,
                 "fidelity_score": quality.fidelity_score,
-                "effectiveness_score": quality.effectiveness_score,
+                "observed_progress_score": quality.observed_progress_score,
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "actions": actions.len(),
