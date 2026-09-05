@@ -1,6 +1,8 @@
 /// Errors from embedding generation backends (OpenAI, local models, etc.).
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum EmbeddingGenerationError {
+    #[error("Invalid embedding request: {0}")]
+    InvalidRequest(String),
     #[error("Connection error: {0}")]
     Connection(String),
     #[error("API error: status {0}: {1}")]

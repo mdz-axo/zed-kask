@@ -1692,10 +1692,9 @@ fn main() {
                                     &cx,
                                 )
                                 .await
-                                .map(|(api_url, api_key)| {
+                                .map(|credentials| {
                                     kask_bridge::LanguageModelEmbeddingPort::new(
-                                        api_url,
-                                        api_key,
+                                        credentials,
                                         http_client,
                                         tokio_handle,
                                     )

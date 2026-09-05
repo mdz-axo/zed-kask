@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -112,7 +112,7 @@ const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 /// context (a thread-local): the child-process spawn registers the stdio
 /// pipes with the IO driver, the retry backoff is `tokio::time::sleep`, and
 /// the keeper/supervisor/stderr tasks are `tokio::spawn`ed. Deliberate
-/// callers run on the tokio runtime (the health supervisor's `block_on`,
+/// callers run on the tokio runtime (the health supervisor's startup worker,
 /// the `Tokio::spawn` launch and settings-restart paths), but the on-demand
 /// reconnect (`call_tool_inner → try_reconnect`) is polled by whoever awaits
 /// `ToolPort::invoke` — and a caller on a reactor-less executor (the GPUI
@@ -212,6 +212,7 @@ fn resolve_u32_env(var: &str, default: u32) -> u32 {
 struct McpRuntimeConfig {
     reconnect_cooldown: Duration,
     startup_max_retries: u32,
+    startup_timeout: Duration,
     startup_initial_backoff: Duration,
     startup_max_backoff: Duration,
     health_check_interval: Duration,
@@ -224,6 +225,10 @@ impl Default for McpRuntimeConfig {
             reconnect_cooldown: resolve_duration_env_secs(
                 "HKASK_MCP_RECONNECT_COOLDOWN_SECS",
                 DEFAULT_RECONNECT_COOLDOWN,
+            ),
+            startup_timeout: resolve_duration_env_secs(
+                "HKASK_MCP_STARTUP_TIMEOUT_SECS",
+                DEFAULT_HEALTH_CHECK_INTERVAL,
             ),
             startup_max_retries: resolve_u32_env(
                 "HKASK_MCP_STARTUP_MAX_RETRIES",
@@ -335,6 +340,13 @@ pub enum ServerStartError {
     ConnectFailed(String),
     #[error("Failed to discover tools from server: {0}")]
     DiscoveryFailed(String),
+    #[error("MCP server '{0}' startup cancelled by stop or replacement")]
+    Cancelled(String),
+    #[error("MCP server '{server_id}' timed out during {phase}")]
+    TimedOut {
+        server_id: String,
+        phase: &'static str,
+    },
 }
 
 /// Resolve the binary path for an MCP server.
@@ -380,6 +392,19 @@ struct ToolGovernance {
 struct LaunchSpec {
     command: String,
     env: hkask_types::ServerEnv,
+    generation: u64,
+    cancel: CancellationToken,
+}
+
+impl LaunchSpec {
+    fn new(command: String, env: hkask_types::ServerEnv) -> Self {
+        Self {
+            command,
+            env,
+            generation: CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed),
+            cancel: CancellationToken::new(),
+        }
+    }
 }
 
 /// Monotonic generation counter for connection identity.
@@ -411,6 +436,8 @@ enum ConnectionState {
 
 #[derive(Clone)]
 pub struct McpRuntime {
+    /// Serializes desired-state changes and publication, never handshake/discovery.
+    lifecycle: Arc<Mutex<()>>,
     /// Registered MCP servers (metadata)
     servers: Arc<RwLock<HashMap<String, McpServer>>>,
     /// Tool registry (tool_name -> server_id)
@@ -440,6 +467,7 @@ impl McpRuntime {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            lifecycle: Arc::new(Mutex::new(())),
             servers: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
@@ -551,52 +579,44 @@ impl McpRuntime {
         command: &str,
         env: hkask_types::ServerEnv,
     ) -> Result<(), ServerStartError> {
-        // Acquire write lock first to prevent TOCTOU races.
-        {
-            let mut connections = self.connections.write().await;
-            match connections.get(server_id) {
-                Some(existing) if !existing.peer.is_transport_closed() => {
-                    info!(
-                        target: "hkask.mcp",
-                        server_id = %server_id,
-                        "Server already connected"
-                    );
-                    return Ok(());
-                }
-                Some(_) => {
-                    // A dead entry: drop it so the fresh connection below replaces
-                    // it even if the handshake takes a while.
-                    tracing::warn!(
-                        target: "hkask.mcp",
-                        server_id = %server_id,
-                        "Replacing a closed connection"
-                    );
-                    connections.remove(server_id);
-                }
-                None => {}
+        let spec = {
+            let _lifecycle = self.lifecycle.lock().await;
+            if self.get_peer(server_id).await.is_some() {
+                return Ok(());
             }
+            let spec = LaunchSpec::new(command.to_string(), env);
+            if let Some(previous) = self
+                .launch_specs
+                .write()
+                .await
+                .insert(server_id.to_string(), spec.clone())
+            {
+                previous.cancel.cancel();
+            }
+            spec
+        };
+        self.start_recorded(server_id, &spec).await
+    }
+
+    async fn start_recorded(
+        &self,
+        server_id: &str,
+        spec: &LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        tokio::select! {
+            biased;
+            _ = spec.cancel.cancelled() => Err(ServerStartError::Cancelled(server_id.to_string())),
+            result = self.start_connection(server_id, spec) => result,
         }
-        // Lock dropped — the spawn+handshake below does not hold the connections
-        // lock across `.await` points. This keeps the future closer to `Send`,
-        // though `start_server_with_env` is still not fully `Send` because
-        // `serve(transport).await` captures the `TokioChildProcess` (which
-        // contains a `Box<dyn ChildWrapper>`). The health supervisor works
-        // around this by running on the multi-thread `gpui_tokio` runtime,
-        // which can host non-`Send` futures in a `tokio::spawn` task. The
-        // supervisor clones the runtime (all fields are `Arc<RwLock<...>>`)
-        // and calls `start_server_with_env` directly — see the supervisor
-        // spawn below for the full reasoning.
+    }
 
-        // Record the launch spec before spawning so a later reconnect can rebuild
-        // this server even if this attempt fails partway through.
-        self.launch_specs.write().await.insert(
-            server_id.to_string(),
-            LaunchSpec {
-                command: command.to_string(),
-                env: env.clone(),
-            },
-        );
-
+    async fn start_connection(
+        &self,
+        server_id: &str,
+        spec: &LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        let command = &spec.command;
+        let env = &spec.env;
         // Resolve the binary path: check HKASK_MCP_{ID}_BIN first, then fall back
         // to PATH-based resolution. The env var allows pointing at a specific build
         //
@@ -614,6 +634,9 @@ impl McpRuntime {
         let mut attempt: u32 = 0;
         let running = loop {
             let mut cmd = Command::new(&binary);
+            // Fallback if the runtime itself shuts down during rmcp's graceful
+            // close: dropping the child must still terminate the process.
+            cmd.kill_on_drop(true);
             // `Command` inherits the parent env by default, and the parent
             // process may have API keys in its environment (set via shell
             // env vars) and sets HKASK_SMTP_PASSWORD. Inheriting meant every
@@ -698,7 +721,14 @@ impl McpRuntime {
                 });
             }
 
-            match ().into_dyn().serve(transport).await {
+            let handshake =
+                tokio::time::timeout(self.config.startup_timeout, ().into_dyn().serve(transport))
+                    .await
+                    .map_err(|_| ServerStartError::TimedOut {
+                        server_id: server_id.to_string(),
+                        phase: "handshake",
+                    })?;
+            match handshake {
                 Ok(running) => break Some(running),
                 Err(e) => {
                     last_error = Some(ServerStartError::ConnectFailed(format!(
@@ -732,6 +762,9 @@ impl McpRuntime {
 
         let peer = running.peer().clone();
         let cancel = CancellationToken::new();
+        // On discovery error, cancellation, or a losing publication race, this
+        // guard cancels the keeper; ownership transfers only after publication.
+        let startup_guard = cancel.clone().drop_guard();
         let generation = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
 
         // Keep the RunningService alive in a background task.
@@ -744,8 +777,9 @@ impl McpRuntime {
         // healthy replacement installed by a reconnect.
         let bg_cancel = cancel.clone();
         let reap_connections = self.connections.clone();
-        let reap_tokens = self.cancellation_tokens.clone();
+
         let reap_id = server_id.to_string();
+        let reap_lifecycle = self.lifecycle.clone();
         tokio::spawn(async move {
             let reaped = tokio::select! {
                 quit = running.waiting() => {
@@ -774,38 +808,46 @@ impl McpRuntime {
             if !reaped {
                 return;
             }
+            let _lifecycle = reap_lifecycle.lock().await;
             let mut connections = reap_connections.write().await;
             if connections
                 .get(&reap_id)
                 .is_some_and(|current| current.generation == generation)
             {
                 connections.remove(&reap_id);
-                drop(connections);
-                reap_tokens.write().await.remove(&reap_id);
+                // Retain the token until replacement/stop so the still-running
+                // supervisor remains owned and can be cancelled.
             }
         });
 
         // Discover tools from the live server
-        let tools = peer.list_all_tools().await.map_err(|e| {
-            ServerStartError::DiscoveryFailed(format!(
-                "list_all_tools from '{}' failed: {}",
-                server_id, e
-            ))
-        })?;
+        let tools = tokio::time::timeout(self.config.startup_timeout, peer.list_all_tools())
+            .await
+            .map_err(|_| ServerStartError::TimedOut {
+                server_id: server_id.to_string(),
+                phase: "tool discovery",
+            })?
+            .map_err(|e| {
+                ServerStartError::DiscoveryFailed(format!(
+                    "list_all_tools from '{}' failed: {}",
+                    server_id, e
+                ))
+            })?;
 
-        // Re-acquire the connections write lock to insert the new connection.
-        // The lock was dropped before the spawn+handshake to keep the future `Send`,
-        // which opens a TOCTOU window: a concurrent `start_server_with_env` for
-        // the same server_id (e.g. from `try_reconnect`) may have already inserted
-        // a live connection. If so, drop the new connection (its `RunningService`
-        // and child process are cleaned up by rmcp's DropGuard) rather than
-        // overwriting the existing one and orphaning its keeper task.
-        //
-        // The keeper task for this (loser) connection was already spawned above
-        // and holds the `RunningService` alive. We must cancel it so the child
-        // process is killed and the keeper exits — otherwise the loser's process
-        // and keeper task leak (nobody holds the cancellation token for this
-        // generation, since the insert below is skipped).
+        // Stop/replacement and publication share this lock. A reconnect carries
+        // the original spec; it cannot manufacture a fresh desired generation.
+        let _lifecycle = self.lifecycle.lock().await;
+        if !self
+            .launch_specs
+            .read()
+            .await
+            .get(server_id)
+            .is_some_and(|current| {
+                current.generation == spec.generation && !current.cancel.is_cancelled()
+            })
+        {
+            return Err(ServerStartError::Cancelled(server_id.to_string()));
+        }
         {
             let mut connections = self.connections.write().await;
             if let Some(existing) = connections.get(server_id)
@@ -876,6 +918,7 @@ impl McpRuntime {
         // for the full design — the supervisor is the proactive self-healing
         // path that restarts crashed servers even when no tool call is in flight.
         self.spawn_health_supervisor(server_id, cancel);
+        startup_guard.disarm();
 
         Ok(())
     }
@@ -900,17 +943,8 @@ impl McpRuntime {
     /// open transport) — that would require a ping-based health check, which
     /// is a future enhancement.
     ///
-    /// The supervisor attempts a restart on every unhealthy check by
-    /// re-invoking `start_server_with_env` with the recorded launch spec.
-    /// `McpRuntime: Clone + Send + Sync` (all fields are `Arc<RwLock<...>>`),
-    /// so the supervisor clones the runtime and spawns the restart inline.
-    /// The `start_server_with_env` future is not `Send` (it holds
-    /// `RwLockWriteGuard` across `.await` points), but the supervisor itself
-    /// is a `tokio::spawn` task on the multi-thread runtime, which can host
-    /// non-`Send` futures — unlike `tokio::spawn` which requires `Send`, the
-    /// `LocalSet`-free `tokio::spawn` on the current-thread runtime would
-    /// not. The governed runtime runs on the multi-thread `gpui_tokio`
-    /// runtime, so this is safe.
+    /// Restarts retain the recorded desired generation and run on the runtime's
+    /// blocking pool. Stop cancels that generation even during startup.
     ///
     /// After `config.max_consecutive_health_failures` consecutive failures
     /// the circuit breaker stops auto-healing the server with an
@@ -970,8 +1004,14 @@ impl McpRuntime {
                             "MCP server transport closed — supervisor removing dead connection"
                         );
                         {
+                            let _lifecycle = supervisor_runtime.lifecycle.lock().await;
                             let mut connections = supervisor_connections.write().await;
-                            connections.remove(&supervisor_id);
+                            if connections
+                                .get(&supervisor_id)
+                                .is_some_and(|connection| connection.peer.is_transport_closed())
+                            {
+                                connections.remove(&supervisor_id);
+                            }
                         }
                     }
                     ConnectionState::Missing => {
@@ -1016,23 +1056,7 @@ impl McpRuntime {
                     continue;
                 };
 
-                // Re-check the cancellation token before the restart. There is a
-                // TOCTOU window between the spec read above and the
-                // `start_server_with_env` call below: `stop_server` could clear
-                // the spec and cancel the token in between. Without this check,
-                // the supervisor would resurrect a deliberately stopped server.
-                // The `block_in_place` call below blocks the supervisor task, so
-                // the `tokio::select!` cancellation arm cannot interrupt it —
-                // this check closes the window for the common case (stop fires
-                // before the restart begins). A stop that fires *during* the
-                // `block_in_place` is still racy, but `start_server_with_env`'s
-                // idempotency check (line ~454) would see the cancellation token
-                // removed and the connection absent, so it would proceed —
-                // however, the resulting process would be reaped on the next
-                // supervisor tick because `stop_server` also cancels the
-                // supervisor token, so the supervisor exits and the keeper task
-                // for the new process reaps it on the next death. The residual
-                // race is bounded and self-correcting.
+                // The retained launch generation is also checked at publication.
                 if supervisor_cancel.is_cancelled() {
                     info!(
                         target: "hkask.mcp",
@@ -1073,29 +1097,9 @@ impl McpRuntime {
                     connection_state = ?connection_state,
                     "MCP server unhealthy — supervisor attempting restart"
                 );
-                // `start_server_with_env` is not `Send` (it holds
-                // `RwLockWriteGuard` across `.await` points and captures
-                // `TokioChildProcess` which contains a `Box<dyn ChildWrapper>`),
-                // so it cannot be `.await`'d directly inside a `tokio::spawn`
-                // task (which requires `Send`). `block_in_place` moves the
-                // blocking onto a dedicated thread (the multi-thread runtime's
-                // blocking pool), and `Handle::current().block_on` drives the
-                // future to completion on the runtime's reactor without
-                // requiring `Send`. This is the same pattern used by
-                // `hkask-mcp-kata-kanban` for `resolve_worktree_spawn_port`.
-                //
-                // SAFETY: `block_in_place` is safe on the multi-thread runtime.
-                // The governed runtime runs on `gpui_tokio`'s multi-thread
-                // runtime, so this is always satisfied in production. In tests,
-                // `#[tokio::test(flavor = "multi_thread")]` provides the
-                // required runtime flavor.
-                let restart_outcome = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        supervisor_runtime
-                            .start_server_with_env(&supervisor_id, &spec.command, spec.env)
-                            .await
-                    })
-                });
+                let restart_outcome = supervisor_runtime
+                    .restart_on_runtime(&supervisor_id, spec)
+                    .await;
                 match restart_outcome {
                     Ok(()) => {
                         info!(
@@ -1140,8 +1144,8 @@ impl McpRuntime {
     /// **Feature-gated to `test-fixture` deliberately.** Reap-on-death is only
     /// observable by reading connection state directly — every production path
     /// (`invoke`) *heals* on a missing peer, so it cannot distinguish "reaped"
-    /// from "never reaped but reconnected". A future `tests/reconnect_integration.rs`
-    /// (not yet written) would need that distinction to pin the reap independently.
+    /// from "never reaped but reconnected". `tests/reconnect_integration.rs`
+    /// uses that distinction to pin the reap independently.
     ///
     /// Not exposed unconditionally because nothing in production consumes it, and
     /// an always-present "for health checks" accessor with no health surface is
@@ -1203,37 +1207,7 @@ impl McpRuntime {
             server_id = %server_id,
             "Reconnecting to MCP server after transport loss"
         );
-        // `start_server_with_env` needs a tokio reactor context (see
-        // [`SPAWN_RUNTIME`]). Callers already on the tokio runtime carry it;
-        // a caller on a reactor-less executor hops onto the configured
-        // runtime via `Handle::block_on`, which parks the calling thread and
-        // drives the future with the context entered, so the spawn, backoff
-        // sleeps, and task spawns all find a reactor. This cannot deadlock:
-        // `start_server_with_env` touches only tokio and the filesystem,
-        // never the caller's own executor — the `.rules` block-on trap is
-        // about futures that need the blocked executor to make progress.
-        let start_result = match tokio::runtime::Handle::try_current() {
-            Ok(_) => {
-                self.start_server_with_env(server_id, &spec.command, spec.env)
-                    .await
-            }
-            Err(_) => {
-                let Some(handle) = configured_spawn_runtime() else {
-                    // Per `.rules` (failure signals): an unwired hook must be
-                    // distinguishable from a failed reconnect, not silently
-                    // reported as "could not reconnect".
-                    warn!(
-                        target: "hkask.mcp",
-                        server_id = %server_id,
-                        "Reconnect reached a non-tokio executor with no spawn runtime wired — \
-                         cannot reconnect (the embedder must call hkask_mcp::set_spawn_runtime \
-                         at startup)"
-                    );
-                    return false;
-                };
-                handle.block_on(self.start_server_with_env(server_id, &spec.command, spec.env))
-            }
-        };
+        let start_result = self.restart_on_runtime(server_id, spec).await;
         match start_result {
             Ok(()) => {
                 info!(
@@ -1255,11 +1229,45 @@ impl McpRuntime {
         }
     }
 
+    async fn restart_on_runtime(
+        &self,
+        server_id: &str,
+        spec: LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        let handle = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(configured_spawn_runtime)
+            .ok_or_else(|| {
+                ServerStartError::ConnectFailed(format!(
+                    "'{server_id}': no spawn runtime wired; call set_spawn_runtime at startup"
+                ))
+            })?;
+        let runtime = self.clone();
+        let server_id = server_id.to_string();
+        let worker_handle = handle.clone();
+        // Construct and poll the potentially non-Send startup future on a
+        // runtime worker, never by parking the caller's executor thread.
+        handle
+            .spawn_blocking(move || {
+                worker_handle.block_on(runtime.start_recorded(&server_id, &spec))
+            })
+            .await
+            .map_err(|error| {
+                ServerStartError::ConnectFailed(format!("startup worker failed: {error}"))
+            })?
+    }
+
     /// Shut down all managed server processes.
     ///
     /// Clears the launch specs too: a deliberate shutdown must not leave a
     /// reconnect path that would resurrect servers the caller just stopped.
     pub async fn shutdown_all(&self) {
+        let _lifecycle = self.lifecycle.lock().await;
+        for (_, spec) in self.launch_specs.write().await.drain() {
+            spec.cancel.cancel();
+        }
+        self.servers.write().await.clear();
+        self.tool_registry.write().await.clear();
         // Drop the connections before cancelling so a keeper task racing the
         // cancellation finds nothing of its own generation to reap.
         self.connections.write().await.clear();
@@ -1268,7 +1276,6 @@ impl McpRuntime {
             cancel.cancel();
         }
         drop(tokens);
-        self.launch_specs.write().await.clear();
         self.last_reconnect.write().await.clear();
         self.health_failures.write().await.clear();
     }
@@ -1288,6 +1295,10 @@ impl McpRuntime {
     /// server that was deliberately stopped. The restart path re-records the spec
     /// when it calls `start_server_with_env` again.
     pub async fn stop_server(&self, server_id: &str) {
+        let _lifecycle = self.lifecycle.lock().await;
+        if let Some(spec) = self.launch_specs.write().await.remove(server_id) {
+            spec.cancel.cancel();
+        }
         // Remove the connection first: the keeper task's cancellation arm does not
         // reap, so removing here (before cancelling) keeps the two paths from
         // racing over the same entry.
@@ -1295,7 +1306,6 @@ impl McpRuntime {
         if let Some(cancel) = self.cancellation_tokens.write().await.remove(server_id) {
             cancel.cancel();
         }
-        self.launch_specs.write().await.remove(server_id);
         self.last_reconnect.write().await.remove(server_id);
         self.health_failures.write().await.remove(server_id);
         // Drop the server's tools from the registry so stale names do not
@@ -1931,10 +1941,10 @@ mod reconnect_path_tests {
         // Record a launch spec directly, as `start_server_with_env` would.
         runtime.launch_specs.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec {
-                command: "mcp-test-fixture".to_string(),
-                env: hkask_types::ServerEnv::default(),
-            },
+            LaunchSpec::new(
+                "mcp-test-fixture".to_string(),
+                hkask_types::ServerEnv::default(),
+            ),
         );
         runtime
             .last_reconnect
@@ -1963,17 +1973,11 @@ mod reconnect_path_tests {
         let mut specs = runtime.launch_specs.write().await;
         specs.insert(
             "a".to_string(),
-            LaunchSpec {
-                command: "a".to_string(),
-                env: hkask_types::ServerEnv::default(),
-            },
+            LaunchSpec::new("a".to_string(), hkask_types::ServerEnv::default()),
         );
         specs.insert(
             "b".to_string(),
-            LaunchSpec {
-                command: "b".to_string(),
-                env: hkask_types::ServerEnv::default(),
-            },
+            LaunchSpec::new("b".to_string(), hkask_types::ServerEnv::default()),
         );
         drop(specs);
         let mut last = runtime.last_reconnect.write().await;
@@ -2010,10 +2014,10 @@ mod reconnect_path_tests {
         // rather than the no-spec early return.
         runtime.launch_specs.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec {
-                command: "mcp-test-fixture".to_string(),
-                env: hkask_types::ServerEnv::default(),
-            },
+            LaunchSpec::new(
+                "mcp-test-fixture".to_string(),
+                hkask_types::ServerEnv::default(),
+            ),
         );
 
         // First call: reaches the cooldown gate, stamps `last_reconnect`,
@@ -2079,10 +2083,7 @@ mod reconnect_path_tests {
         )]));
         runtime.launch_specs.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec {
-                command: "mcp-test-fixture".to_string(),
-                env: fixture_env.clone(),
-            },
+            LaunchSpec::new("mcp-test-fixture".to_string(), fixture_env.clone()),
         );
 
         // The spec is present and carries the env a reconnect would need.

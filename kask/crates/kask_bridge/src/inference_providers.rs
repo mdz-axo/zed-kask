@@ -375,7 +375,14 @@ pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
     urls
 }
 
-/// Resolve `(api_url, api_key)` for an embedding model string by reading
+/// A provider descriptor and its key, resolved together so dispatch cannot
+/// lose the destination identity when stripping a model prefix.
+pub struct ResolvedEmbeddingCredentials {
+    pub(crate) provider: &'static InferenceProviderDescriptor,
+    pub(crate) api_key: String,
+}
+
+/// Resolve provider-bound credentials for an embedding model string by reading
 /// the API key from the Zed keychain at the provider's `api_url`.
 ///
 /// This is the direct path: parse the provider prefix from the model string
@@ -396,7 +403,7 @@ pub async fn resolve_embedding_credentials(
     embedding_model: &str,
     credentials_provider: &dyn CredentialsProvider,
     cx: &gpui::AsyncApp,
-) -> Option<(String, String)> {
+) -> Option<ResolvedEmbeddingCredentials> {
     let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
         tracing::warn!(
             "Embedding model '{}' has no recognized provider prefix \
@@ -412,7 +419,10 @@ pub async fn resolve_embedding_credentials(
     // `env_var` signals "no key needed." Return an empty key so the embedding
     // port can connect without authentication.
     if provider.env_var.is_empty() {
-        return Some((provider.api_url.to_string(), String::new()));
+        return Some(ResolvedEmbeddingCredentials {
+            provider,
+            api_key: String::new(),
+        });
     }
 
     // Read the API key from the Zed keychain at the provider's `api_url`.
@@ -458,7 +468,7 @@ pub async fn resolve_embedding_credentials(
         }
     };
 
-    Some((provider.api_url.to_string(), api_key))
+    Some(ResolvedEmbeddingCredentials { provider, api_key })
 }
 
 /// Find the `InferenceProviderDescriptor` for an embedding model string by
@@ -466,106 +476,18 @@ pub async fn resolve_embedding_credentials(
 fn embedding_provider_descriptor(
     embedding_model: &str,
 ) -> Option<&'static InferenceProviderDescriptor> {
-    for provider in INFERENCE_PROVIDERS {
-        let prefix = format!("{}/", provider.id);
-        if embedding_model.len() >= prefix.len()
-            && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
-        {
-            return Some(provider);
-        }
+    let (prefix, model) = embedding_model.split_once('/')?;
+    if model.is_empty() {
+        return None;
     }
-    None
-}
-
-/// Strip the provider prefix from a model string, case-insensitive.
-///
-/// Accepts long-form prefixes (`OpenRouter/`,
-/// `RunPod/`, `ollama/`, `DeepInfra/`).
-/// Returns the bare model id. If no prefix is recognized, returns the
-/// string unchanged (the API will reject it, which surfaces a clear error).
-///
-/// The recognized prefixes are driven by the bridge's `INFERENCE_PROVIDERS`
-/// table — adding a provider there automatically extends stripping here.
-/// This is the single source of truth: a previous hardcoded `LONG_FORM`
-/// table diverged from `INFERENCE_PROVIDERS` and omitted `DeepInfra/`,
-/// causing the default embedding model to reach the DeepInfra API unstripped
-/// and 404 with `model_not_found`.
-pub(crate) fn strip_provider_prefix(model: &str) -> String {
-    for provider in INFERENCE_PROVIDERS {
-        let prefix = provider.id;
-        if model.len() > prefix.len() + 1
-            && model.as_bytes()[prefix.len()] == b'/'
-            && model[..prefix.len()].eq_ignore_ascii_case(prefix)
-        {
-            return model[prefix.len() + 1..].to_string();
-        }
-    }
-
-    // No recognized prefix — return as-is. The API will reject an unknown
-    // model, which surfaces a clear error to the operator.
-    model.to_string()
+    INFERENCE_PROVIDERS
+        .iter()
+        .find(|provider| provider.id.eq_ignore_ascii_case(prefix))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{INFERENCE_PROVIDERS, strip_provider_prefix};
-
-    // Regression for the embedding 404: `DEFAULT_EMBEDDING_MODEL` is
-    // `DeepInfra/Qwen/Qwen3-Embedding-0.6B`, but the old hardcoded
-    // `LONG_FORM` table omitted `DeepInfra/`, so the full prefixed string
-    // reached the DeepInfra `/embeddings` endpoint and 404'd with
-    // `model_not_found`. The fix drives the prefix set from
-    // `INFERENCE_PROVIDERS`, which registers `DeepInfra`.
-    #[test]
-    fn strip_provider_prefix_handles_deepinfra() {
-        assert_eq!(
-            strip_provider_prefix("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
-            "Qwen/Qwen3-Embedding-0.6B"
-        );
-    }
-
-    // Case-insensitivity is load-bearing: operators may write `deepinfra/...`
-    // or `OPENROUTER/...` in settings. The `eq_ignore_ascii_case` match
-    // must cover all casings.
-    #[test]
-    fn strip_provider_prefix_is_case_insensitive() {
-        assert_eq!(
-            strip_provider_prefix("deepinfra/Qwen/Qwen3-Embedding-0.6B"),
-            "Qwen/Qwen3-Embedding-0.6B"
-        );
-        assert_eq!(
-            strip_provider_prefix("OPENROUTER/z-ai/glm-5.2"),
-            "z-ai/glm-5.2"
-        );
-    }
-
-    // Every provider registered in `INFERENCE_PROVIDERS` must be strippable.
-    // This is the single-source-of-truth contract: if a provider is added to
-    // the table, stripping comes for free. If this test breaks, either the
-    // table or the stripper diverged.
-    #[test]
-    fn strip_provider_prefix_handles_every_registered_provider() {
-        for provider in INFERENCE_PROVIDERS {
-            let prefixed = format!("{}/some-model", provider.id);
-            assert_eq!(
-                strip_provider_prefix(&prefixed),
-                "some-model",
-                "provider {} not strippable",
-                provider.id
-            );
-        }
-    }
-
-    // Unrecognized prefixes pass through unchanged — the API rejects them
-    // with a clear error. This is the documented fallback behavior.
-    #[test]
-    fn strip_provider_prefix_passes_through_unknown_prefix() {
-        assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
-        assert_eq!(
-            strip_provider_prefix("UnknownProvider/some-model"),
-            "UnknownProvider/some-model"
-        );
-    }
+    use super::INFERENCE_PROVIDERS;
 
     // zed-kask: pins the inference-provider credential consolidation (the
     // 2026-08-31 split-brain fix — successor to the D29 mirror contract):

@@ -64,7 +64,7 @@ their store modules' `init_schema` methods.
 | `HMemStore::update` (single-connection tx) | `kask/crates/hkask-storage/src/hmem.rs:404-476` |
 | `HMemStore::touch_recall` (decay clock) | `kask/crates/hkask-storage/src/hmem.rs:501-507` |
 | Ontology queries (`json_extract` paths) | `kask/crates/hkask-storage/src/hmem.rs:586-700` |
-| `HMemStore::close_by_id` / `delete_by_id` | `kask/crates/hkask-storage/src/hmem.rs:709-729` |
+| `HMemStore::delete_by_id` | `kask/crates/hkask-storage/src/hmem.rs:709-729` |
 | `StoredEmbedding` / `SimilarityResult` | `kask/crates/hkask-storage/src/embeddings.rs:27-39` |
 | `EmbeddingStore` | `kask/crates/hkask-storage/src/embeddings.rs:64-68` |
 | `EmbeddingStore::from_driver` (dim==0 clamp) | `kask/crates/hkask-storage/src/embeddings.rs:83-110` |
@@ -185,7 +185,7 @@ erDiagram
         TEXT attribute
         TEXT value
         TEXT valid_from
-        TEXT valid_to
+
         TEXT recalled_at
         REAL confidence
         TEXT perspective
@@ -270,15 +270,17 @@ status: VERIFIED
 ### Memory and embeddings
 
 The `hmems` table (`schema.sql:1`) is the entity-attribute-value store for
-hKask memory. Each row is a uni-temporal triple with `valid_from`/`valid_to`
-(valid time; `valid_to IS NULL` means live), `recalled_at` (recall-time decay
+hKask memory. Each retained row has `valid_from` (creation time) and
+`recalled_at` (recall-time decay
 clock, reset by `HMemStore::touch_recall` at `hmem.rs:501-507`),
 `owner_webid` and `visibility` (sovereignty), `perspective`
 (multi-perspective modeling), and `ontology` (a JSON blob carrying the
 dual-axis anchoring — DC+BIBO state axis + PKO process axis + 5W1H +
 open-world domain tags; `hmem.rs:53-58`). Ontology queries reach into the
 blob with SQLite `json_extract`, guarded by `json_valid(ontology)`
-(`hmem.rs:586-700`).
+(`hmem.rs:586-700`). Forgetting physically deletes rows; there is no
+expired-row state or `close_by_id` compatibility API (operator decision
+2026-09-04).
 
 The `embeddings` table (`schema.sql:5`) stores vector embeddings keyed by
 `entity_ref`, with a `vector` BLOB (little-endian f32), `dimensions`,

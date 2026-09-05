@@ -176,7 +176,7 @@ pub(crate) fn spawn_distillation_timer(
                 "Memory distillation pass complete"
             );
             // Distillation-gated forgetting (operator ruling 2026-09-04):
-            // forget (expire) the shared-copy turns of threads whose
+            // delete the shared-copy turns of threads whose
             // distillation watermark has aged past the forgetting
             // threshold — the goldfish principle's automatic leg.
             if forgetting_days > 0 {
@@ -186,7 +186,7 @@ pub(crate) fn spawn_distillation_timer(
                     target: "hkask.mcp.curator.forgetting",
                     threads_examined = forgetting_outcome.threads_examined,
                     threads_forgotten = forgetting_outcome.threads_forgotten,
-                    turns_expired = forgetting_outcome.turns_expired,
+                    turns_deleted = forgetting_outcome.turns_deleted,
                     embeddings_deleted = forgetting_outcome.embeddings_deleted,
                     orphans_swept = forgetting_outcome.orphans_swept,
                     "Memory forgetting pass complete"

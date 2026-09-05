@@ -2,8 +2,7 @@
 
 Vector embedding + relational lookup memory for hKask.
 
-Implements the memory pipeline: turn ingestion → episodic h_mem + prompt
-embedding → consolidation → semantic recall.
+Implements turn ingestion → h_mem + embedding → cleanup → semantic recall.
 
 ## Architecture
 
@@ -15,8 +14,7 @@ full turn text.
 - **`MemoryStore`** — wraps `HMemStore` (relational EAV) + `EmbeddingStore`
   (sqlite-vec vectors). Provides `store`, `store_embedding`, `search_similar`,
   `query_deduped`, and decay/touch operations.
-- **`MemoryConsolidator`** — background episodic → semantic promotion
-  (Bayesian confidence combine, budget-gated pruning).
+- **`MemoryConsolidator`** — confidence-floor cleanup and storage-budget pruning.
 
 The bridge that wires thread turns into this store lives in `kask_bridge`
 (`RealMemoryPort`), not in this crate.
@@ -44,17 +42,15 @@ concurrent recall).
 
 ## Consolidation
 
-Episodic → Semantic is a one-way bridge. Runs on a background timer
-(cadence from `kask.memory.consolidation_cadence_secs`, default 300s):
+`MemoryConsolidator::consolidate` deletes rows at or below a supplied confidence
+floor, then prunes lowest-confidence rows to the requested storage budget when
+needed. It does not promote, re-tag, or change visibility. Memory rows are
+unified; distillation and age-gated forgetting live in the curator server.
 
-1. Selects oldest, lowest-confidence episodic candidates
-2. Re-tags ontology from episodic (PKO) to semantic (DC+BIBO)
-3. Sets visibility to Shared
-4. Bayesian combines with existing semantic h_mems (log-odds pooling)
-5. Expires episodic source (soft-delete via `valid_to`)
-6. Prunes by confidence floor and storage budget
-
-Decoupled from ingestion — runs on the timer, not in the `ingest_turn` path.
+Normalized-value dedup likewise physically deletes lower-confidence duplicates.
+There is no expired-memory state or compatibility alias; results report
+`deleted_count`. The one-time storage migration converts older soft-deleted
+rows to deletion rather than continuing to expose the old lifecycle.
 
 ## Documentation
 

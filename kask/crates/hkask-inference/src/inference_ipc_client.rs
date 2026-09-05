@@ -541,6 +541,9 @@ impl InferenceIpcClient {
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::Embeddings { embeddings } => Ok(embeddings),
+            InferenceOutcome::Error { error } if error.code == "InvalidRequest" => {
+                Err(EmbeddingGenerationError::InvalidRequest(error.message))
+            }
             InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(
                 format!("{}: {}", error.code, error.message),
             )),

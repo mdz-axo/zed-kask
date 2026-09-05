@@ -55,18 +55,27 @@ hKask operates under a Magna Carta — a charter of liberties that honors user s
 
 The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principles hKask is built to uphold. Some of the surface it names is **live in code (IS)**; the rest is **intended design (OUGHT)** that is not yet enforced. This section is the single source of truth for which is which, so a reader (human or agent) never implements an OUGHT type as if it were live code. Every status claim below was verified by grep of `kask/crates/**/*.rs` and `kask/mcp-servers/**/*.rs` on 2026-09-04.
 
+### Core-review decision — 2026-09-04
+
+The operator reaffirmed **parent-held delegation grants**: a child request may
+narrow, never enlarge, its grant. This is approved work (core-review T04), not
+completed enforcement. The present IPC membership check reads a caller-supplied
+list and is therefore request consistency checking, not independent child
+confinement. Same-UID Unix processes are not OS-isolated by this protocol.
+
 ### Live enforcement (IS)
 
 | Surface | Location | Role |
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
-| Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | **The authority gate for delegated dispatch.** Refuses any `server/tool` outside the child-declared allowlist, before dispatch |
+| Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | Request consistency check: refuses `server/tool` outside the child-declared list. Parent-held authority is not yet implemented (T04) |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:224-229` (declared set), `:441-447` (refusal) | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1378`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist
-> rows above — boundaries whose list the caller being checked does not choose.
+> boundaries whose list the checked caller cannot choose. The IPC row still
+> needs the parent-held grant implementation described above.
 
 ### Intended design (OUGHT) — NOT in code as of 2026-08-28
 

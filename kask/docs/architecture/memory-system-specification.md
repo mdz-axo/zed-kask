@@ -19,7 +19,7 @@ mds_categories: [lifecycle, domain, curation, trust]
 > duplicate (`goal:{id}`) are retired, and with them every dual-write code
 > path in this document's former §4. No backward compatibility requirement
 > exists (operator ruling, restated 2026-09-04): legacy whole-turn rows and
-> their envelope values are expired by the therapy hygiene pass and the
+> their envelope values are deleted by the therapy hygiene pass and the
 > forgetting pass, not accommodated in code. Ratified package: inline LLM
 > tagging via the classifier model / single copy under `curator:thread:` /
 > rule-based clean / no migration of old rows.
@@ -165,7 +165,7 @@ creation (`hmem.rs:141-149`).
 | `attribute`   | TEXT    | The attribute (e.g., `turn`)                   |
 | `value`       | TEXT    | JSON string of the turn content               |
 | `valid_from`  | TEXT    | Creation timestamp (`observed_at`)            |
-| `valid_to`    | TEXT    | Soft-delete timestamp (set by dedup/resolve)   |
+
 | `recalled_at` | TEXT    | Last recall time (decay clock, `NOT NULL DEFAULT datetime('now')`) |
 | `confidence`  | REAL    | Confidence score (0.0–1.0, default 1.0)        |
 | `perspective` | TEXT    | The WebID of the agent who wrote this          |
@@ -242,7 +242,7 @@ erDiagram
         TEXT attribute
         TEXT value
         TEXT valid_from
-        TEXT valid_to
+
         TEXT recalled_at
         REAL confidence
         TEXT perspective
@@ -618,7 +618,7 @@ The goldfish principle's automatic leg (operator ruling 2026-09-04;
 naming ruling the same day: one *forgets* memories — "retirement" was
 rejected as a workplace metaphor. Distinct from §7 decay, which is the
 confidence curve R(t) = exp(-t/S): two mechanisms, two names). A
-thread's shared-copy turns are expired — and their embeddings deleted
+thread's shared-copy turns are deleted — along with their embeddings
 — once the thread's newest distillation watermark is older than
 `forgetting_days`. The watermark proves the lessons were extracted; the
 age grace keeps recent conversations recallable. Time-based and
@@ -629,12 +629,12 @@ ruling 2026-09-04).
   2026-09-04 single-copy ruling there is no separate perspective original
   to preserve — a turn's content lives only in its shared chunks, so
   forgetting the shared copies forgets the turn (the lessons stay). The
-  legacy `chat:thread:` rows that predate the ruling were expired by the
-  therapy hygiene pass, not by this pass. Watermarks are never expired
+  legacy `chat:thread:` rows that predate the ruling were deleted by the
+  therapy hygiene pass, not by this pass. Watermarks are never deleted
   (idempotence markers). A never-distilled thread is never forgotten (no
   watermark, no proof of extraction). Pinned by
-  `forgetting_expires_only_aged_distilled_shared_turns`.
-- **Idempotent:** expired turns stay expired; a thread counts as
+  `forgetting_deletes_only_aged_distilled_shared_turns`.
+- **Idempotent:** deleted turns stay deleted; a thread counts as
   forgotten only when work was done. Pinned by `forgetting_is_idempotent`.
 - **Orphan sweep:** each pass deletes vector rows whose metadata row is
   gone (KNN's inner join already ignores them; the sweep reclaims space
@@ -792,10 +792,9 @@ floor — live in the curator server, pinned by
   `embed_for_semantic_recall` (`:1578`).
 - **`memory_update`** (`:1249`) — Bayesian combine (log-odds pooling),
   never replace (`:1249-1253`).
-- **`memory_resolve_contradiction`** (`:1319`) — the three Festinger
-  dissonance-resolution strategies: `expire` (soft-delete),
-  `update_confidence` (reduce importance), `delete` (remove dissonant)
-  (`:1319-1323`).
+- **`memory_resolve_contradiction`** — `forget` physically deletes the
+  dissonant h_mem; `update_confidence` reduces its importance. No `expire`
+  compatibility strategy is supported (operator reaffirmation 2026-09-04).
 - **`curator_memory_prune`** (`:1424`) — deterministic bulk hygiene:
   delete curator h_mems older than `max_age_days`, optionally sparing
   those recalled within a recent window.
@@ -823,7 +822,7 @@ graph TD
         Consult["curator_consult<br/>(read)"]
         Insert["memory_insert<br/>(write — evidence-grounded,<br/>confidence floor 0.5)"]
         Update["memory_update<br/>(write — Bayesian combine)"]
-        Resolve["memory_resolve_contradiction<br/>(write — expire/update/delete)"]
+        Resolve["memory_resolve_contradiction<br/>(write — forget/update_confidence)"]
         Prune["curator_memory_prune<br/>(deterministic bulk hygiene)"]
         Dedup["curator_memory_dedup<br/>(deterministic bulk hygiene)"]
         Extract["curator_memory_extract<br/>(on-demand candidate extraction)"]
@@ -914,7 +913,7 @@ sovereignty:
   its distilled lessons, not a private transcript copy.
 
 - **The user can purge memory.** The `memory_resolve_contradiction` tool
-  allows the user to expire, de-confidence, or delete any
+  allows the user to forget or reduce confidence in a memory
   (`hkask_mcp_curator.rs:1175`). `curator_memory_prune` (`:1280`)
   and `curator_memory_dedup` (`:1319`) provide deterministic bulk hygiene.
   The user is never trapped by accumulated memory.

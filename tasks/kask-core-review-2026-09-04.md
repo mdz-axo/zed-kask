@@ -1,7 +1,7 @@
 # Kask core review and improvement plan
 
 - Date: 2026-09-04
-- Status: **Implementation in progress — checkpoint below; D1–D5 still await explicit decisions**
+- Status: **Implementation in progress — 13/20 tasks verified; D1/D2/D3/D5 approved; D4 weekly-review proposal awaits confirmation**
 - Scope: all 18 crates under `kask/crates`, with deeper inspection of critical paths and selected production consumers outside that directory
 - Initial baseline: `535e9b2b8b523a933af41248deaf0bdb02bf7b12`
 - Validation baseline: `a3496b7164fc1a49e050a245e8ea12d6633d9c88`
@@ -10,7 +10,99 @@
 
 All source paths below are relative to the repository root. Line citations describe the reviewed snapshot. HEAD advanced externally during inspection; `git diff 535e9b2b8b HEAD --stat -- kask/crates` was empty at the coordinator's verification. Existing uncommitted work was not changed by this review. No source changes or fixes were made. This new report does not replace `tasks/plan.md`, `tasks/todo.md`, or any canonical design specification.
 
-## Implementation checkpoint — 2026-09-04
+## Continuation checkpoint — 2026-09-04
+
+Baseline: `93e9a89799` (the preceding checkpoint was committed externally).
+The following decisions supersede the earlier checkpoint's approval gates:
+
+| Decision | Operator ruling / implementation status |
+|---|---|
+| Memory repair / compatibility | **Approved:** repair the forgetting-migration build break; no backward compatibility requirement. Remove obsolete expiry API/field usage, not restore shims. The existing one-time forward schema conversion remains; old lifecycle behavior is not supported. |
+| D1 | **Approved:** parent-held delegation grants; child requests may narrow but cannot enlarge them. Not OS isolation against arbitrary same-UID code. T04 remains to implement. |
+| D2 | **Approved and implemented:** reject mismatched embedding providers before sending; no silent destination substitution. The port accepts a provider-bound credential bundle. Unqualified/unknown prefixes also fail before HTTP. |
+| D3 | **Approved:** admission-to-completion inference deadline, explicit overload/cancellation errors, and no replay of unknown-effect work. Preserve AIMD. T13/T14 remain to implement; T08's MCP startup deadline is separate. |
+| D5 | **Approved:** visible temporary passphrase maintenance/recovery, settled writers and reopened consumers; all databases succeed before keychain publication. T11 remains to implement and is still a live-rotation safety gap. |
+| D4 | **Proposal, not ratified:** weekly advice review, not weekly sensing. Reconcile recovery promptly from fresh observations; never interpret missing data as healthy. Start a seven-day assessment window after confirmed human action, distinguish improvement/recovery/no improvement/insufficient evidence, and do not infer causal efficacy from an accepted observation. User asked whether weekly was appropriate; no seven-day constant or timer has been added. |
+
+### Newly verified
+
+- **Memory repair:** `MemoryStore::dedup_by_normalized_value` uses `query_all`
+  and `delete_by_id`, reports `deleted_count`, and tests the physical row count.
+  Curator forgetting telemetry uses `turns_deleted`. Stale expiry descriptions
+  were removed from the affected README, request types, and memory/storage docs.
+- **T02/T20:** previously blocked MCP-server tests now pass, including mapped
+  addresses and relative-path containment. The real corpus conversion fixture
+  writes new basename and nested relative outputs successfully.
+- **T05:** provider descriptor and key stay together from startup to dispatch.
+  Removed the unbound constructor and now-unused permissive bridge prefix helper.
+  Recording-transport tests cover every registered provider, mismatch/unknown/
+  Unicode/empty-model rejection with zero HTTP, and same-provider case-insensitive
+  overrides. IPC preserves the `InvalidRequest` classification. No network calls.
+- **T07:** desired generation/cancellation gates publication against stop and
+  replacement. A startup drop guard owns cleanup until publication, including
+  repeated failed discovery; keeper tokens remain tracked while supervisors live.
+  The command also enables kill-on-drop as a runtime-teardown fallback.
+- **T08:** reconnect's potentially non-Send startup future is constructed and
+  polled on the runtime's worker pool, not by blocking the caller. Handshake and
+  discovery each use `HKASK_MCP_STARTUP_TIMEOUT_SECS` (default 60s, the existing
+  health interval; zero means an immediate deadline). Real-process tests verify
+  foreground progress, named phase timeout, replacement, and cleanup. rmcp's
+  three-second graceful-close period is included in the cleanup test; the
+  fixture stays paused for thirty seconds so self-exit cannot mask a leak.
+- **T12:** ordinary tools use Auto; an empty tool list carries no tool choice;
+  the sole `emit_result` structured-output protocol remains required. A GPUI
+  fake-provider regression failed before the fix and now returns final text.
+  A swarm executor fixture performs exactly one tool round and then answers,
+  requiring two inference calls rather than exhausting the round cap.
+
+### Verification for this continuation
+
+All commands used offline/locked dependencies and bounded tool runtimes.
+
+- `cargo test --offline --locked -p hkask-memory -p hkask-mcp-server --lib`
+  — **30 memory + 19 MCP-server tests passed**; final repeat used temporary
+  `HKASK_DATA_DIR` / `HKASK_ARTIFACTS_DIR` roots.
+- `cargo test --offline --locked -p hkask-mcp-corpus --lib convert_writes_new_relative_outputs`
+  — **1 passed**, with temporary data/artifact roots and subprocess CWD.
+- `cargo test --offline --locked -p hkask-mcp-curator --lib forgetting`
+  — **4 passed**, with temporary roots.
+- `cargo test --offline --locked -p hkask-mcp --features test-fixture -- --test-threads=1`
+  — **17 unit + 13 integration tests passed**. The two initial discovery
+  regressions failed before the lifecycle change; the deadline cleanup fixture
+  was corrected to respect rmcp's documented grace period, not weakened to
+  accept an unowned process.
+- `cargo test --offline --locked -p kask_bridge --lib inference_`
+  — **32 passed**, including recording-HTTP and actual IPC dispatch tests.
+- `cargo test --offline --locked -p hkask-mcp-swarm --lib tool_enabled_delegate_returns_answer_before_round_cap`
+  — **1 passed**, with temporary roots.
+- `cargo check --offline --locked -p kask_bridge --tests` and
+  `cargo check --offline --locked -p zed` — **passed**. This verifies the
+  changed D8 composition-root call site; it is not a full application test run.
+- `./script/clippy --offline --locked -p kask_bridge -p hkask-inference -p hkask-memory -p hkask-mcp -p hkask-mcp-server -p hkask-mcp-curator -p hkask-mcp-swarm`
+  — **passed**, including Kask cargo-machete, typos, and buf checks.
+
+### Remaining work and ownership
+
+**T04, T11, T13, T14** are approved, unimplemented work owned by the coding
+agent for subsequent checkpoints. Parent authority, live passphrase maintenance,
+and inference queue/cancellation/deadline guarantees must not be advertised as
+fixed. T11 still requires cross-consumer lifecycle design and failure injection;
+MCP stop currently initiates asynchronous shutdown, not a complete maintenance
+quiescence barrier.
+
+**T15–T17** remain pending the D4 semantic decision (operator), then implementation
+and trace-based tests (coding agent). A weekly cadence must not turn the current
+one-minute sensor observations into week-old "current" samples.
+
+An external action again staged intermediate edits during this continuation.
+The agent did not stage or commit; validate/reconcile the full index before
+committing. Latest timeout cleanup tests and documentation may be unstaged.
+
+**Learning:** process cleanup has its own measured lifetime (including rmcp's
+grace period). Deadline tests must distinguish that lifetime from both request
+completion and the fixture's independent exit timer.
+
+## Implementation checkpoint — 2026-09-04 (preceding snapshot)
 
 The operator authorized proceeding with implementation in this session. That
 supersedes the proposal-only scheduling status, not the explicit D1–D5 experience
@@ -758,17 +850,17 @@ Each package inherits the corresponding finding's acceptance/falsifier above. Ve
 | Task | Vertical outcome and likely code owners | Dependencies / gate | Acceptance and verification | Estimate |
 |---|---|---|---|---|
 | [x] T01 Isolate credential tests | Running explicit resolver tests cannot overwrite operator keys. `hkask-keystore/src/keychain.rs` and its isolated test support. F09. | None | Disposable-backend round trip; fail/panic path; refuse unsafe ambient ignored-test execution. No real-key tests. | S–M |
-| [ ] T02 Normalize URL destination classification | Strict tools reject mapped private addresses before transport. `hkask-mcp-server/src/security.rs`; caller fixture. F02. | None | Native/mapped deny matrix, public/permissive controls, zero-fetch assertion. | S |
+| [x] T02 Normalize URL destination classification | Strict tools reject mapped private addresses before transport. `hkask-mcp-server/src/security.rs`; caller fixture. F02. | None | Native/mapped deny matrix, public/permissive controls, zero-fetch assertion. | S |
 | [x] T03 Bound the complete Lisp boundary | Supplied forms return a result/error without aborting the host. `hkask-lisp/src/hkask_lisp.rs`; subprocess test support; existing agent seam only if required. F03. | Safety design checkpoint | Matrix for parser/quotes/env/output/builtin/drop work; adversarial subprocesses; ordinary skill predicates remain valid. Do not equate evaluator depth with data depth. | M; split if needed |
 | [ ] T04 Enforce parent-held delegation | Child requests cannot enlarge their assigned tool set. `kask_bridge/src/inference_ipc_server.rs`, IPC client/types, grant-producing caller. F01. | D1 | Real dispatch refusal with forged request list; inference-only caller refused; allowed calls still succeed. Protocol change may touch more than five files—justify as one authority boundary. | M |
-| [ ] T05 Preserve embedding destination intent | Provider-prefixed inputs are routed correctly or rejected before send. `kask_bridge/src/inference_embedding.rs`, provider resolution, relevant IPC fixture. F04. | D2 | Recording transport observes endpoint/model/key consistency; mismatch performs no HTTP; same-provider overrides retained. | S–M |
+| [x] T05 Preserve embedding destination intent | Provider-prefixed inputs are routed correctly or rejected before send. `kask_bridge/src/inference_embedding.rs`, provider resolution, relevant IPC fixture. F04. | D2 | Recording transport observes endpoint/model/key consistency; mismatch performs no HTTP; same-provider overrides retained. | S–M |
 | [x] T06 Own ledger transactions | Commit/debit remains atomic amid pooled concurrent work. `hkask-ledger/src/hkask_ledger.rs`, existing storage transaction interface, ledger integration tests. F08. | None | Barrier-driven multi-connection debit/commit/rollback/idempotency tests; no partial transactions or cross-operation rollback. | M |
-| [ ] T07 Publish only desired server lifecycles | Unload remains unloaded; failed startup retains cleanup responsibility. `hkask-mcp/src/runtime.rs`, fixture and reconnect integration tests. F10–F11. | Ownership design checkpoint | Stop/config-replace during discovery; discovery failure; cancellation; repeat runs leave no child/token/tool residue. Keep one runtime owner. | M; split only at safe states |
-| [ ] T08 Reconnect without blocking the caller | Editor foreground continues during slow restart. `hkask-mcp/src/runtime.rs`, existing spawn hook and integration fixture. F12. | T07 | Foreground-progress probe during paused handshake; cancelable phase deadline; actionable typed failure; no replay of uncertain calls. | M |
+| [x] T07 Publish only desired server lifecycles | Unload remains unloaded; failed startup retains cleanup responsibility. `hkask-mcp/src/runtime.rs`, fixture and reconnect integration tests. F10–F11. | Ownership design checkpoint | Stop/config-replace during discovery; discovery failure; cancellation; repeat runs leave no child/token/tool residue. Keep one runtime owner. | M; split only at safe states |
+| [x] T08 Reconnect without blocking the caller | Editor foreground continues during slow restart. `hkask-mcp/src/runtime.rs`, existing spawn hook and integration fixture. F12. | T07 | Foreground-progress probe during paused handshake; cancelable phase deadline; actionable typed failure; no replay of uncertain calls. | M |
 | [x] T09 Copy populated RSS schemas safely | A valid feed/entry/search fixture survives rotation. `hkask-storage/src/rotation.rs`, isolated schema fixture matching research DB. F07. | None | Real SQLCipher rotation with FK validation and FTS round trip; failure preserves source/key; test uses actual schema rather than minimal fake tables. | M |
 | [x] T10 Preserve post-rotation semantic recall | Old and new memories remain searchable. `hkask-storage/src/rotation.rs`, `embeddings.rs`, recall tests. F06. | T09 where copy logic is shared | Reopen and nearest-neighbor/h_mem JOIN round trip before/after rotation/new write; malformed vectors cause explicit failure, not silent omission. | M |
 | [ ] T11 Coordinate passphrase maintenance | Rotation settles writers, preserves all DBs, reopens all consumers, resumes visibly. `kask_bridge/src/identity.rs`, curator store ownership, rotation, settings orchestration. F05. | D5, T07, T09, T10; T08 if reopen uses runtime reconnect | Failure matrix for quiesce/copy/verify/rollback/key publication/reopen; every consumer covered; keychain unchanged on failed rotation; explicit recoverable state after reopen failure. Cross-crate integration requires sizing before edits. | M or re-slice |
-| [ ] T12 Permit ordinary agent completion | Tool-enabled delegates can finish with an answer while structured results remain required. `kask_bridge/src/inference_chat.rs`, inference request intent/caller as needed, swarm fixture. F13. | None | Fake provider honoring Required/Auto; one useful tool round then final text; `emit_result` remains enforced; no repeated-effect loop. | S–M |
+| [x] T12 Permit ordinary agent completion | Tool-enabled delegates can finish with an answer while structured results remain required. `kask_bridge/src/inference_chat.rs`, inference request intent/caller as needed, swarm fixture. F13. | None | Fake provider honoring Required/Auto; one useful tool round then final text; `emit_result` remains enforced; no repeated-effect loop. | S–M |
 | [ ] T13 Own inference cancellation | Queued cancelled requests do not start provider work; admission is bounded. `kask_bridge/src/inference_chat.rs`, IPC request/disconnect path. F14. | D3 | Pause provider, saturate capacity, cancel queue entries, assert zero dispatch for cancelled requests and capacity release; explicit overload response. | M |
 | [ ] T14 Align request deadlines | Queue/establishment/drain share the chosen lifetime bound. Bridge chat timers, settings contract, `hkask-inference/src/inference_ipc_client.rs`. F15. | D3, T13 | Paused queue and stalled established stream; server error precedes transport deadline; zero/disabled behavior explicitly tested; no tokio timer on GPUI. | M |
 | [ ] T15 Expire sensor observations | Quiet domains become idle without another operation. `hkask-regulation/src/runtime.rs`, sensor tests. F18. | D4 semantic decision only | Controlled-clock active→idle transition; no-current-data distinct from failed/successful sample; aggregate reading excludes expired contributions. | S–M |
@@ -776,7 +868,7 @@ Each package inherits the corresponding finding's acceptance/falsifier above. Ve
 | [ ] T17 Report progress honestly | Accepted noise does not become efficacy or erase persistent stagnation. Regulation outcome model/consumers, metacognition bridge. F17. | D4, T16 | Constant degraded trace, tolerated noise, delayed human response, genuinely recovered condition; status names distinguish observation from attribution. | M |
 | [x] T18 Apply configured outcome thresholds | Startup sensitivity matches supplied SetPoints. `hkask-regulation/src/runtime.rs`, algedonic construction/tests. F19. | None; verify YAML path independent of T19 | Constructor-driven nondefault/default classifications and invalid-bound tests; avoid setter-only proof. | S |
 | [x] T19 Read host-compatible settings | Valid shared-file comments do not discard model overrides. `hkask-services-core/src/standalone_settings.rs`, existing compatible parser dependency if available. F20. | None | JSONC override fixtures, precedence/default controls, malformed-file surfaced degradation; no settings writer or GPUI dependency. | S |
-| [ ] T20 Resolve new relative outputs consistently | `out.txt` works like `./out.txt` without weaker containment. `hkask-mcp-server/src/server/validation.rs`, real corpus-handler fixture. F21. | None | Temp-CWD basename/nested creation, existing-file behavior, traversal/symlink negative controls. | S |
+| [x] T20 Resolve new relative outputs consistently | `out.txt` works like `./out.txt` without weaker containment. `hkask-mcp-server/src/server/validation.rs`, real corpus-handler fixture. F21. | None | Temp-CWD basename/nested creation, existing-file behavior, traversal/symlink negative controls. | S |
 
 ### Checkpoints and sequencing
 

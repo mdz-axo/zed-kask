@@ -697,6 +697,9 @@ async fn dispatch(
             Ok(embeddings) => InferenceOutcome::Embeddings { embeddings },
             Err(e) => {
                 let (code, message) = match e {
+                    hkask_types::EmbeddingGenerationError::InvalidRequest(m) => {
+                        ("InvalidRequest", m)
+                    }
                     hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
                     hkask_types::EmbeddingGenerationError::Api(status, m) => {
                         ("Api", format!("status {status}: {m}"))
@@ -1582,6 +1585,49 @@ mod tests {
         }
     }
 
+    /// expect: "IPC rejects a different embedding destination before HTTP dispatch" [P1]
+    #[tokio::test]
+    async fn ipc_embedding_provider_mismatch_is_invalid_request() {
+        let http_client =
+            http_client::FakeHttpClient::create(|_| async { panic!("mismatch reached HTTP") });
+        let provider = crate::INFERENCE_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == "OpenRouter")
+            .expect("registered provider");
+        let embedding = crate::LanguageModelEmbeddingPort::new(
+            crate::ResolvedEmbeddingCredentials {
+                provider,
+                api_key: "fixture-key".into(),
+            },
+            http_client,
+            tokio::runtime::Handle::current(),
+        );
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let outcome = dispatch(
+            &port,
+            Some(&embedding),
+            None,
+            &make_list_models_tx(),
+            None,
+            &make_batch_credential_tx(),
+            InferenceRequest {
+                id: 1,
+                method: InferenceMethod::Embed,
+                params: InferenceParams {
+                    embed_model: Some("ollama/local-model".into()),
+                    embed_texts: Some(vec!["private source".into()]),
+                    ..Default::default()
+                },
+            },
+        )
+        .await;
+        let InferenceOutcome::Error { error } = outcome else {
+            panic!("mismatch must fail");
+        };
+        assert_eq!(error.code, "InvalidRequest");
+        assert!(error.message.contains("OpenRouter"));
+    }
+
     #[tokio::test]
     async fn dispatch_embed_errors_without_embedding_port() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
@@ -2059,6 +2105,7 @@ mod tests {
         // operators into diagnosing network issues for parse errors.
         let err = hkask_types::EmbeddingGenerationError::Json("test".to_string());
         let (code, message) = match err {
+            hkask_types::EmbeddingGenerationError::InvalidRequest(m) => ("InvalidRequest", m),
             hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
             hkask_types::EmbeddingGenerationError::Api(s, m) => ("Api", format!("status {s}: {m}")),
             hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m),

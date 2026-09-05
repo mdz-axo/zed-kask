@@ -733,19 +733,13 @@ impl LanguageModelInferencePort {
             temperature: Some(parameters.temperature),
             max_tokens: None,
             thinking_allowed: parameters.thinking_allowed,
-            // zed-kask: D25 — when a structured-output tool (emit_result) is offered,
-            // force the model to call it via tool_choice: Any ("required" in
-            // OpenAI's API). With Auto, the model may return prose instead of
-            // calling the tool, and parse_json_response fails on the non-JSON
-            // text. Any guarantees the model emits a tool call, so the executor
-            // extracts args from tool_calls[0] instead of parsing free text.
-            // This is the LangGraph/Swarm enforce-at-the-API-layer pattern:
-            // the output contract is enforced by the provider, not by a
-            // best-effort JSON extractor.
-            tool_choice: if tools.is_some() {
-                Some(LanguageModelToolChoice::Any)
-            } else {
-                None
+            // The sole emit_result tool denotes the structured-output protocol.
+            // Ordinary tools are capabilities, not a requirement to act again;
+            // forcing them would prevent the agent loop from finishing.
+            tool_choice: match tools.unwrap_or(&[]) {
+                [] => None,
+                [tool] if tool.function.name == "emit_result" => Some(LanguageModelToolChoice::Any),
+                _ => Some(LanguageModelToolChoice::Auto),
             },
             ..Default::default()
         }
@@ -1243,7 +1237,52 @@ mod tests {
         );
     }
 
-    // ── tool_choice: Any only when tools are offered (D25) ─────────────
+    /// expect: "An agent with ordinary tools can finish with an answer" [P3]
+    #[gpui::test]
+    async fn ordinary_tools_allow_final_answer(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _receiver) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2,
+            cx.to_async(),
+        );
+        let request = cx.spawn(async move |_| {
+            let tools = [ChatToolDefinition {
+                tool_type: "function".into(),
+                function: ChatToolFunction {
+                    name: "lookup".into(),
+                    description: "Optional lookup".into(),
+                    parameters: serde_json::json!({"type":"object"}),
+                },
+            }];
+            port.generate(
+                "Answer if no lookup is needed",
+                &LLMParameters::default(),
+                Some(&tools),
+            )
+            .await
+        });
+        cx.run_until_parked();
+        let pending = fake
+            .pending_completions()
+            .into_iter()
+            .next()
+            .expect("provider request");
+        assert!(
+            matches!(pending.tool_choice, Some(LanguageModelToolChoice::Auto)),
+            "ordinary tools must not require another effect"
+        );
+        fake.send_completion_stream_text_chunk(&pending, "Finished without another tool call.");
+        fake.end_completion_stream(&pending);
+        cx.run_until_parked();
+        let answer = request.await.expect("final answer");
+        assert_eq!(answer.text, "Finished without another tool call.");
+        assert!(answer.tool_calls.is_empty());
+    }
+
+    // ── tool_choice: Any for the structured result protocol ─────────────
     //
     // When a structured-output tool (emit_result) is offered, the built
     // request must carry tool_choice: Any ("required" in OpenAI's API) so
@@ -1253,7 +1292,7 @@ mod tests {
     // None: forcing a tool call when no tool was offered is an invalid
     // request.
     #[gpui::test]
-    async fn tool_choice_any_only_when_tools_offered(cx: &mut gpui::TestAppContext) {
+    async fn structured_emit_result_remains_required(cx: &mut gpui::TestAppContext) {
         let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
         let (port, _task) = super::LanguageModelInferencePort::new(
             model.clone(),
@@ -1281,10 +1320,11 @@ mod tests {
         let with_tools = port.build_request(&messages, &parameters, Some(&tools));
         assert!(
             matches!(with_tools.tool_choice, Some(LanguageModelToolChoice::Any)),
-            "with tools offered, tool_choice must be Any so the provider \
-             enforces the tool call instead of returning prose"
+            "a sole structured result tool must remain required"
         );
 
+        let empty_tools = port.build_request(&messages, &parameters, Some(&[]));
+        assert!(empty_tools.tool_choice.is_none());
         let without_tools = port.build_request(&messages, &parameters, None);
         assert!(
             without_tools.tool_choice.is_none(),

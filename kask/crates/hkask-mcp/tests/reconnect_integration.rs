@@ -128,6 +128,262 @@ impl Fixture {
     }
 }
 
+/// expect: "Unloading during discovery cannot publish tools or resurrect a child" [P1]
+#[tokio::test(flavor = "multi_thread")]
+async fn unload_during_discovery_stays_unloaded() {
+    let mut fixture = Fixture::new("unload-discovery");
+    let entered = fixture._tmp.path().join("entered");
+    let release = fixture._tmp.path().join("release");
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_ENTERED".into(),
+        entered.to_string_lossy().into_owned(),
+    );
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        release.to_string_lossy().into_owned(),
+    );
+    let runtime = McpRuntime::new();
+    let binary = fixture_binary();
+    let start = runtime.start_server_with_env(
+        "fixture",
+        binary.to_str().expect("fixture path"),
+        hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+    );
+    let stop = async {
+        wait_for(
+            || entered.exists(),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+            "discovery entry",
+        )
+        .await;
+        runtime.stop_server("fixture").await;
+        std::fs::write(&release, b"release").expect("release discovery");
+    };
+    let (result, ()) = futures::join!(start, stop);
+    let connected = runtime.is_connected("fixture").await;
+    let tools = runtime.registered_servers().await;
+    runtime.shutdown_all().await;
+    assert!(result.is_err(), "stopped startup must fail, got {result:?}");
+    assert!(!connected, "late startup resurrected connection");
+    assert!(tools.is_empty(), "late startup published tools");
+}
+
+/// expect: "Failed discovery cleans up its child even before publication" [P1]
+#[tokio::test(flavor = "multi_thread")]
+async fn discovery_failure_reaps_child() {
+    let runtime = McpRuntime::new();
+    for iteration in 0..3 {
+        let mut fixture = Fixture::new(&format!("failed-discovery-{iteration}"));
+        fixture
+            .env
+            .insert("FIXTURE_DISCOVERY_ERROR".into(), "1".into());
+        let result = runtime
+            .start_server_with_env(
+                "fixture",
+                &fixture_binary().to_string_lossy(),
+                hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+            )
+            .await;
+        let pid = fixture.wait_for_pid().await;
+        runtime.stop_server("fixture").await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        // Only inspect/kill the PID written by this test's own child.
+        while unsafe { libc::kill(pid as i32, 0) } == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let leaked = unsafe { libc::kill(pid as i32, 0) } == 0;
+        if leaked {
+            Fixture::kill(pid);
+        }
+        assert!(result.is_err());
+        assert!(!leaked, "failed discovery left an unowned child");
+        assert!(runtime.registered_servers().await.is_empty());
+    }
+}
+
+/// expect: "A replaced pending start cannot overwrite the new server configuration" [P1]
+#[tokio::test(flavor = "multi_thread")]
+async fn replacement_during_discovery_keeps_new_configuration() {
+    let mut old = Fixture::new("old-configuration");
+    let entered = old._tmp.path().join("entered");
+    old.env.insert(
+        "FIXTURE_DISCOVERY_ENTERED".into(),
+        entered.to_string_lossy().into_owned(),
+    );
+    old.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        old._tmp
+            .path()
+            .join("never-released")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let replacement = Fixture::new("new-configuration");
+    let runtime = McpRuntime::new();
+    let binary = fixture_binary();
+    let old_start = runtime.start_server_with_env(
+        "fixture",
+        binary.to_str().expect("binary"),
+        hkask_types::ServerEnv::from_canonical(old.env.clone()),
+    );
+    let replace = async {
+        wait_for(
+            || entered.exists(),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+            "old discovery",
+        )
+        .await;
+        runtime.stop_server("fixture").await;
+        runtime
+            .start_server_with_env(
+                "fixture",
+                binary.to_str().expect("binary"),
+                hkask_types::ServerEnv::from_canonical(replacement.env.clone()),
+            )
+            .await
+            .expect("replacement starts");
+    };
+    let (old_result, ()) = futures::join!(old_start, replace);
+    let response = ping(&runtime, "fixture").await;
+    runtime.shutdown_all().await;
+    assert!(old_result.is_err());
+    assert_eq!(
+        response["marker"].as_str(),
+        Some(replacement.marker.as_str())
+    );
+}
+
+/// expect: "My foreground executor can progress while MCP reconnect is stalled" [P1]
+#[tokio::test(flavor = "multi_thread")]
+async fn foreground_progresses_during_reconnect() {
+    let mut fixture = Fixture::new("foreground-progress");
+    let entered = fixture._tmp.path().join("entered");
+    let release = fixture._tmp.path().join("release");
+    std::fs::write(&release, b"initial launch").expect("initial release");
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_ENTERED".into(),
+        entered.to_string_lossy().into_owned(),
+    );
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        release.to_string_lossy().into_owned(),
+    );
+    let (runtime, pid) = launch(&fixture).await;
+    hkask_mcp::set_spawn_runtime(tokio::runtime::Handle::current());
+    std::fs::remove_file(&release).expect("pause restart");
+    std::fs::remove_file(&entered).expect("clear marker");
+    Fixture::kill(pid);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while runtime.is_connected("fixture").await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("dead connection observed");
+    let (progress_sender, progress_receiver) = tokio::sync::oneshot::channel();
+    let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+    let worker = {
+        let runtime = runtime.clone();
+        std::thread::spawn(move || {
+            use std::future::Future;
+            let mut request = Box::pin(runtime.invoke(
+                "fixture",
+                "ping",
+                serde_json::json!({}),
+                WebID::for_agent_name("foreground-test"),
+            ));
+            let began = std::time::Instant::now();
+            let poll = request.as_mut().poll(&mut std::task::Context::from_waker(
+                futures::task::noop_waker_ref(),
+            ));
+            progress_sender
+                .send(began.elapsed())
+                .expect("progress receiver");
+            let result = match poll {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => futures::executor::block_on(request),
+            };
+            result_sender.send(result).expect("result receiver");
+        })
+    };
+    let elapsed = progress_receiver.await.expect("foreground poll completed");
+    std::fs::write(&release, b"resume").expect("resume restart");
+    let result = result_receiver.await.expect("tool result");
+    worker.join().expect("foreground worker");
+    runtime.shutdown_all().await;
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "foreground poll blocked for {elapsed:?}"
+    );
+    assert!(result.is_ok(), "reconnect failed: {result:?}");
+}
+
+/// expect: "A stalled discovery fails with a named phase deadline and releases its child" [P1]
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_discovery_has_a_phase_deadline() {
+    if std::env::var_os("HKASK_STARTUP_DEADLINE_TEST_CHILD").is_none() {
+        let output =
+            tokio::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "stalled_discovery_has_a_phase_deadline",
+                    "--test-threads=1",
+                ])
+                .env("HKASK_STARTUP_DEADLINE_TEST_CHILD", "1")
+                .env("HKASK_MCP_STARTUP_TIMEOUT_SECS", "1")
+                .output()
+                .await
+                .expect("isolated deadline test");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let mut fixture = Fixture::new("stalled-discovery");
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        fixture
+            ._tmp
+            .path()
+            .join("never")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let runtime = McpRuntime::new();
+    let result = runtime
+        .start_server_with_env(
+            "fixture",
+            &fixture_binary().to_string_lossy(),
+            hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+        )
+        .await;
+    let pid = fixture.wait_for_pid().await;
+    runtime.stop_server("fixture").await;
+    // rmcp allows three seconds for graceful shutdown before force-killing.
+    // The fixture waits thirty seconds, so its own timeout cannot satisfy this.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while unsafe { libc::kill(pid as i32, 0) } == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let leaked = unsafe { libc::kill(pid as i32, 0) } == 0;
+    if leaked {
+        Fixture::kill(pid);
+    }
+    assert!(!leaked);
+    let error = result
+        .expect_err("stalled discovery must time out")
+        .to_string();
+    assert!(
+        error.contains("fixture") && error.contains("timed out during tool discovery"),
+        "{error}"
+    );
+}
+
 /// Wait for `predicate` to return true, polling every `poll` up to `timeout`.
 /// Used to wait for the keeper task's asynchronous reap or the health
 /// supervisor's periodic check.

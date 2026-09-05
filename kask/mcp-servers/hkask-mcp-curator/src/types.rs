@@ -204,7 +204,7 @@ pub struct MemoryUpdateRequest {
 /// Resolve a contradiction between two or more memories.
 ///
 /// This is the therapy process tool — it resolves cognitive dissonance in
-/// the memory store by expiring, updating, or deleting contradictory h_mems.
+/// the memory store by forgetting or updating contradictory h_mems.
 /// Requires operator approval (the curator proposes; the operator approves).
 ///
 /// Grounding: Festinger's three dissonance resolution strategies
@@ -267,8 +267,8 @@ pub struct MemoryPruneRequest {
 ///
 /// Scans the curator's h_mems and groups them by (entity, attribute,
 /// normalized_value). For each group with 2+ near-duplicate values, the
-/// highest-confidence h_mem is kept and the rest are expired (soft-delete
-/// via `valid_to`). Non-string values are skipped — structural dedup is
+/// highest-confidence h_mem is kept and the rest are deleted.
+/// Non-string values are skipped — structural dedup is
 /// the recall-time exact-EAV filter's job.
 ///
 /// Normalization: lowercase, strip punctuation, collapse whitespace.

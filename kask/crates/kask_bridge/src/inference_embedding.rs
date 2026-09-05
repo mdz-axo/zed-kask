@@ -1,6 +1,6 @@
 //! Embedding generation over OpenAI-compatible provider credentials.
 //!
-//! The port takes `(api_url, api_key)` resolved upfront from the bridge's
+//! The port takes a provider-bound credential bundle resolved upfront from the bridge's
 //! `INFERENCE_PROVIDERS` table (env var) and makes raw
 //! `/embeddings` POSTs through the app's `HttpClient`. No GPUI access is
 //! needed at request time — credentials are resolved once at construction.
@@ -41,7 +41,7 @@ struct OpenAiEmbeddingData {
 
 /// Embedding generation port over OpenAI-compatible provider credentials.
 ///
-/// Construct with `(api_url, api_key)` resolved from the bridge's
+/// Construct with `ResolvedEmbeddingCredentials` resolved from the bridge's
 /// `INFERENCE_PROVIDERS` table and the app's `HttpClient`. The port is
 /// `Send + Sync` — no GPUI access is needed at request time.
 #[derive(Clone)]
@@ -52,30 +52,36 @@ pub struct LanguageModelEmbeddingPort {
 impl LanguageModelEmbeddingPort {
     /// Construct the port and spawn the receiver task on the tokio runtime.
     ///
-    /// `api_url` is the OpenAI-compatible base URL (e.g.
-    /// `https://openrouter.ai/api/v1`). `api_key` is the bearer token.
-    /// Both are resolved once at construction from `INFERENCE_PROVIDERS` +
-    /// env var; no GPUI access is needed at request time. The `tokio_handle`
+    /// The provider descriptor and bearer key are resolved together by
+    /// `resolve_embedding_credentials`. Requests must name that provider;
+    /// mismatches are rejected before serialization or HTTP. The `tokio_handle`
     /// is used to spawn the receiver task (obtained via
     /// `gpui_tokio::Tokio::handle(cx)` at the call site).
     pub fn new(
-        api_url: String,
-        api_key: String,
+        credentials: crate::ResolvedEmbeddingCredentials,
         http_client: Arc<dyn HttpClient>,
         tokio_handle: tokio::runtime::Handle,
     ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        let provider = credentials.provider;
+        let api_key = credentials.api_key;
 
         // The receiver runs on the tokio runtime — no GPUI access needed.
         tokio_handle.spawn(async move {
             while let Some(req) = rx.recv().await {
                 let http_client = http_client.clone();
-                let api_url = api_url.clone();
+                let api_url = provider.api_url;
                 let api_key = api_key.clone();
                 let result = async move {
-                    // Strip the provider prefix (case-insensitive). The
-                    // API expects the bare model id.
-                    let model_id = crate::inference_providers::strip_provider_prefix(&req.model);
+                    let (requested_provider, model_id) = req.model.split_once('/').ok_or_else(|| {
+                        EmbeddingGenerationError::InvalidRequest("model must be provider-qualified".into())
+                    })?;
+                    if !requested_provider.eq_ignore_ascii_case(provider.id) || model_id.is_empty() {
+                        return Err(EmbeddingGenerationError::InvalidRequest(format!(
+                            "model '{}' cannot use the embedding port bound to '{}'; select a model from that provider or reconfigure the port",
+                            req.model, provider.id,
+                        )));
+                    }
 
                     // Build and send the OpenAI-compatible /embeddings request.
                     // `encoding_format: "float"` requests raw float arrays instead
@@ -198,8 +204,8 @@ impl LanguageModelEmbeddingPort {
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `DEFAULT_EMBEDDING_MODEL`). The prefix is stripped
-    /// before the API call.
+    /// `DEFAULT_EMBEDDING_MODEL`). The prefix must match the bound provider
+    /// before it is stripped for the API call.
     pub async fn embed(
         &self,
         model: &str,
@@ -221,5 +227,88 @@ impl LanguageModelEmbeddingPort {
         rx_reply.await.map_err(|e| {
             EmbeddingGenerationError::Connection(format!("embedding port reply dropped: {e}"))
         })?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// expect: "An embedding override never sends my text to a different provider" [P1]
+    #[tokio::test]
+    async fn embedding_provider_mismatch_sends_no_http() {
+        for provider in crate::INFERENCE_PROVIDERS {
+            let sends = Arc::new(AtomicUsize::new(0));
+            let http_client = http_client::FakeHttpClient::create({
+                let sends = sends.clone();
+                move |mut request| {
+                    let sends = sends.clone();
+                    async move {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(
+                            request.uri().to_string(),
+                            format!("{}/embeddings", provider.api_url)
+                        );
+                        assert_eq!(request.headers()["Authorization"], "Bearer fixture-key");
+                        let mut text = String::new();
+                        request.body_mut().read_to_string(&mut text).await?;
+                        let body: serde_json::Value = serde_json::from_str(&text)?;
+                        assert_eq!(body["model"], "organization/embedding");
+                        assert_eq!(body["input"], serde_json::json!(["private source"]));
+                        Ok(http_client::Response::builder().status(200).body(
+                            AsyncBody::from_bytes(
+                                br#"{"data":[{"embedding":[1.0,0.0]}]}"#.to_vec().into(),
+                            ),
+                        )?)
+                    }
+                }
+            });
+            let port = LanguageModelEmbeddingPort::new(
+                crate::ResolvedEmbeddingCredentials {
+                    provider,
+                    api_key: "fixture-key".into(),
+                },
+                http_client,
+                tokio::runtime::Handle::current(),
+            );
+            let input = vec!["private source".to_string()];
+            for other in crate::INFERENCE_PROVIDERS
+                .iter()
+                .filter(|other| other.id != provider.id)
+            {
+                let error = port
+                    .embed(&format!("{}/embedding", other.id), &input)
+                    .await
+                    .expect_err("provider mismatch");
+                assert!(matches!(error, EmbeddingGenerationError::InvalidRequest(_)));
+            }
+            for model in [
+                "unqualified",
+                "unknown/model",
+                "🦀🦀🦀/model",
+                &format!("{}/", provider.id),
+            ] {
+                assert!(matches!(
+                    port.embed(model, &input).await,
+                    Err(EmbeddingGenerationError::InvalidRequest(_))
+                ));
+            }
+            assert_eq!(
+                sends.load(Ordering::SeqCst),
+                0,
+                "rejected inputs must not reach transport"
+            );
+            assert_eq!(
+                port.embed(
+                    &format!("{}/organization/embedding", provider.id.to_lowercase()),
+                    &input
+                )
+                .await
+                .expect("same provider"),
+                vec![vec![1.0, 0.0]]
+            );
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+        }
     }
 }

@@ -841,23 +841,23 @@ impl MemoryStore {
     //    (operator-in-the-loop, handles divergent values, not near-duplicates).
     //
     // This pass is the missing fourth layer: deterministic fuzzy string
-    // dedup that batch-expires stored near-duplicates. It normalizes string
+    // dedup that deletes stored near-duplicates. It normalizes string
     // values (lowercase, strip punctuation, collapse whitespace) and groups
     // h_mems by (entity, attribute, normalized_value), keeping the
-    // highest-confidence one and expiring the rest. Non-string values are
+    // highest-confidence one and deleting the rest. Non-string values are
     // skipped — structural dedup is the EAV path's job.
 
     /// Deduplicate h_mems by normalized string value within each
     /// (entity, attribute) group. For each group of near-duplicate
     /// values, the highest-confidence h_mem is kept and the rest are
-    /// expired (soft-delete via `valid_to`). Returns the count of
-    /// expired duplicates. Scans all live h_mems (no perspective filter)
+    /// deleted. Returns the count of deleted duplicates.
+    /// Scans all stored h_mems (no perspective filter)
     /// — the curator's memory is a single store and dedup is global.
     pub fn dedup_by_normalized_value(
         &self,
         limit: usize,
     ) -> Result<DedupOutcome, MemoryStoreError> {
-        let h_mems = self.h_mem_store.query_all_live(limit)?;
+        let h_mems = self.h_mem_store.query_all(limit)?;
 
         // Group by (entity, attribute, normalized_value) for string values.
         let mut groups: std::collections::HashMap<(String, String, String), Vec<&HMem>> =
@@ -874,7 +874,7 @@ impl MemoryStore {
             groups.entry(key).or_default().push(h_mem);
         }
 
-        let mut expired_count = 0usize;
+        let mut deleted_count = 0usize;
         let mut failed_count = 0usize;
         let mut groups_with_dupes = 0usize;
 
@@ -883,7 +883,7 @@ impl MemoryStore {
                 continue;
             }
             groups_with_dupes += 1;
-            // Keep the highest-confidence h_mem; expire the rest.
+            // Keep the highest-confidence h_mem; delete the rest.
             let mut sorted = group.clone();
             sorted.sort_by(|a, b| {
                 b.confidence
@@ -891,17 +891,17 @@ impl MemoryStore {
                     .partial_cmp(&a.confidence.value())
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            // The first one is kept; expire the rest.
+            // The first one is kept; delete the rest.
             for h_mem in &sorted[1..] {
-                match self.h_mem_store.close_by_id(&h_mem.id) {
-                    Ok(()) => expired_count += 1,
+                match self.h_mem_store.delete_by_id(&h_mem.id) {
+                    Ok(()) => deleted_count += 1,
                     Err(error) => {
                         failed_count += 1;
                         tracing::warn!(
                             target: "reg.consolidation",
                             %error,
                             h_mem_id = %h_mem.id.as_uuid(),
-                            "Failed to expire duplicate h_mem during dedup_by_normalized_value"
+                            "Failed to delete duplicate h_mem during dedup_by_normalized_value"
                         );
                     }
                 }
@@ -912,7 +912,7 @@ impl MemoryStore {
             target: "reg.consolidation",
             scanned = h_mems.len(),
             groups_with_dupes,
-            expired = expired_count,
+            deleted = deleted_count,
             failed = failed_count,
             skipped_non_string,
             "Normalized-value dedup complete"
@@ -921,7 +921,7 @@ impl MemoryStore {
         Ok(DedupOutcome {
             scanned: h_mems.len(),
             groups_with_dupes,
-            expired_count,
+            deleted_count,
             failed_count,
             skipped_non_string,
         })
@@ -1236,7 +1236,7 @@ mod tests {
         let outcome = store
             .dedup_by_normalized_value(1000)
             .expect("dedup succeeds");
-        assert_eq!(outcome.expired_count, 1);
+        assert_eq!(outcome.deleted_count, 1);
 
         // The high-confidence one survives.
         let remaining = store
@@ -1245,6 +1245,18 @@ mod tests {
             .expect("query");
         assert_eq!(remaining.len(), 1);
         assert!((remaining[0].confidence.value() - 0.9).abs() < 1e-9);
+        let stored_rows = store
+            .h_mem_store
+            .driver()
+            .query_optional("SELECT count(*) FROM hmems", &[])
+            .expect("raw row count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            stored_rows, 1,
+            "dedup must delete, not hide, the duplicate row"
+        );
     }
 
     #[test]

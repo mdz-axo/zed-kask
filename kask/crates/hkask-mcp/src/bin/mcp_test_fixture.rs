@@ -1,9 +1,7 @@
-//! A minimal, controllable MCP server intended for a future
-//! `tests/reconnect_integration.rs` (not yet written). Kept feature-gated so it
-//! does not affect normal builds. The connection-healing unit tests in
-//! `runtime.rs` cover the bookkeeping around the healing paths, but cannot
-//! prove a killed server is actually reconnected end-to-end — that is the
-//! not-yet-written integration test's job.
+//! A controllable MCP server for `tests/reconnect_integration.rs`.
+//! Kept feature-gated so it does not affect normal builds. Discovery can be
+//! paused via FIXTURE_DISCOVERY_ENTERED/FIXTURE_DISCOVERY_RELEASE files or
+//! failed via FIXTURE_DISCOVERY_ERROR to exercise startup ownership.
 //!
 //! The connection-healing paths in `McpRuntime` (reap-on-death, liveness-on-read,
 //! reconnect-on-demand) can only be exercised against a **real child process**
@@ -62,6 +60,27 @@ fn main() {
             continue;
         };
 
+        if method == "tools/list" {
+            if let Ok(path) = std::env::var("FIXTURE_DISCOVERY_ENTERED") {
+                std::fs::write(path, b"entered").expect("write discovery marker");
+            }
+            if let Ok(path) = std::env::var("FIXTURE_DISCOVERY_RELEASE") {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while !std::path::Path::new(&path).exists() {
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            if std::env::var_os("FIXTURE_DISCOVERY_ERROR").is_some() {
+                let response = serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":"injected discovery failure"}});
+                if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
+                    return;
+                }
+                continue;
+            }
+        }
         let result = match method {
             "initialize" => serde_json::json!({
                 "protocolVersion": "2025-06-18",

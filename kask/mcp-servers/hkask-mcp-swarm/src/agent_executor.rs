@@ -655,6 +655,79 @@ mod tests {
         }
     }
 
+    struct ToolThenAnswer(std::sync::atomic::AtomicUsize);
+
+    impl hkask_types::InferencePort for ToolThenAnswer {
+        fn generate(
+            &self,
+            prompt: &str,
+            parameters: &hkask_types::LLMParameters,
+            tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            assert!(tools.is_some_and(|tools| {
+                tools
+                    .iter()
+                    .any(|tool| tool.function.name == "fixture/lookup")
+            }));
+            let response =
+                hkask_types::InferencePort::generate(&StubInference, prompt, parameters, tools);
+            Box::pin(async move {
+                let mut result = response.await?;
+                if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    result.text.clear();
+                    result.tool_calls.push(hkask_types::StructuredToolCall {
+                        server: "fixture".into(),
+                        tool: "lookup".into(),
+                        args: serde_json::json!({}),
+                        call_id: Some("lookup-1".into()),
+                    });
+                }
+                Ok(result)
+            })
+        }
+    }
+
+    /// expect: "A tool-enabled delegate returns an answer after one useful tool round" [P3]
+    #[tokio::test]
+    async fn tool_enabled_delegate_returns_answer_before_round_cap() {
+        let inference = Arc::new(ToolThenAnswer(std::sync::atomic::AtomicUsize::new(0)));
+        let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
+        let card = LocalAgentCard {
+            agent_id: "completion-test".into(),
+            agent_type: "research".into(),
+            description: String::new(),
+            display_name: String::new(),
+            accepts: vec!["text".into()],
+            produces: vec!["text".into()],
+            dependencies: Default::default(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["fixture/lookup".into()],
+                ..Default::default()
+            },
+            cloud_swarm_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+            version: "1.0.0".into(),
+            workflow_template: None,
+        };
+        let result = executor
+            .run(&card, "Look up once, then answer")
+            .await
+            .expect("delegation");
+        assert_eq!(result.text, "stub");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(inference.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     struct StubDispatch;
 
     impl hkask_types::ToolDispatchPort for StubDispatch {

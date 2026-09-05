@@ -10,6 +10,30 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
+## Core-review continuation — 2026-09-04
+
+**D8 embedding startup:** `crates/zed/src/main.rs` now passes
+`ResolvedEmbeddingCredentials` directly to `LanguageModelEmbeddingPort::new`.
+The bundle retains the provider descriptor with its key; bare endpoint/key
+arguments and the bridge's permissive prefix-stripping helper are removed.
+Provider-qualified mismatches fail before HTTP, including through IPC, per the
+operator-approved D2 core-review decision. Pins:
+`embedding_provider_mismatch_sends_no_http` and
+`ipc_embedding_provider_mismatch_is_invalid_request`; the changed composition
+root is also checked by `cargo check -p zed`.
+
+**D3 runtime (Kask-owned implementation):** desired launch generations are
+cancelled on stop/replacement. Startup publication shares a lifecycle lock with
+stop; a drop guard retains failed-start cleanup ownership. Reconnect is polled
+on a runtime worker rather than blocking its caller. Handshake/discovery each
+have a configurable deadline (`HKASK_MCP_STARTUP_TIMEOUT_SECS`, default 60s).
+Pins in `reconnect_integration.rs`: `unload_during_discovery_stays_unloaded`,
+`discovery_failure_reaps_child`, `replacement_during_discovery_keeps_new_configuration`,
+`foreground_progresses_during_reconnect`, and `stalled_discovery_has_a_phase_deadline`.
+These supersede older runtime timing/ownership descriptions below, not the
+outcome-unknown no-replay rule. Parent-held IPC grants (core-review T04) remain
+approved but not yet implemented; caller-supplied lists are not independent authority.
+
 ## The divergence surface (D1–D48)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
