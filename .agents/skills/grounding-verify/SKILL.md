@@ -109,6 +109,12 @@ cited.
 4. Call `lisp_eval` to check structural invariants:
    - form: `"(if (= (length claims) 0) 'no_factual_claims 'ok)"`
    - env: `{ "claims": <your extracted claims> }`
+   - For any `lisp_eval` call in this skill that walks the claims list with
+     a recursive helper form, pass `max_depth` ≥ 8× the list length —
+     helpers consume 2–4 depth frames per element, so the 1024 default
+     only covers lists of a few hundred claims (observed 2026-09-03: a
+     134-element assignments list needed ~300 depth frames and the former
+     64 default failed both validation calls on first attempt).
    - If the result is `no_factual_claims`, emit `fact_score = nil` with
      `data_gap: "no_factual_claims_found"` and stop.
 
