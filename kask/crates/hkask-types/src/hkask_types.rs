@@ -71,7 +71,6 @@ pub struct HMemEntry {
     pub attribute: String,
     pub value: serde_json::Value,
     pub valid_from: String,
-    pub valid_to: Option<String>,
     pub confidence: f64,
     pub perspective: String,
     pub visibility: String,

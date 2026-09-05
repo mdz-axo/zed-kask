@@ -648,18 +648,18 @@ impl KanbanService {
     pub(crate) fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
         let task = self.require_task(task_id)?;
 
-        // Close the task h_mem
+        // Delete the task h_mem
         let h_mems = self
             .store
             .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
             .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
         for t in &h_mems {
             self.store
-                .close_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("h_mem close failed: {e}")))?;
+                .delete_by_id(&t.id)
+                .map_err(|e| KanbanError::Internal(format!("h_mem delete failed: {e}")))?;
         }
 
-        // Close the index h_mem
+        // Delete the index h_mem
         let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
         let idx_triples = self
             .store
@@ -667,8 +667,8 @@ impl KanbanService {
             .map_err(|e| KanbanError::Internal(format!("index query failed: {e}")))?;
         for t in &idx_triples {
             self.store
-                .close_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("index close failed: {e}")))?;
+                .delete_by_id(&t.id)
+                .map_err(|e| KanbanError::Internal(format!("index delete failed: {e}")))?;
         }
 
         Ok(())
@@ -879,15 +879,15 @@ impl KanbanService {
             }
         }
 
-        // Close the board h_mem
+        // Delete the board h_mem
         let h_mems = self
             .store
             .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
             .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
         for t in &h_mems {
             self.store
-                .close_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("h_mem close failed: {e}")))?;
+                .delete_by_id(&t.id)
+                .map_err(|e| KanbanError::Internal(format!("h_mem delete failed: {e}")))?;
         }
         let _ = board;
 

@@ -1316,10 +1316,10 @@ impl CuratorServer {
     /// Resolve a contradiction between two or more memories.
     ///
     /// This is the therapy process tool — it resolves cognitive dissonance
-    /// in the memory store by expiring, updating, or deleting contradictory
+    /// in the memory store by forgetting or de-conflicting contradictory
     /// h_mems.
     #[tool(
-        description = "Resolve a contradiction between memories. Strategies: 'expire' (soft-delete), 'update_confidence' (lower confidence), 'delete' (hard-delete). Requires a reason citing the contradiction."
+        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the h_mem from the database — memories are forgotten, not expired), 'update_confidence' (lower confidence). Requires a reason citing the contradiction."
     )]
     pub async fn memory_resolve_contradiction(
         &self,
@@ -1356,14 +1356,14 @@ impl CuratorServer {
                 })?;
 
             match req.strategy.as_str() {
-                "expire" => {
+                "forget" => {
                     memory
-                        .expire_h_mem(&target_id)
-                        .map_err(|e| map_memory_store_error(e, "Failed to expire h_mem"))?;
-                    RegulationSpan::Curation.emit("contradiction_expired");
+                        .delete_h_mem(&target_id)
+                        .map_err(|e| map_memory_store_error(e, "Failed to forget h_mem"))?;
+                    RegulationSpan::Curation.emit("contradiction_forgotten");
                     Ok(json!({
                         "resolved": true,
-                        "strategy": "expire",
+                        "strategy": "forget",
                         "target_h_mem_id": req.target_h_mem_id,
                         "contradicting_h_mem_ids": req.h_mem_ids,
                         "reason": req.reason
@@ -1391,21 +1391,8 @@ impl CuratorServer {
                         "reason": req.reason
                     }))
                 }
-                "delete" => {
-                    memory
-                        .delete_h_mem(&target_id)
-                        .map_err(|e| map_memory_store_error(e, "Failed to delete h_mem"))?;
-                    RegulationSpan::Curation.emit("contradiction_deleted");
-                    Ok(json!({
-                        "resolved": true,
-                        "strategy": "delete",
-                        "target_h_mem_id": req.target_h_mem_id,
-                        "contradicting_h_mem_ids": req.h_mem_ids,
-                        "reason": req.reason
-                    }))
-                }
                 other => Err(McpToolError::invalid_argument(format!(
-                    "Unknown strategy '{other}' — must be one of: expire, update_confidence, delete"
+                    "Unknown strategy '{other}' — must be one of: forget, update_confidence"
                 ))),
             }
         })
@@ -1481,9 +1468,9 @@ impl CuratorServer {
 
     /// Deduplicate h_mems by normalized string value. Groups by
     /// (entity, attribute, normalized_value), keeps highest-confidence,
-    /// expires the rest. Non-string values skipped.
+    /// deletes the rest. Non-string values skipped.
     #[tool(
-        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, expires the rest. Deterministic, non-LLM. Non-string values skipped."
+        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values skipped."
     )]
     pub async fn curator_memory_dedup(
         &self,
@@ -1508,7 +1495,7 @@ impl CuratorServer {
                 "deduped": true,
                 "scanned": outcome.scanned,
                 "groups_with_dupes": outcome.groups_with_dupes,
-                "expired_count": outcome.expired_count,
+                "deleted_count": outcome.deleted_count,
                 "failed_count": outcome.failed_count,
                 "skipped_non_string": outcome.skipped_non_string,
             }))
@@ -1541,8 +1528,8 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            // Every active h_mem (empty prefix matches all entities; the
-            // underlying query filters valid_to IS NULL).
+            // Every h_mem (empty prefix matches all entities — all rows
+            // are current; forgotten rows are deleted, not filtered out).
             let active = memory
                 .h_mems_by_entity_prefix("")
                 .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;

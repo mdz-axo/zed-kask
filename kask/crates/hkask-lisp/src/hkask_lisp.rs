@@ -5,7 +5,7 @@
 //! Design goals (following the `rust_lisp` reference by brundonsmith):
 //! - Small footprint, no runtime dependencies beyond serde_json
 //! - No I/O, no filesystem, no network, no environment variable access
-//! - Bounded recursion depth (64) and bounded evaluation steps (100000)
+//! - Bounded recursion depth (1024) and bounded evaluation steps (100000)
 //! - JSON-native: input env is `serde_json::Value`, output is `serde_json::Value`
 //! - JSON objects become association lists — the classic Lisp data structure
 //!
@@ -460,7 +460,10 @@ impl EvalBudget {
 }
 
 pub fn eval(env: Rc<RefCell<Env>>, form: &LispValue) -> Result<LispValue, LispError> {
-    let mut budget = EvalBudget::new(100000, 64);
+    // Depth 1024: recursive helpers consume 2–4 frames per list element, so
+    // the former 64 overflowed at ~16 elements — real-scale validation lists
+    // failed their first attempt. Infinite recursion still trips immediately.
+    let mut budget = EvalBudget::new(100000, 1024);
     eval_with_budget(env, form, &mut budget)
 }
 
@@ -1387,7 +1390,7 @@ fn is_alist(items: &[LispValue]) -> bool {
 /// is a JSON object whose keys become top-level bindings (values converted
 /// to Lisp values via `from_json` — objects become association lists).
 pub fn eval_sandboxed(form: &str, env_json: &Value) -> Result<Value, LispError> {
-    eval_sandboxed_with_budget(form, env_json, 100000, 64)
+    eval_sandboxed_with_budget(form, env_json, 100000, 1024)
 }
 
 pub fn eval_sandboxed_with_budget(
@@ -1462,7 +1465,7 @@ mod tests {
         // `define` has no function sugar — bind a lambda instead.
         let program = "(define loop (lambda (n) (loop (+ n 1)))) (loop 0)";
         let err =
-            eval_sandboxed_with_budget(program, &serde_json::json!({}), 1000, 64).unwrap_err();
+            eval_sandboxed_with_budget(program, &serde_json::json!({}), 1000, 1024).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -1470,6 +1473,32 @@ mod tests {
             ),
             "unbounded recursion must hit a budget, got: {err}"
         );
+    }
+
+    /// The observed live failure behind the 64→1024 default raise: a
+    /// recursive helper over a real-scale validation list (134 claim
+    /// assignments) needed depth ~300 — the former default of 64 overflowed
+    /// at ~16 elements and the first attempt failed, wasting turns on
+    /// retries. The DEFAULT budget (no explicit max_depth) must cover it.
+    #[test]
+    fn recursive_helper_over_real_scale_list_succeeds_at_default_depth() {
+        let assignments: Vec<Value> = (0..134)
+            .map(|index| {
+                serde_json::json!({"claim_id": format!("c{index}"), "provenance": "tool_verified"})
+            })
+            .collect();
+        let program = r#"
+            (define count-verified
+              (lambda (lst)
+                (if (lt (length lst) 1)
+                    0
+                    (+ (if (string-contains "tool_verified" (assoc "provenance" (car lst))) 1 0)
+                       (count-verified (cdr lst))))))
+            (count-verified assignments)
+        "#;
+        let result = eval_sandboxed(program, &serde_json::json!({ "assignments": assignments }))
+            .expect("a 134-element recursive helper must succeed at the default depth");
+        assert_eq!(result, serde_json::json!(134));
     }
 
     #[test]

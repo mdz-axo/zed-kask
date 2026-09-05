@@ -188,6 +188,7 @@ impl Database {
         let dim = embedding_dim();
         conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
         Self::migrate_embeddings_passage_text(conn)?;
+        Self::migrate_hmems_forgetting_spec(conn)?;
         Ok(())
     }
 
@@ -207,6 +208,33 @@ impl Database {
             tracing::info!(
                 target: "reg.storage",
                 "Migration: added passage_text column to embeddings table"
+            );
+        }
+        Ok(())
+    }
+
+    /// Migrate existing `hmems` tables to the forgetting spec (operator
+    /// ruling 2026-09-04): there is no "expired" state — memories age
+    /// and are forgotten or deleted, and forgotten means deleted from the
+    /// database. Rows carrying a `valid_to` timestamp (the former
+    /// soft-delete marker) are forgotten rows under the old mechanism:
+    /// delete them, then drop the column. `CREATE TABLE IF NOT EXISTS`
+    /// won't remove the column from an already-existing table, so
+    /// `ALTER TABLE ... DROP COLUMN` is needed for DBs created before the
+    /// ruling. No index references `valid_to`, so the drop is safe.
+    fn migrate_hmems_forgetting_spec(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(hmems)")?;
+        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let has_column = has_column
+            .filter_map(|r| r.ok())
+            .any(|name| name == "valid_to");
+        if has_column {
+            let forgotten = conn.execute("DELETE FROM hmems WHERE valid_to IS NOT NULL", [])?;
+            conn.execute_batch("ALTER TABLE hmems DROP COLUMN valid_to;")?;
+            tracing::info!(
+                target: "reg.storage",
+                forgotten,
+                "Migration: forgetting spec applied — soft-deleted rows deleted, valid_to column dropped"
             );
         }
         Ok(())

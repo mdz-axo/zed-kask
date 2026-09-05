@@ -6,10 +6,12 @@
 //! Named "forgetting" per the operator's 2026-09-04 naming ruling — one
 //! forgets memories; "retirement" was a workplace metaphor that didn't
 //! survive review. Distinct from "decay" (memory-system-specification.md
-//! §7): decay is the confidence curve R(t) = exp(-t/S); forgetting is the
-//! episodic expiry. Two mechanisms, two names.
+//! §7): decay is the confidence curve R(t) = exp(-t/S); forgetting is
+//! deletion — the forgotten rows are removed from the database (operator
+//! ruling 2026-09-04: there is no "expired" state; memories age and are
+//! forgotten or deleted). Two mechanisms, two names.
 //!
-//! A thread's shared-copy turns are expired — and their embeddings
+//! A thread's shared-copy turns are deleted — and their embeddings
 //! deleted — once the thread's newest distillation watermark has aged
 //! past the forgetting threshold. The watermark proves the lessons were
 //! extracted; the age grace keeps recent conversations recallable. Since
@@ -17,7 +19,8 @@
 //! curator-perspective original to preserve: a turn's content lives only
 //! in its shared-copy chunks, so forgetting the shared copies forgets the
 //! turn (the lessons stay). The legacy `chat:thread:` rows that predate
-//! the ruling were expired by the 2026-09-04 therapy hygiene pass.
+//! the ruling were forgotten (deleted) by the 2026-09-04 therapy hygiene
+//! pass.
 //!
 //! The pass also sweeps vector rows orphaned from their metadata (KNN's
 //! inner join already ignores them; the sweep reclaims the space).
@@ -83,14 +86,14 @@ fn parse_days_value(raw: &str) -> u64 {
 pub(crate) struct ForgettingOutcome {
     pub threads_examined: usize,
     pub threads_forgotten: usize,
-    pub turns_expired: usize,
+    pub turns_deleted: usize,
     pub embeddings_deleted: usize,
     pub orphans_swept: usize,
 }
 
-/// One forgetting pass: expire the shared-copy turns (and delete their
-/// embeddings) of every thread whose newest distillation watermark is
-/// older than `min_age_days`, then sweep orphaned vector rows.
+/// One forgetting pass: delete the shared-copy turns (and their embeddings)
+/// of every thread whose newest distillation watermark is older than
+/// `min_age_days`, then sweep orphaned vector rows.
 pub(crate) fn forget_distilled_threads(
     memory: &MemoryStore,
     now: chrono::DateTime<chrono::Utc>,
@@ -127,14 +130,14 @@ pub(crate) fn forget_distilled_threads(
             continue; // still inside the grace window
         }
         let shared_entity = format!("{SHARED_TURN_PREFIX}{thread_id}");
-        let expired = memory.expire_h_mems_by_entity_prefix(&shared_entity)?;
-        let deleted = memory.delete_embeddings_by_entity(&shared_entity)?;
+        let deleted_rows = memory.delete_h_mems_by_entity_prefix(&shared_entity)?;
+        let deleted_embeddings = memory.delete_embeddings_by_entity(&shared_entity)?;
         // Count the thread only when work was done — a qualifying thread
-        // whose turns are already expired (a prior pass) is a no-op, not
+        // whose turns are already deleted (a prior pass) is a no-op, not
         // a second forgetting. Pinned by forgetting_is_idempotent.
-        if expired > 0 || deleted > 0 {
-            outcome.turns_expired += expired;
-            outcome.embeddings_deleted += deleted;
+        if deleted_rows > 0 || deleted_embeddings > 0 {
+            outcome.turns_deleted += deleted_rows;
+            outcome.embeddings_deleted += deleted_embeddings;
             outcome.threads_forgotten += 1;
         }
     }
@@ -233,7 +236,7 @@ mod tests {
     /// threads, never-distilled threads, curator-perspective originals,
     /// and the watermarks themselves are untouched.
     #[test]
-    fn forgetting_expires_only_aged_distilled_shared_turns() {
+    fn forgetting_deletes_only_aged_distilled_shared_turns() {
         let (memory, _driver) = store_with_driver();
         let now = chrono::Utc::now();
         let old = now - chrono::Duration::days(10);
@@ -265,8 +268,8 @@ mod tests {
             "only the aged thread is forgotten"
         );
         assert_eq!(
-            outcome.turns_expired, 2,
-            "both shared turns of the aged thread expire"
+            outcome.turns_deleted, 2,
+            "both shared turns of the aged thread are deleted"
         );
         assert_eq!(
             outcome.embeddings_deleted, 1,
@@ -278,7 +281,7 @@ mod tests {
                 .h_mems_by_entity_prefix("curator:thread:old-thread")
                 .expect("query")
                 .is_empty(),
-            "the aged thread's shared turns are expired"
+            "the aged thread's shared turns are deleted"
         );
         assert_eq!(
             memory
@@ -286,7 +289,7 @@ mod tests {
                 .expect("query")
                 .len(),
             1,
-            "the pass never touches the retired perspective prefix — legacy rows there were expired by the therapy hygiene pass, not here"
+            "the pass never touches the retired perspective prefix — legacy rows there were forgotten (deleted) by the therapy hygiene pass, not here"
         );
         assert_eq!(
             memory
@@ -310,11 +313,11 @@ mod tests {
                 .expect("query")
                 .len(),
             2,
-            "watermarks are never expired — they are the idempotence markers"
+            "watermarks are never deleted — they are the idempotence markers"
         );
     }
 
-    /// The pass is idempotent: expired turns stay expired, deleted
+    /// The pass is idempotent: deleted turns stay deleted, deleted
     /// embeddings stay deleted, a second pass changes nothing.
     #[test]
     fn forgetting_is_idempotent() {
@@ -325,18 +328,18 @@ mod tests {
         seed_watermark(&memory, "old-thread", now - chrono::Duration::days(10));
 
         let first = forget_distilled_threads(&memory, now, 7).expect("first pass");
-        assert_eq!(first.turns_expired, 1);
+        assert_eq!(first.turns_deleted, 1);
         let second = forget_distilled_threads(&memory, now, 7).expect("second pass");
         assert_eq!(
             second,
             ForgettingOutcome {
                 threads_examined: 1,
                 threads_forgotten: 0,
-                turns_expired: 0,
+                turns_deleted: 0,
                 embeddings_deleted: 0,
                 orphans_swept: 0,
             },
-            "a second pass must be a no-op — expired turns stay expired"
+            "a second pass must be a no-op — deleted turns stay deleted"
         );
     }
 

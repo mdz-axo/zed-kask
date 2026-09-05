@@ -16,7 +16,7 @@
 //! - `query_by_perspective()` — filter by who wrote the memory (the swarm
 //!   hive uses this to scope by agent)
 //! - Embedding operations (store, search, centroid, purge)
-//! - Consolidation helpers (update_confidence, expire_h_mem)
+//! - Consolidation helpers (update_confidence, delete_h_mem)
 //!
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
 //! at recall time.
@@ -69,9 +69,9 @@ pub struct DedupOutcome {
     pub scanned: usize,
     /// Groups that contained 2+ near-duplicate values.
     pub groups_with_dupes: usize,
-    /// Successfully expired (soft-delete).
-    pub expired_count: usize,
-    /// Individual expire failures (counted, not aborting the batch).
+    /// Successfully deleted (forgotten — the row is removed).
+    pub deleted_count: usize,
+    /// Individual delete failures (counted, not aborting the batch).
     pub failed_count: usize,
     /// Non-string h_mems skipped (structural dedup is the EAV path's job).
     pub skipped_non_string: usize,
@@ -410,9 +410,10 @@ impl MemoryStore {
     }
 
     /// Fetch a single h_mem by ID, without decay and without touching
-    /// `recalled_at`. Expired h_mems are absent (valid_to set filters them) —
-    /// this is the "does this citation exist" check `memory_insert` runs on
-    /// its evidence, not a recall path.
+    /// `recalled_at`. Deleted h_mems are absent — forgetting removes the
+    /// row from the database (there is no "expired" state) — so this is
+    /// the "does this citation exist" check `memory_insert` runs on its
+    /// evidence, not a recall path.
     pub fn get_by_id(&self, id: &hkask_storage::HMemId) -> Result<Option<HMem>, MemoryStoreError> {
         self.h_mem_store.get_by_id(id).map_err(Into::into)
     }
@@ -660,29 +661,19 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Expire a h_mem by setting its `valid_to` (soft-delete).
-    pub fn expire_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
-        self.h_mem_store.close_by_id(id)?;
-        tracing::debug!(
-            target: "hkask.memory",
-            triple_id = %id.as_uuid(),
-            "h_mem expired (soft-delete via valid_to)"
-        );
-        Ok(())
-    }
-
-    /// Expire every active h_mem under an entity prefix (soft-delete
-    /// via valid_to), in one statement. Returns the number expired.
-    /// The curator's retirement pass retires a distilled thread's
-    /// shared-copy turns this way.
-    pub fn expire_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
-        let count = self.h_mem_store.close_by_entity_prefix(prefix)?;
+    /// Delete every h_mem under an entity prefix, in one statement.
+    /// Returns the number deleted. The forgetting pass uses this to forget
+    /// a distilled thread's shared-copy turns — forgotten rows are
+    /// removed from the database (operator ruling 2026-09-04: there is no
+    /// "expired" state).
+    pub fn delete_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
+        let count = self.h_mem_store.delete_by_entity_prefix(prefix)?;
         if count > 0 {
             tracing::debug!(
                 target: "hkask.memory",
                 prefix,
                 count,
-                "h_mems expired by entity prefix (soft-delete via valid_to)"
+                "h_mems deleted by entity prefix (forgotten)"
             );
         }
         Ok(count)
@@ -1175,14 +1166,14 @@ mod tests {
     }
 
     #[test]
-    fn dedup_by_normalized_value_expires_near_duplicates() {
+    fn dedup_by_normalized_value_deletes_near_duplicates() {
         let store = test_store();
         let webid = WebID::from_persona(b"curator");
         // Three h_mems for the same entity+attribute with near-duplicate values.
         store_h_mem(&store, "company:AAPL", "ticker", "AAPL", webid);
         store_h_mem(&store, "company:AAPL", "ticker", "aapl.", webid);
         store_h_mem(&store, "company:AAPL", "ticker", " AAPL ", webid);
-        // A distinct value that should NOT be expired.
+        // A distinct value that should NOT be deleted.
         store_h_mem(&store, "company:AAPL", "ticker", "MSFT", webid);
         // A non-string value that should be skipped.
         let numeric = hkask_storage::HMem::new(
@@ -1201,7 +1192,7 @@ mod tests {
             outcome.groups_with_dupes, 1,
             "one group has near-duplicates"
         );
-        assert_eq!(outcome.expired_count, 2, "two near-duplicates expired");
+        assert_eq!(outcome.deleted_count, 2, "two near-duplicates deleted");
         assert_eq!(outcome.skipped_non_string, 1, "numeric value skipped");
 
         // The remaining h_mems for ticker: one of the AAPL variants + MSFT.
@@ -1209,11 +1200,12 @@ mod tests {
             .h_mem_store
             .query_by_entity_attribute("company:AAPL", "ticker")
             .expect("query");
-        // query_by_entity_attribute returns live (valid_to IS NULL) h_mems only.
+        // query_by_entity_attribute returns all current h_mems — forgetting
+        // deletes rows; there is no validity filter.
         assert_eq!(
             remaining.len(),
             2,
-            "one AAPL variant + MSFT survive; two AAPL variants expired"
+            "one AAPL variant + MSFT survive; two AAPL variants deleted"
         );
     }
 

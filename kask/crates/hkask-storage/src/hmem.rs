@@ -158,7 +158,7 @@ impl HMemStore {
     }
 }
 
-const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
+const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -198,18 +198,18 @@ impl HMemStore {
                 attribute: row.get(2)?.as_text()?.to_string(),
                 value: value_text,
                 valid_from: row.get(4)?.as_text()?.to_string(),
-                recalled_at: row.get(6)?.as_text().ok().unwrap_or_default().to_string(),
-                confidence: Confidence::new(row.get(7)?.as_real()?),
-                perspective: row.get(8)?.as_text().ok().and_then(|s| s.parse().ok()),
-                visibility: match row.get(9)?.as_text().unwrap_or("private") {
+                recalled_at: row.get(5)?.as_text().ok().unwrap_or_default().to_string(),
+                confidence: Confidence::new(row.get(6)?.as_real()?),
+                perspective: row.get(7)?.as_text().ok().and_then(|s| s.parse().ok()),
+                visibility: match row.get(8)?.as_text().unwrap_or("private") {
                     "public" => Visibility::Public,
                     "shared" => Visibility::Shared,
                     _ => Visibility::Private,
                 },
-                owner_webid: row.get(10)?.as_text()?.parse().map_err(|_| {
+                owner_webid: row.get(9)?.as_text()?.parse().map_err(|_| {
                     HMemError::Infra(InfrastructureError::database("invalid webid"))
                 })?,
-                ontology: row.get(11)?.as_text().ok().and_then(|s| {
+                ontology: row.get(10)?.as_text().ok().and_then(|s| {
                     if s.is_empty() {
                         None
                     } else {
@@ -264,7 +264,7 @@ impl HMemStore {
         };
         self.exec(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
             ),
             &[
                 DbValue::Text(h_mem.id.to_string()),
@@ -272,7 +272,6 @@ impl HMemStore {
                 DbValue::Text(h_mem.attribute.clone()),
                 DbValue::Text(value),
                 DbValue::Text(h_mem.observed_at.to_rfc3339()),
-                DbValue::Null,
                 DbValue::Text(h_mem.recalled_at.to_rfc3339()),
                 DbValue::Real(h_mem.confidence.value()),
                 h_mem
@@ -296,7 +295,7 @@ impl HMemStore {
     #[must_use = "result must be used"]
     pub fn query_by_entity(&self, entity: &str) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity = ?1 ORDER BY valid_from DESC"),
             &[DbValue::Text(entity.to_string())],
         )
     }
@@ -328,7 +327,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE entity LIKE ?1 AND valid_to IS NULL \
+                 WHERE entity LIKE ?1 \
                  ORDER BY valid_from DESC LIMIT ?2"
             ),
             &[
@@ -356,7 +355,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE entity LIKE ?1 AND valid_to IS NULL AND valid_from >= ?2 \
+                 WHERE entity LIKE ?1 AND valid_from >= ?2 \
                  ORDER BY valid_from ASC LIMIT ?3"
             ),
             &[
@@ -378,7 +377,7 @@ impl HMemStore {
         attribute: &str,
     ) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity = ?1 AND attribute = ?2 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity = ?1 AND attribute = ?2 ORDER BY valid_from DESC"),
             &[DbValue::Text(entity.to_string()), DbValue::Text(attribute.to_string())],
         )
     }
@@ -390,7 +389,9 @@ impl HMemStore {
     /// post: returns Vec of h_mems for this perspective
     pub fn query_by_perspective(&self, perspective: &WebID) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective = ?1 ORDER BY valid_from DESC"
+            ),
             &[DbValue::Text(perspective.to_string())],
         )
     }
@@ -404,13 +405,17 @@ impl HMemStore {
     #[must_use = "result must be used"]
     pub fn query_by_attribute(&self, attribute: &str) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE attribute = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems WHERE attribute = ?1 ORDER BY valid_from DESC"
+            ),
             &[DbValue::Text(attribute.to_string())],
         )
     }
-    /// Update a h_mem's value (close current version, insert new).
-    /// Wrapped in a transaction for atomicity.
-    /// Update a h_mem's value and confidence.
+    /// Update a h_mem's value and confidence: delete the current version
+    /// and insert the replacement, wrapped in a transaction for atomicity.
+    /// The prior version is deleted — the forgetting spec keeps no
+    /// superseded state (operator ruling 2026-09-04: memories are
+    /// forgotten or deleted, never "expired").
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P3\] Motivating: Generative Space — update value and confidence
@@ -428,9 +433,9 @@ impl HMemStore {
         // prior `execute_batch("BEGIN")` / `execute()` / `execute_batch("COMMIT")
         // pattern acquired a different pool connection per call, so the
         // writes ran outside any transaction (autocommit on conns B/C, COMMIT
-        // was a no-op on conn D). A crash between the UPDATE (close old
-        // version) and INSERT (new version) left the row closed with no
-        // replacement — silent data loss under `max_size > 1`.
+        // was a no-op on conn D). A crash between the DELETE and INSERT now
+        // rolls back both — no window where the row is gone with no
+        // replacement.
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
             HMemError::Infra(InfrastructureError::database(
                 "HMemStore::update requires a SqliteDriver",
@@ -442,13 +447,8 @@ impl HMemStore {
         let tx = conn
             .transaction()
             .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        // Close the old version (set valid_to).
-        tx.execute(
-            "UPDATE hmems SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
-            rusqlite::params![now, id.to_string()],
-        )
-        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        // Read the old version's metadata to carry into the new version.
+        // Read the old version's metadata to carry into the replacement —
+        // before the delete, because the row is gone afterwards.
         let row = tx.query_row(
             "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
             rusqlite::params![id.to_string()],
@@ -464,10 +464,18 @@ impl HMemStore {
             },
         ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         let (entity, attribute, perspective, visibility, owner_webid, ontology) = row;
+        // Delete the old version — the forgetting spec keeps no superseded
+        // state (operator ruling 2026-09-04: memories are forgotten or
+        // deleted, never "expired").
+        tx.execute(
+            "DELETE FROM hmems WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+        )
+        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         let new_id = HMemId::new();
         tx.execute(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
             ),
             rusqlite::params![
                 new_id.to_string(),
@@ -475,7 +483,6 @@ impl HMemStore {
                 attribute,
                 serde_json::to_string(&new_value)?,
                 now,
-                Option::<String>::None,
                 now,
                 new_confidence.value(),
                 perspective,
@@ -498,7 +505,7 @@ impl HMemStore {
     #[must_use = "result must be used"]
     pub fn get_by_id(&self, id: &HMemId) -> Result<Option<HMem>, HMemError> {
         let results = self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE id = ?1 AND valid_to IS NULL"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE id = ?1"),
             &[DbValue::Text(id.to_string())],
         )?;
         Ok(results.into_iter().next())
@@ -511,11 +518,11 @@ impl HMemStore {
     /// `valid_from` is never modified — it remains the creation timestamp.
     ///
     /// expect: "The system provides durable storage for h_mem data"
-    /// pre:  id is a valid, non-expired h_mem ID
+    /// pre:  id is a valid h_mem ID
     /// post: h_mem's recalled_at updated to current time
     pub fn touch_recall(&self, id: &HMemId) -> Result<(), HMemError> {
         self.exec(
-            "UPDATE hmems SET recalled_at = ?1 WHERE id = ?2 AND valid_to IS NULL",
+            "UPDATE hmems SET recalled_at = ?1 WHERE id = ?2",
             &[DbValue::Text(now_rfc3339()), DbValue::Text(id.to_string())],
         )?;
         Ok(())
@@ -523,14 +530,16 @@ impl HMemStore {
     /// Query h_mems with lowest confidence, ordered ASC. Used by consolidation.
     pub fn query_lowest_confidence(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE valid_to IS NULL ORDER BY confidence ASC, valid_from ASC LIMIT ?1"),
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems ORDER BY confidence ASC, valid_from ASC LIMIT ?1"
+            ),
             &[DbValue::Integer(limit as i64)],
         )
     }
     /// Count h_mems below confidence threshold. Used by consolidation.
     pub fn count_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
         self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL AND confidence <= ?1",
+            "SELECT COUNT(*) FROM hmems WHERE confidence <= ?1",
             &[DbValue::Real(threshold)],
         )
     }
@@ -541,14 +550,14 @@ impl HMemStore {
         limit: usize,
     ) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE valid_to IS NULL AND confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
             &[DbValue::Real(threshold), DbValue::Integer(limit as i64)],
         )
     }
     /// Count all h_mems.
     #[must_use = "result must be used"]
     pub fn count(&self) -> Result<usize, HMemError> {
-        self.count_rows("SELECT COUNT(*) FROM hmems WHERE valid_to IS NULL", &[])
+        self.count_rows("SELECT COUNT(*) FROM hmems", &[])
     }
 
     /// Query h_mems whose `valid_from` (observation timestamp) is older than
@@ -559,8 +568,8 @@ impl HMemStore {
     /// memories by filtering on `recalled_at` after the query.
     ///
     /// pre:  cutoff is a valid RFC 3339 timestamp
-    /// post: returns h_mems with `valid_from < cutoff` and `valid_to IS NULL`,
-    ///       ordered oldest first
+    /// post: returns h_mems with `valid_from < cutoff`, ordered oldest
+    ///       first
     #[must_use = "result must be used"]
     pub fn query_older_than(
         &self,
@@ -570,7 +579,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE valid_to IS NULL AND valid_from < ?1 \
+                 WHERE valid_from < ?1 \
                  ORDER BY valid_from ASC LIMIT ?2"
             ),
             &[
@@ -580,18 +589,16 @@ impl HMemStore {
         )
     }
 
-    /// Query all live h_mems, without decay or dedup. Used by the dedup
+    /// Query all h_mems, without decay or dedup. Used by the dedup
     /// tool to scan the full memory set for near-duplicate values.
     ///
     /// pre:  limit > 0
-    /// post: returns up to `limit` live h_mems (valid_to IS NULL),
-    ///       ordered newest first
+    /// post: returns up to `limit` h_mems, ordered newest first
     #[must_use = "result must be used"]
-    pub fn query_all_live(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
+    pub fn query_all(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE valid_to IS NULL \
                  ORDER BY valid_from DESC LIMIT ?1"
             ),
             &[DbValue::Integer(limit as i64)],
@@ -635,7 +642,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE {valid} AND {extract} = ?1 AND valid_to IS NULL \
+                 WHERE {valid} AND {extract} = ?1 \
                  ORDER BY valid_from DESC"
             ),
             &[DbValue::Text(dc_type.to_string())],
@@ -662,7 +669,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE {valid} AND {extract} LIKE ?1 AND valid_to IS NULL \
+                 WHERE {valid} AND {extract} LIKE ?1 \
                  ORDER BY valid_from DESC"
             ),
             &[DbValue::Text(format!("%{subject}%"))],
@@ -679,7 +686,7 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE {valid} AND {extract} = ?1 AND valid_to IS NULL \
+                 WHERE {valid} AND {extract} = ?1 \
                  ORDER BY valid_from DESC"
             ),
             &[DbValue::Text(procedure.to_string())],
@@ -707,39 +714,22 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE {valid} AND {predicate} AND valid_to IS NULL \
+                 WHERE {valid} AND {predicate} \
                  ORDER BY valid_from DESC"
             ),
             &params,
         )
     }
 
-    /// Soft-delete: set valid_to to close a h_mem.
-    /// Soft-delete a h_mem by setting valid_to.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — soft-delete h_mem
-    /// pre:  id is valid
-    /// post: h_mem's valid_to set to now (soft-delete)
-    pub fn close_by_id(&self, id: &HMemId) -> Result<(), HMemError> {
+    /// Delete every h_mem under an entity prefix, in one statement.
+    /// Returns the number of rows deleted. The forgetting pass uses this
+    /// to forget a distilled thread's shared-copy turns — forgotten rows
+    /// are removed from the database (operator ruling 2026-09-04: there
+    /// is no "expired" state).
+    pub fn delete_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
         self.exec(
-            "UPDATE hmems SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
-            &[DbValue::Text(now_rfc3339()), DbValue::Text(id.to_string())],
-        )?;
-        Ok(())
-    }
-
-    /// Soft-delete (expire) every active h_mem under an entity prefix,
-    /// in one statement. Returns the number of rows expired. The
-    /// curator's retirement pass uses this to retire a distilled
-    /// thread's shared-copy turns.
-    pub fn close_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
-        self.exec(
-            "UPDATE hmems SET valid_to = ?1 WHERE entity LIKE ?2 AND valid_to IS NULL",
-            &[
-                DbValue::Text(now_rfc3339()),
-                DbValue::Text(format!("{}%", prefix)),
-            ],
+            "DELETE FROM hmems WHERE entity LIKE ?1",
+            &[DbValue::Text(format!("{}%", prefix))],
         )
     }
     /// Hard-delete a h_mem row entirely.
@@ -796,7 +786,6 @@ impl From<&HMem> for HMemEntry {
             attribute: t.attribute.clone(),
             value: t.value.clone(),
             valid_from: t.observed_at.to_rfc3339(),
-            valid_to: None,
             confidence: t.confidence.value(),
             perspective: t
                 .access

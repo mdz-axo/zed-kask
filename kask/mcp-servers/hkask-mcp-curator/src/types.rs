@@ -210,16 +210,16 @@ pub struct MemoryUpdateRequest {
 /// Grounding: Festinger's three dissonance resolution strategies
 /// (`Universal_Principles_of_Design:39`): reduce importance (lower
 /// confidence), add consonant (insert reconciling memory), remove dissonant
-/// (expire/delete).
+/// (forget — delete the row).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemoryResolveContradictionRequest {
     /// The h_mem IDs involved in the contradiction.
     pub h_mem_ids: Vec<String>,
-    /// The resolution strategy: "expire" (soft-delete the lower-confidence
-    /// one), "update_confidence" (lower confidence on the contradicted one),
-    /// or "delete" (hard-delete — use sparingly).
+    /// The resolution strategy: "forget" (delete the dissonant h_mem from
+    /// the database — memories are forgotten, not expired) or
+    /// "update_confidence" (lower confidence on the contradicted one).
     pub strategy: String,
-    /// The h_mem ID to act on (the one to expire/update/delete). For
+    /// The h_mem ID to act on (the one to forget or update). For
     /// "update_confidence", the new confidence value must be provided.
     pub target_h_mem_id: String,
     /// For "update_confidence": the new confidence value. Ignored for other

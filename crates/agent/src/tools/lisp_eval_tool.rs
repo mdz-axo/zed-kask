@@ -58,7 +58,13 @@ pub struct LispEvalToolInput {
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     #[serde(default = "default_max_steps")]
     max_steps: u64,
-    /// Maximum evaluation depth (default 64). Prevents infinite recursion.
+    /// Maximum evaluation depth (default 1024). Prevents infinite recursion.
+    /// Recursive helper forms over lists consume roughly 2–4 depth frames
+    /// per element, so the former default of 64 overflowed at ~16 elements —
+    /// real-scale validation lists (100+ claims) failed on the first attempt
+    /// and wasted turns on retries (observed live: a 134-element list needed
+    /// 300). 1024 covers realistic registries out of the box; genuinely
+    /// infinite recursion still trips the budget immediately.
     #[serde(default = "default_max_depth")]
     max_depth: u64,
 }
@@ -68,7 +74,12 @@ fn default_max_steps() -> u64 {
 }
 
 fn default_max_depth() -> u64 {
-    64
+    // 1024, not 64: recursive helpers consume 2–4 depth frames per list
+    // element, so 64 overflowed at ~16 elements and real validation lists
+    // (100+) failed their first attempt (observed: 134 elements needed 300).
+    // Infinite recursion still trips this immediately — the budget is a
+    // guard, not a workload ceiling.
+    1024
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -182,6 +193,17 @@ mod tests {
             env_schema["type"], "object",
             "env schema must have type:object so the model populates it, got: {env_schema}"
         );
+    }
+
+    #[test]
+    fn default_max_depth_covers_real_scale_lists() {
+        // The regression pin for the 64→1024 raise: deserializing a call that
+        // omits max_depth must yield the raised default — the observed live
+        // case (a 134-element recursive helper needing ~300) failed its first
+        // attempt at 64.
+        let input: LispEvalToolInput =
+            serde_json::from_str(r#"{"form": "(+ 1 2)"}"#).expect("deserializes");
+        assert_eq!(input.max_depth, 1024);
     }
 
     #[test]

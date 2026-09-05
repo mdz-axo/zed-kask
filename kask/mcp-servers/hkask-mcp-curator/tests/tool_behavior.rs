@@ -1034,42 +1034,42 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
 /// with the bare UUID — and no entity is a bare UUID, so every resolution
 /// attempt returned not_found and the tool could never resolve anything
 /// (the same bug class memory_insert's evidence check was fixed for).
-/// Pins both the expire and update_confidence strategies.
+/// Pins both the forget and update_confidence strategies.
 #[tokio::test]
 async fn resolve_contradiction_finds_target_by_id() {
     let (server, memory) = make_server_with_embeddings();
-    let expire_target = hkask_storage::HMem::new(
+    let forget_target = hkask_storage::HMem::new(
         "zed-kask/duplicate-ruling",
         "operator_ruling",
         serde_json::Value::String("ruling A".to_string()),
         WebID::new(),
     );
-    let expire_id = expire_target.id.to_string();
-    memory.store(expire_target).expect("seed expire target");
+    let forget_id = forget_target.id.to_string();
+    memory.store(forget_target).expect("seed forget target");
 
     let response = parse(
         &server
             .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
                 h_mem_ids: vec!["some-other-id".to_string()],
-                strategy: "expire".to_string(),
-                target_h_mem_id: expire_id,
+                strategy: "forget".to_string(),
+                target_h_mem_id: forget_id,
                 new_confidence: None,
                 reason: "duplicate ruling merge".to_string(),
             }))
             .await
-            .expect("expire must resolve by ID"),
+            .expect("forget must resolve by ID"),
     );
     assert_eq!(
         response["resolved"].as_bool(),
         Some(true),
-        "expire must resolve — got: {response}",
+        "forget must resolve — got: {response}",
     );
     assert!(
         memory
             .h_mems_by_entity_prefix("zed-kask/duplicate-ruling")
-            .expect("query after expire")
+            .expect("query after forget")
             .is_empty(),
-        "the expired target must be soft-deleted (valid_to set)"
+        "the forgotten target must be deleted from the database"
     );
 
     let confidence_target = hkask_storage::HMem::new(
