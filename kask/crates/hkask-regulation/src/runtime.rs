@@ -497,34 +497,26 @@ impl RegulationLedger {
         }
     }
 
-    /// Create a Regulation runtime with history caps from `SetPoints`.
+    /// Create a Regulation runtime with history caps and outcome thresholds from `SetPoints`.
     ///
-    /// Allows operators to tune how many regulation cycles and skill spans
-    /// are retained for history queries, via YAML config or env vars.
+    /// expect: "My configured outcome thresholds control alerts from startup"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — operator configuration controls sensitivity
+    /// pre: set_points passed SetPoints::validate (as enforced by load_set_points)
+    /// post: history caps and outcome thresholds are applied before any observations
     pub fn with_set_points(threshold: u64, set_points: &crate::set_points::SetPoints) -> Self {
+        let state = RegState::with_history_caps(
+            threshold,
+            set_points.max_regulation_history,
+            set_points.max_skill_span_history,
+            set_points.max_alerts,
+        );
+        state.algedonic.write().set_outcome_thresholds(
+            set_points.outcome_warning_threshold,
+            set_points.outcome_critical_threshold,
+        );
         Self {
-            state: Arc::new(RwLock::new(RegState::with_history_caps(
-                threshold,
-                set_points.max_regulation_history,
-                set_points.max_skill_span_history,
-                set_points.max_alerts,
-            ))),
+            state: Arc::new(RwLock::new(state)),
         }
-    }
-
-    /// Override the outcome quality thresholds from YAML configurable SetPoints.
-    ///
-    /// Called by the CyberneticsLoop when SetPointsConfig is loaded.
-    ///
-    /// expect: "The system provides configurable outcome quality thresholds for homeostatic regulation"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — threshold configuration enables loop tuning
-    /// \[P7\] Constraining: Evolutionary Architecture — thresholds emerged from real usage data
-    /// pre:  warning >= 0.0, critical >= 0.0, warning > critical
-    /// post: outcome thresholds updated for all domains
-    pub async fn set_outcome_thresholds(&self, warning: f64, critical: f64) {
-        let state = self.state.write().await;
-        let mut mgr = state.algedonic.write();
-        mgr.set_outcome_thresholds(warning, critical);
     }
 
     // ── Health & Alerts ──
@@ -839,7 +831,8 @@ impl RegulationLedger {
 
     /// Check outcome quality thresholds and emit alerts if degraded.
     ///
-    /// Thresholds: success_rate < 0.50 → Warning, < 0.25 → Critical.
+    /// Uses the configured outcome thresholds (defaults: < 0.50 → Warning,
+    /// < 0.25 → Critical).
     /// Only checks when at least 5 operations have been recorded (avoids
     /// alert storms from small sample sizes).
     /// Check outcome health for a domain.
@@ -986,6 +979,39 @@ impl RegulationSink for NoopEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "My configured outcome thresholds control alerts from startup" [P9]
+    #[tokio::test]
+    async fn configured_outcome_thresholds_apply_at_construction() -> anyhow::Result<()> {
+        let configuration: crate::set_points::SetPointsConfig = serde_yaml_neo::from_str(
+            "outcome_warning_threshold: 0.95\noutcome_critical_threshold: 0.90\n",
+        )?;
+        let points = crate::set_points::SetPoints::from_config(&configuration);
+        points.validate()?;
+        let ledger = RegulationLedger::with_set_points(100, &points);
+        let default_ledger =
+            RegulationLedger::with_set_points(100, &crate::set_points::SetPoints::default());
+        for ledger in [&ledger, &default_ledger] {
+            for _ in 0..9 {
+                ledger.record_outcome("review", true, None).await;
+            }
+            ledger
+                .record_outcome("review", false, Some("internal"))
+                .await;
+        }
+        let alert = ledger.check_outcome("review").await.expect("90% must warn");
+        assert_eq!(alert.severity, crate::algedonic::AlertSeverity::Warning);
+        assert!(default_ledger.check_outcome("review").await.is_none());
+        ledger
+            .record_outcome("review", false, Some("internal"))
+            .await;
+        let alert = ledger
+            .check_outcome("review")
+            .await
+            .expect("below 90% must escalate");
+        assert_eq!(alert.severity, crate::algedonic::AlertSeverity::Critical);
+        Ok(())
+    }
 
     /// `variety()` must include server-name domains — the tool-dispatch feed
     /// taxonomy. The previous `SpanNamespace::parse` filter hid every

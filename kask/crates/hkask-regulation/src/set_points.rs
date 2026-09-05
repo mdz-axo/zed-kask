@@ -486,6 +486,11 @@ impl SetPoints {
             ("seam_coverage_min", self.seam_coverage_min),
             ("coverage_floor", self.coverage_floor),
             ("mutation_score_floor", self.mutation_score_floor),
+            ("outcome_warning_threshold", self.outcome_warning_threshold),
+            (
+                "outcome_critical_threshold",
+                self.outcome_critical_threshold,
+            ),
         ] {
             if !(0.0..=1.0).contains(&value) {
                 return Err(anyhow::anyhow!("{name} must be in [0.0, 1.0], got {value}"));
@@ -545,6 +550,34 @@ impl SetPoints {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "Invalid outcome sensitivity is rejected instead of silently disabling alerts" [P9]
+    #[test]
+    fn validate_outcome_threshold_bounds_and_order() {
+        for (warning, critical) in [
+            (1.1, 0.25),
+            (0.5, -0.1),
+            (0.5, 0.5),
+            (0.25, 0.5),
+            (f64::NAN, 0.25),
+            (0.5, f64::NAN),
+            (f64::INFINITY, 0.25),
+            (0.5, f64::NEG_INFINITY),
+        ] {
+            let points = SetPoints {
+                outcome_warning_threshold: warning,
+                outcome_critical_threshold: critical,
+                ..SetPoints::default()
+            };
+            assert!(points.validate().is_err(), "accepted {warning}/{critical}");
+        }
+        let points = SetPoints {
+            outcome_warning_threshold: 1.0,
+            outcome_critical_threshold: 0.0,
+            ..SetPoints::default()
+        };
+        assert!(points.validate().is_ok());
+    }
 
     /// Pins the non-zero floor for tool_reliability_threshold: 0.0
     /// configures a silently-vacuous sensor (no outcome can ever breach a

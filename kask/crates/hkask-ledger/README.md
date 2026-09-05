@@ -17,6 +17,21 @@ The ledger implements triple-entry accounting:
 
 All entries are immutable and timeline-ordered. The ledger is the single source of truth for energy accounting.
 
+## Transaction ownership (core-review T06, 2026-09-04)
+
+`Ledger::commit` and `Ledger::debit_if_funds` reserve one SQLite pooled
+connection and use an immediate RAII transaction for the entire operation.
+Reference/idempotency checks and balance checks occur under that transaction's
+write lock. Failed postings roll back the header and every earlier posting;
+concurrent pool users cannot commit or roll back that operation's connection.
+`debit_if_funds` returns the balance at its own commit, not a later writer's
+balance. Transactional writes require the existing SQLite driver; unsupported
+drivers return an explicit error rather than falling back to unbound statements.
+
+This is a focused correction against the review and `Ledger`'s source
+contracts. The older triple-entry description above and its missing linked spec
+have not been ratified or reconstructed by this change.
+
 ## See Also
 
 - [`docs/architecture/specs/hkask-ledger.md`](../../docs/architecture/specs/hkask-ledger.md) — Full specification

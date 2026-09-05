@@ -267,6 +267,9 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
         .and_then(|cwd| cwd.canonicalize())
         .map_err(|e| McpToolError::internal(format!("Cannot resolve working directory: {e}")))?;
 
+    // Anchor once: a new basename's parent is otherwise the empty path, not CWD.
+    let absolute = cwd.join(path);
+    let path = absolute.as_path();
     // Collect all allowed roots: CWD + data dir + artifacts dir.
     let mut allowed_roots = vec![cwd];
     if let Some(data_dir) = hkask_types::agent_paths::resolve_data_dir()
@@ -309,7 +312,8 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
 }
 
 /// Resolve a caller-supplied write target, rejecting anything outside the
-/// project root (CWE-73). The target need not exist yet.
+/// allowed roots (CWE-73). The target need not exist yet; relative paths,
+/// including new basenames, are resolved against the server's CWD.
 #[must_use = "result must be used"]
 pub fn contain_for_write(path: &str) -> Result<std::path::PathBuf, McpToolError> {
     contain(std::path::Path::new(path), true)
@@ -325,6 +329,69 @@ pub fn contain_for_read(path: &str) -> Result<std::path::PathBuf, McpToolError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "New relative outputs work without weakening path containment" [P4]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "isolated synchronous test subprocess; never runs on GPUI"
+    )]
+    fn relative_write_paths_preserve_containment() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "HKASK_RELATIVE_WRITE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let cwd = std::env::current_dir()?.canonicalize()?;
+            for name in ["output.txt", "new/nested/output.txt"] {
+                let destination = contain_for_write(name).expect("new relative output");
+                assert_eq!(destination, cwd.join(name));
+                assert_eq!(
+                    destination,
+                    contain_for_write(&format!("./{name}")).expect("dot-prefixed output")
+                );
+                assert_eq!(
+                    destination,
+                    contain_for_write(cwd.join(name).to_str().expect("UTF-8 test path"))
+                        .expect("absolute output")
+                );
+                std::fs::create_dir_all(destination.parent().expect("parent"))?;
+                std::fs::write(&destination, "output")?;
+                assert_eq!(
+                    contain_for_write(name).expect("existing output"),
+                    destination
+                );
+                assert_eq!(contain_for_read(name).expect("existing input"), destination);
+            }
+            assert!(contain_for_write("../outside/escape.txt").is_err());
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../outside", "escape")?;
+                assert!(contain_for_write("escape/output.txt").is_err());
+                assert!(contain_for_write("escape/nested/output.txt").is_err());
+            }
+            return Ok(());
+        }
+        // Only the child changes CWD/env; other tests retain their process state.
+        let directory = tempfile::tempdir()?;
+        for name in ["work", "outside", "data", "artifacts"] {
+            std::fs::create_dir(directory.path().join(name))?;
+        }
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "server::validation::tests::relative_write_paths_preserve_containment",
+            ])
+            .current_dir(directory.path().join("work"))
+            .env(CHILD, "1")
+            .env("HKASK_DATA_DIR", directory.path().join("data"))
+            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
 
     /// The containment must accept paths under the CWD (the project root
     /// when launched per-project). This is the pre-existing behavior the

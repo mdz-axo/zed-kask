@@ -1,7 +1,7 @@
 # Kask core review and improvement plan
 
 - Date: 2026-09-04
-- Status: **Review complete; improvement plan proposed, not ratified or implemented**
+- Status: **Implementation in progress — checkpoint below; D1–D5 still await explicit decisions**
 - Scope: all 18 crates under `kask/crates`, with deeper inspection of critical paths and selected production consumers outside that directory
 - Initial baseline: `535e9b2b8b523a933af41248deaf0bdb02bf7b12`
 - Validation baseline: `a3496b7164fc1a49e050a245e8ea12d6633d9c88`
@@ -10,7 +10,100 @@
 
 All source paths below are relative to the repository root. Line citations describe the reviewed snapshot. HEAD advanced externally during inspection; `git diff 535e9b2b8b HEAD --stat -- kask/crates` was empty at the coordinator's verification. Existing uncommitted work was not changed by this review. No source changes or fixes were made. This new report does not replace `tasks/plan.md`, `tasks/todo.md`, or any canonical design specification.
 
-### Final working-tree caveat
+## Implementation checkpoint — 2026-09-04
+
+The operator authorized proceeding with implementation in this session. That
+supersedes the proposal-only scheduling status, not the explicit D1–D5 experience
+gates. The findings and original review evidence below remain historical; they
+have not been rewritten to make the implementation its own specification.
+
+### Delivered and verified
+
+| Tasks | Outcome | Evidence / scope |
+|---|---|---|
+| T01 | Credential unit tests cannot use the ambient keyring. | Already implemented in `c4c5c2b123`; 10 keystore tests passed, including disposable backend and cross-keyring isolation. No production credential mutation. |
+| T03 | Hostile Lisp input is checked in subprocesses; ordinary recursion remains functional. | Already implemented in `c4c5c2b123`; 17 tests passed. This checkpoint aligned the README with the implemented limits and scoped a Clippy exception to the bounded synchronous subprocess test only. |
+| T06 | Ledger writes retain one connection/RAII transaction, including reference and balance checks. | Added concurrent funding/idempotency/debit, nonnegative-balance, and forced-posting rollback tests. The concurrent test failed before the fix with a UNIQUE reference error; all 3 tests now pass. No ledger integration-test directory exists in the current tree. |
+| T09 | Populated RSS tables, contentless FTS search, triggers, and AUTOINCREMENT state survive rotation. | Actual research-server DDL is read into a temporary SQLCipher fixture. Regression failed before the fix on `main.feeds`; now passes, including post-reopen insert/delete search updates. |
+| T10 | Old and new vectors remain searchable after reopening, with preserved rowids and h_mem JOINs. | Regression initially returned no old neighbor; now passes. Malformed vector/dimension/NaN and foreign-key fixtures fail before replacement and retain old-key access. |
+| T18 | Startup uses configured outcome thresholds and rejects invalid probability bounds. | Constructor test covers parsed YAML 0.95/0.90 plus defaults; validation rejects non-finite/out-of-range and reversed/equal thresholds. Both regressions failed before correction; all 58 regulation tests pass. |
+| T19 | Commented shared settings preserve model overrides without changing environment precedence. | Uses the host's existing `serde_json_lenient` dependency. Tests cover comments/trailing commas, defaults, environment precedence, malformed syntax/types and warning emission. JSONC regression failed before correction; all 5 services-core tests pass. |
+
+Checked task boxes below mean implemented and verified at this checkpoint, not
+operator-confirmed acceptance of the experience. T01/T03 credit belongs to the
+preceding commit; it is not newly implemented functionality from this session.
+
+### Implemented but validation blocked
+
+- **T02:** mapped-address normalization already exists in `c4c5c2b123`; full
+  MCP-server test verification remains blocked below.
+- **T20:** relative inputs are anchored to the already-resolved server CWD.
+  Added subprocess tests for basename/nested/absolute equivalence, existing-file
+  behavior, traversal and symlink denial, plus a real `corpus_convert` fixture.
+  These tests have **not run**, because their dependency graph fails first.
+
+**Build blocker (owner: operator decision, then coding agent):** the unchanged
+`hkask-memory/src/memory_store.rs` still calls removed `query_all_live` and
+`close_by_id`, and constructs removed `DedupOutcome::expired_count`, after the
+prior forgetting migration. Baseline and targeted MCP/corpus builds fail there.
+Repairing that separate migration requires scope approval; it was not silently
+folded into these review fixes. Until then T02/T20 are not verified and the
+MCP/corpus applications are not certified buildable.
+
+### Design record and remaining ownership
+
+- **Provenance:** this report's F08/F07/F06/F19/F20/F21 and task acceptance
+  criteria; authorization to proceed in the current session.
+- **Pattern:** use existing owners, not a new service framework. Ledger follows
+  storage's connection-scoped transaction idiom. Rotation uses SQLCipher's
+  schema export, reopens the attachment to load virtual declarations, then
+  rebuilds KNN and validates foreign keys/integrity before replacement.
+- **Preserved invariants:** user settings/default precedence; fail visibly on
+  invalid data; no live-key/database tests; all-DB-before-keychain publication
+  remains required; no autonomous regulation or AIMD changes; no upstream edits.
+- **Refused shortcuts:** ledger-local mutexes that miss other pool users;
+  alphabetical-table reorder as a substitute for schema preservation; claiming
+  copied embedding metadata proves search; stripping comments manually;
+  relaxing containment to admit relative paths.
+- **Boundary:** the affected Kask ledger/storage/regulation/services-core and
+  MCP-server files, corpus-handler regression, crate manifests/lockfile, adjacent
+  README corrections, and this report. No settings orchestration, IPC authority,
+  inference lifetime, or upstream Zed code was changed.
+- **T07/T08/T12 (owner: coding agent, next checkpoint):** not started. Runtime
+  lifecycle/reconnect and ordinary-tool completion still require implementation
+  and their acceptance tests; not being abandoned or marked complete.
+- **T04/T05/T11/T13–T17 (owner: operator for D1–D5, then coding agent):** blocked
+  on the experience choices in the original decision table. No horizon, overload
+  policy, trust model, or live-key recovery policy has been inferred as ratified.
+- **T11 safety warning remains:** passing isolated storage rotation tests does
+  not make rotation safe while live database consumers remain open.
+
+### Validation actually run for this checkpoint
+
+- `cargo test --offline --locked -p hkask-keystore -p hkask-lisp -p hkask-ledger -p hkask-storage -p hkask-regulation -p hkask-services-core`
+  — **129 tests passed** (10 + 17 + 3 + 36 + 58 + 5); three pre-existing storage
+  doctest examples ignored. No ignored keyring tests were invoked.
+- `./script/clippy --offline --locked -p hkask-keystore -p hkask-lisp -p hkask-ledger -p hkask-storage -p hkask-regulation -p hkask-services-core`
+  — **passed**, including Kask-scoped cargo-machete, typos, and buf checks.
+  Initial lint runs rejected synchronous subprocess calls in test code;
+  narrowly justified test-only exceptions fixed those, without relaxing
+  production foreground restrictions.
+- `cargo test --offline -p hkask-mcp-server -p hkask-mcp-corpus --lib relative`
+  — **blocked** by the existing memory migration errors described above.
+- `git diff HEAD --check` — **passed**. Only coordinator self-review was
+  available: the attempted independent read-only review failed before execution
+  because the delegation endpoint exceeded its context limit.
+
+**Working-tree handoff:** an external action staged much of the in-flight patch
+while this session was running; the agent did not stage or commit anything.
+Later rotation fixes/tests and documentation are unstaged. Verification applies
+to the complete working tree, not the partial index. Reconcile the index with
+this checkpoint before committing; do not commit its earlier intermediate state.
+
+**Learning:** storage preservation must be checked through the operations users
+need after reopening—RSS search/triggers and h_mem recall—not metadata counts.
+
+### Original final working-tree caveat (review-time snapshot)
 
 After the reported test/probe runs, a final status check found concurrent modifications to `crates/agent/src/tools/lisp_eval_tool.rs`, `kask/crates/hkask-lisp/src/hkask_lisp.rs`, `kask/crates/hkask-storage/src/core/connection.rs`, `kask/crates/hkask-storage/src/core/sql/schema.sql`, `kask/crates/hkask-storage/src/hmem.rs`, and `kask/crates/hkask-types/src/hkask_types.rs`. These were not made by this review and were left untouched. The 393 passing tests do not certify that later working tree. Revalidate affected paths before implementation; line numbers may have shifted.
 
@@ -658,22 +751,22 @@ The relative-output base is already described as server CWD; T20 restores that b
 
 ### Work packages and dependencies
 
-Unchecked boxes mean **proposed**, not scheduled or authorized. S/M are planning estimates, not promises. T03, T07, and T11 require a design/sizing checkpoint; if the scope exceeds one safe implementation session, split into working vertical increments before coding. Do not preserve a count of 20 at the expense of a sound split.
+Originally, unchecked boxes meant **proposed**, not scheduled or authorized. The implementation checkpoint above now records authorization and progress; unchecked tasks remain incomplete or blocked. S/M are planning estimates, not promises. T03, T07, and T11 require a design/sizing checkpoint; if the scope exceeds one safe implementation session, split into working vertical increments before coding. Do not preserve a count of 20 at the expense of a sound split.
 
 Each package inherits the corresponding finding's acceptance/falsifier above. Verification must test outcomes, not merely satisfy a quota of test names.
 
 | Task | Vertical outcome and likely code owners | Dependencies / gate | Acceptance and verification | Estimate |
 |---|---|---|---|---|
-| [ ] T01 Isolate credential tests | Running explicit resolver tests cannot overwrite operator keys. `hkask-keystore/src/keychain.rs` and its isolated test support. F09. | None | Disposable-backend round trip; fail/panic path; refuse unsafe ambient ignored-test execution. No real-key tests. | S–M |
+| [x] T01 Isolate credential tests | Running explicit resolver tests cannot overwrite operator keys. `hkask-keystore/src/keychain.rs` and its isolated test support. F09. | None | Disposable-backend round trip; fail/panic path; refuse unsafe ambient ignored-test execution. No real-key tests. | S–M |
 | [ ] T02 Normalize URL destination classification | Strict tools reject mapped private addresses before transport. `hkask-mcp-server/src/security.rs`; caller fixture. F02. | None | Native/mapped deny matrix, public/permissive controls, zero-fetch assertion. | S |
-| [ ] T03 Bound the complete Lisp boundary | Supplied forms return a result/error without aborting the host. `hkask-lisp/src/hkask_lisp.rs`; subprocess test support; existing agent seam only if required. F03. | Safety design checkpoint | Matrix for parser/quotes/env/output/builtin/drop work; adversarial subprocesses; ordinary skill predicates remain valid. Do not equate evaluator depth with data depth. | M; split if needed |
+| [x] T03 Bound the complete Lisp boundary | Supplied forms return a result/error without aborting the host. `hkask-lisp/src/hkask_lisp.rs`; subprocess test support; existing agent seam only if required. F03. | Safety design checkpoint | Matrix for parser/quotes/env/output/builtin/drop work; adversarial subprocesses; ordinary skill predicates remain valid. Do not equate evaluator depth with data depth. | M; split if needed |
 | [ ] T04 Enforce parent-held delegation | Child requests cannot enlarge their assigned tool set. `kask_bridge/src/inference_ipc_server.rs`, IPC client/types, grant-producing caller. F01. | D1 | Real dispatch refusal with forged request list; inference-only caller refused; allowed calls still succeed. Protocol change may touch more than five files—justify as one authority boundary. | M |
 | [ ] T05 Preserve embedding destination intent | Provider-prefixed inputs are routed correctly or rejected before send. `kask_bridge/src/inference_embedding.rs`, provider resolution, relevant IPC fixture. F04. | D2 | Recording transport observes endpoint/model/key consistency; mismatch performs no HTTP; same-provider overrides retained. | S–M |
-| [ ] T06 Own ledger transactions | Commit/debit remains atomic amid pooled concurrent work. `hkask-ledger/src/hkask_ledger.rs`, existing storage transaction interface, ledger integration tests. F08. | None | Barrier-driven multi-connection debit/commit/rollback/idempotency tests; no partial transactions or cross-operation rollback. | M |
+| [x] T06 Own ledger transactions | Commit/debit remains atomic amid pooled concurrent work. `hkask-ledger/src/hkask_ledger.rs`, existing storage transaction interface, ledger integration tests. F08. | None | Barrier-driven multi-connection debit/commit/rollback/idempotency tests; no partial transactions or cross-operation rollback. | M |
 | [ ] T07 Publish only desired server lifecycles | Unload remains unloaded; failed startup retains cleanup responsibility. `hkask-mcp/src/runtime.rs`, fixture and reconnect integration tests. F10–F11. | Ownership design checkpoint | Stop/config-replace during discovery; discovery failure; cancellation; repeat runs leave no child/token/tool residue. Keep one runtime owner. | M; split only at safe states |
 | [ ] T08 Reconnect without blocking the caller | Editor foreground continues during slow restart. `hkask-mcp/src/runtime.rs`, existing spawn hook and integration fixture. F12. | T07 | Foreground-progress probe during paused handshake; cancelable phase deadline; actionable typed failure; no replay of uncertain calls. | M |
-| [ ] T09 Copy populated RSS schemas safely | A valid feed/entry/search fixture survives rotation. `hkask-storage/src/rotation.rs`, isolated schema fixture matching research DB. F07. | None | Real SQLCipher rotation with FK validation and FTS round trip; failure preserves source/key; test uses actual schema rather than minimal fake tables. | M |
-| [ ] T10 Preserve post-rotation semantic recall | Old and new memories remain searchable. `hkask-storage/src/rotation.rs`, `embeddings.rs`, recall tests. F06. | T09 where copy logic is shared | Reopen and nearest-neighbor/h_mem JOIN round trip before/after rotation/new write; malformed vectors cause explicit failure, not silent omission. | M |
+| [x] T09 Copy populated RSS schemas safely | A valid feed/entry/search fixture survives rotation. `hkask-storage/src/rotation.rs`, isolated schema fixture matching research DB. F07. | None | Real SQLCipher rotation with FK validation and FTS round trip; failure preserves source/key; test uses actual schema rather than minimal fake tables. | M |
+| [x] T10 Preserve post-rotation semantic recall | Old and new memories remain searchable. `hkask-storage/src/rotation.rs`, `embeddings.rs`, recall tests. F06. | T09 where copy logic is shared | Reopen and nearest-neighbor/h_mem JOIN round trip before/after rotation/new write; malformed vectors cause explicit failure, not silent omission. | M |
 | [ ] T11 Coordinate passphrase maintenance | Rotation settles writers, preserves all DBs, reopens all consumers, resumes visibly. `kask_bridge/src/identity.rs`, curator store ownership, rotation, settings orchestration. F05. | D5, T07, T09, T10; T08 if reopen uses runtime reconnect | Failure matrix for quiesce/copy/verify/rollback/key publication/reopen; every consumer covered; keychain unchanged on failed rotation; explicit recoverable state after reopen failure. Cross-crate integration requires sizing before edits. | M or re-slice |
 | [ ] T12 Permit ordinary agent completion | Tool-enabled delegates can finish with an answer while structured results remain required. `kask_bridge/src/inference_chat.rs`, inference request intent/caller as needed, swarm fixture. F13. | None | Fake provider honoring Required/Auto; one useful tool round then final text; `emit_result` remains enforced; no repeated-effect loop. | S–M |
 | [ ] T13 Own inference cancellation | Queued cancelled requests do not start provider work; admission is bounded. `kask_bridge/src/inference_chat.rs`, IPC request/disconnect path. F14. | D3 | Pause provider, saturate capacity, cancel queue entries, assert zero dispatch for cancelled requests and capacity release; explicit overload response. | M |
@@ -681,8 +774,8 @@ Each package inherits the corresponding finding's acceptance/falsifier above. Ve
 | [ ] T15 Expire sensor observations | Quiet domains become idle without another operation. `hkask-regulation/src/runtime.rs`, sensor tests. F18. | D4 semantic decision only | Controlled-clock active→idle transition; no-current-data distinct from failed/successful sample; aggregate reading excludes expired contributions. | S–M |
 | [ ] T16 Reconcile pending conditions | Recovery clears the right escalation on a later tick. `hkask-regulation/src/cybernetics_loop/cycle.rs`, sensor/bridge sink fixture. F16. | T15; D4 | Complete recovery resolves once; partial improvement stays pending; missing observation stays unresolved; tests run through `tick()`. | M |
 | [ ] T17 Report progress honestly | Accepted noise does not become efficacy or erase persistent stagnation. Regulation outcome model/consumers, metacognition bridge. F17. | D4, T16 | Constant degraded trace, tolerated noise, delayed human response, genuinely recovered condition; status names distinguish observation from attribution. | M |
-| [ ] T18 Apply configured outcome thresholds | Startup sensitivity matches supplied SetPoints. `hkask-regulation/src/runtime.rs`, algedonic construction/tests. F19. | None; verify YAML path independent of T19 | Constructor-driven nondefault/default classifications and invalid-bound tests; avoid setter-only proof. | S |
-| [ ] T19 Read host-compatible settings | Valid shared-file comments do not discard model overrides. `hkask-services-core/src/standalone_settings.rs`, existing compatible parser dependency if available. F20. | None | JSONC override fixtures, precedence/default controls, malformed-file surfaced degradation; no settings writer or GPUI dependency. | S |
+| [x] T18 Apply configured outcome thresholds | Startup sensitivity matches supplied SetPoints. `hkask-regulation/src/runtime.rs`, algedonic construction/tests. F19. | None; verify YAML path independent of T19 | Constructor-driven nondefault/default classifications and invalid-bound tests; avoid setter-only proof. | S |
+| [x] T19 Read host-compatible settings | Valid shared-file comments do not discard model overrides. `hkask-services-core/src/standalone_settings.rs`, existing compatible parser dependency if available. F20. | None | JSONC override fixtures, precedence/default controls, malformed-file surfaced degradation; no settings writer or GPUI dependency. | S |
 | [ ] T20 Resolve new relative outputs consistently | `out.txt` works like `./out.txt` without weaker containment. `hkask-mcp-server/src/server/validation.rs`, real corpus-handler fixture. F21. | None | Temp-CWD basename/nested creation, existing-file behavior, traversal/symlink negative controls. | S |
 
 ### Checkpoints and sequencing

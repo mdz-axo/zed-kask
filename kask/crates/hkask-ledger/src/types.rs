@@ -32,6 +32,12 @@ pub enum LedgerError {
     },
 }
 
+impl From<rusqlite::Error> for LedgerError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Database(DbError::Database(error.to_string()))
+    }
+}
+
 /// A single entry in a transaction — moves `amount` of `asset` from
 /// `source` account to `destination` account. Amount is in the asset's
 /// smallest integer unit (µrJ for rJ, µUSD for USD, etc.).

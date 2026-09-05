@@ -1,6 +1,7 @@
 //! Standalone (non-zed) settings layer — single source of truth for the
 //! settings file location used by CLI, API, and REPL surfaces. Magna Carta
-//! P3: all surfaces read/write the same `~/.config/hkask/settings.json`.
+//! P3: standalone surfaces read the same `~/.config/zed-kask/settings.json`
+//! as the host, with compatible JSONC syntax. This layer never writes it.
 //! Also provides `HkaskSettings` for model defaults shared across all servers.
 //!
 //! # The two settings layers
@@ -24,7 +25,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Returns the canonical path to `~/.config/hkask/settings.json`,
+/// Returns the canonical path to `~/.config/zed-kask/settings.json`,
 /// creating the parent directory if needed.
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
@@ -119,7 +120,8 @@ impl HkaskSettings {
     /// Load settings from the shared `~/.config/zed-kask/settings.json`.
     /// Falls back to defaults if the file doesn't exist or is unreadable.
     ///
-    /// The file is zed's settings file; kask model settings live under its
+    /// The file accepts Zed's JSONC syntax, including comments and trailing
+    /// commas. Kask model settings live under its
     /// `kask.models` section (`KaskModelsSettingsContent` in
     /// `settings_content.rs`). Fields absent from that section fall back to
     /// `Default` — the file never needs to carry all four fields.
@@ -146,7 +148,7 @@ impl HkaskSettings {
     /// \[P5\] pre:  none
     /// post: defaults with `kask.models.{embedding_model, classifier_model, ocr_model}` overlaid when present and well-typed
     fn parse_over_defaults(json: &str, path: &std::path::Path) -> Self {
-        let user: serde_json::Value = match serde_json::from_str(json) {
+        let user: serde_json::Value = match serde_json_lenient::from_str(json) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(
@@ -287,6 +289,34 @@ impl HkaskSettings {
 mod tests {
     use super::HkaskSettings;
 
+    /// expect: "Comments and trailing commas in my Zed settings preserve my model choices" [P3]
+    #[test]
+    fn commented_settings_preserve_model_overrides() {
+        let json = r#"{
+            // Same syntax as the host settings reader.
+            "kask": {
+                "models": {
+                    "embedding_model": "test/embedding",
+                    /* Comments must not consume comment markers inside strings. */
+                    "classifier_model": "https://example.test/model//classifier",
+                    "ocr_model": "test/ocr",
+                },
+            },
+        }"#;
+        let settings =
+            HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
+        assert_eq!(settings.embedding_model, "test/embedding");
+        assert_eq!(
+            settings.classifier_model,
+            "https://example.test/model//classifier"
+        );
+        assert_eq!(settings.ocr_model, "test/ocr");
+        assert_eq!(
+            settings.chunk_max_tokens,
+            HkaskSettings::default().chunk_max_tokens
+        );
+    }
+
     /// The shared settings file is zed's — kask model settings live under
     /// `kask.models`. A zed-shaped file (the operator's actual file shape)
     /// must parse without error, overlaying present fields and defaulting
@@ -325,14 +355,102 @@ mod tests {
         assert_eq!(settings, HkaskSettings::default());
     }
 
-    /// Unparsable JSON still degrades to defaults (surfaced by the warn in
-    /// the parse path, not by a panic).
+    #[derive(Clone, Default)]
+    struct LogBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| std::io::Error::other("poisoned log buffer"))?
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// expect: "Malformed settings tell me defaults were used rather than hiding the failure" [P3]
     #[test]
-    fn unparsable_settings_file_yields_defaults() {
-        let settings = HkaskSettings::parse_over_defaults(
-            "{ not json",
-            std::path::Path::new("/test/settings.json"),
+    fn malformed_settings_surface_fallback() {
+        for (json, message) in [
+            ("{ not json", "Failed to parse settings.json"),
+            (
+                r#"{"kask":{"models":{"ocr_model":12}}}"#,
+                "Failed to parse kask.models settings",
+            ),
+        ] {
+            let buffer = LogBuffer::default();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_writer({
+                    let buffer = buffer.clone();
+                    move || buffer.clone()
+                })
+                .finish();
+            let settings = tracing::subscriber::with_default(subscriber, || {
+                HkaskSettings::parse_over_defaults(
+                    json,
+                    std::path::Path::new("/test/settings.json"),
+                )
+            });
+            assert_eq!(settings, HkaskSettings::default());
+            let bytes = buffer.0.lock().expect("log buffer");
+            let log = String::from_utf8_lossy(&bytes);
+            assert!(log.contains(message), "missing diagnostic: {log}");
+            assert!(log.contains("using defaults"));
+            assert!(log.contains("/test/settings.json"));
+        }
+    }
+
+    /// expect: "Environment overrides still take precedence over commented settings" [P3]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "isolated synchronous test subprocess; never runs on GPUI"
+    )]
+    fn environment_model_takes_precedence() -> Result<(), Box<dyn std::error::Error>> {
+        const VARIABLE: &str = "HKASK_SETTINGS_TEST_MODEL";
+        if std::env::var_os(VARIABLE).is_some() {
+            let settings = HkaskSettings::parse_over_defaults(
+                r#"{/* disk choice */"kask":{"models":{"ocr_model":"test/disk"}}}"#,
+                std::path::Path::new("/test/settings.json"),
+            );
+            assert_eq!(
+                HkaskSettings::resolve_model(VARIABLE, &settings.ocr_model, "test/default"),
+                "test/environment"
+            );
+            assert_eq!(
+                HkaskSettings::resolve_model(
+                    "HKASK_SETTINGS_TEST_ABSENT",
+                    &settings.ocr_model,
+                    "test/default"
+                ),
+                "test/disk"
+            );
+            assert_eq!(
+                HkaskSettings::resolve_model("HKASK_SETTINGS_TEST_ABSENT", "", "test/default"),
+                "test/default"
+            );
+            return Ok(());
+        }
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "standalone_settings::tests::environment_model_takes_precedence",
+            ])
+            .env(VARIABLE, "test/environment")
+            .env_remove("HKASK_SETTINGS_TEST_ABSENT")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(settings, HkaskSettings::default());
+        Ok(())
     }
 }

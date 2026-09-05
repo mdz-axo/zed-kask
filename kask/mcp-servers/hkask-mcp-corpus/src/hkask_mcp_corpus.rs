@@ -445,6 +445,50 @@ mod smoke {
             .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
     }
 
+    /// expect: "Corpus conversion writes new basename and nested outputs relative to server CWD" [P3]
+    #[tokio::test]
+    async fn convert_writes_new_relative_outputs() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "HKASK_CORPUS_RELATIVE_OUTPUT_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let source =
+                "This source contains real words for conversion without inference. ".repeat(20);
+            std::fs::write("source.txt", &source)?;
+            let server = make_server();
+            for output in ["output.txt", "./dot-output.txt", "new/nested/output.txt"] {
+                let response = server
+                    .corpus_convert(Parameters(crate::tools::document::ConvertRequest {
+                        path: "source.txt".into(),
+                        output: Some(output.into()),
+                        force_ocr: false,
+                        target_pages: None,
+                        include_structure: None,
+                    }))
+                    .await
+                    .expect("relative output conversion succeeds");
+                hkask_types::tool_response::parse_tool_response(&response)
+                    .expect("valid tool response");
+                assert_eq!(std::fs::read_to_string(output)?.trim(), source.trim());
+            }
+            return Ok(());
+        }
+        let directory = tempfile::tempdir()?;
+        let output = tokio::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", "smoke::convert_writes_new_relative_outputs"])
+            .current_dir(directory.path())
+            .env(CHILD, "1")
+            .env("HKASK_DATA_DIR", directory.path().join("data"))
+            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
+            .output()
+            .await?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn corpus_clear_index_returns_valid_json() {
         let server = make_server();

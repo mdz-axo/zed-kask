@@ -1,51 +1,30 @@
-//! Atomic SQLCipher passphrase rotation — re-encrypt a database under a new
-//! passphrase without data loss.
+//! SQLCipher passphrase rotation for a quiesced database.
 //!
-//! # Why this exists
+//! # Preservation
 //!
-//! SQLCipher encrypts a database file with a key derived from the passphrase
-//! (salt lives in the DB header under the native KDF). Changing the
-//! passphrase requires re-encrypting every page — there is no in-place
-//! "PRAGMA rekey" path that survives a crash mid-rotation. The safe approach
-//! is:
+//! SQLCipher's `sqlcipher_export` copies the source schema and rows into a
+//! new encrypted attachment, including FTS shadow data, triggers, indexes,
+//! rowids, and AUTOINCREMENT counters. The attachment is reopened to load
+//! exported virtual-table declarations. Before replacement, the vector index
+//! is rebuilt from canonical `embeddings` rows and the destination must pass
+//! foreign-key and integrity checks. Invalid vectors fail rather than vanish.
 //!
-//! 1. Open the source DB with the old passphrase (verifies it).
-//! 2. Attach a new DB file encrypted with the new passphrase.
-//! 3. Copy every table's schema + rows via `INSERT INTO ... SELECT *`.
-//! 4. Detach, close both connections, and atomically rename:
-//!    `<db>` → `<db>.old`, `<db>.new` → `<db>`, then delete `<db>.old`.
+//! Export/check failures leave the source file in place under its old key;
+//! rotation-owned connections close before the incomplete copy is removed.
 //!
-//! If any step fails, the original DB is untouched — the caller continues
-//! using the old passphrase. The `.new` and `.old` artifacts are cleaned up
-//! on the failure path.
+//! # Lifecycle precondition and recovery limits
 //!
-//! # Atomicity
+//! All other consumers, including in-process pools, must be closed BEFORE
+//! calling this function. They must reopen with the resulting authoritative
+//! key afterwards. Restarting only after rotation does not meet this
+//! precondition. Coordinated settings/curator quiescence is not implemented
+//! here (core-review T11 remains open).
 //!
-//! The rename step uses `std::fs::rename`, which is atomic on POSIX for
-//! same-directory renames. The new DB is written to `<db>.new` (same directory
-//! as `<db>`) so the rename is same-directory.
-//!
-//! # What is copied
-//!
-//! The rotation copies every user table (excluding SQLite's internal
-//! `sqlite_*` and `vec0` shadow tables, which are rebuilt from the
-//! `vec_embeddings` virtual table definition in `schema.sql`). The
-//! `sqlite_sequence` table (autoincrement counters) is also copied so
-//! `AUTOINCREMENT` columns continue from the correct next value.
-//!
-//! # Limitations
-//!
-//! - The source DB must be closed by all other processes before rotation
-//!   (SQLCipher's WAL holds a file lock). The caller is responsible for
-//!   ensuring no other process has the DB open — typically by restarting
-//!   the MCP server after rotation.
-//! - The `vec0` virtual table's shadow tables are NOT copied directly.
-//!   The vec0 table is recreated by `schema.sql` on first open of the new
-//!   DB, and the embeddings are re-indexed by the embedding store on next
-//!   use. This means a rotated DB's vector index is empty until the next
-//!   embedding write triggers a re-index. This is acceptable because the
-//!   `embeddings` table (the source of truth) IS copied, and the vec0
-//!   table is a derived index.
+//! Individual same-directory renames are atomic on POSIX, but the sequence
+//! `<db>` → `<db>.old`, `<db>.new` → `<db>` is not a crash-atomic transaction.
+//! Restoration is attempted if the second rename fails; a failed restoration
+//! names the backup for operator recovery. This API does not provide
+//! multi-database/keychain crash atomicity.
 
 use std::path::Path;
 
@@ -76,7 +55,11 @@ pub enum RotationError {
     },
 }
 
-/// Atomically re-encrypt a SQLCipher database under a new passphrase.
+/// Re-encrypt a quiesced SQLCipher database under a new passphrase.
+///
+/// expect: "My stored data and search results survive a passphrase change" [P1]
+/// pre: every other database consumer has closed its handles
+/// post: a verified encrypted copy replaces the source; canonical embeddings are indexed
 ///
 /// # Arguments
 ///
@@ -88,27 +71,23 @@ pub enum RotationError {
 ///
 /// 1. Opens `<db_path>` with `old_passphrase` (verifies it).
 /// 2. Creates `<db_path>.new` encrypted with `new_passphrase`.
-/// 3. Copies all user tables + `sqlite_sequence` via `INSERT INTO ... SELECT`.
-/// 4. Atomically renames: `<db_path>` → `<db_path>.old`,
+/// 3. Exports the schema/data, rebuilds KNN, and validates the destination.
+/// 4. Renames: `<db_path>` → `<db_path>.old`,
 ///    `<db_path>.new` → `<db_path>`, then deletes `<db_path>.old`.
 ///
 /// # Failure safety
 ///
-/// If any step before the rename fails, the `.new` DB and its salt are
-/// deleted, and the original DB is untouched. The caller can retry with
-/// the correct old passphrase.
+/// If export or verification fails before rename, the incomplete `.new` DB
+/// is removed and the original file remains usable under the old key.
 ///
-/// If the rename fails (extremely unlikely on POSIX same-directory), the
-/// original DB is still intact — only the `.new` artifacts are in a
-/// partially-renamed state, which the caller can clean up manually.
+/// If replacement fails, restoration of `.old` is attempted. A restoration
+/// failure logs the backup path that the operator must recover manually.
 ///
 /// # Post-rotation
 ///
-/// The caller must restart any process that holds the DB open (MCP servers,
-/// the in-process curator store) so they re-open with the new passphrase.
-/// The `nudge_mcp_servers` path in the settings UI handles this for MCP
-/// servers; the in-process curator store re-opens on next use via its
-/// self-healing path.
+/// The caller must reopen previously closed consumers with the new passphrase
+/// after success, or the old passphrase after a pre-replacement failure.
+/// This function neither coordinates those consumers nor updates the keychain.
 pub fn rotate_passphrase(
     db_path: &str,
     old_passphrase: &str,
@@ -167,57 +146,19 @@ pub fn rotate_passphrase(
                 source: e,
             })?;
 
-    // 2. Create the new DB file encrypted with the new passphrase.
-    //    `Database::open` creates parent dirs; the native KDF stores the
-    //    salt in the DB header, so there is no salt file to manage.
-    tracing::info!(
-        target: "reg.storage",
-        path = %new_path,
-        "Creating new DB with new passphrase"
-    );
-    let new_db =
-        Database::open(&new_path, new_passphrase).map_err(|e| RotationError::Filesystem {
-            path: new_path.clone(),
-            error: std::io::Error::other(format!("Failed to create new DB: {e}")),
-        })?;
-    let new_pool = new_db.sqlite_pool().map_err(|e| {
+    // Export into an empty encrypted destination. Pre-initializing its schema
+    // would conflict with the source's virtual tables, triggers, and indexes.
+    let result = copy_all_tables(&source_pool, db_path, &new_path, new_passphrase);
+    // Close every rotation-owned connection before cleanup or replacement.
+    // Other consumers must already have been closed by the caller.
+    drop(source_pool);
+    drop(source_db);
+    if let Err(error) = result {
         remove_artifact(&new_path);
-        RotationError::Filesystem {
-            path: new_path.clone(),
-            error: std::io::Error::other(format!("Failed to open new DB pool: {e}")),
-        }
-    })?;
-
-    // 3. Copy all user tables. We use ATTACH on the source connection to
-    //    the new DB, then `INSERT INTO main.<table> SELECT * FROM attached.<table>`.
-    //    This avoids cross-process locking and lets SQLite handle the copy
-    //    in a single transaction.
-    //
-    //    We attach the NEW db to a SOURCE connection so the source's
-    //    passphrase is already unlocked. The new DB is opened with its own
-    //    passphrase via PRAGMA key on the attached connection.
-    let result = copy_all_tables(&source_pool, &new_pool, db_path, &new_path);
-    if let Err(e) = result {
-        // Clean up the new DB artifacts — the source is untouched.
-        remove_artifact(&new_path);
-        // Also clean up WAL/SHM files that SQLite may have created.
         remove_artifact(&format!("{new_path}-wal"));
         remove_artifact(&format!("{new_path}-shm"));
-        return Err(e);
+        return Err(error);
     }
-
-    // Drop the pools BEFORE renaming — SQLite holds file locks on the DB
-    // files, and a rename on a locked file can fail on some platforms.
-    // Dropping the `Database` structs drops their pools.
-    tracing::debug!(
-        target: "reg.storage",
-        path = %db_path,
-        "Closing source and new DB pools before rename"
-    );
-    drop(source_pool);
-    drop(new_pool);
-    drop(source_db);
-    drop(new_db);
 
     // 4. Atomically rename. On POSIX, same-directory renames are atomic.
     //    a. Rename old DB → .old
@@ -288,322 +229,109 @@ pub fn rotate_passphrase(
     Ok(())
 }
 
-/// Copy all user tables from the source pool to the new pool.
-///
-/// Uses a single connection from each pool. The source connection reads
-/// each table's schema and rows; the new connection writes them. We use
-/// `ATTACH` on the new connection to attach the source DB read-only,
-/// then `INSERT INTO main.<table> SELECT * FROM attached.<table>`.
-///
-/// This approach avoids cross-process locking because both connections
-/// are in the same process, and the ATTACH uses the source's passphrase
-/// (which we know).
+/// SQLCipher owns schema export, including contentless FTS shadow tables,
+/// indexes, triggers, rowids, and AUTOINCREMENT high-water marks. Rebuilding
+/// only the vector index from canonical rows avoids preserving an incomplete
+/// derived index. No destination is published until all checks succeed.
 fn copy_all_tables(
     source_pool: &r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
-    new_pool: &r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     source_path: &str,
     new_path: &str,
+    new_passphrase: &str,
 ) -> Result<(), RotationError> {
-    let source_conn = source_pool.get().map_err(|e| RotationError::Sql {
+    let connection = source_pool.get().map_err(|error| RotationError::Sql {
         path: source_path.to_string(),
         error: rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-            Some(format!("source pool get: {e}")),
+            Some(format!("source pool get: {error}")),
         ),
     })?;
-    let new_conn = new_pool.get().map_err(|e| RotationError::Sql {
-        path: new_path.to_string(),
-        error: rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-            Some(format!("new pool get: {e}")),
-        ),
-    })?;
-
-    // Get the list of user tables from the source DB.
-    // Exclude: sqlite_* (internal), vec0* (virtual table shadow tables,
-    // rebuilt from schema), sqlite_sequence (copied separately).
-    let table_names: Vec<String> = {
-        // Query the SOURCE connection's sqlite_master to know what to copy.
-        let mut source_stmt = source_conn
-            .prepare(
-                "SELECT name FROM sqlite_master \
-                 WHERE type = 'table' \
-                 AND name NOT LIKE 'sqlite_%' \
-                 AND name NOT LIKE 'vec_%' \
-                 AND name NOT LIKE 'vec0%' \
-                 ORDER BY name",
-            )
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-        let rows = source_stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-        let mut names = Vec::new();
-        for row in rows {
-            names.push(row.map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?);
+    let export = || -> rusqlite::Result<()> {
+        // Export must be free to create/load mutually dependent tables. Check
+        // the complete destination afterwards rather than relying on row order.
+        connection.pragma_update(None, "foreign_keys", false)?;
+        connection.execute(
+            "ATTACH DATABASE ?1 AS rotated KEY ?2",
+            rusqlite::params![new_path, new_passphrase],
+        )?;
+        connection.query_row("SELECT sqlcipher_export('rotated')", [], |_| Ok(()))?;
+        // Export writes virtual-table declarations through sqlite_schema;
+        // reopen the attachment so SQLite loads those declarations before use.
+        connection.execute_batch("DETACH DATABASE rotated")?;
+        connection.execute(
+            "ATTACH DATABASE ?1 AS rotated KEY ?2",
+            rusqlite::params![new_path, new_passphrase],
+        )?;
+        rebuild_vector_index(&connection)?;
+        let mut foreign_keys = connection.prepare("PRAGMA rotated.foreign_key_check")?;
+        if foreign_keys.query([])?.next()?.is_some() {
+            return Err(copy_validation_error(
+                "destination foreign-key check failed",
+            ));
         }
-        names
+        drop(foreign_keys);
+        let integrity: String =
+            connection.query_row("PRAGMA rotated.integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(copy_validation_error(&format!(
+                "destination integrity check failed: {integrity}"
+            )));
+        }
+        connection.execute_batch("DETACH DATABASE rotated")?;
+        Ok(())
     };
-
-    tracing::debug!(
-        target: "reg.storage",
-        path = %source_path,
-        tables = ?table_names,
-        "Copying tables during rotation"
-    );
-
-    // Begin a transaction on the new connection so the copy is atomic.
-    new_conn
-        .execute_batch("BEGIN")
-        .map_err(|e| RotationError::Sql {
-            path: new_path.to_string(),
-            error: e,
-        })?;
-
-    // For each table, get its CREATE statement from the source and run it
-    // on the new DB (in case the new DB's schema.sql didn't create it —
-    // e.g., custom tables added by a store's init_schema). Then copy rows.
-    for table_name in &table_names {
-        // Get the CREATE statement from the source.
-        let create_sql: String = source_conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-                rusqlite::params![table_name],
-                |row| row.get(0),
-            )
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-
-        // SQLite stores the CREATE statement in sqlite_master WITHOUT the
-        // `IF NOT EXISTS` clause (it normalizes the SQL). The new DB's
-        // schema.sql already created the standard tables (hmems, embeddings,
-        // etc.) with `CREATE TABLE IF NOT EXISTS`, so running the source's
-        // CREATE would fail with "table already exists". We inject
-        // `IF NOT EXISTS` to make it idempotent. For non-standard tables
-        // (added by a store's init_schema), this creates them safely.
-        let create_sql =
-            if create_sql.contains("IF NOT EXISTS") || create_sql.contains("if not exists") {
-                create_sql
-            } else {
-                create_sql.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
-            };
-
-        new_conn
-            .execute_batch(&create_sql)
-            .map_err(|e| RotationError::Sql {
+    let result = export();
+    // This pool is private to rotation, but leave its connection policy intact
+    // on both success and error. Closing the pool also detaches failed exports.
+    if let Err(error) = connection.pragma_update(None, "foreign_keys", true) {
+        tracing::warn!(target: "reg.storage", error = %error, "Could not restore rotation connection foreign-key policy");
+        if result.is_ok() {
+            return Err(RotationError::Sql {
                 path: new_path.to_string(),
-                error: e,
-            })?;
+                error,
+            });
+        }
+    }
+    result.map_err(|error| RotationError::Sql {
+        path: new_path.to_string(),
+        error,
+    })
+}
 
-        // Copy rows. We read from the source and insert into the new.
-        // Using `INSERT INTO <table> SELECT * FROM <table>` won't work
-        // across connections, so we read row-by-row and batch-insert.
-        //
-        // For efficiency, we use a prepared INSERT and bind values.
-        // The column count and names come from the source table's PRAGMA.
-        let column_info: Vec<(String, String)> = {
-            let mut stmt = source_conn
-                .prepare(&format!("PRAGMA table_info({table_name})"))
-                .map_err(|e| RotationError::Sql {
-                    path: source_path.to_string(),
-                    error: e,
-                })?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(1)?, // name
-                        row.get::<_, String>(2)?, // type
-                    ))
+fn copy_validation_error(message: &str) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(message.to_string()),
+    )
+}
+
+fn rebuild_vector_index(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("DELETE FROM rotated.vec_embeddings", [])?;
+    {
+        let mut source =
+            transaction.prepare("SELECT rowid, vector, dimensions FROM rotated.embeddings")?;
+        let mut rows = source.query([])?;
+        let mut insert = transaction
+            .prepare("INSERT INTO rotated.vec_embeddings(rowid, embedding) VALUES (?1, ?2)")?;
+        while let Some(row) = rows.next()? {
+            let rowid: i64 = row.get(0)?;
+            let vector: Vec<u8> = row.get(1)?;
+            let dimensions: i64 = row.get(2)?;
+            if dimensions <= 0
+                || dimensions.checked_mul(4) != i64::try_from(vector.len()).ok()
+                || vector.chunks_exact(4).any(|bytes| {
+                    !f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).is_finite()
                 })
-                .map_err(|e| RotationError::Sql {
-                    path: source_path.to_string(),
-                    error: e,
-                })?;
-            let mut info = Vec::new();
-            for row in rows {
-                info.push(row.map_err(|e| RotationError::Sql {
-                    path: source_path.to_string(),
-                    error: e,
-                })?);
+            {
+                return Err(copy_validation_error(&format!(
+                    "invalid canonical embedding at rowid {rowid}"
+                )));
             }
-            info
-        };
-
-        if column_info.is_empty() {
-            // Table has no columns — skip (shouldn't happen).
-            continue;
-        }
-
-        let col_names: Vec<&str> = column_info.iter().map(|(n, _)| n.as_str()).collect();
-        let placeholders: Vec<String> = (0..col_names.len())
-            .map(|i| format!("?{}", i + 1))
-            .collect();
-        let insert_sql = format!(
-            "INSERT INTO {table_name} ({cols}) VALUES ({vals})",
-            cols = col_names.join(", "),
-            vals = placeholders.join(", ")
-        );
-
-        // Read all rows from the source.
-        let select_sql = format!("SELECT {} FROM {table_name}", col_names.join(", "));
-        let mut select_stmt = source_conn
-            .prepare(&select_sql)
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-
-        let column_count = col_names.len();
-        let mut insert_stmt = new_conn
-            .prepare(&insert_sql)
-            .map_err(|e| RotationError::Sql {
-                path: new_path.to_string(),
-                error: e,
-            })?;
-
-        // Use query_map to read rows, then bind each to the insert.
-        // We read values as raw ValueRef to avoid type assumptions.
-        let mut rows_iter = select_stmt.query([]).map_err(|e| RotationError::Sql {
-            path: source_path.to_string(),
-            error: e,
-        })?;
-
-        let mut row_count = 0usize;
-        while let Some(row) = rows_iter.next().map_err(|e| RotationError::Sql {
-            path: source_path.to_string(),
-            error: e,
-        })? {
-            // Bind each column value from the source row.
-            // We use rusqlite::Value to handle all types uniformly.
-            let mut params: Vec<rusqlite::types::Value> = Vec::with_capacity(column_count);
-            for i in 0..column_count {
-                let val = row.get_ref(i).map_err(|e| RotationError::Sql {
-                    path: source_path.to_string(),
-                    error: e,
-                })?;
-                let value = match val {
-                    rusqlite::types::ValueRef::Null => rusqlite::types::Value::Null,
-                    rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
-                    rusqlite::types::ValueRef::Real(f) => rusqlite::types::Value::Real(f),
-                    rusqlite::types::ValueRef::Text(s) => {
-                        rusqlite::types::Value::Text(String::from_utf8_lossy(s).into_owned())
-                    }
-                    rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
-                };
-                params.push(value);
-            }
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
-                .iter()
-                .map(|p| p as &dyn rusqlite::types::ToSql)
-                .collect();
-            insert_stmt
-                .execute(param_refs.as_slice())
-                .map_err(|e| RotationError::Sql {
-                    path: new_path.to_string(),
-                    error: e,
-                })?;
-            row_count += 1;
-        }
-
-        tracing::debug!(
-            target: "reg.storage",
-            path = %source_path,
-            table = %table_name,
-            rows = row_count,
-            "Copied table during rotation"
-        );
-    }
-
-    // Copy sqlite_sequence (autoincrement counters) if it exists in the
-    // source AND in the new DB. `sqlite_sequence` is an internal SQLite table
-    // that is auto-created when a table with `AUTOINCREMENT` is created. It
-    // cannot be created manually ("object name reserved for internal use"),
-    // so we only copy rows if the new DB already has it (i.e., at least one
-    // table uses AUTOINCREMENT). If no tables use AUTOINCREMENT, this is a
-    // no-op.
-    let has_source_sequence: bool = source_conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
-            [],
-            |_| Ok(1),
-        )
-        .map(|_| true)
-        .unwrap_or(false);
-
-    let has_new_sequence: bool = new_conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
-            [],
-            |_| Ok(1),
-        )
-        .map(|_| true)
-        .unwrap_or(false);
-
-    if has_source_sequence && has_new_sequence {
-        let mut select_stmt = source_conn
-            .prepare("SELECT name, seq FROM sqlite_sequence")
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-        let rows = select_stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                ))
-            })
-            .map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-        for row in rows {
-            let (name, seq) = row.map_err(|e| RotationError::Sql {
-                path: source_path.to_string(),
-                error: e,
-            })?;
-            new_conn
-                .execute(
-                    "INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES (?, ?)",
-                    rusqlite::params![name, seq],
-                )
-                .map_err(|e| RotationError::Sql {
-                    path: new_path.to_string(),
-                    error: e,
-                })?;
+            insert.execute(rusqlite::params![rowid, vector])?;
         }
     }
-
-    // Commit the transaction.
-    new_conn
-        .execute_batch("COMMIT")
-        .map_err(|e| RotationError::Sql {
-            path: new_path.to_string(),
-            error: e,
-        })?;
-
-    // Checkpoint the new DB to flush WAL before we close the pool. A failed
-    // checkpoint means committed pages may still live in the WAL — surface it
-    // so the rotation aborts and rolls back instead of proceeding to the
-    // rename steps that assume the file is complete.
-    new_conn
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .map_err(|e| RotationError::Sql {
-            path: new_path.to_string(),
-            error: e,
-        })?;
-
-    Ok(())
+    transaction.commit()
 }
 
 /// Remove a rotation artifact, ignoring "not found" (the common case —
@@ -664,6 +392,244 @@ pub(crate) mod tests {
         )
         .expect("insert embedding");
         path
+    }
+
+    /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_rss_feed_entries_and_search() {
+        // Read the actual server DDL without introducing a storage → server dependency.
+        let source = include_str!("../../../mcp-servers/hkask-mcp-research/src/research/db.rs");
+        let schema = source
+            .split_once("pub const RSS_SCHEMA_DDL: &str = \"")
+            .expect("RSS DDL declaration")
+            .1
+            .split_once("\";")
+            .expect("RSS DDL end")
+            .0;
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = directory
+            .path()
+            .join("rss.db")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let database = Database::open_with_extensions(&path, "old-passphrase", schema)
+                .expect("RSS database");
+            let pool = database.sqlite_pool().expect("RSS pool");
+            let connection = pool.get().expect("RSS connection");
+            connection.execute_batch(
+                "INSERT INTO feeds(id,url,title) VALUES (7,'https://example.test/rss','Example');
+                 INSERT INTO subscriptions(feed_id,stream_id) VALUES (7,'feed/example');
+                 INSERT INTO entries(id,feed_id,entry_id,title,content) VALUES (42,7,'first','Quasar','Preserved search text');
+                 INSERT INTO entry_states(entry_id,is_read) VALUES (42,1);
+                 INSERT INTO feeds(id,url) VALUES (100,'https://example.test/deleted');
+                 DELETE FROM feeds WHERE id=100;",
+            ).expect("populated RSS schema");
+        }
+        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate populated RSS");
+        let database = Database::open(&path, "new-passphrase").expect("reopen");
+        let pool = database.sqlite_pool().expect("pool");
+        let connection = pool.get().expect("connection");
+        let entry: i64 = connection
+            .query_row(
+                "SELECT e.id FROM entries e JOIN entries_fts f ON e.id=f.rowid
+             JOIN feeds ON feeds.id=e.feed_id JOIN entry_states s ON s.entry_id=e.id
+             WHERE entries_fts MATCH 'Quasar' AND s.is_read=1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preserved search and foreign keys");
+        assert_eq!(entry, 42);
+        assert!(
+            connection
+                .prepare("PRAGMA foreign_key_check")
+                .expect("foreign key check")
+                .query([])
+                .expect("check rows")
+                .next()
+                .expect("check result")
+                .is_none()
+        );
+        connection
+            .execute_batch(
+                "INSERT INTO feeds(url) VALUES ('https://example.test/next');
+             INSERT INTO entries(feed_id,entry_id,title) VALUES (7,'second','Nebula');",
+            )
+            .expect("post-rotation insert");
+        let feed: i64 = connection
+            .query_row(
+                "SELECT id FROM feeds WHERE url='https://example.test/next'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("new feed");
+        assert_eq!(feed, 101, "AUTOINCREMENT retains deleted high-water mark");
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM entries_fts WHERE entries_fts MATCH 'Nebula'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("insert trigger");
+        assert_eq!(count, 1);
+        connection
+            .execute("DELETE FROM entries WHERE id=42", [])
+            .expect("delete trigger");
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM entries_fts WHERE entries_fts MATCH 'Quasar'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("deleted search entry");
+        assert_eq!(count, 0);
+    }
+
+    /// expect: "Old and new memories remain searchable after passphrase rotation" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_knn_recall_after_reopen_and_new_write() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "recall.db", "old-passphrase");
+        let query = vec![0.1f32; 1024];
+        {
+            let database = Database::open(&path, "old-passphrase").expect("open");
+            let pool = database.sqlite_pool().expect("pool");
+            let connection = pool.get().expect("connection");
+            // Non-contiguous rowids detect accidental renumbering during copy.
+            connection
+                .execute("UPDATE embeddings SET rowid=73 WHERE id='emb-1'", [])
+                .expect("row identity");
+            connection.execute_batch("INSERT INTO vec_embeddings(rowid,embedding) SELECT rowid,vector FROM embeddings;").expect("initial index");
+        }
+        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate");
+        let database = Database::open(&path, "new-passphrase").expect("reopen");
+        let driver: std::sync::Arc<dyn crate::database::driver::DatabaseDriver> =
+            std::sync::Arc::new(crate::database::sqlite::SqliteDriver::new(
+                database.sqlite_pool().expect("pool"),
+            ));
+        let embeddings =
+            crate::EmbeddingStore::from_driver(driver.clone(), 1024).expect("embedding store");
+        let before = embeddings.search(&query, 1).expect("old nearest neighbor");
+        assert_eq!(
+            before
+                .first()
+                .expect("old memory recalled")
+                .embedding
+                .entity_ref,
+            "test-entity"
+        );
+        let connection = driver
+            .sqlite_pool()
+            .expect("SQLite pool")
+            .get()
+            .expect("connection");
+        let rowid: i64 = connection
+            .query_row("SELECT rowid FROM embeddings WHERE id='emb-1'", [], |row| {
+                row.get(0)
+            })
+            .expect("rowid");
+        assert_eq!(rowid, 73);
+        connection.execute_batch(
+            "INSERT INTO hmems(id,entity,attribute,value,valid_from,owner_webid) VALUES ('new-memory','new-entity','test','new','2026-09-04T00:00:00Z','webid:test');",
+        ).expect("new h_mem");
+        drop(connection);
+        let mut other = vec![0.0f32; 1024];
+        other[0] = 1.0;
+        embeddings
+            .store("new-entity", &other, "test-model", None)
+            .expect("new embedding");
+        for (vector, entity) in [(&query, "test-entity"), (&other, "new-entity")] {
+            let result = embeddings.search(vector, 1).expect("nearest neighbor");
+            assert_eq!(
+                result
+                    .first()
+                    .expect("memory recalled")
+                    .embedding
+                    .entity_ref,
+                entity
+            );
+            let blob: Vec<u8> = vector
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect();
+            let connection = driver
+                .sqlite_pool()
+                .expect("pool")
+                .get()
+                .expect("connection");
+            let recalled: String = connection
+                .query_row(
+                    "SELECT h.entity FROM vec_embeddings v JOIN embeddings e ON e.rowid=v.rowid
+                 JOIN hmems h ON h.entity=e.entity_ref WHERE v.embedding MATCH ?1 AND v.k=1",
+                    [blob],
+                    |row| row.get(0),
+                )
+                .expect("h_mem recall JOIN");
+            assert_eq!(recalled, entity);
+        }
+    }
+
+    /// expect: "Invalid embedding data aborts rotation without changing my database key" [P1]
+    #[test]
+    fn malformed_embeddings_abort_rotation_before_replacement() {
+        for (dimensions, vector) in [
+            (1024, vec![0u8; 3]),
+            (1, 0.5f32.to_le_bytes().to_vec()),
+            (
+                1024,
+                vec![f32::NAN; 1024]
+                    .iter()
+                    .flat_map(|value| value.to_le_bytes())
+                    .collect(),
+            ),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary database");
+            let path = make_test_db(directory.path(), "invalid.db", "old-passphrase");
+            {
+                let database = Database::open(&path, "old-passphrase").expect("open");
+                let pool = database.sqlite_pool().expect("pool");
+                pool.get()
+                    .expect("connection")
+                    .execute(
+                        "UPDATE embeddings SET dimensions=?1, vector=?2",
+                        rusqlite::params![dimensions, vector],
+                    )
+                    .expect("malformed canonical vector fixture");
+            }
+            let error = rotate_passphrase(&path, "old-passphrase", "new-passphrase")
+                .expect_err("invalid vector must fail");
+            assert!(matches!(error, RotationError::Sql { .. }));
+            assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+            assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
+            assert!(!Path::new(&format!("{path}.new")).exists());
+            assert!(!Path::new(&format!("{path}.old")).exists());
+        }
+    }
+
+    /// expect: "A foreign-key violation fails preservation checks rather than publishing a broken copy" [P1]
+    #[test]
+    fn foreign_key_validation_failure_preserves_source() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "invalid-fk.db", "old-passphrase");
+        {
+            let database = Database::open(&path, "old-passphrase").expect("open");
+            let pool = database.sqlite_pool().expect("pool");
+            pool.get()
+                .expect("connection")
+                .execute_batch(
+                    "PRAGMA foreign_keys=OFF;
+                 CREATE TABLE parents(id INTEGER PRIMARY KEY);
+                 CREATE TABLE children(parent_id INTEGER REFERENCES parents(id));
+                 INSERT INTO children VALUES (1);",
+                )
+                .expect("invalid foreign-key fixture");
+        }
+        let error = rotate_passphrase(&path, "old-passphrase", "new-passphrase")
+            .expect_err("foreign-key violation");
+        assert!(error.to_string().contains("foreign-key check failed"));
+        assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+        assert!(!Path::new(&format!("{path}.new")).exists());
+        assert!(!Path::new(&format!("{path}.old")).exists());
     }
 
     fn count_hmems(path: &str, passphrase: &str) -> i64 {

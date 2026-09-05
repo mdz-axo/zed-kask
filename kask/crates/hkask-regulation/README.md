@@ -33,6 +33,15 @@ allowlist.
 
 The OCAP-gated tool invocation membrane (`McpRuntime::invoke`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `CallCapManager`, and `ToolStats` primitives via the call-charge pattern (`CyberneticsLoop::charge_call`).
 
+## Outcome threshold configuration
+
+`RegulationLedger::with_set_points` applies outcome warning/critical thresholds
+and history caps together, before any observations. `load_set_points` validates
+YAML configuration: both outcome thresholds must be finite values in `[0, 1]`,
+with warning strictly greater than critical. Invalid configuration logs a warning
+and uses defaults. Programmatic callers must validate their `SetPoints` first.
+The default warning/critical success-rate thresholds remain 0.50/0.25.
+
 ## Dependencies
 
 - `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError, `InferencePort`)

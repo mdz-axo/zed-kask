@@ -17,9 +17,12 @@ by brundonsmith, with these deviations:
 - **JSON-native**: input env is `serde_json::Value`, output is `serde_json::Value`.
   JSON objects become association lists (the classic Lisp data structure) at
   the `from_json` boundary — access fields via `(assoc "key" obj)`.
-- **Bounded**: `max_steps` (default 100000) and `max_depth` (default 64) prevent
-  infinite loops and stack overflow. Depth is checked only for compound forms
-  (lists), not atoms.
+- **Bounded sandbox entry points**: `max_steps` (default 100000) accounts for
+  parsing, environment conversion, evaluation, builtin work, and output
+  expansion. `max_depth` (default 1024) bounds source/data traversal as well
+  as compound-form evaluation. Stack-safe recursive operations and list
+  destruction protect the host stack. JSON output has a separate nesting
+  boundary of 128, independent of the requested evaluation depth.
 - **No `eval` builtin**: Lisp code cannot evaluate arbitrary strings. This is
   a deliberate security restriction — the interpreter is safe for skill
   convergence checks.
@@ -65,6 +68,7 @@ Call `lisp_eval`:
 
 - `serde_json` — JSON interop
 - `thiserror` — error types
+- `stacksafe` — recursive operations and destruction without host-stack overflow
 
 No hKask crate dependencies — this is a standalone computation library.
 
@@ -73,7 +77,10 @@ No hKask crate dependencies — this is a standalone computation library.
 - No `eval` builtin (Lisp code cannot evaluate arbitrary strings)
 - No `load` or `require`
 - No I/O, no filesystem, no network, no environment variable access
-- Bounded recursion depth (64) and bounded evaluation steps (100000)
+- Budgeted sandbox boundary (`eval_sandboxed` / `eval_sandboxed_with_budget`):
+  default depth 1024 and work budget 100000; oversized work returns a limit error
+- Lower-level conversion helpers do not enforce the sandbox budget themselves
+- Returned JSON nesting is independently bounded for caller serialization/drop
 - Environment is immutable from Lisp's perspective (define mutates a local
   scope discarded after evaluation)
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate

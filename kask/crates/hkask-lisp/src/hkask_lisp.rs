@@ -1716,6 +1716,10 @@ mod tests {
 
     /// expect: "Malformed or oversized Lisp work returns an error instead of killing the host" [P4]
     #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "hostile input runs in a bounded subprocess on the test thread, never GPUI"
+    )]
     fn hostile_inputs_are_process_safe() -> Result<(), Box<dyn std::error::Error>> {
         const CHILD_CASE: &str = "HKASK_LISP_SAFETY_TEST_CASE";
         if let Ok(case) = std::env::var(CHILD_CASE) {

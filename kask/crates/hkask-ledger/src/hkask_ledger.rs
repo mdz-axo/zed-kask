@@ -24,6 +24,7 @@ use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::DbValue;
 use hkask_storage::define_driver_store;
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::sync::Arc;
 
 // The double-entry ledger.
@@ -81,89 +82,53 @@ impl Ledger {
 
         let now = chrono::Utc::now().to_rfc3339();
 
-        // Check if this reference already exists
-        let existing = self.driver.query_optional(
-            "SELECT id FROM transactions WHERE reference = ?1",
-            &[DbValue::Text(tx.reference.clone())],
-        )?;
-
-        if let Some(row) = existing {
-            let existing_id = row.get_str(0)?.to_string();
-            // Reference exists — verify the postings match for true idempotency
-            let existing_postings = self.driver.query(
-                "SELECT source, destination, asset, amount
-                 FROM postings WHERE transaction_id = ?1 ORDER BY id",
-                &[DbValue::Text(existing_id)],
-            )?;
-
-            if existing_postings.len() != tx.postings.len() {
-                return Err(LedgerError::IdempotencyConflict {
-                    reference: tx.reference.clone(),
-                });
-            }
-            for (i, p) in tx.postings.iter().enumerate() {
-                let row = &existing_postings[i];
-                let src = row.get_str(0)?;
-                let dst = row.get_str(1)?;
-                let ast = row.get_str(2)?;
-                let amt = row.get_int(3)?;
-                if p.source != src || p.destination != dst || p.asset != ast || p.amount != amt {
-                    return Err(LedgerError::IdempotencyConflict {
-                        reference: tx.reference.clone(),
-                    });
+        self.with_transaction(|transaction| {
+            // The reference check shares the write lock with insertion: concurrent
+            // identical commits must observe a no-op, not a UNIQUE violation.
+            let existing: Option<String> = transaction.query_row(
+                "SELECT id FROM transactions WHERE reference = ?1",
+                [&tx.reference],
+                |row| row.get(0),
+            ).optional()?;
+            if let Some(existing_id) = existing {
+                let mut statement = transaction.prepare(
+                    "SELECT source, destination, asset, amount
+                     FROM postings WHERE transaction_id = ?1 ORDER BY id",
+                )?;
+                let existing_postings = statement.query_map([existing_id], |row| {
+                    Ok(Posting {
+                        source: row.get(0)?,
+                        destination: row.get(1)?,
+                        asset: row.get(2)?,
+                        amount: row.get(3)?,
+                    })
+                })?.collect::<Result<Vec<_>, _>>()?;
+                if existing_postings.len() != tx.postings.len()
+                    || existing_postings.iter().zip(&tx.postings).any(|(existing, proposed)| {
+                        existing.source != proposed.source
+                            || existing.destination != proposed.destination
+                            || existing.asset != proposed.asset
+                            || existing.amount != proposed.amount
+                    })
+                {
+                    return Err(LedgerError::IdempotencyConflict { reference: tx.reference.clone() });
                 }
+                return Ok(());
             }
-            // Postings match — true idempotent, no-op
-            return Ok(());
-        }
-
-        // Wrap in transaction for atomicity
-        self.driver.execute_batch("BEGIN IMMEDIATE")?;
-        let result: Result<(), LedgerError> = (|| {
-            self.driver.execute(
+            transaction.execute(
                 "INSERT INTO transactions (id, timestamp, reference, metadata, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                &[
-                    DbValue::Text(tx.id.clone()),
-                    DbValue::Text(tx.timestamp.clone()),
-                    DbValue::Text(tx.reference.clone()),
-                    DbValue::Text(tx.metadata.to_string()),
-                    DbValue::Text(now.clone()),
-                ],
+                params![tx.id, tx.timestamp, tx.reference, tx.metadata.to_string(), now],
             )?;
-
             for posting in &tx.postings {
-                self.driver.execute(
+                transaction.execute(
                     "INSERT INTO postings (transaction_id, source, destination, asset, amount, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    &[
-                        DbValue::Text(tx.id.clone()),
-                        DbValue::Text(posting.source.clone()),
-                        DbValue::Text(posting.destination.clone()),
-                        DbValue::Text(posting.asset.clone()),
-                        DbValue::Integer(posting.amount),
-                        DbValue::Text(now.clone()),
-                    ],
+                    params![tx.id, posting.source, posting.destination, posting.asset, posting.amount, now],
                 )?;
             }
             Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.driver.execute_batch("COMMIT")?;
-                Ok(())
-            }
-            Err(e) => {
-                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
-                    tracing::error!(
-                        target: "reg.ledger",
-                        error = %rollback_err,
-                        "Failed to rollback ledger transaction"
-                    );
-                }
-                Err(e)
-            }
-        }
+        })
     }
 
     /// Atomically debit `amount` of `asset` from `account` to `external`,
@@ -208,24 +173,14 @@ impl Ledger {
         // Acquire the write lock up front. Any concurrent writer (another
         // debit, a commit) blocks until this transaction finishes, so the
         // balance read below sees the committed effect of all prior writers.
-        self.driver.execute_batch("BEGIN IMMEDIATE")?;
-        let result: Result<(), LedgerError> = (|| {
-            // Re-read the balance INSIDE the transaction. The write lock
-            // guarantees no other writer can land a debit between this read
-            // and the insert below.
-            let row = self.driver.query_optional(
+        self.with_transaction(|transaction| {
+            let balance: i64 = transaction.query_row(
                 "SELECT COALESCE(SUM(CASE WHEN destination = ?1 THEN amount ELSE 0 END), 0)
                       - COALESCE(SUM(CASE WHEN source = ?1 THEN amount ELSE 0 END), 0)
                      FROM postings WHERE (source = ?1 OR destination = ?1) AND asset = ?2",
-                &[
-                    DbValue::Text(account.to_string()),
-                    DbValue::Text(asset.to_string()),
-                ],
+                params![account, asset],
+                |row| row.get(0),
             )?;
-            let balance = match row {
-                Some(r) => r.get_int(0)?,
-                None => 0,
-            };
             if balance < amount {
                 return Err(LedgerError::InsufficientFunds {
                     account: account.to_string(),
@@ -235,48 +190,46 @@ impl Ledger {
                 });
             }
 
-            self.driver.execute(
+            transaction.execute(
                 "INSERT INTO transactions (id, timestamp, reference, metadata, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                &[
-                    DbValue::Text(tx_id.clone()),
-                    DbValue::Text(now.clone()),
-                    DbValue::Text(reference.to_string()),
-                    DbValue::Text(metadata.to_string()),
-                    DbValue::Text(now.clone()),
-                ],
+                params![tx_id, now, reference, metadata.to_string(), now],
             )?;
-            self.driver.execute(
+            transaction.execute(
                 "INSERT INTO postings (transaction_id, source, destination, asset, amount, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                &[
-                    DbValue::Text(tx_id),
-                    DbValue::Text(account.to_string()),
-                    DbValue::Text("external".to_string()),
-                    DbValue::Text(asset.to_string()),
-                    DbValue::Integer(amount),
-                    DbValue::Text(now),
-                ],
+                params![tx_id, account, "external", asset, amount, now],
             )?;
-            Ok(())
-        })();
+            // Return this debit's balance, not a later writer's observation.
+            Ok(if account == "external" { balance } else { balance - amount })
+        })
+    }
+
+    fn with_transaction<T>(
+        &self,
+        operation: impl FnOnce(&Transaction<'_>) -> Result<T, LedgerError>,
+    ) -> Result<T, LedgerError> {
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            DbError::Database("Ledger transactions require a SqliteDriver".into())
+        })?;
+        let mut connection = pool
+            .get()
+            .map_err(|error| DbError::Connection(error.to_string()))?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let result = operation(&transaction);
         match result {
-            Ok(()) => {
-                self.driver.execute_batch("COMMIT")?;
+            Ok(value) => {
+                transaction.commit()?;
+                tracing::debug!(target: "reg.ledger", "Ledger transaction committed");
+                Ok(value)
             }
-            Err(e) => {
-                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
-                    tracing::error!(
-                        target: "reg.ledger",
-                        error = %rollback_err,
-                        "Failed to rollback debit_if_funds transaction"
-                    );
+            Err(error) => {
+                if let Err(rollback_error) = transaction.rollback() {
+                    tracing::error!(target: "reg.ledger", error = %rollback_error, "Failed to rollback ledger transaction");
                 }
-                return Err(e);
+                Err(error)
             }
         }
-
-        self.balance(account, Some(asset))
     }
 
     /// REQ: P9-ledger-balance
@@ -416,4 +369,200 @@ fn build_query_params(range: &DateRange, filter: &QueryFilter) -> Vec<DbValue> {
         params.push(DbValue::Text(ns.clone()));
     }
     params
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::database::sqlite::{SqliteDriver, init_wal_pragmas};
+    use std::sync::Barrier;
+
+    fn fixture() -> (tempfile::TempDir, Arc<Ledger>) {
+        let directory = tempfile::tempdir().expect("temporary ledger directory");
+        let manager =
+            r2d2_sqlite::SqliteConnectionManager::file(directory.path().join("ledger.db"))
+                .with_init(|connection| {
+                    init_wal_pragmas(connection)?;
+                    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+                    connection.busy_timeout(std::time::Duration::from_secs(3))
+                });
+        let pool = r2d2::Pool::builder()
+            .max_size(4)
+            .build(manager)
+            .expect("four-connection pool");
+        let ledger = Ledger::from_driver(Arc::new(SqliteDriver::new(pool))).expect("ledger schema");
+        (directory, Arc::new(ledger))
+    }
+
+    fn funding(reference: &str, amount: i64) -> LedgerTransaction {
+        LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            reference: reference.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            metadata: serde_json::json!({}),
+            postings: vec![Posting {
+                source: "external".into(),
+                destination: "operator".into(),
+                asset: "credits".into(),
+                amount,
+            }],
+        }
+    }
+
+    /// expect: "Concurrent pool users cannot split ledger transactions or double-charge references" [P8]
+    #[test]
+    fn ledger_commit_isolated_from_concurrent_pool_users() {
+        let (_directory, ledger) = fixture();
+        ledger
+            .commit(&funding("initial", 100))
+            .expect("initial funding");
+        let barrier = Arc::new(Barrier::new(9));
+        let mut workers = Vec::new();
+        for worker in 0..9 {
+            let ledger = ledger.clone();
+            let barrier = barrier.clone();
+            workers.push(std::thread::spawn(move || -> Result<(), LedgerError> {
+                barrier.wait();
+                for iteration in 0..5 {
+                    if worker < 4 {
+                        ledger.commit(&funding(&format!("fund-{iteration}"), 10))?;
+                    } else if worker < 8 {
+                        let balance = ledger.debit_if_funds(
+                            "operator",
+                            "credits",
+                            3,
+                            &format!("debit-{worker}-{iteration}"),
+                            &serde_json::json!({}),
+                        )?;
+                        assert!(balance >= 0);
+                    } else {
+                        assert!(ledger.balance("operator", Some("credits"))? >= 0);
+                    }
+                }
+                Ok(())
+            }));
+        }
+        // Join every worker even when one fails, so temporary storage outlives all users.
+        let results: Vec<_> = workers.into_iter().map(|worker| worker.join()).collect();
+        for result in results {
+            result
+                .expect("worker does not panic")
+                .expect("operation remains atomic");
+        }
+        assert_eq!(
+            ledger
+                .balance("operator", Some("credits"))
+                .expect("balance"),
+            90
+        );
+        let count = ledger
+            .driver
+            .query_optional("SELECT COUNT(*) FROM transactions", &[])
+            .expect("transaction count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(count, 26);
+        let conflict = funding("fund-0", 11);
+        assert!(matches!(
+            ledger.commit(&conflict),
+            Err(LedgerError::IdempotencyConflict { .. })
+        ));
+    }
+
+    /// expect: "Concurrent debits cannot spend more than the available balance" [P8]
+    #[test]
+    fn concurrent_debits_preserve_nonnegative_balance() {
+        let (_directory, ledger) = fixture();
+        ledger
+            .commit(&funding("initial", 10))
+            .expect("initial funding");
+        let barrier = Arc::new(Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|index| {
+                let ledger = ledger.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    ledger.debit_if_funds(
+                        "operator",
+                        "credits",
+                        7,
+                        &format!("debit-{index}"),
+                        &serde_json::json!({}),
+                    )
+                })
+            })
+            .collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker"))
+            .collect();
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(3)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(LedgerError::InsufficientFunds { balance: 3, .. })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            ledger
+                .balance("operator", Some("credits"))
+                .expect("balance"),
+            3
+        );
+    }
+
+    /// expect: "A failed posting rolls back its header and earlier postings, not another operation" [P8]
+    #[test]
+    fn failed_posting_rolls_back_entire_transaction() {
+        let (_directory, ledger) = fixture();
+        ledger.driver.execute_batch(
+            "CREATE TRIGGER reject_test_posting BEFORE INSERT ON postings WHEN NEW.amount = 9999
+             BEGIN SELECT RAISE(ABORT, 'injected posting failure'); END;",
+        ).expect("failure injection");
+        ledger
+            .commit(&funding("retained", 20))
+            .expect("independent transaction");
+        let mut transaction = funding("failed", 5);
+        transaction
+            .postings
+            .push(funding("unused", 9999).postings.remove(0));
+        assert!(ledger.commit(&transaction).is_err());
+        assert!(
+            ledger
+                .driver
+                .query_optional(
+                    "SELECT id FROM transactions WHERE reference = 'failed'",
+                    &[]
+                )
+                .expect("query header")
+                .is_none()
+        );
+        assert_eq!(
+            ledger
+                .balance("operator", Some("credits"))
+                .expect("balance"),
+            20
+        );
+        ledger
+            .commit(&funding("after-failure", 10))
+            .expect("pool remains usable");
+        assert_eq!(
+            ledger
+                .balance("operator", Some("credits"))
+                .expect("balance"),
+            30
+        );
+    }
 }
