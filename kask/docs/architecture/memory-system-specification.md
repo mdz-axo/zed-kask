@@ -319,6 +319,25 @@ handle — a failed initial open leaves the store `None`, and every `get()`
 re-attempts the open (`curator_stores.rs`); a successful re-open also
 rebuilds the consolidation service.
 
+### Brier loop → memory confidence (goal scores)
+
+A `kanban_goal_score` goal event is the one outcome the memory system
+observes automatically, and it closes the calibration loop (spec §11
+item 4): the Brier it carries is mapped to a confidence signal —
+`(1 − 2·Brier)` clamped to [0.05, 0.95], so a binary no-skill prediction
+(Brier 0.25) is the neutral point — and Bayesian-combined
+(`hkask_memory::combine_confidences`, the same log-odds pooling
+`memory_update` uses) into the confidence of the goal's prediction record
+(the `kanban_goal_create` h_mem under the same `curator:goal:{id}`
+entity). Never a raw confidence write. A disconfirming score drops the
+record below the 0.5 floor, where the consolidation service's floor-delete
+cleans it up — calibration by outcome, cleanup by floor. A null Brier (no
+intake prediction recorded) calibrates nothing. Pinned by
+`goal_score_brier_calibrates_goal_create_confidence`,
+`goal_score_without_brier_leaves_create_confidence_at_floor`, and
+`goal_score_high_brier_disconfirms_below_the_consolidation_floor`
+(`kask_bridge/src/memory.rs`).
+
 ### Ingestion semaphore
 
 A `tokio::sync::Semaphore` (default 1 permit, configurable via
@@ -964,7 +983,7 @@ knowledge or consent.
 | 1 | Confidence in recall ranking | ✅ Done (`memory.rs:839-849`) |
 | 2 | Absence signaling (hypocognition guard) | ✅ Done (`context_injector.rs:285-311`) |
 | 3 | Connectedness tracking (co-occurrence links) | ✅ Done — schema (`schema.sql:23-29`), recording (`context_injector.rs:324-335`), ranking bonus (`memory.rs:839-845`) |
-| 4 | Brier loop → memory confidence | Not started |
+| 4 | Brier loop → memory confidence | ✅ Done (2026-09-05) — a `kanban_goal_score` event's Brier Bayesian-combines into the goal's `kanban_goal_create` record at ingestion (§4); disconfirmed records drop below the consolidation floor |
 | 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1037-1179`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
 | 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |

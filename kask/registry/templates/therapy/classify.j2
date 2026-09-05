@@ -27,12 +27,12 @@ Forgetting (purging/condensing source memories after reification) is a hygiene s
    - Grounding: Festinger — "add consonant cognitions." Nelson & Shiffrin (2013) — trace coevolution.
 
 3. **Remove dissonant** — one memory is clearly wrong (old code status, pre-solution config).
-   - Action: `memory_resolve_contradiction` with strategy "expire" or "delete".
+   - Action: `memory_resolve_contradiction` with strategy "forget" (delete — memories are forgotten, not expired; operator ruling 2026-09-04).
    - Grounding: Festinger — "remove dissonant cognitions." Goldfish principle — don't let the past own the present.
 
 ### Memory hygiene — fragmentation
 
-- **Merge**: isolated duplicate → expire the isolated one.
+- **Merge**: isolated duplicate → forget the isolated one.
 - **Link**: related but unlinked → insert a connecting h_mem.
 - **Keep**: intentional isolation → note it, no action.
 
@@ -60,9 +60,9 @@ For each reification candidate, determine the reification target:
 
 After a lesson has been reified into a skill/template/rule AND the user has approved the reification, the source episodic memories can be forgotten:
 
-- **Purge**: `memory_resolve_contradiction` with strategy "delete" for each source h_mem.
+- **Purge**: `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
   - Grounding: goldfish principle — you don't need recall guidance once you've learned to frame it as proactive guidance.
-- **Condense**: `memory_insert` a single high-confidence summary, then expire the originals.
+- **Condense**: `memory_insert` a single high-confidence summary, then forget the originals.
   - Use only if the source memories have ongoing reference value.
 - **Keep**: if the source memories are still needed for recall, keep them.
 

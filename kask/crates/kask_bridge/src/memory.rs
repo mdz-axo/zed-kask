@@ -1297,6 +1297,204 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn goal_score_brier_calibrates_goal_create_confidence() {
+        // Spec §11 item 4 — the Brier loop → memory confidence. A
+        // kanban_goal_score event Bayesian-combines a Brier-mapped signal
+        // into the goal's prediction record (kanban_goal_create). A binary
+        // no-skill prediction scores Brier 0.25 — the neutral point;
+        // 0.0625 maps to a 0.875 signal, which combined with the 0.5 floor
+        // is 0.875.
+        let port = in_memory_port();
+        let create_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "set a goal".to_string(),
+            agent_response: "goal recorded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-brier",
+                        "goal_text": "The user can filter by date",
+                        "prediction": 0.75
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(create_record)
+            .await
+            .expect("create ingest");
+        let score_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "score it".to_string(),
+            agent_response: "scored".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-brier",
+                        "achieved": true,
+                        "brier": 0.0625
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(score_record).await.expect("score ingest");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let goals = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-brier")
+            .expect("query goal records");
+        let create = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_create")
+            .expect("create record survives calibration");
+        assert!(
+            (create.confidence.value() - 0.875).abs() < 1e-9,
+            "Brier 0.0625 calibrates the prediction record to 0.875, got {}",
+            create.confidence.value()
+        );
+        let score = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_score")
+            .expect("score record stored");
+        assert_eq!(
+            score.confidence.value(),
+            0.5,
+            "the score record itself stays at the floor — calibration is by update, not insert"
+        );
+    }
+
+    #[tokio::test]
+    async fn goal_score_without_brier_leaves_create_confidence_at_floor() {
+        // `brier` is null when no intake prediction was recorded — nothing
+        // to calibrate. The create record must stay at the 0.5 floor.
+        let port = in_memory_port();
+        let create_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "set a goal".to_string(),
+            agent_response: "goal recorded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-nopred",
+                        "goal_text": "The user can filter by date"
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(create_record)
+            .await
+            .expect("create ingest");
+        let score_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "score it".to_string(),
+            agent_response: "scored".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-nopred",
+                        "achieved": true,
+                        "brier": null
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(score_record).await.expect("score ingest");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let goals = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-nopred")
+            .expect("query goal records");
+        let create = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_create")
+            .expect("create record");
+        assert_eq!(
+            create.confidence.value(),
+            0.5,
+            "a null Brier (no prediction recorded) must not move confidence"
+        );
+    }
+
+    #[tokio::test]
+    async fn goal_score_high_brier_disconfirms_below_the_consolidation_floor() {
+        // The disconfirm leg of the loop: a maximally wrong prediction
+        // (Brier 1.0) maps to a 0.05 signal, dropping the create record
+        // BELOW the 0.5 floor — where the consolidation service's
+        // floor-delete cleans it up. Calibration by outcome, cleanup by
+        // floor: the two mechanisms compose.
+        let port = in_memory_port();
+        let create_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "set a goal".to_string(),
+            agent_response: "goal recorded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-wrong",
+                        "goal_text": "The user can filter by date",
+                        "prediction": 0.9
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(create_record)
+            .await
+            .expect("create ingest");
+        let score_record = TurnRecord {
+            thread_id: "goal-thread".to_string(),
+            user_input: "score it".to_string(),
+            agent_response: "scored".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-wrong",
+                        "achieved": false,
+                        "brier": 1.0
+                    }
+                }),
+            }],
+        };
+        port.ingest_turn(score_record).await.expect("score ingest");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let goals = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-wrong")
+            .expect("query goal records");
+        let create = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_create")
+            .expect("create record");
+        assert!(
+            (create.confidence.value() - 0.05).abs() < 1e-9,
+            "Brier 1.0 disconfirms the prediction record to 0.05 (below the floor, consolidation-eligible), got {}",
+            create.confidence.value()
+        );
+    }
+
+    #[tokio::test]
     async fn ingest_turn_goal_events_are_single_copy() {
         // 2026-09-04 single-copy ruling: goal events get ONE shared h_mem
         // under curator:goal:{goal_id} — the curator-perspective goal:{id}

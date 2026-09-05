@@ -182,6 +182,93 @@ pub(crate) async fn write_turn(
                 );
             }
         }
+
+        // ── Brier loop → memory confidence (spec §11 item 4) ──────────
+        // The goal score is the one outcome the memory system observes
+        // automatically: its Brier calibrates the confidence of the goal's
+        // prediction record (the `kanban_goal_create` h_mem) via Bayesian
+        // combination — never a raw confidence write. Mapping: a binary
+        // no-skill prediction scores Brier 0.25, the neutral point; 0 →
+        // 0.95 (strong confirm), 1 → 0.05 (strong disconfirm, which drops
+        // the record below the consolidation floor so cleanup deletes it).
+        if event.tool_name == "kanban_goal_score" {
+            let brier = event
+                .output
+                .get("brier")
+                .or_else(|| event.output.pointer("/content/brier"))
+                .and_then(serde_json::Value::as_f64);
+            let Some(brier) = brier else {
+                // `brier` is null when no intake prediction was recorded —
+                // nothing to calibrate, not a failure.
+                tracing::debug!(
+                    target: "reg.memory",
+                    goal_id = %goal_id,
+                    "Goal score without a Brier — no prediction to calibrate"
+                );
+                continue;
+            };
+            let Some(curator_store) = curator_store.as_ref() else {
+                continue;
+            };
+            let goal_entity = format!("curator:goal:{goal_id}");
+            let create_records = match curator_store.h_mems_by_entity_prefix(&goal_entity) {
+                Ok(records) => records
+                    .into_iter()
+                    .filter(|h_mem| h_mem.attribute == "kanban_goal_create")
+                    .collect::<Vec<_>>(),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        thread_id = %thread_id,
+                        goal_id = %goal_id,
+                        error = %e,
+                        "Failed to query goal records for Brier calibration"
+                    );
+                    continue;
+                }
+            };
+            if create_records.is_empty() {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    goal_id = %goal_id,
+                    brier,
+                    "Goal score carried a Brier but no kanban_goal_create h_mem exists to calibrate"
+                );
+                continue;
+            }
+            let signal = (1.0 - 2.0 * brier).clamp(0.05, 0.95);
+            let mut calibrated = 0usize;
+            for create_record in create_records {
+                let combined = hkask_memory::combine_confidences(
+                    create_record.confidence,
+                    Confidence::new(signal),
+                );
+                match curator_store.update_confidence(
+                    &create_record.id,
+                    create_record.value.clone(),
+                    combined,
+                ) {
+                    Ok(()) => calibrated += 1,
+                    Err(e) => tracing::warn!(
+                        target: "reg.memory",
+                        thread_id = %thread_id,
+                        goal_id = %goal_id,
+                        error = %e,
+                        "Failed to calibrate goal-create confidence from Brier score"
+                    ),
+                }
+            }
+            tracing::info!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                goal_id = %goal_id,
+                brier,
+                signal,
+                calibrated,
+                "Brier score calibrated goal-create memory confidence"
+            );
+        }
     }
 
     // ── 2. Clean + chunk the turn content ─────────────────────────────

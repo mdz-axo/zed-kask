@@ -128,6 +128,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 ## Other traps
 
+* Built-in file tools (`write_file`, `edit_file`, `create_directory`) are sandboxed to the project root. Writes under `~/Documents/zk-data` (the companies-mcp, corpus-mcp, media-mcp, portfolio-mcp data dirs) fail with a misleading "parent directory doesn't exist" even when the directory exists. Write those files via `terminal` heredoc (split long content into multiple `>>` appends) or via the owning MCP server's tools (observed live 2026-09-03, Polaris PIF report save).
 * `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused inference calls to use the wrong model.
 * `LanguageModelProvider` registry subscriptions must filter self-events to avoid unbounded warn storms.
 * `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — run `check-desktop-no-collision.sh` before committing.

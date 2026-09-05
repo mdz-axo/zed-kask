@@ -36,6 +36,7 @@ Look for confidence values that don't match evidence:
 - High-confidence h_mems with no evidence citation.
 - Low-confidence h_mems recalled many times without contradiction.
 - Confidence values that diverge significantly from related h_mems.
+- Memories verified accurate by this scan's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction) — raise_confidence candidates: verification work is the outcome signal that strengthens confidence (via memory_update's Bayesian combination, never a raw write).
 
 ### 4. Reification candidates
 

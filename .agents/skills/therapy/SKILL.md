@@ -59,7 +59,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 
 ### Cognitive dissonance (Festinger; Lidwell, *Universal Principles of Design*)
 
-- **Three resolution strategies**: reduce importance (lower confidence), add consonant (insert reconciling memory), remove dissonant (expire/delete). Therapy classifies contradictions by strategy and proposes resolutions.
+- **Three resolution strategies**: reduce importance (lower confidence), add consonant (insert reconciling memory), remove dissonant (forget — delete). Therapy classifies contradictions by strategy and proposes resolutions.
 
 ### Dunning's self-knowledge framework
 
@@ -104,6 +104,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - High-confidence h_mems with no evidence citation (no `evidence_h_mem_id`).
    - Low-confidence h_mems that have been recalled many times (high `recalled_at` frequency) without contradiction.
    - Confidence values that diverge significantly from related h_mems on the same topic.
+   - Memories verified accurate by this scan's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction) — these are raise_confidence candidates: verification work is the outcome signal that strengthens confidence (via `memory_update`'s Bayesian combination, never a raw write).
 
    **d. Reification candidates** — clusters of episodic memories that share a common pattern or lesson but have not yet been reified into a skill, template, or rule. Look for:
    - Repeated patterns across multiple entities (e.g., "this skill fails 40% of the time when X" appears across multiple skill-use-issue reports).
@@ -136,6 +137,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 4. Call `lisp_eval` to check the scan is non-trivial:
    - form: "(length (assoc \"findings\" scan_result))"
    - env: { "scan_result": <your scan output> }
+   - For recursive helper forms, pass `max_depth` ≥ 8× the list length — helpers consume 2–4 depth frames per element, so the 1024 default only covers lists of a few hundred elements.
    - If the result is 0, report "No issues found in {target}. Memory is clean." and exit.
 
 ### Phase 3 — Classify and propose
@@ -158,18 +160,18 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - Action: `memory_insert` with a new h_mem that synthesizes the contradiction, citing both contradicting h_mems as evidence.
    - Grounding: Festinger — "add consonant cognitions." Also Nelson & Shiffrin (2013) — "traces can accumulate information across events."
 
-   **Remove dissonant** (expire or delete):
+   **Remove dissonant** (forget):
    - Use when one memory is clearly wrong (e.g., old code status, pre-solution configuration).
-   - Action: `memory_resolve_contradiction` with strategy "expire" (soft-delete) or "delete" (hard-delete).
+   - Action: `memory_resolve_contradiction` with strategy "forget" (deletes the dissonant h_mem — memories are forgotten or deleted, never expired; operator ruling 2026-09-04).
    - Grounding: Festinger — "remove or change dissonant cognitions." Also Loftus (2005) — distorted traces should be corrected. Also the goldfish principle — don't let the past own the present.
 
    **For fragmentation** — propose:
-   - **Merge**: if an isolated h_mem is a duplicate of a connected one, expire the isolated one.
+   - **Merge**: if an isolated h_mem is a duplicate of a connected one, forget the isolated one.
    - **Link**: if an isolated h_mem is related but not linked, propose inserting a connecting h_mem.
    - **Keep**: if the isolation is intentional (a unique perspective), keep it but note it.
 
    **For miscalibrated confidence** — propose:
-   - **Raise confidence**: if a h_mem has been recalled many times without contradiction, `memory_update` to raise confidence.
+   - **Raise confidence**: if a h_mem has been recalled many times without contradiction, or was verified accurate by this session's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction), `memory_update` to raise confidence — verification work is the outcome signal; combine a modest signal (e.g. 0.6–0.7), never a raw write.
    - **Lower confidence**: if a h_mem has no evidence citation, `memory_update` to lower confidence.
    - **Reset to floor**: if confidence is clearly wrong, `memory_update` to 0.5 (the floor).
 
@@ -177,8 +179,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - **Create skill**: if the pattern is a repeatable process that could guide future action, propose creating a skill (SKILL.md + templates) via the `create-skill` skill. The skill captures the lesson as proactive contextualized guidance.
    - **Create template**: if the pattern is a prompt structure or output format that could guide future generation, propose creating a .j2 template.
    - **Create rule**: if the pattern is a simple constraint or guideline (e.g., "always check X before Y"), propose adding it to the project `.rules` file or the agent's system prompt.
-   - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "delete" to purge them (cognitive load shedding).
-   - **Condense source memories**: if the source memories have ongoing reference value, propose replacing them with a single high-confidence summary h_mem via `memory_insert` + `memory_resolve_contradiction` (expire the originals, keep the summary).
+   - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "forget" to purge them (cognitive load shedding).
+   - **Condense source memories**: if the source memories have ongoing reference value, propose replacing them with a single high-confidence summary h_mem via `memory_insert` + `memory_resolve_contradiction` (forget the originals, keep the summary).
 
    **For system wiring defects** — these are not contradictions between memories and take no Festinger strategy. The proposal is a code fix: correct the writing path to enforce the invariant it violates (confidence floor, embedding contract, key convention), with a pinning test in the same change. Grounding: the operator's standing rule — fix the tool, never work around the tool failure — applied to the memory system itself.
 
@@ -205,7 +207,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - form: "(define count-approved (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"approved\" (car lst)) t) (+ 1 (count-approved (cdr lst))) (count-approved (cdr lst)))))) (count-approved proposals)"
    - env: { "proposals": <your proposal list with user decisions> }
    - The interpreter has no `filter` builtin — the count is a recursive
-     helper (the floor-strength pattern).
+     helper (the floor-strength pattern). Pass `max_depth` ≥ 8× the list
+     length — recursive helpers consume 2–4 depth frames per element.
    - If the result is 0, report "No proposals approved. Memory unchanged." and exit.
 
 ### Phase 5 — Execute
@@ -224,8 +227,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries.
 
    **Post-reification hygiene (forgetting — runs after reification, not part of learning):**
-   - **Purge**: `memory_resolve_contradiction` with strategy "delete" for each source h_mem.
-   - **Condense**: `memory_insert` to create the summary h_mem, then `memory_resolve_contradiction` with strategy "expire" for each source h_mem.
+   - **Purge**: `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
+   - **Condense**: `memory_insert` to create the summary h_mem, then `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
    - **Keep sources**: if the user chose to keep the source memories, no action.
 
 2. For corpus memory targets, use the corpus-specific tools to modify the chunk database.
@@ -237,7 +240,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"success\" (car lst)) nil) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
    - env: { "results": <your execution results> }
    - The interpreter has no `filter` builtin — the count is a recursive
-     helper (the floor-strength pattern). A missing `success` counts as a
+     helper (the floor-strength pattern). Pass `max_depth` ≥ 8× the list
+     length — recursive helpers consume 2–4 depth frames per element. A missing `success` counts as a
      failure; an explicit `false` does not.
    - If the result is > 0, report the failures and suggest manual remediation.
 
