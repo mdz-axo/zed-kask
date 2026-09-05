@@ -1,7 +1,7 @@
 # Kask core review and improvement plan
 
 - Date: 2026-09-04
-- Status: **Implementation in progress — 13/20 tasks verified; D1/D2/D3/D5 approved; D4 weekly-review proposal awaits confirmation**
+- Status: **Implementation in progress — 13/20 tasks previously verified; six further tasks implemented but final validation unfinished in `f868676f81`; T11 unimplemented. See continuation handoff below.**
 - Scope: all 18 crates under `kask/crates`, with deeper inspection of critical paths and selected production consumers outside that directory
 - Initial baseline: `535e9b2b8b523a933af41248deaf0bdb02bf7b12`
 - Validation baseline: `a3496b7164fc1a49e050a245e8ea12d6633d9c88`
@@ -9,6 +9,37 @@
 - Document type: review/proposal (`bibo:Document`); process: review → adjudicate → propose → operator decision → implementation → verification
 
 All source paths below are relative to the repository root. Line citations describe the reviewed snapshot. HEAD advanced externally during inspection; `git diff 535e9b2b8b HEAD --stat -- kask/crates` was empty at the coordinator's verification. Existing uncommitted work was not changed by this review. No source changes or fixes were made. This new report does not replace `tasks/plan.md`, `tasks/todo.md`, or any canonical design specification.
+
+## Latest handoff — finishing the remaining seven tasks
+
+Read [`kask-core-review-continuation-prompt.md`](kask-core-review-continuation-prompt.md)
+for the implementation inventory, operator decisions, unfinished acceptance
+coverage, and recommended next steps. The operator requested this continuation
+prompt after asking to finish T04, T11, T13, T14, T15, T16, and T17.
+
+At handoff, HEAD was `f868676f81` (`Harden delegation and regulation feedback`),
+committed externally. T04/T13/T14/T15/T16/T17 contain substantial new code but
+are not marked verified here. **T11 remains unimplemented.** The last recommendation
+was maintenance restart versus a broader managed-store refactor; the precise
+restart experience must be settled before implementing that path.
+
+Latest observed validation:
+
+- `cargo test --offline --locked -p hkask-regulation --lib`: **59 passed, 1 failed**.
+  `sense_reports_algedonic_log_population` still expects absent healthy population
+  signals; the new observation contract returns actual zero-valued readings.
+  Correct that test's assertions/comments without restoring the old blind spot.
+- Fresh individual passes: `ipc_child_cannot_expand_parent_grant`,
+  `grants_are_stable_until_changed_and_revoked`, and
+  `later_tick_reconciles_durable_conditions` in `kask_bridge`.
+- `cargo check --offline --locked -p zed`: **timed out at 120 seconds**, following
+  package/build lock waits, at the final binary check (1958/1959). No compiler
+  error was captured; it is not a pass.
+- Full final Clippy/integration validation of `f868676f81` is still outstanding.
+
+The prior checkpoint sections below are historical evidence, not certification
+of the latest commit. Do not increase the checked-task count from implementation
+or commit presence alone.
 
 ## Continuation checkpoint — 2026-09-04
 
