@@ -97,7 +97,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Consolidate semantically related chunks via LLM synthesis. Clusters chunks within each source file by cosine similarity > threshold (default 0.75), then uses the inference router to synthesize each multi-chunk cluster into a single comprehensive passage. Re-embeds consolidated text and stores the new embedding. Writes consolidated tagged chunks JSONL with provenance."
+        description = "Consolidate semantically related chunks via LLM synthesis. Clusters chunks within each source file by cosine similarity > threshold (default 0.75), then uses the inference router to synthesize each multi-chunk cluster into a single comprehensive passage. Re-embeds annotated synthesis while storing original synthesized passage_text and publishing it to warm retrieval; restart hydration retains that text. Repeated DB/ref writes replace prior embeddings; original source entities remain. Clear/purge cancels overlapping in-flight publication with an error. Writes consolidated tagged chunks JSONL with provenance."
     )]
     pub async fn corpus_consolidate_chunks(
         &self,

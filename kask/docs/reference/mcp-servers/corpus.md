@@ -175,9 +175,41 @@ a configured model whose embedding service is unavailable yields `unavailable`.
 The isolated `corpus_query_without_inference_surfaces_structured_error` smoke test
 covers both conditions and an explicit environment override without live inference.
 
-`corpus_query` (above) queries the in-memory vector index. `corpus_chunk`
-incrementally inserts passages into this index (auto-index is on by default);
-the index is rebuilt from the source JSONL on restart.
+`index.rs::PassageIndex` owns all cache mutations. Durable identity is canonical
+DB path plus entity reference; ephemeral `corpus_chunk` passages have separate
+source/ref identity. Repeated embed/consolidate replaces a durable entry. Tag
+prefixes are embedding input only; original/synthesized `passage_text` is stored
+through MemoryStore and published to the warm index. Consolidation retains its
+original source entities.
+
+The approved retrieval slice preserves `a2134949e2`'s **empty-index-only**
+fallback: `corpus_query(db_path=...)` hydrates stored embeddings/text only when
+the index is empty (`b51bd23106`). It does not switch databases on a nonempty
+index. Clear explicitly before selecting a different DB alone. Ephemeral
+passages are lost on restart, not rebuilt automatically from JSONL.
+
+Plain and Lisp queries default to `include_text=false`, which suppresses text
+only in returned results. Answer generation receives usable original text and
+the normalized natural-language question. Missing legacy/centroid text is
+surfaced by `missing_passage_text`, `note`, and result `text_available=false`;
+these rows are omitted from RAG context. No usable context yields `answer_error`
+without a generation call. Re-embed original sources to restore missing text.
+
+`corpus_purge_qa` invalidates only matching DB/ref cache entries, including
+relative/absolute/symlink aliases, and cancels overlapping in-flight operations.
+Other DBs and ephemeral entries survive. Clear cancels all pending publications
+but does not delete DB rows. Cancellation is explicit (`corpus_embed.cancelled`
+and `note`, included in `failed`; other indexing paths return an error).
+Later operations can publish new data. Hydration and store/cache publication
+are synchronous under the same owner lock; inference never holds that lock.
+
+Purge/replacement are not cross-operation transactions: failures can leave a
+partially modified DB, but known-deleted results are invalidated and errors
+propagate rather than inventing zero counts. An h_mem failure after embedding
+purge cannot restore the removed cache results. These guarantees are local to
+one corpus server, not independent external DB writers. See the corpus crate
+README's Passage retrieval contract and `retrieval_tests.rs` for the offline
+real-DB tool/service regression coverage.
 
 ## Strategy Traits
 

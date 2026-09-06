@@ -2,8 +2,8 @@
 use crate::helpers::map_corpus_io_error;
 use crate::index::RetrievedPassage;
 use crate::{
-    CorpusServer, LLMParameters, McpToolError, Parameters,
-    execute_tool, json, render_docproc_template, tool, tool_router,
+    CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool, json,
+    render_docproc_template, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -72,7 +72,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Query the in-memory vector index for passages relevant to a natural language question. Embeds the query, computes cosine similarity against indexed passages, and returns top-k results. Optionally generates an LLM-augmented answer from retrieved context."
+        description = "Search indexed passages by plain natural-language or Lisp query. db_path hydrates stored passage text only when the index is empty; it does not switch DBs on a nonempty index. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text is surfaced; no usable context yields answer_error without generation."
     )]
     /// Query the in-memory vector index for top-k relevant passages.
     ///
@@ -101,7 +101,7 @@ impl CorpusServer {
 
             // Parse the query string. When it starts with `(list`, it's a
             // Lisp S-expression specifying query options. Otherwise it's a
-            // plain natural-language query (backward compatible).
+            // plain natural-language query.
             let (nl_query, k, include_text_flag, min_score_val, gen_answer) =
                 if query.trim_start().starts_with("(list") {
                     parse_lisp_query(&query)?
@@ -212,7 +212,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Clear the in-memory vector index. Call this when starting a new document set to avoid cross-document contamination in query results."
+        description = "Clear all in-memory passages and cancel pending publications. Does not delete stored DB embeddings. Call before selecting a different DB with corpus_query's empty-index fallback."
     )]
     pub async fn corpus_clear_index(
         &self,
@@ -226,7 +226,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Purge QA embeddings and h_mems by entity-ref prefix. Deletes embeddings matching the prefix, then deletes h_mems with matching entity or attribute. Useful for clearing old training data before re-ingesting."
+        description = "Purge embeddings and h_mems by entity-ref prefix in the named DB. Invalidates matching warm passages and cancels overlapping pending publications; other DBs and ephemeral passages survive. Deletions are not atomic across entities: partial failures return errors, including h_mem failures after embeddings were removed."
     )]
     pub async fn corpus_purge_qa(
         &self,
@@ -279,8 +279,7 @@ pub(crate) struct QueryRequest {
     /// - `"generate-answer"` (bool, default false) — generate LLM answer from results
     ///
     /// When the string does NOT start with `(list`, it is treated as a
-    /// plain natural-language query (backward compatible with the original
-    /// `query` + `top_k` + `generate_answer` parameters).
+    /// plain natural-language query using the separate option parameters.
     pub query: String,
     /// Number of top results to return (default 5). Ignored when `query`
     /// is a Lisp S-expression (use `"top-k"` in the expression instead).
@@ -418,8 +417,12 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
 impl RetrievedPassage {
     fn project(&self, include_text: bool) -> serde_json::Value {
         let mut result = json!({"metadata": self.passage.metadata, "score": self.score});
-        if self.passage.text.is_none() { result["text_available"] = json!(false); }
-        if include_text { result["text"] = json!(self.passage.text); }
+        if self.passage.text.is_none() {
+            result["text_available"] = json!(false);
+        }
+        if include_text {
+            result["text"] = json!(self.passage.text);
+        }
         result
     }
 }
@@ -437,8 +440,17 @@ mod tests {
         }
     }
 
-    fn search_passages(passages: &[IndexedPassage], query: &[f32], k: usize, min_score: f32, include_text: bool) -> Vec<serde_json::Value> {
-        crate::index::search_passages(passages.iter(), query, k, min_score).iter().map(|matched| matched.project(include_text)).collect()
+    fn search_passages(
+        passages: &[IndexedPassage],
+        query: &[f32],
+        k: usize,
+        min_score: f32,
+        include_text: bool,
+    ) -> Vec<serde_json::Value> {
+        crate::index::search_passages(passages.iter(), query, k, min_score)
+            .iter()
+            .map(|matched| matched.project(include_text))
+            .collect()
     }
 
     // ── search_passages ──────────────────────────────────────────────────

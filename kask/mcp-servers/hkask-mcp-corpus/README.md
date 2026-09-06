@@ -9,6 +9,7 @@ flow stage.
 ```
 hkask_mcp_corpus.rs  — Server struct, shared helpers (embedding_dim, normalize_concept,
                         extract_text, filter_outcome_to_pages, OCR fallback threshold)
+index.rs              — Passage identity, upsert/publication, scoped invalidation and DB hydration
 batch.rs              — Shared batch infrastructure (retry_with_backoff, BatchOutcome,
                         DEGRADED_FAILURE_THRESHOLD, MAX_RETRIES)
 text.rs               — Text processing wrappers (chunk_text, strip_gutenberg_headers)
@@ -127,7 +128,7 @@ and the whole book silently degraded to Tesseract.
 | `corpus_generate_qa_batch` | Execute canonical prepared QA records unchanged under one optional provider-prefixed model. AIMD synchronous processing with 3-attempt retry or provider Batch API; shared completion accounting and fallible incremental output. |
 | `corpus_ingest_qa` | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance. |
 | `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
-| `corpus_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
+| `corpus_purge_qa` | Purge embeddings and h_mems by entity-ref prefix in the named DB; invalidate matching warm passages and overlapping in-flight publications. |
 
 ### Prepared QA JSONL contract
 
@@ -223,6 +224,48 @@ an `fsync` durability guarantee. The single-chunk/cross-reference
 | `corpus_cache` | Cache processed document text keyed by label in `~/.config/hkask/docproc-cache/`. |
 | `corpus_query` | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
 | `corpus_clear_index` | Clear the in-memory vector index between document sets. |
+
+### Passage retrieval contract
+
+The approved retrieval slice retains the **empty-index-only** DB fallback from
+`a2134949e2` and persisted `passage_text` hydration from `b51bd23106`.
+`corpus_query(db_path=...)` hydrates the index only when empty; `db_path` is
+**not** a per-query DB selector and is ignored on a nonempty index. Clear the
+index explicitly to query a different DB alone. Ephemeral `corpus_chunk`
+passages are not persisted or recovered after restart.
+
+Durable identity is `(canonical DB path, entity_ref)`; relative, absolute and
+symlink paths to the same DB share identity. Ephemeral passages have a separate
+source/ref identity. Embedding or consolidating the same durable ref replaces
+its vector/text rather than duplicating it. Original source entities survive
+consolidation. Ontology annotations affect embedding input only: original or
+synthesized text is stored as `passage_text`, returned in warm and restarted
+search, and used as answer context.
+
+`include_text` defaults to **false** in plain and Lisp modes. It controls only
+returned result text, not answer context. Lisp answers use the normalized
+natural-language question. Legacy/centroid rows without usable stored text
+carry `text_available: false`; `missing_passage_text` and `note` surface the gap.
+They are omitted from answer context. If no usable text is retrieved,
+`answer_error` explains the gap and generation is not called. No legacy text
+is fabricated or resynthesized; re-embed available sources to restore it.
+
+The index owner serializes synchronous DB publication, hydration and purge.
+No mutex is held during inference. Clear cancels all pending publications;
+purge cancels pending operations whose input/output refs overlap the named
+DB/prefix, leaving other cached DBs and ephemeral passages intact. Cancellation
+is visible (`corpus_embed`: `cancelled` count and `note`, also counted in
+`failed`; consolidation/chunk indexing: explicit error). A new operation
+started after invalidation may publish again. Hydration completes before query
+inference, so a paused query cannot later republish a cleared DB snapshot.
+
+Replacement and purge use existing MemoryStore APIs, **not a cross-operation
+transaction**. Cache invalidation precedes deletion. Errors report partial
+application; a failed replacement may have removed its previous embedding,
+and an h_mem deletion failure does not restore already-purged embeddings.
+Counts are never replaced with zero on DB errors. Failed embedding batches
+(including short or dimension-mismatched responses) are counted honestly.
+These guarantees coordinate this server's tools, not independent external DB writers.
 
 Retrieval distinguishes a missing effective model (`permission_denied`, naming
 `HKASK_EMBEDDING_MODEL`) from an unavailable embedding service (`unavailable`).

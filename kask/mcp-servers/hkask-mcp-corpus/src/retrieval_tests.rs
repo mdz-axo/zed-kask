@@ -302,20 +302,50 @@ async fn retrieval_upsert_preserves_unannotated_text() {
     let directory = fixture();
     let port = Arc::new(RecordingPort::default());
     let server = server(Arc::clone(&port));
-    content(server.corpus_embed(Parameters(embed_request(directory.path(), "memory.db", "old text"))).await);
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "memory.db",
+                "old text",
+            )))
+            .await,
+    );
     let mut request = embed_request(directory.path(), "memory.db", ORIGINAL);
     let tags = directory.path().join("tags.jsonl");
-    std::fs::write(&tags, json!({"entity_ref":"corpus:test:1", "ontology_tags":{"golem":["river"]}}).to_string()).expect("tags");
+    std::fs::write(
+        &tags,
+        json!({"entity_ref":"corpus:test:1", "ontology_tags":{"golem":["river"]}}).to_string(),
+    )
+    .expect("tags");
     request.tagged_jsonl = Some(tags.to_string_lossy().into());
     content(server.corpus_embed(Parameters(request)).await);
-    assert!(port.inputs.lock().expect("inputs").iter().any(|input| input == &format!("[golem: river] {ORIGINAL}")));
+    assert!(
+        port.inputs
+            .lock()
+            .expect("inputs")
+            .iter()
+            .any(|input| input == &format!("[golem: river] {ORIGINAL}"))
+    );
     let fresh = self::server(Arc::clone(&port));
     for current in [&server, &fresh] {
-        let result = content(current.corpus_query(Parameters(query(Some(&directory.path().join("memory.db")), false, true))).await);
+        let result = content(
+            current
+                .corpus_query(Parameters(query(
+                    Some(&directory.path().join("memory.db")),
+                    false,
+                    true,
+                )))
+                .await,
+        );
         assert_eq!(result["total_indexed"], 1);
         assert_eq!(result["results"][0]["text"], ORIGINAL);
     }
-    let store = crate::helpers::open_memory_store(&directory.path().join("memory.db").to_string_lossy(), PASSPHRASE).expect("DB");
+    let store = crate::helpers::open_memory_store(
+        &directory.path().join("memory.db").to_string_lossy(),
+        PASSPHRASE,
+    )
+    .expect("DB");
     assert_eq!(store.embedding_count().expect("count"), 1);
 }
 
@@ -327,25 +357,76 @@ async fn retrieval_origin_isolation_and_path_aliases() {
     let server = server(Arc::new(RecordingPort::default()));
     let database = directory.path().join("first.db");
     let mut request = embed_request(directory.path(), "first.db", ORIGINAL);
-    request.db_path = database.strip_prefix(std::env::current_dir().expect("cwd")).expect("relative DB").to_string_lossy().into();
+    request.db_path = database
+        .strip_prefix(std::env::current_dir().expect("cwd"))
+        .expect("relative DB")
+        .to_string_lossy()
+        .into();
     content(server.corpus_embed(Parameters(request)).await);
-    content(server.corpus_embed(Parameters(embed_request(directory.path(), "second.db", "other DB text"))).await);
-    crate::services::convert::ConvertService::from_corpus(&server).index_passages(&[("corpus:test:1".into(), "ephemeral text".into())], "river.txt").await.expect("ephemeral index");
-    let mut request = query(Some(&directory.path().join("does-not-exist.db")), false, true);
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "second.db",
+                "other DB text",
+            )))
+            .await,
+    );
+    crate::services::convert::ConvertService::from_corpus(&server)
+        .index_passages(
+            &[("corpus:test:1".into(), "ephemeral text".into())],
+            "river.txt",
+        )
+        .await
+        .expect("ephemeral index");
+    let mut request = query(
+        Some(&directory.path().join("does-not-exist.db")),
+        false,
+        true,
+    );
     request.passphrase = Some("wrong but unused".into());
-    assert_eq!(content(server.corpus_query(Parameters(request)).await)["total_indexed"], 3, "nonempty index must not consult db_path");
+    assert_eq!(
+        content(server.corpus_query(Parameters(request)).await)["total_indexed"],
+        3,
+        "nonempty index must not consult db_path"
+    );
     assert!(!directory.path().join("does-not-exist.db").exists());
     purge(&server, &database).await;
-    let retained = content(server.corpus_query(Parameters(query(None, false, true))).await);
+    let retained = content(
+        server
+            .corpus_query(Parameters(query(None, false, true)))
+            .await,
+    );
     assert_eq!(retained["total_indexed"], 2);
-    let texts: Vec<_> = retained["results"].as_array().expect("results").iter().map(|entry| entry["text"].as_str().expect("text")).collect();
+    let texts: Vec<_> = retained["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|entry| entry["text"].as_str().expect("text"))
+        .collect();
     assert!(texts.contains(&"other DB text") && texts.contains(&"ephemeral text"));
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         let alias = directory.path().join("alias.db");
         std::os::unix::fs::symlink(&database, &alias).expect("DB symlink");
-        content(server.corpus_embed(Parameters(embed_request(directory.path(), "first.db", ORIGINAL))).await);
+        content(
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "first.db",
+                    ORIGINAL,
+                )))
+                .await,
+        );
         purge(&server, &alias).await;
-        assert_eq!(content(server.corpus_query(Parameters(query(None, false, true))).await)["total_indexed"], 2);
+        assert_eq!(
+            content(
+                server
+                    .corpus_query(Parameters(query(None, false, true)))
+                    .await
+            )["total_indexed"],
+            2
+        );
     }
 }
 
@@ -355,16 +436,38 @@ async fn retrieval_origin_isolation_and_path_aliases() {
 async fn retrieval_missing_text_is_visible_without_generation() {
     let directory = fixture();
     let database = directory.path().join("memory.db");
-    let store = crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
-    store.store_embedding("legacy:1", &vec![1.0; crate::embedding_dim()], "offline", None).expect("legacy row");
+    let store =
+        crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
+    store
+        .store_embedding(
+            "legacy:1",
+            &vec![1.0; crate::embedding_dim()],
+            "offline",
+            None,
+        )
+        .expect("legacy row");
     let port = Arc::new(RecordingPort::default());
     let server = server(Arc::clone(&port));
     for _ in 0..2 {
-        let result = content(server.corpus_query(Parameters(query(Some(&database), true, false))).await);
+        let result = content(
+            server
+                .corpus_query(Parameters(query(Some(&database), true, false)))
+                .await,
+        );
         assert_eq!(result["missing_passage_text"], 1);
         assert_eq!(result["results"][0]["text_available"], false);
-        assert!(result["answer_error"].as_str().expect("gap").contains("No usable passage text"));
-        assert!(result["note"].as_str().expect("note").contains("passage_text"));
+        assert!(
+            result["answer_error"]
+                .as_str()
+                .expect("gap")
+                .contains("No usable passage text")
+        );
+        assert!(
+            result["note"]
+                .as_str()
+                .expect("note")
+                .contains("passage_text")
+        );
     }
     assert!(port.prompts.lock().expect("prompts").is_empty());
 }
@@ -375,13 +478,197 @@ async fn retrieval_missing_text_is_visible_without_generation() {
 async fn retrieval_invalid_vectors_do_not_publish() {
     for short in [true, false] {
         let directory = fixture();
-        let port = Arc::new(RecordingPort { short, wrong_dimension: !short, ..Default::default() });
+        let port = Arc::new(RecordingPort {
+            short,
+            wrong_dimension: !short,
+            ..Default::default()
+        });
         let server = server(port);
-        let summary = content(server.corpus_embed(Parameters(embed_request(directory.path(), "memory.db", ORIGINAL))).await);
+        let summary = content(
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "memory.db",
+                    ORIGINAL,
+                )))
+                .await,
+        );
         assert_eq!(summary["total"], 1);
         assert_eq!(summary["embedded"], 0);
         assert_eq!(summary["failed"], 1);
-        let store = crate::helpers::open_memory_store(&directory.path().join("memory.db").to_string_lossy(), PASSPHRASE).expect("DB");
+        let store = crate::helpers::open_memory_store(
+            &directory.path().join("memory.db").to_string_lossy(),
+            PASSPHRASE,
+        )
+        .expect("DB");
         assert_eq!(store.embedding_count().expect("count"), 0);
     }
+}
+
+/// expect: Clear/purge wins over already-started embedding work, with visible cancellation.
+/// [P8] Motivating: no resurrection; pre: inference paused; post: no stale store/cache publication.
+#[tokio::test]
+async fn retrieval_inflight_embed_is_cancelled() {
+    for clear in [true, false] {
+        let directory = fixture();
+        let database = directory.path().join("memory.db");
+        let port = Arc::new(RecordingPort {
+            pause: Some(Default::default()),
+            ..Default::default()
+        });
+        let server = server(Arc::clone(&port));
+        let request = embed_request(directory.path(), "memory.db", ORIGINAL);
+        let (entered, release) = port.pause.as_ref().expect("barriers");
+        let result = tokio::try_join!(server.corpus_embed(Parameters(request)), async {
+            entered.notified().await;
+            if clear {
+                content(
+                    server
+                        .corpus_clear_index(Parameters(crate::tools::storage::ClearIndexRequest {}))
+                        .await,
+                );
+            } else {
+                purge(&server, &database).await;
+            }
+            release.notify_one();
+            Ok(())
+        }).expect("embedding and invalidation complete");
+        let result = content(Ok(result.0));
+        assert_eq!(result["embedded"], 0);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(result["cancelled"], 1);
+        assert!(
+            result["note"]
+                .as_str()
+                .expect("cancellation reason")
+                .contains("cancelled")
+        );
+        let store =
+            crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
+        assert_eq!(store.embedding_count().expect("count"), 0);
+        release.notify_one();
+        let later = content(
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "memory.db",
+                    ORIGINAL,
+                )))
+                .await,
+        );
+        assert_eq!(
+            later["embedded"], 1,
+            "writes initiated after invalidation are allowed"
+        );
+    }
+}
+
+/// expect: A query loading a cold DB cannot restore a cleared/purged cache after its inference finishes.
+/// [P8] Motivating: no stale hydration; pre: cold query blocked at embedding barrier; post: invalidation wins.
+#[tokio::test]
+async fn retrieval_inflight_hydration_cannot_republish() {
+    for clear in [true, false] {
+        let directory = fixture();
+        let database = directory.path().join("memory.db");
+        let writer = server(Arc::new(RecordingPort::default()));
+        content(
+            writer
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "memory.db",
+                    ORIGINAL,
+                )))
+                .await,
+        );
+        let port = Arc::new(RecordingPort {
+            pause: Some(Default::default()),
+            ..Default::default()
+        });
+        let fresh = server(Arc::clone(&port));
+        let (entered, release) = port.pause.as_ref().expect("barriers");
+        let result = tokio::try_join!(
+            fresh.corpus_query(Parameters(query(Some(&database), true, false))),
+            async {
+                entered.notified().await;
+                if clear {
+                    let cleared = content(
+                        fresh
+                            .corpus_clear_index(Parameters(
+                                crate::tools::storage::ClearIndexRequest {},
+                            ))
+                            .await,
+                    );
+                    assert_eq!(
+                        cleared["cleared"], 1,
+                        "hydration linearized before inference"
+                    );
+                } else {
+                    purge(&fresh, &database).await;
+                }
+                release.notify_one();
+                Ok(())
+            }
+        ).expect("query and invalidation complete");
+        let result = content(Ok(result.0));
+        assert_eq!(result["results"], json!([]));
+        assert!(result.get("answer_error").is_some());
+        assert!(port.prompts.lock().expect("prompts").is_empty());
+        let store =
+            crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
+        assert_eq!(
+            store.embedding_count().expect("count"),
+            usize::from(clear),
+            "clear is cache-only"
+        );
+    }
+}
+
+/// expect: A late h_mem deletion failure does not keep already-purged embeddings in warm answers.
+/// [P8] Motivating: partial failures are visible and known-deleted passages stay invalidated.
+/// pre: SQLite trigger rejects h_mem deletion; post: tool error, empty warm cache, embeddings removed.
+#[tokio::test]
+async fn retrieval_partial_purge_failure_still_invalidates() {
+    let directory = fixture();
+    let database = directory.path().join("memory.db");
+    let server = server(Arc::new(RecordingPort::default()));
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "memory.db",
+                ORIGINAL,
+            )))
+            .await,
+    );
+    let store =
+        crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
+    store
+        .store(hkask_storage::HMem::new(
+            "corpus:test:1",
+            "assertion",
+            json!("source assertion"),
+            WebID::new(),
+        ))
+        .expect("h_mem");
+    let database_handle =
+        hkask_storage::Database::open(&database.to_string_lossy(), PASSPHRASE).expect("DB handle");
+    let pool = database_handle.sqlite_pool().expect("pool");
+    pool.get().expect("connection").execute_batch("CREATE TRIGGER reject_h_mem_delete BEFORE DELETE ON hmems BEGIN SELECT RAISE(FAIL, 'injected h_mem deletion failure'); END;").expect("failure trigger");
+    let result = server
+        .corpus_purge_qa(Parameters(PurgeQaRequest {
+            prefix: "corpus:test:".into(),
+            db_path: database.to_string_lossy().into(),
+            passphrase: PASSPHRASE.into(),
+        }))
+        .await;
+    assert!(result.is_err(), "partial purge must not return success");
+    assert_eq!(store.embedding_count().expect("count"), 0);
+    assert_eq!(
+        content(
+            server
+                .corpus_query(Parameters(query(None, false, true)))
+                .await
+        )["results"],
+        json!([])
+    );
 }
