@@ -1,312 +1,169 @@
-//! Gallery state management — init, scan, info.
-//!
-//! Manages a local image directory with a SQLite index for metadata,
-//! tags, captions, objects, and faces. Supports three modes:
-//! - `read-only`: files are read-only, never modified
-//! - `copy-on-write`: files can be edited, originals preserved elsewhere
-//! - `destructive`: files may be edited in-place, original data may be lost
+//! Filesystem observations for gallery reconciliation. Scanning never modifies source files.
 
+pub use hkask_storage::GalleryMode;
+use hkask_storage::gallery::{AssetObservation, GalleryScan};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-use hkask_types::time::now_rfc3339;
-
-pub use hkask_storage::GalleryMode;
-
-/// Supported image extensions for gallery scanning.
 const DEFAULT_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff"];
 
-/// Configuration and state for an active gallery.
+/// Only activation state lives in memory. Counts and asset state come from SQLite.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GalleryState {
-    /// Absolute path to the gallery root directory.
     pub path: PathBuf,
-    /// Operating mode.
     pub mode: GalleryMode,
-    /// Path to the .hkask-gallery metadata directory.
-    pub meta_dir: PathBuf,
-    /// Total number of indexed images.
-    pub image_count: u64,
-    /// Total size of indexed images in bytes.
-    pub total_size_bytes: u64,
-    /// Timestamp of the last scan (ISO 8601).
-    pub last_scan: Option<String>,
-    /// Number of unique tags in the index.
-    pub tags_count: u64,
-    /// SQLite gallery ID (set after gallery_set_root creates the record).
     pub gallery_id: Option<String>,
 }
 
-/// Result of a gallery scan operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScanResult {
-    pub added: u32,
-    pub removed: u32,
-    pub unchanged: u32,
-    pub total: u32,
-    pub errors: Vec<String>,
-    /// Discovered image entries ready for SQLite persistence.
-    pub entries: Vec<ImageEntry>,
-}
-
-/// A single indexed image entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageEntry {
-    /// Relative path from gallery root.
-    pub relative_path: String,
-    /// SHA-256 checksum of file contents.
-    pub checksum: String,
-    /// Image width in pixels.
-    pub width: u32,
-    /// Image height in pixels.
-    pub height: u32,
-    /// File format (extension without dot).
-    pub format: String,
-    /// File size in bytes.
-    pub size_bytes: u64,
-    /// ISO 8601 timestamp when added to index.
-    pub added_at: String,
-}
-
 impl GalleryState {
-    /// Create a new gallery state from a path and mode.
-    ///
-    /// Does not scan — use `scan()` to populate counts.
     pub fn new(path: PathBuf, mode: GalleryMode) -> Self {
-        let meta_dir = path.join(".hkask-gallery");
         Self {
             path,
             mode,
-            meta_dir,
-            image_count: 0,
-            total_size_bytes: 0,
-            last_scan: None,
-            tags_count: 0,
             gallery_id: None,
         }
     }
 
-    /// Validate that the gallery path exists and is a directory.
-    /// Canonicalizes the path to resolve `..` components and prevent
-    /// path traversal attacks.
+    /// Validate before opening a durable gallery or replacing the active state.
     pub fn validate(&mut self) -> Result<(), crate::MediaError> {
-        self.path = self
-            .path
-            .canonicalize()
-            .map_err(|e| crate::MediaError::Io(format!("Gallery path is not accessible: {}", e)))?;
-        if !self.path.exists() {
-            return Err(crate::MediaError::Io(format!(
-                "Gallery path does not exist: {}",
-                self.path.display()
-            )));
-        }
+        self.path = self.path.canonicalize().map_err(|error| {
+            crate::MediaError::Io(format!("Gallery path is not accessible: {error}"))
+        })?;
         if !self.path.is_dir() {
             return Err(crate::MediaError::Io(format!(
                 "Gallery path is not a directory: {}",
                 self.path.display()
             )));
         }
+        std::fs::read_dir(&self.path)?;
         Ok(())
     }
 
-    /// Ensure the .hkask-gallery metadata directory exists.
-    pub fn ensure_meta_dir(&self) -> Result<(), crate::MediaError> {
-        std::fs::create_dir_all(&self.meta_dir).map_err(|e| {
-            crate::MediaError::Io(format!(
-                "Failed to create metadata directory {}: {}",
-                self.meta_dir.display(),
-                e
-            ))
-        })
-    }
-
-    /// Scan the gallery directory for images.
-    ///
-    /// Walks the directory tree, computes SHA-256 checksums for deduplication,
-    /// and returns a ScanResult with counts.
-    pub fn scan(&mut self, recursive: bool, extensions: Option<&[String]>) -> ScanResult {
-        let exts: Vec<String> = extensions
-            .map(|e| e.iter().map(|s| s.to_lowercase()).collect())
-            .unwrap_or_else(|| DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect());
-
-        let mut added = 0u32;
-        let mut errors = Vec::new();
-        let mut entries = Vec::new();
-
-        let walker = if recursive {
-            WalkDir::new(&self.path).into_iter()
-        } else {
-            WalkDir::new(&self.path).max_depth(1).into_iter()
+    /// expect: An unreadable or partial scan does not make my photos disappear. [P1]
+    /// pre: path is the validated canonical root
+    /// post: observations hash and decode the same bytes; errors disable absence inference
+    pub fn scan(&self, recursive: bool, extensions: Option<&[String]>) -> GalleryScan {
+        let extensions: Vec<String> = extensions
+            .map(|extensions| {
+                extensions
+                    .iter()
+                    .map(|extension| extension.to_lowercase())
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                DEFAULT_EXTENSIONS
+                    .iter()
+                    .map(|extension| extension.to_string())
+                    .collect()
+            });
+        let mut scan = GalleryScan {
+            root_path: self.path.to_string_lossy().into_owned(),
+            recursive,
+            extensions,
+            entries: Vec::new(),
+            errors: Vec::new(),
         };
-
+        let walker = WalkDir::new(&self.path)
+            .max_depth(if recursive { usize::MAX } else { 1 })
+            .into_iter()
+            .filter_entry(|entry| entry.file_name() != ".hkask-gallery");
         for entry in walker {
             let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    errors.push(format!("Walk error: {}", e));
+                Ok(entry) => entry,
+                Err(error) => {
+                    scan.errors.push(format!("Walk error: {error}"));
                     continue;
                 }
             };
-
+            // Never follow directory symlinks implicitly: their unseen subtree is uncertain.
+            if entry.file_type().is_symlink() {
+                scan.errors
+                    .push(format!("Symlink not scanned: {}", entry.path().display()));
+                continue;
+            }
             if !entry.file_type().is_file() {
                 continue;
             }
-
-            let path = entry.path();
-            let ext = path
+            let extension = entry
+                .path()
                 .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-
-            if !exts.contains(&ext) {
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if !scan.extensions.contains(&extension) {
                 continue;
             }
-
-            // Compute checksum
-            match std::fs::read(path) {
-                Ok(data) => {
-                    let mut hasher = Sha256::new();
-                    hasher.update(&data);
-                    let _checksum = format!("{:x}", hasher.finalize());
-
-                    // Read dimensions
-                    let (width, height) = match image::image_dimensions(path) {
-                        Ok(dims) => dims,
-                        Err(e) => {
-                            errors.push(format!(
-                                "Failed to read dimensions for {}: {}",
-                                path.display(),
-                                e
-                            ));
-                            continue;
-                        }
-                    };
-
-                    let size_bytes = data.len() as u64;
-                    self.image_count += 1;
-                    self.total_size_bytes += size_bytes;
-                    added += 1;
-
-                    let entry = ImageEntry {
-                        relative_path: path
-                            .strip_prefix(&self.path)
-                            .unwrap_or(path)
-                            .to_string_lossy()
-                            .to_string(),
-                        checksum: _checksum,
-                        width,
-                        height,
-                        format: ext,
-                        size_bytes,
-                        added_at: now_rfc3339(),
-                    };
-                    entries.push(entry);
+            let observed = (|| -> Result<AssetObservation, crate::MediaError> {
+                let path = entry.path().canonicalize()?;
+                if !path.starts_with(&self.path) {
+                    return Err(crate::MediaError::Io(format!(
+                        "Scan path escapes root: {}",
+                        path.display()
+                    )));
                 }
-                Err(e) => {
-                    errors.push(format!("Failed to read {}: {}", path.display(), e));
-                }
+                let bytes = crate::read_image_capped(&path.to_string_lossy())?;
+                let image = image::load_from_memory(&bytes).map_err(|error| {
+                    crate::MediaError::Io(format!("Decode {}: {error}", path.display()))
+                })?;
+                Ok(AssetObservation {
+                    absolute_path: path.to_string_lossy().into_owned(),
+                    hash: format!("{:x}", Sha256::digest(&bytes)),
+                    width: image.width(),
+                    height: image.height(),
+                    format: extension,
+                    size_bytes: bytes.len() as u64,
+                    media_type: "image".into(),
+                })
+            })();
+            match observed {
+                Ok(observation) => scan.entries.push(observation),
+                Err(error) => scan
+                    .errors
+                    .push(format!("{}: {error}", entry.path().display())),
             }
         }
-
-        self.last_scan = Some(now_rfc3339());
-
-        ScanResult {
-            added,
-            removed: 0,
-            unchanged: 0,
-            total: self.image_count as u32,
-            errors,
-            entries,
-        }
+        scan.entries
+            .sort_by(|left, right| left.absolute_path.cmp(&right.absolute_path));
+        scan
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
-    fn setup_test_gallery() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let gallery_path = dir.path().to_path_buf();
-
-        // Create a test image file (1x1 PNG)
-        let img_path = gallery_path.join("test.png");
-        let img_data: Vec<u8> = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
-            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49,
-            0x44, 0x41, // IDAT
-            0x54, 0x08, 0xD7, 0x63, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x04, 0x00, 0x01, 0x27,
-            0x34, 0x0A, 0x1E, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND
-            0x44, 0xAE, 0x42, 0x60, 0x82,
-        ];
-        let mut file = std::fs::File::create(&img_path).unwrap();
-        file.write_all(&img_data).unwrap();
-
-        (dir, gallery_path)
+    /// expect: Scans report valid observations, never accumulating counts. [P1]
+    #[test]
+    fn scan_is_repeatable_and_excludes_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        image::RgbImage::new(2, 3).save(directory.path().join("test.png"))?;
+        std::fs::create_dir(directory.path().join(".hkask-gallery"))?;
+        image::RgbImage::new(1, 1).save(directory.path().join(".hkask-gallery/hidden.png"))?;
+        let mut state = GalleryState::new(directory.path().into(), GalleryMode::ReadOnly);
+        state.validate()?;
+        for _ in 0..2 {
+            let scan = state.scan(true, None);
+            assert_eq!(scan.entries.len(), 1);
+            assert!(scan.errors.is_empty());
+            assert_eq!((scan.entries[0].width, scan.entries[0].height), (2, 3));
+        }
+        assert!(state.scan(true, Some(&["gif".into()])).entries.is_empty());
+        Ok(())
     }
 
+    /// expect: Decode and walk failures are surfaced as uncertain coverage. [P1]
     #[test]
-    fn gallery_new_creates_state() {
-        let state = GalleryState::new(PathBuf::from("/tmp/test"), GalleryMode::ReadOnly);
-        assert_eq!(state.path, PathBuf::from("/tmp/test"));
-        assert_eq!(state.mode, GalleryMode::ReadOnly);
-        assert_eq!(state.image_count, 0);
-        assert_eq!(state.total_size_bytes, 0);
-        assert!(state.last_scan.is_none());
-    }
-
-    #[test]
-    fn validate_rejects_missing_path() {
-        let mut state = GalleryState::new(
-            PathBuf::from("/nonexistent/path/12345"),
-            GalleryMode::ReadOnly,
-        );
-        let result = state.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not accessible"));
-    }
-
-    #[test]
-    fn validate_accepts_existing_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut state = GalleryState::new(dir.path().to_path_buf(), GalleryMode::ReadOnly);
-        assert!(state.validate().is_ok());
-    }
-
-    #[test]
-    fn ensure_meta_dir_creates_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = GalleryState::new(dir.path().to_path_buf(), GalleryMode::ReadOnly);
-        state.ensure_meta_dir().unwrap();
-        assert!(state.meta_dir.exists());
-        assert!(state.meta_dir.is_dir());
-    }
-
-    #[test]
-    fn scan_finds_images() {
-        let (_dir, gallery_path) = setup_test_gallery();
-        let mut state = GalleryState::new(gallery_path, GalleryMode::ReadOnly);
-        let result = state.scan(true, None);
-        assert_eq!(result.added, 1);
-        assert_eq!(state.image_count, 1);
-        assert!(state.total_size_bytes > 0);
-        assert!(state.last_scan.is_some());
-    }
-
-    #[test]
-    fn scan_respects_extension_filter() {
-        let (_dir, gallery_path) = setup_test_gallery();
-        let mut state = GalleryState::new(gallery_path, GalleryMode::ReadOnly);
-        let result = state.scan(true, Some(&["gif".to_string(), "bmp".to_string()]));
-        assert_eq!(
-            result.added, 0,
-            "PNG should be excluded by extension filter"
-        );
+    fn scan_surfaces_decode_and_walk_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("broken.png"), b"not an image")?;
+        let mut state = GalleryState::new(directory.path().into(), GalleryMode::ReadOnly);
+        state.validate()?;
+        assert_eq!(state.scan(true, None).errors.len(), 1);
+        directory.close()?;
+        assert!(!state.scan(true, None).errors.is_empty());
+        assert!(state.validate().is_err());
+        Ok(())
     }
 }

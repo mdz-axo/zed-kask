@@ -15,7 +15,9 @@ use crate::{define_driver_store, impl_from_db_error};
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 use hkask_types::time::now_rfc3339;
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use thiserror::Error;
 #[derive(Debug, Error)]
@@ -26,8 +28,10 @@ pub enum GalleryStoreError {
     NotFound(NotFound),
     #[error("Invalid policy mode: {0}")]
     InvalidMode(String),
-    #[error("Gallery already exists at path: {0}")]
-    AlreadyExists(String),
+    #[error("Gallery identity conflict: {0}")]
+    Conflict(String),
+    #[error("Invalid gallery path: {0}")]
+    InvalidPath(String),
 }
 impl_from_db_error!(GalleryStoreError, Infra);
 /// Gallery policy mode — three states, no gray zone.
@@ -92,6 +96,74 @@ pub struct ImageRecord {
     pub added_at: String,
     /// Media type: "image", "video", or "audio".
     pub media_type: String,
+    pub missing: bool,
+    pub metadata_stale: bool,
+}
+
+/// Physical observations, never annotations. Identity is gallery + canonical path, not hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetObservation {
+    pub absolute_path: String,
+    pub hash: String,
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+    pub size_bytes: u64,
+    pub media_type: String,
+}
+
+/// Coverage is explicit: errors prohibit absence inference for the entire scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GalleryScan {
+    pub root_path: String,
+    pub recursive: bool,
+    pub extensions: Vec<String>,
+    pub entries: Vec<AssetObservation>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReconcileResult {
+    pub added: u32,
+    pub changed: u32,
+    pub restored: u32,
+    pub missing: u32,
+    pub unchanged: u32,
+    pub total: u64,
+    /// Actual newly added/changed/restored records; callers must not infer positional ranges.
+    pub analysis_assets: Vec<ImageRecord>,
+}
+
+fn database_error(error: impl std::fmt::Display) -> InfrastructureError {
+    InfrastructureError::database(error.to_string())
+}
+
+/// Canonicalize existing paths; retain normalized absolute identities when files are offline.
+fn asset_path(path: &str) -> Result<PathBuf, GalleryStoreError> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(GalleryStoreError::InvalidPath(path.display().to_string()));
+    }
+    match path.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut normalized = PathBuf::new();
+            for component in path.components() {
+                match component {
+                    std::path::Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    std::path::Component::CurDir => {}
+                    other => normalized.push(other.as_os_str()),
+                }
+            }
+            Ok(normalized)
+        }
+        Err(error) => Err(GalleryStoreError::InvalidPath(format!(
+            "{}: {error}",
+            path.display()
+        ))),
+    }
 }
 /// A tag on an image.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,8 +262,6 @@ impl GalleryStore {
                 id TEXT PRIMARY KEY,
                 root_path TEXT NOT NULL UNIQUE,
                 mode TEXT NOT NULL DEFAULT 'read-only',
-                image_count INTEGER NOT NULL DEFAULT 0,
-                total_size_bytes INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -206,7 +276,9 @@ impl GalleryStore {
                 format TEXT NOT NULL,
                 size_bytes INTEGER NOT NULL,
                 added_at TEXT NOT NULL,
-                media_type TEXT NOT NULL DEFAULT 'image'
+                media_type TEXT NOT NULL DEFAULT 'image',
+                missing INTEGER NOT NULL DEFAULT 0,
+                metadata_stale INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_gallery_images_gallery
                 ON gallery_images(gallery_id);
@@ -264,53 +336,130 @@ impl GalleryStore {
             CREATE INDEX IF NOT EXISTS idx_gallery_album_members_image
                 ON gallery_album_members(image_id);",
         )?;
+        // One forward schema update. Never deduplicate by deleting a record: it may
+        // own different tags, album memberships, face references or generation lineage.
+        let pool = driver
+            .sqlite_pool()
+            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+        let mut connection = pool.get().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let columns = transaction
+            .prepare("PRAGMA table_info(gallery_images)")
+            .map_err(database_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(database_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(database_error)?;
+        if !columns.iter().any(|column| column == "missing") {
+            transaction
+                .execute_batch(
+                    "ALTER TABLE gallery_images ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE gallery_images ADD COLUMN metadata_stale INTEGER NOT NULL DEFAULT 0;",
+                )
+                .map_err(database_error)?;
+            let roots = transaction
+                .prepare("SELECT id, root_path FROM galleries")
+                .map_err(database_error)?
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(database_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(database_error)?;
+            for (gallery_id, root) in roots {
+                let root = asset_path(&root).map_err(database_error)?;
+                transaction
+                    .execute(
+                        "UPDATE galleries SET root_path = ?1 WHERE id = ?2",
+                        params![root.to_string_lossy(), gallery_id],
+                    )
+                    .map_err(|error| {
+                        database_error(format!(
+                            "Gallery root identity conflict; no records removed: {error}"
+                        ))
+                    })?;
+                let images = transaction
+                    .prepare("SELECT id, absolute_path FROM gallery_images WHERE gallery_id = ?1")
+                    .map_err(database_error)?
+                    .query_map([&gallery_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .map_err(database_error)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(database_error)?;
+                for (image_id, absolute) in images {
+                    let absolute = asset_path(&absolute).map_err(database_error)?;
+                    let relative = absolute.strip_prefix(&root).unwrap_or(&absolute);
+                    transaction.execute("UPDATE gallery_images SET absolute_path = ?1, relative_path = ?2 WHERE id = ?3",
+                        params![absolute.to_string_lossy(), relative.to_string_lossy(), image_id]).map_err(database_error)?;
+                }
+            }
+        }
+        transaction.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_images_identity ON gallery_images(gallery_id, absolute_path);")
+            .map_err(|error| database_error(format!("Gallery asset identity conflict; resolve duplicate paths explicitly, no records removed: {error}")))?;
+        // Counts have one read path: aggregate active rows, not cached counters.
+        let columns = transaction
+            .prepare("PRAGMA table_info(galleries)")
+            .map_err(database_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(database_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(database_error)?;
+        if columns.iter().any(|column| column == "image_count") {
+            transaction.execute_batch("ALTER TABLE galleries DROP COLUMN image_count; ALTER TABLE galleries DROP COLUMN total_size_bytes;").map_err(database_error)?;
+        }
+        transaction.commit().map_err(database_error)?;
         Ok(())
     }
-    /// Create a new gallery. Returns the gallery record.
-    ///
-    /// expect: "The system provides durable storage for gallery data"
-    /// Create a new gallery.
-    ///
-    /// expect: "The system provides durable storage for gallery data"
-    /// \[P3\] Motivating: Generative Space — create a gallery
-    /// pre:  name is non-empty
-    /// post: gallery created and returned
-    pub fn create(
+    /// expect: Reopening a gallery restores its identity and original permissions.
+    /// [P1] Motivating: User ownership survives restarts and canonical aliases.
+    /// pre: root is an accessible directory
+    /// post: same canonical root returns same ID and stored mode; no implicit escalation
+    pub fn open(
         &self,
         root_path: &str,
         mode: GalleryMode,
-    ) -> std::result::Result<GalleryRecord, GalleryStoreError> {
-        let id = uuid::Uuid::new_v4().to_string();
+    ) -> Result<GalleryRecord, GalleryStoreError> {
+        let root = Path::new(root_path)
+            .canonicalize()
+            .map_err(|error| GalleryStoreError::InvalidPath(format!("{root_path}: {error}")))?;
+        if !root.is_dir() {
+            return Err(GalleryStoreError::InvalidPath(format!(
+                "{} is not a directory",
+                root.display()
+            )));
+        }
+        std::fs::read_dir(&root).map_err(|error| {
+            GalleryStoreError::InvalidPath(format!("{}: {error}", root.display()))
+        })?;
+        let root = root.to_string_lossy().into_owned();
         let now = now_rfc3339();
-        // Check for existing gallery at this path
-        let existing: Option<String> = query_row(
+        self.driver.execute(
+            "INSERT INTO galleries (id, root_path, mode, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(root_path) DO NOTHING",
+            &[uuid::Uuid::new_v4().to_string().into(), root.clone().into(), mode.as_str().to_string().into(), now.into()],
+        )?;
+        let id = query_row(
             &*self.driver,
             "SELECT id FROM galleries WHERE root_path = ?1",
-            &[DbValue::Text(root_path.to_string())],
+            &[root.into()],
             |row| Ok(row.get_str(0)?.to_string()),
-        )?;
-        if existing.is_some() {
-            return Err(GalleryStoreError::AlreadyExists(root_path.to_string()));
-        }
-        self.driver.execute(
-            "INSERT INTO galleries (id, root_path, mode, image_count, total_size_bytes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, 0, ?4, ?4)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(root_path.to_string()),
-                DbValue::Text(mode.as_str().to_string()),
-                DbValue::Text(now.clone()),
-            ],
-        )?;
-        Ok(GalleryRecord {
-            id,
-            root_path: root_path.to_string(),
-            mode: mode.as_str().to_string(),
-            image_count: 0,
-            total_size_bytes: 0,
-            created_at: now.clone(),
-            updated_at: now,
-        })
+        )?
+        .ok_or_else(|| GalleryStoreError::Conflict("opened gallery vanished".into()))?;
+        self.get(&id)
+    }
+
+    pub fn get(&self, gallery_id: &str) -> Result<GalleryRecord, GalleryStoreError> {
+        query_row(&*self.driver,
+            "SELECT g.id, g.root_path, g.mode, COUNT(i.id), COALESCE(SUM(i.size_bytes), 0), g.created_at, g.updated_at
+             FROM galleries g LEFT JOIN gallery_images i ON i.gallery_id = g.id AND i.missing = 0
+             WHERE g.id = ?1 GROUP BY g.id", &[gallery_id.to_string().into()], |row| Ok(GalleryRecord {
+                id: row.get_str(0)?.into(), root_path: row.get_str(1)?.into(), mode: row.get_str(2)?.into(),
+                image_count: row.get_int(3)? as u32, total_size_bytes: row.get_int(4)? as u64,
+                created_at: row.get_str(5)?.into(), updated_at: row.get_str(6)?.into(),
+             }))?.ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "gallery".into(), id: gallery_id.into() }))
     }
     /// Add an image to the gallery index.
     ///
@@ -352,7 +501,7 @@ impl GalleryStore {
     pub fn add_media(
         &self,
         gallery_id: &str,
-        relative_path: &str,
+        _relative_path: &str,
         absolute_path: &str,
         hash: &str,
         width: u32,
@@ -361,51 +510,214 @@ impl GalleryStore {
         size_bytes: u64,
         media_type: &str,
     ) -> std::result::Result<ImageRecord, GalleryStoreError> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = now_rfc3339();
-        self.driver.execute(
-            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(gallery_id.to_string()),
-                DbValue::Text(relative_path.to_string()),
-                DbValue::Text(absolute_path.to_string()),
-                DbValue::Text(hash.to_string()),
-                DbValue::Integer(width as i64),
-                DbValue::Integer(height as i64),
-                DbValue::Text(format.to_string()),
-                DbValue::Integer(size_bytes as i64),
-                DbValue::Text(now.clone()),
-                DbValue::Text(media_type.to_string()),
-            ],
-        )?;
-        // Update gallery counts
-        self.driver.execute(
-            "UPDATE galleries SET image_count = image_count + 1, total_size_bytes = total_size_bytes + ?1, updated_at = ?2
-             WHERE id = ?3",
-            &[
-                DbValue::Integer(size_bytes as i64),
-                DbValue::Text(now.clone()),
-                DbValue::Text(gallery_id.to_string()),
-            ],
-        )?;
-        Ok(ImageRecord {
-            id,
-            gallery_id: gallery_id.to_string(),
-            relative_path: relative_path.to_string(),
-            absolute_path: absolute_path.to_string(),
-            hash: hash.to_string(),
+        let gallery = self.get(gallery_id)?;
+        let observation = AssetObservation {
+            absolute_path: absolute_path.into(),
+            hash: hash.into(),
             width,
             height,
-            format: format.to_string(),
+            format: format.into(),
             size_bytes,
-            added_at: now,
-            media_type: media_type.to_string(),
+            media_type: media_type.into(),
+        };
+        let pool = self
+            .driver
+            .sqlite_pool()
+            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+        let mut connection = pool.get().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let record = Self::observe(&transaction, &gallery, &observation)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(record)
+    }
+    fn observe(
+        transaction: &rusqlite::Transaction<'_>,
+        gallery: &GalleryRecord,
+        observation: &AssetObservation,
+    ) -> Result<ImageRecord, GalleryStoreError> {
+        let absolute = asset_path(&observation.absolute_path)?;
+        let relative = absolute
+            .strip_prefix(&gallery.root_path)
+            .unwrap_or(&absolute);
+        transaction.execute(
+            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(gallery_id, absolute_path) DO UPDATE SET
+                relative_path = excluded.relative_path, hash = excluded.hash, width = excluded.width,
+                height = excluded.height, format = excluded.format, size_bytes = excluded.size_bytes,
+                media_type = excluded.media_type, missing = 0,
+                metadata_stale = gallery_images.metadata_stale OR gallery_images.hash != excluded.hash",
+            params![uuid::Uuid::new_v4().to_string(), gallery.id, relative.to_string_lossy(), absolute.to_string_lossy(),
+                observation.hash, observation.width, observation.height, observation.format, observation.size_bytes,
+                now_rfc3339(), observation.media_type],
+        ).map_err(database_error)?;
+        transaction.query_row(
+            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+             FROM gallery_images WHERE gallery_id = ?1 AND absolute_path = ?2",
+            params![gallery.id, absolute.to_string_lossy()], Self::image_from_sql_row,
+        ).map_err(|error| database_error(error).into())
+    }
+
+    /// expect: A scan never destroys my annotations or guesses that unreadable files were deleted.
+    /// [P1] Motivating: Durable path identity and user metadata preservation.
+    /// pre: scan observations and coverage describe this gallery's canonical root
+    /// post: all observations and safe missing transitions commit together or roll back together
+    pub fn reconcile(
+        &self,
+        gallery_id: &str,
+        scan: &GalleryScan,
+    ) -> Result<ReconcileResult, GalleryStoreError> {
+        let gallery = self.get(gallery_id)?;
+        if scan.root_path != gallery.root_path {
+            return Err(GalleryStoreError::Conflict(
+                "scan root differs from gallery root".into(),
+            ));
+        }
+        let pool = self
+            .driver
+            .sqlite_pool()
+            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+        let mut connection = pool.get().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let previous = transaction.prepare(
+            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+             FROM gallery_images WHERE gallery_id = ?1").map_err(database_error)?
+            .query_map([gallery_id], Self::image_from_sql_row).map_err(database_error)?
+            .collect::<rusqlite::Result<Vec<_>>>().map_err(database_error)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut result = ReconcileResult::default();
+        for observation in &scan.entries {
+            let path = asset_path(&observation.absolute_path)?;
+            if !path.starts_with(&gallery.root_path) {
+                return Err(GalleryStoreError::InvalidPath(format!(
+                    "scan path escapes root: {}",
+                    path.display()
+                )));
+            }
+            let path = path.to_string_lossy().into_owned();
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let old = previous.iter().find(|record| record.absolute_path == path);
+            let record = Self::observe(&transaction, &gallery, observation)?;
+            match old {
+                None => result.added += 1,
+                Some(old) if old.hash != record.hash => result.changed += 1,
+                Some(old) if old.missing => result.restored += 1,
+                Some(_) => result.unchanged += 1,
+            }
+            if old.is_none_or(|old| old.hash != record.hash || old.missing) {
+                result.analysis_assets.push(record);
+            }
+        }
+        if scan.errors.is_empty() {
+            for record in previous {
+                let path = Path::new(&record.absolute_path);
+                let Ok(relative) = path.strip_prefix(&gallery.root_path) else {
+                    continue;
+                };
+                let extension = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if record.media_type != "image"
+                    || record.missing
+                    || seen.contains(&record.absolute_path)
+                    || relative
+                        .components()
+                        .any(|component| component.as_os_str() == ".hkask-gallery")
+                    || (!scan.recursive && relative.components().count() != 1)
+                    || !scan.extensions.contains(&extension)
+                {
+                    continue;
+                }
+                transaction
+                    .execute(
+                        "UPDATE gallery_images SET missing = 1 WHERE id = ?1",
+                        [&record.id],
+                    )
+                    .map_err(database_error)?;
+                result.missing += 1;
+            }
+        }
+        transaction
+            .execute(
+                "UPDATE galleries SET updated_at = ?1 WHERE id = ?2",
+                params![now_rfc3339(), gallery_id],
+            )
+            .map_err(database_error)?;
+        result.total = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM gallery_images WHERE gallery_id = ?1 AND missing = 0",
+                [gallery_id],
+                |row| row.get(0),
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(result)
+    }
+
+    /// Stable-ID inspection includes missing assets; positional readers never do.
+    pub fn get_by_id(
+        &self,
+        gallery_id: &str,
+        image_id: &str,
+    ) -> Result<ImageRecord, GalleryStoreError> {
+        query_row(&*self.driver,
+            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+             FROM gallery_images WHERE gallery_id = ?1 AND id = ?2",
+            &[gallery_id.to_string().into(), image_id.to_string().into()], Self::image_from_row)?
+            .ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "image".into(), id: image_id.into() }))
+    }
+
+    /// expect: Analysis of an old revision never tags or certifies a different revision. [P1]
+    /// pre: record was captured before inference
+    /// post: tags and freshness commit together only while identity/hash still match
+    pub fn persist_analysis(&self, record: &ImageRecord, tags: &[(String, String, f64)], model: &str, complete: bool) -> Result<bool, GalleryStoreError> {
+        let pool = self.driver.sqlite_pool().ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+        let mut connection = pool.get().map_err(database_error)?;
+        let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(database_error)?;
+        let matches: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM gallery_images WHERE id = ?1 AND gallery_id = ?2 AND hash = ?3 AND missing = 0)",
+            params![record.id, record.gallery_id, record.hash], |row| row.get(0)).map_err(database_error)?;
+        if !matches { return Ok(false); }
+        for (tag_type, value, confidence) in tags {
+            transaction.execute("INSERT INTO gallery_tags (id, image_id, tag_type, value, confidence, model_used, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(image_id, tag_type, value) DO NOTHING",
+                params![uuid::Uuid::new_v4().to_string(), record.id, tag_type, value, confidence, model, now_rfc3339()]).map_err(database_error)?;
+        }
+        if complete {
+            transaction.execute("UPDATE gallery_images SET metadata_stale = 0 WHERE id = ?1", [&record.id]).map_err(database_error)?;
+        }
+        transaction.commit().map_err(database_error)?;
+        Ok(true)
+    }
+
+    fn image_from_sql_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ImageRecord> {
+        Ok(ImageRecord {
+            id: row.get(0)?,
+            gallery_id: row.get(1)?,
+            relative_path: row.get(2)?,
+            absolute_path: row.get(3)?,
+            hash: row.get(4)?,
+            width: row.get(5)?,
+            height: row.get(6)?,
+            format: row.get(7)?,
+            size_bytes: row.get(8)?,
+            added_at: row.get(9)?,
+            media_type: row.get(10)?,
+            missing: row.get(11)?,
+            metadata_stale: row.get(12)?,
         })
     }
+
     /// List gallery assets in index order — 0-based position matching
-    /// `get_image`'s `ORDER BY added_at ASC` index semantics, so index
+    /// `get_image`'s `ORDER BY added_at ASC, id ASC` index semantics, so index
     /// `offset + i` in the result is the `image_index` every other gallery
     /// tool accepts. Paginated; no filter (callers filter client-side by
     /// `media_type` — a filtered query would renumber positions and break
@@ -419,9 +731,9 @@ impl GalleryStore {
     ) -> std::result::Result<Vec<ImageRecord>, GalleryStoreError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
-             FROM gallery_images WHERE gallery_id = ?1
-             ORDER BY added_at ASC LIMIT ?3 OFFSET ?2",
+            "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+             FROM gallery_images WHERE gallery_id = ?1 AND missing = 0
+             ORDER BY added_at ASC, id ASC LIMIT ?3 OFFSET ?2",
             &[
                 DbValue::Text(gallery_id.to_string()),
                 DbValue::Integer(offset as i64),
@@ -436,7 +748,7 @@ impl GalleryStore {
     pub fn count_assets(&self, gallery_id: &str) -> std::result::Result<u64, GalleryStoreError> {
         query_row(
             &*self.driver,
-            "SELECT COUNT(*) FROM gallery_images WHERE gallery_id = ?1",
+            "SELECT COUNT(*) FROM gallery_images WHERE gallery_id = ?1 AND missing = 0",
             &[DbValue::Text(gallery_id.to_string())],
             |row| row.get_int(0).map(|count| count as u64),
         )?
@@ -466,8 +778,8 @@ impl GalleryStore {
         let row = if let Some(h) = hash {
             query_row(
                 &*self.driver,
-                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
-                 FROM gallery_images WHERE gallery_id = ?1 AND hash = ?2",
+                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+                 FROM gallery_images WHERE gallery_id = ?1 AND hash = ?2 AND missing = 0 ORDER BY added_at ASC, id ASC LIMIT 1",
                 &[
                     DbValue::Text(gallery_id.to_string()),
                     DbValue::Text(h.to_string()),
@@ -481,9 +793,9 @@ impl GalleryStore {
         } else if let Some(idx) = index {
             query_row(
                 &*self.driver,
-                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type
-                 FROM gallery_images WHERE gallery_id = ?1
-                 ORDER BY added_at ASC LIMIT 1 OFFSET ?2",
+                "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
+                 FROM gallery_images WHERE gallery_id = ?1 AND missing = 0
+                 ORDER BY added_at ASC, id ASC LIMIT 1 OFFSET ?2",
                 &[
                     DbValue::Text(gallery_id.to_string()),
                     DbValue::Integer(idx as i64),
@@ -602,7 +914,7 @@ impl GalleryStore {
             "SELECT t.id, t.image_id, t.tag_type, t.value, t.confidence, t.model_used, t.created_at, i.relative_path
              FROM gallery_tags t
              JOIN gallery_images i ON t.image_id = i.id
-             WHERE i.gallery_id = ?1
+             WHERE i.gallery_id = ?1 AND i.missing = 0
              ORDER BY t.created_at DESC",
             &[DbValue::Text(gallery_id.to_string())],
             |row| {
@@ -832,6 +1144,8 @@ impl GalleryStore {
             size_bytes: row.get_int(8)? as u64,
             added_at: row.get_str(9)?.to_string(),
             media_type: row.get_str(10)?.to_string(),
+            missing: row.get_int(11)? != 0,
+            metadata_stale: row.get_int(12)? != 0,
         })
     }
     fn tag_from_row(
@@ -1113,7 +1427,7 @@ impl GalleryStore {
     ) -> std::result::Result<Vec<String>, GalleryStoreError> {
         let rows = query_map(
             &*self.driver,
-            "SELECT image_id FROM gallery_album_members WHERE album_id = ?1 ORDER BY added_at ASC",
+            "SELECT m.image_id FROM gallery_album_members m JOIN gallery_images i ON i.id = m.image_id WHERE m.album_id = ?1 AND i.missing = 0 ORDER BY i.added_at ASC, i.id ASC",
             &[DbValue::Text(album_id.to_string())],
             |row| row.get_str(0).map(String::from),
         )?;
@@ -1248,22 +1562,44 @@ mod tests {
     #[test]
     fn create_gallery_returns_record() {
         let store = setup();
-        let gallery = store.create("/tmp/test", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         assert!(!gallery.id.is_empty());
-        assert_eq!(gallery.root_path, "/tmp/test");
+        assert!(Path::new(&gallery.root_path).is_absolute());
     }
 
     #[test]
-    fn create_duplicate_path_rejected() {
+    fn reopening_preserves_mode_and_identity() {
         let store = setup();
-        store.create("/tmp/dup", GalleryMode::ReadOnly).unwrap();
-        assert!(store.create("/tmp/dup", GalleryMode::ReadOnly).is_err());
+        let directory = tempfile::tempdir().expect("gallery root");
+        let path = directory.path().to_str().expect("UTF-8 root");
+        let first = store.open(path, GalleryMode::ReadOnly).expect("open");
+        let second = store.open(path, GalleryMode::Destructive).expect("reopen");
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.mode, "read-only");
     }
 
     #[test]
     fn add_image_stores_record() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1283,7 +1619,16 @@ mod tests {
     #[test]
     fn get_image_by_index() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         store
             .add_image(
                 &gallery.id,
@@ -1317,7 +1662,16 @@ mod tests {
     #[test]
     fn get_image_by_hash() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         store
             .add_image(
                 &gallery.id,
@@ -1337,7 +1691,16 @@ mod tests {
     #[test]
     fn tag_image_stores_tag() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1359,7 +1722,16 @@ mod tests {
     #[test]
     fn get_tags_returns_all() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1385,7 +1757,16 @@ mod tests {
     #[test]
     fn tag_image_ignores_duplicates() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1411,7 +1792,16 @@ mod tests {
     #[test]
     fn register_face_creates_record() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1434,7 +1824,16 @@ mod tests {
     #[test]
     fn list_faces_returns_all() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1460,7 +1859,16 @@ mod tests {
     #[test]
     fn list_faces_filters_by_status() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1486,7 +1894,16 @@ mod tests {
     #[test]
     fn get_face_returns_record() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1515,7 +1932,16 @@ mod tests {
     #[test]
     fn remove_face_deletes_record() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1538,7 +1964,16 @@ mod tests {
     #[test]
     fn update_face_changes_status() {
         let store = setup();
-        let gallery = store.create("/tmp/g", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1561,7 +1996,16 @@ mod tests {
     #[test]
     fn record_and_get_generation_lineage() {
         let store = setup();
-        let gallery = store.create("/tmp/gen", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1608,7 +2052,16 @@ mod tests {
     #[test]
     fn get_generation_returns_none_when_no_lineage() {
         let store = setup();
-        let gallery = store.create("/tmp/gen2", GalleryMode::ReadOnly).unwrap();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
         let img = store
             .add_image(
                 &gallery.id,
@@ -1660,7 +2113,16 @@ mod tests {
                 db_path_str.as_str(),
             ));
             let store = GalleryStore::from_driver(driver).unwrap();
-            let gallery = store.create("/tmp/gal", GalleryMode::ReadOnly).unwrap();
+            let gallery = store
+                .open(
+                    tempfile::tempdir()
+                        .expect("gallery root")
+                        .path()
+                        .to_str()
+                        .expect("UTF-8 root"),
+                    GalleryMode::ReadOnly,
+                )
+                .unwrap();
             let img = store
                 .add_image(&gallery.id, "a.png", "/tmp/gal/a.png", "h", 1, 1, "png", 1)
                 .unwrap();
@@ -1696,4 +2158,61 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// expect: Same path keeps identity while same-content copies remain separate; tied times have stable indices. [P1]
+    #[test]
+    fn path_upsert_retains_annotations_and_deterministic_positions() -> Result<(), Box<dyn std::error::Error>> {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
+        let path = directory.path().join("a.png").to_string_lossy().into_owned();
+        let first = store.add_image(&gallery.id, "ignored", &path, "hash", 1, 1, "png", 10)?;
+        store.tag_image(&first.id, "caption", "Keep", 1.0, "user")?;
+        let album = store.create_album(&gallery.id, "Keep", None)?;
+        store.add_to_album(&album.id, &first.id)?;
+        let repeated = store.add_image(&gallery.id, "ignored", &path, "hash", 1, 1, "png", 10)?;
+        assert_eq!(first.id, repeated.id); assert_eq!(first.added_at, repeated.added_at);
+        assert_eq!(store.get(&gallery.id)?.total_size_bytes, 10);
+        let changed = store.add_image(&gallery.id, "ignored", &path, "changed", 2, 2, "png", 20)?;
+        assert!(changed.metadata_stale); assert_eq!(changed.id, first.id);
+        assert_eq!(store.get_tags(&first.id)?.len(), 1); assert_eq!(store.list_album_members(&album.id)?, vec![first.id.clone()]);
+        let other = directory.path().join("b.png").to_string_lossy().into_owned();
+        let copy = store.add_image(&gallery.id, "ignored", &other, "changed", 2, 2, "png", 20)?;
+        assert_ne!(copy.id, first.id);
+        store.driver.execute("UPDATE gallery_images SET added_at = 'same-time' WHERE gallery_id = ?1", &[gallery.id.clone().into()])?;
+        let listed = store.list_assets(&gallery.id, 0, 10)?;
+        assert!(listed[0].id < listed[1].id);
+        for (index, image) in listed.iter().enumerate() { assert_eq!(store.get_image(&gallery.id, Some(index), None)?.id, image.id); }
+        assert_eq!(store.get(&gallery.id)?.total_size_bytes, 40);
+        Ok(())
+    }
+
+    /// expect: Forward schema updates preserve metadata, and ambiguous duplicate identities stop explicitly. [P1]
+    #[test]
+    fn forward_schema_preserves_data_and_refuses_duplicate_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
+        let path = directory.path().join("a.png").to_string_lossy().into_owned();
+        let image = store.add_image(&gallery.id, "a.png", &path, "hash", 1, 1, "png", 10)?;
+        store.tag_image(&image.id, "caption", "Original annotation", 1.0, "user")?;
+        store.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
+            ALTER TABLE gallery_images DROP COLUMN missing;
+            ALTER TABLE gallery_images DROP COLUMN metadata_stale;
+            ALTER TABLE galleries ADD COLUMN image_count INTEGER NOT NULL DEFAULT 99;
+            ALTER TABLE galleries ADD COLUMN total_size_bytes INTEGER NOT NULL DEFAULT 99;")?;
+        let migrated = GalleryStore::from_driver(store.driver.clone())?;
+        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
+        assert_eq!(migrated.get(&gallery.id)?.image_count, 1);
+        assert_eq!(migrated.get(&gallery.id)?.total_size_bytes, 10);
+        migrated.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
+            INSERT INTO gallery_images SELECT 'duplicate', gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale FROM gallery_images;")?;
+        migrated.tag_image("duplicate", "caption", "Conflicting annotation", 1.0, "user")?;
+        let error = match GalleryStore::from_driver(migrated.driver.clone()) { Ok(_) => panic!("duplicate identity accepted"), Err(error) => error };
+        assert!(error.to_string().contains("identity conflict"), "{error}");
+        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
+        assert_eq!(migrated.get_tags("duplicate")?.len(), 1);
+        assert_eq!(migrated.count_assets(&gallery.id)?, 2);
+        Ok(())
+    }
+
 }

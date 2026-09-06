@@ -622,6 +622,14 @@ pub async fn build_mcp_server_env(
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
     //    unfiltered map; the allowlist is what keeps the curator's email
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
+    let catalog = match crate::database_inventory_path() {
+        Ok(path) => path.to_string_lossy().into_owned(),
+        Err(error) => {
+            tracing::warn!(%error, "Database inventory route unavailable; child will refuse the empty route");
+            String::new()
+        }
+    };
+    env.insert(hkask_storage::DATABASE_CATALOG_ENV.into(), catalog);
     // Update authority before credential awaits: an older env-building future
     // must not re-grant access after a newer settings pass revoked it.
     let tools = settings

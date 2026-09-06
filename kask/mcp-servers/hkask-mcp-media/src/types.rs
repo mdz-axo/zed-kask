@@ -767,8 +767,10 @@ pub struct GalleryAddMediaRequest {
 /// lineage, and face associations in a single call.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GalleryAssetDetailRequest {
-    /// Index of the gallery asset to inspect.
-    pub image_index: usize,
+    /// Active asset position. Supply exactly one of image_index or image_id.
+    pub image_index: Option<usize>,
+    /// Stable asset ID, including retained missing records in the active gallery.
+    pub image_id: Option<String>,
 }
 
 /// Request for `gallery_list_assets` — the panel/library data source.

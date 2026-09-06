@@ -9,7 +9,13 @@
 pub(crate) mod core;
 pub mod database;
 pub mod gallery;
+mod maintenance_inventory;
 pub mod rotation;
+pub use maintenance_inventory::{
+    ConfirmedInventory, DATABASE_CATALOG_ENV, DATABASE_CATALOG_RELATIVE_PATH, DatabaseInventory,
+    InventoryEntry, InventoryError, configure_database_catalog, database_catalog_path,
+    read_database_catalog,
+};
 
 pub use core::DatabaseDriverTrait;
 pub use core::connection::{

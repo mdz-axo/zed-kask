@@ -31,7 +31,7 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
 ///
 /// Downloads the asset from a URL or decodes a base64 payload, saves it to
 /// `{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and registers it in
-/// the gallery store (best-effort — a gallery-less persist still returns
+/// the gallery store (a gallery-less persist still returns
 /// the path, with a warning naming the skipped indexing). Returns the local
 /// file path on success.
 ///
@@ -47,7 +47,7 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
 /// - `video_url` (DeepInfra video — data URI)
 /// - `url` (OpenRouter video — HTTP URL)
 pub(crate) async fn persist_generated_asset(
-    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery: Option<&GalleryState>,
     gallery_store: &Arc<GalleryStore>,
     result: &serde_json::Value,
     kind: &str,
@@ -155,25 +155,9 @@ pub(crate) async fn persist_generated_asset(
         "audio" => "audio",
         _ => "image",
     };
-    let gallery_id = match gallery_state.lock() {
-        Ok(guard) => match guard.as_ref().and_then(|state| state.gallery_id.clone()) {
-            Some(gallery_id) => gallery_id,
-            None => {
-                tracing::warn!(
-                    target: "hkask.mcp.media",
-                    "Gallery not initialized — generated {media_type} not indexed"
-                );
-                return Ok(path);
-            }
-        },
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.mcp.media",
-                %error,
-                "Gallery state lock poisoned — generated {media_type} not indexed"
-            );
-            return Ok(path);
-        }
+    let Some(gallery_id) = gallery.and_then(|state| state.gallery_id.as_deref()) else {
+        tracing::warn!(target: "hkask.mcp.media", "Gallery not initialized — generated {media_type} not indexed");
+        return Ok(path);
     };
     let hash = {
         use sha2::Digest;
@@ -186,23 +170,10 @@ pub(crate) async fn persist_generated_asset(
     } else {
         (0, 0)
     };
-    if let Err(error) = gallery_store.add_media(
-        &gallery_id,
-        &filename,
-        path.to_str().unwrap_or(""),
-        &hash,
-        width,
-        height,
-        ext,
-        bytes.len() as u64,
-        media_type,
-    ) {
-        tracing::warn!(
-            target: "hkask.mcp.media",
-            %error,
-            "Failed to add generated {media_type} to gallery"
-        );
-    }
+    gallery_store.add_media(
+        gallery_id, &filename, &path.to_string_lossy(), &hash, width, height,
+        ext, bytes.len() as u64, media_type,
+    ).map_err(|error| MediaError::AssetPersistence(format!("File saved at {}, but indexing failed: {error}", path.display())))?;
 
     Ok(path)
 }
@@ -241,6 +212,8 @@ pub(crate) async fn persist_and_slim_result(
     result: &serde_json::Value,
     kind: &str,
 ) -> Result<serde_json::Value, MediaError> {
+    // Bind the entire completion (including every downloaded variant) before its first await.
+    let gallery = gallery_state.lock().map_err(|error| MediaError::AssetPersistence(error.to_string()))?.clone();
     // Multi-image responses persist every entry — the singular persist
     // extracts only data[0], which silently dropped all but the first
     // image of a `num_images > 1` request.
@@ -258,12 +231,12 @@ pub(crate) async fn persist_and_slim_result(
             for entry in entries {
                 let single = serde_json::json!({ "data": [entry] });
                 paths.push(
-                    persist_generated_asset(gallery_state, gallery_store, &single, kind).await?,
+                    persist_generated_asset(gallery.as_ref(), gallery_store, &single, kind).await?,
                 );
             }
             paths
         }
-        None => vec![persist_generated_asset(gallery_state, gallery_store, result, kind).await?],
+        None => vec![persist_generated_asset(gallery.as_ref(), gallery_store, result, kind).await?],
     };
 
     let Some(output_path) = paths.first() else {

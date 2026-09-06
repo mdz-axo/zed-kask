@@ -167,6 +167,8 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
+    #[error("Database inventory is unavailable: {0}")]
+    Inventory(String),
     #[error("Database maintenance lease unavailable for {path}: {reason}")]
     MaintenanceLease { path: String, reason: String },
 }
@@ -417,6 +419,10 @@ impl Database {
             Some(lease) => lease.clone(),
             None => database_lease(&self.path, false)?,
         };
+        if self.maintenance_lease.is_none() {
+            crate::maintenance_inventory::record_managed_database(std::path::Path::new(&self.path))
+                .map_err(|error| DatabaseError::Inventory(error.to_string()))?;
+        }
         // SQLCipher native passphrase KDF. The passphrase is passed as a
         // SQL string literal (single quotes doubled) — SQLCipher derives
         // the page key via PBKDF2 internally and stores the salt in the DB

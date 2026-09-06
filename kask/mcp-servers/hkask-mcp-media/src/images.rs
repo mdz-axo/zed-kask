@@ -3,8 +3,20 @@
 use crate::error::MediaError;
 use crate::gallery::vision;
 use crate::{MediaServer, read_image_capped};
-use hkask_storage::database::value::DbValue;
 use std::path::PathBuf;
+
+/// Encode the captured revision, refusing a path whose contents changed since observation.
+fn image_record_url(record: &hkask_storage::gallery::ImageRecord) -> Result<String, MediaError> {
+    use sha2::Digest;
+    let bytes = read_image_capped(&record.absolute_path)?;
+    let hash = format!("{:x}", sha2::Sha256::digest(&bytes));
+    if record.missing || hash != record.hash {
+        return Err(MediaError::Io(format!("Asset {} changed or is missing; rescan before analyzing", record.id)));
+    }
+    let format = image::guess_format(&bytes).map_err(|error| MediaError::Io(error.to_string()))?;
+    let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+    Ok(format!("data:{};base64,{base64}", format.to_mime_type()))
+}
 
 impl MediaServer {
     /// Resolve an image index to a base64 data URL for vision LLM calls.
@@ -73,45 +85,9 @@ impl MediaServer {
     ///
     /// Used by face matching where we have image IDs from tags/registry,
     /// not gallery indices.
-    pub(crate) fn resolve_image_url_by_id(&self, image_id: &str) -> Result<String, MediaError> {
-        let ga = self.access_gallery()?;
-
-        // Look up the image's absolute path by its SQLite ID
-        let rows = self
-            .gallery_store
-            .driver()
-            .query(
-                "SELECT absolute_path FROM gallery_images WHERE id = ?1 AND gallery_id = ?2",
-                &[
-                    DbValue::Text(image_id.to_string()),
-                    DbValue::Text(ga.gallery_id),
-                ],
-            )
-            .map_err(|e| {
-                MediaError::ImageNotFound(format!("Image not found by ID {}: {}", image_id, e))
-            })?;
-        let absolute_path: String = rows
-            .first()
-            .and_then(|r| r.get_str(0).ok())
-            .ok_or_else(|| {
-                MediaError::ImageNotFound(format!("Image not found by ID {}", image_id))
-            })?
-            .to_string();
-
-        let data = read_image_capped(&absolute_path)?;
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
-        let mime = if absolute_path.ends_with(".png") {
-            "image/png"
-        } else if absolute_path.ends_with(".jpg") || absolute_path.ends_with(".jpeg") {
-            "image/jpeg"
-        } else if absolute_path.ends_with(".webp") {
-            "image/webp"
-        } else if absolute_path.ends_with(".gif") {
-            "image/gif"
-        } else {
-            "image/png"
-        };
-        Ok(format!("data:{};base64,{}", mime, b64))
+    pub(crate) fn resolve_image_url_by_id(&self, gallery_id: &str, image_id: &str) -> Result<String, MediaError> {
+        let record = self.gallery_store.get_by_id(gallery_id, image_id)?;
+        image_record_url(&record)
     }
 
     /// Persist a single tag to the gallery store (best-effort, logs errors).
@@ -203,57 +179,14 @@ impl MediaServer {
         None
     }
 
-    /// Re-scan an existing gallery and persist new images.
-    /// Returns (gallery_id, old_image_count, images_added, total_images, persisted_count).
-    /// The MutexGuard is dropped before return so callers can safely await.
-    pub(crate) fn rescan_existing_gallery(
-        &self,
-        recursive: bool,
-    ) -> Result<(String, u64, u32, u32, u32), MediaError> {
-        // Hold the lock for the entire scan→persist operation to prevent lost-update
-        // races under concurrent calls. All operations inside are synchronous I/O
-        // (std::fs + GalleryStore), so holding std::sync::Mutex is safe.
-        let mut guard = self
-            .gallery_state
-            .lock()
-            .map_err(|e| MediaError::Io(format!("Gallery state lock error: {}", e)))?;
-        let state = guard.as_mut().ok_or(MediaError::GalleryNotInitialized)?;
-
-        let gallery_id = state
-            .gallery_id
-            .clone()
-            .ok_or(MediaError::GalleryNotInitialized)?;
-        let old_count = state.image_count;
-
-        let scan_result = state.scan(recursive, None);
-        let mut persisted = 0u32;
-        for entry in &scan_result.entries {
-            let abs_path = state.path.join(&entry.relative_path);
-            if self
-                .gallery_store
-                .add_image(
-                    &gallery_id,
-                    &entry.relative_path,
-                    &abs_path.to_string_lossy(),
-                    &entry.checksum,
-                    entry.width,
-                    entry.height,
-                    &entry.format,
-                    entry.size_bytes,
-                )
-                .is_ok()
-            {
-                persisted += 1;
-            }
-        }
-
-        Ok((
-            gallery_id,
-            old_count,
-            scan_result.added,
-            scan_result.total,
-            persisted,
-        ))
+    /// Scan a captured gallery, not whichever gallery becomes active later.
+    pub(crate) fn rescan_gallery(
+        &self, gallery: &crate::GalleryAccess, recursive: bool,
+    ) -> Result<(hkask_storage::gallery::GalleryScan, hkask_storage::gallery::ReconcileResult), MediaError> {
+        let state = crate::GalleryState::new(gallery.root_path.clone(), gallery.mode.parse()?);
+        let scan = state.scan(recursive, None);
+        let result = self.gallery_store.reconcile(&gallery.gallery_id, &scan)?;
+        Ok((scan, result))
     }
 
     /// Run the analysis pipeline on a subset of gallery images.
@@ -261,8 +194,20 @@ impl MediaServer {
     /// Returns (analyzed_count, error_messages).
     pub(crate) async fn run_analysis_on_indices(
         &self,
+        gallery: &crate::GalleryAccess,
         indices: &[usize],
         pipelines: &[String],
+    ) -> (u32, Vec<String>) {
+        let records = indices.iter().map(|index| self.gallery_store.get_image(&gallery.gallery_id, Some(*index), None))
+            .collect::<Result<Vec<_>, _>>();
+        match records {
+            Ok(records) => self.run_analysis_on_assets(&records, pipelines).await,
+            Err(error) => (0, vec![error.to_string()]),
+        }
+    }
+
+    pub(crate) async fn run_analysis_on_assets(
+        &self, records: &[hkask_storage::gallery::ImageRecord], pipelines: &[String],
     ) -> (u32, Vec<String>) {
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
@@ -289,20 +234,14 @@ impl MediaServer {
         let run_composition = pipelines.iter().any(|p| p == "composition");
         let run_scene = pipelines.iter().any(|p| p == "scene");
 
-        for idx in indices {
-            let image_url = match self.resolve_image_url(*idx) {
+        for record in records {
+            let idx = &record.id;
+            let image_id = &record.id;
+            let before_errors = errors.len();
+            let mut tags: Vec<(String, String, f64)> = Vec::new();
+            let image_url = match image_record_url(record) {
                 Ok(url) => url,
-                Err(e) => {
-                    errors.push(format!("image {}: {}", idx, e));
-                    continue;
-                }
-            };
-            let image_id = match self.resolve_image_id(*idx) {
-                Ok(id) => id,
-                Err(e) => {
-                    errors.push(format!("image {}: {}", idx, e));
-                    continue;
-                }
+                Err(error) => { errors.push(format!("image {idx}: {error}")); continue; }
             };
 
             if run_faces {
@@ -318,7 +257,7 @@ impl MediaServer {
                         for face in &faces {
                             match serde_json::to_string(face) {
                                 Ok(value) => {
-                                    self.persist_tag(&image_id, "face", &value, 0.85, vision_label)
+                                    tags.push(("face".into(), value, 0.85))
                                 }
                                 Err(e) => errors
                                     .push(format!("image {} face tag serialization: {}", idx, e)),
@@ -343,13 +282,7 @@ impl MediaServer {
                     Ok(objects) => {
                         for obj in &objects {
                             match serde_json::to_string(obj) {
-                                Ok(value) => self.persist_tag(
-                                    &image_id,
-                                    "object",
-                                    &value,
-                                    0.85,
-                                    vision_label,
-                                ),
+                                Ok(value) => tags.push(("object".into(), value, 0.85)),
                                 Err(e) => errors
                                     .push(format!("image {} object tag serialization: {}", idx, e)),
                             }
@@ -374,13 +307,7 @@ impl MediaServer {
                         if let Some(colors) = parsed["colors"].as_array() {
                             for color in colors {
                                 match serde_json::to_string(color) {
-                                    Ok(value) => self.persist_tag(
-                                        &image_id,
-                                        "color",
-                                        &value,
-                                        0.85,
-                                        vision_label,
-                                    ),
+                                    Ok(value) => tags.push(("color".into(), value, 0.85)),
                                     Err(e) => errors.push(format!(
                                         "image {} color tag serialization: {}",
                                         idx, e
@@ -390,7 +317,7 @@ impl MediaServer {
                         }
                         for field in &["palette_style", "temperature", "saturation"] {
                             if let Some(v) = parsed.get(*field).and_then(|v| v.as_str()) {
-                                self.persist_tag(&image_id, "color", v, 0.9, vision_label);
+                                tags.push(("color".into(), v.into(), 0.9));
                             }
                         }
                     }
@@ -421,7 +348,7 @@ impl MediaServer {
                             "negative_space",
                         ] {
                             if let Some(v) = parsed.get(*field).and_then(|v| v.as_str()) {
-                                self.persist_tag(&image_id, "composition", v, 0.85, vision_label);
+                                tags.push(("composition".into(), v.into(), 0.85));
                             }
                         }
                     }
@@ -441,7 +368,7 @@ impl MediaServer {
                 .await
                 {
                     Ok(caption) => {
-                        self.persist_tag(&image_id, "caption", &caption, 0.9, vision_label);
+                        tags.push(("caption".into(), caption, 0.9));
                     }
                     Err(e) => {
                         errors.push(format!("image {} scene caption: {}", idx, e));
@@ -449,7 +376,25 @@ impl MediaServer {
                 }
             }
 
-            analyzed += 1;
+            // A subset cannot certify all retained annotations. Face metadata also
+            // requires the face pipeline when such annotations already exist.
+            let has_faces = match self.gallery_store.get_tags(image_id) {
+                Ok(tags) => tags.iter().any(|tag| tag.tag_type == "face"),
+                Err(error) => { errors.push(error.to_string()); continue; }
+            };
+            let complete = errors.len() == before_errors && run_objects && run_colors
+                && run_composition && run_scene && (run_faces || !has_faces);
+            // Detect source edits even when no rescan has updated the durable hash yet.
+            if let Err(error) = image_record_url(record) {
+                errors.push(format!("image {idx} changed during analysis: {error}"));
+                continue;
+            }
+            match self.gallery_store.persist_analysis(record, &tags, vision_label, complete) {
+                Ok(true) if errors.len() == before_errors => analyzed += 1,
+                Ok(true) => {},
+                Ok(false) => errors.push(format!("image {idx} revision changed during analysis")),
+                Err(error) => errors.push(format!("image {idx} metadata persistence: {error}")),
+            }
         }
 
         (analyzed, errors)

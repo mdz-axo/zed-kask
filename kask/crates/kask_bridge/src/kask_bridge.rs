@@ -24,6 +24,11 @@ mod condenser_bridge;
 mod context_injector;
 mod credentials;
 
+mod database_maintenance;
+pub use database_maintenance::{
+    ConfirmedInventory, DatabaseInventory, InventoryError, database_inventory_path,
+    initialize_database_inventory, preview_database_inventory,
+};
 mod delegation_grants;
 mod identity;
 mod inference_chat;

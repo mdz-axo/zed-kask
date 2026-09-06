@@ -47,6 +47,24 @@ where
         )
         .init();
 
+    let catalog = match std::env::var(hkask_storage::DATABASE_CATALOG_ENV) {
+        Ok(path) => std::path::PathBuf::from(path),
+        Err(std::env::VarError::NotPresent) => hkask_types::agent_paths::resolve_under_data_dir(
+            std::path::Path::new(hkask_storage::DATABASE_CATALOG_RELATIVE_PATH),
+        ),
+        Err(error) => {
+            return Err(McpError::Storage(hkask_storage::DatabaseError::Inventory(
+                error.to_string(),
+            )));
+        }
+    };
+    if let Err(error) = hkask_storage::configure_database_catalog(catalog) {
+        tracing::warn!(%error, "Database inventory could not be configured; refusing server startup");
+        return Err(McpError::Storage(hkask_storage::DatabaseError::Inventory(
+            error.to_string(),
+        )));
+    }
+
     let mut resolved = std::collections::HashMap::new();
     let mut missing_required = Vec::new();
     for cred in &credentials {

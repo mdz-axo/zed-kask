@@ -287,7 +287,7 @@ pub fn rotate_all_kask_db_passphrases(new_passphrase: &str) -> Result<(), Bridge
 /// override, else the Standardized Artifact Storage default under the
 /// hKask data dir — databases are the one artifact class that stays in
 /// the internal data dir).
-fn kask_db_paths() -> Vec<(&'static str, String)> {
+pub(crate) fn kask_db_paths() -> Vec<(&'static str, String)> {
     let resolve = |env_var: &str, default: &str| -> String {
         let raw = std::env::var(env_var)
             .ok()
@@ -302,20 +302,42 @@ fn kask_db_paths() -> Vec<(&'static str, String)> {
         }
     };
 
-    vec![
-        ("curator", resolve_curator_db_path()),
-        ("swarm_memory", resolve_swarm_memory_db_path()),
+    managed_database_layout()
+        .into_iter()
+        .map(|(name, variable, default)| {
+            let path = match name {
+                "curator" => resolve_curator_db_path(),
+                "swarm_memory" => resolve_swarm_memory_db_path(),
+                _ => resolve(variable, &default.to_string_lossy()),
+            };
+            (name, path)
+        })
+        .collect()
+}
+
+pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::path::PathBuf); 5] {
+    use hkask_types::agent_paths::{agent_db, mcp_server_db};
+    [
+        ("curator", "HKASK_CURATOR_DB", agent_db("curator")),
+        (
+            "swarm_memory",
+            "HKASK_SWARM_MEMORY_DB",
+            mcp_server_db("swarm", "memory"),
+        ),
         (
             "kata_kanban",
-            resolve("HKASK_KANBAN_DB", "mcp/kata-kanban/kanban.db"),
+            "HKASK_KANBAN_DB",
+            mcp_server_db("kata-kanban", "kanban"),
         ),
         (
             "research_rss",
-            resolve("HKASK_RSS_DB", "mcp/research/rss.db"),
+            "HKASK_RSS_DB",
+            mcp_server_db("research", "rss"),
         ),
         (
             "training",
-            resolve("HKASK_TRAINING_DB", "mcp/training/training.db"),
+            "HKASK_TRAINING_DB",
+            mcp_server_db("training", "training"),
         ),
     ]
 }

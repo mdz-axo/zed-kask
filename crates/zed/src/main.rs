@@ -369,6 +369,11 @@ fn main() {
         zlog::init_output_stdout();
     }
     ztracing::init();
+    // zed-kask: D8 — catalogue managed DB paths before any consumer opens.
+    if let Err(error) = kask_bridge::initialize_database_inventory() {
+        log::error!("Database inventory initialization failed: {error}");
+        return;
+    }
 
     // zed-kask: `.env` file loading has been removed. API keys must be
     // configured via the settings UI (keychain) or shell environment

@@ -801,6 +801,7 @@ impl MediaServer {
         }): Parameters<VideoExtractFramesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_extract_frames", async {
+            let gallery = self.access_gallery().map_err(map_media_error)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -823,7 +824,11 @@ impl MediaServer {
             let mut imported = Vec::new();
             let mut errors = Vec::new();
             for frame in &frames {
-                match self.import_reference_image(frame) {
+                let durable_path = crate::assets::generated_assets_dir()
+                    .join(format!("{}.jpg", uuid::Uuid::new_v4()));
+                std::fs::copy(frame, &durable_path)
+                    .map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
+                match self.import_reference_image(&gallery, &durable_path) {
                     Ok((image_id, image_url)) => {
                         imported.push(serde_json::json!({
                             "image_id": image_id,

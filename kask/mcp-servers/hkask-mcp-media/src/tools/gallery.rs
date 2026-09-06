@@ -60,123 +60,34 @@ impl MediaServer {
                 }
             };
 
-            // Create gallery in SQLite
-            let record = match self.gallery_store.create(&path, gallery_mode.clone()) {
-                Ok(r) => r,
-                Err(GalleryStoreError::AlreadyExists(_)) => {
-                    // Re-scan existing gallery
-                    match self.rescan_existing_gallery(recursive) {
-                        Ok((gid, old_count, added, total, persisted)) => {
-                            let result = serde_json::json!({
-                                "status": "rescanned",
-                                "gallery_id": gid,
-                                "root_path": path,
-                                "mode": mode,
-                                "images_added": added,
-                                "total_images": total,
-                                "persisted": persisted,
-                            });
-
-                            if auto_analyze && added > 0 {
-                                let new_indices: Vec<usize> = (old_count as usize
-                                    ..(old_count as usize + added as usize))
-                                    .collect();
-                                let pipelines: Vec<String> =
-                                    vec!["faces", "objects", "colors", "composition", "scene"]
-                                        .into_iter()
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                let (analyzed, analyze_errors) =
-                                    self.run_analysis_on_indices(&new_indices, &pipelines).await;
-                                let mut r = result;
-                                r["auto_analyzed"] = serde_json::json!(analyzed);
-                                if !analyze_errors.is_empty() {
-                                    r["analyze_errors"] = serde_json::json!(analyze_errors);
-                                }
-                                return Ok(r);
-                            }
-
-                            return Ok(result);
-                        }
-                        Err(e) => {
-                            return Ok(serde_json::json!({
-                                "status": "already_exists",
-                                "message": e.to_string(),
-                            }));
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(map_media_error(e.into()));
-                }
-            };
-
-            // Set up in-memory GalleryState
             let mut state = GalleryState::new(PathBuf::from(&path), gallery_mode.clone());
             state.validate().map_err(map_media_error)?;
-            state.ensure_meta_dir().map_err(map_media_error)?;
+            let record = self.gallery_store.open(&state.path.to_string_lossy(), gallery_mode)
+                .map_err(map_gallery_store_error)?;
+            state.mode = record.mode.parse().map_err(map_gallery_store_error)?;
             state.gallery_id = Some(record.id.clone());
-
-            // Scan for images
-            let scan_result = state.scan(recursive, None);
-            let mut persisted = 0u32;
-            for entry in &scan_result.entries {
-                let abs_path = state.path.join(&entry.relative_path);
-                if self
-                    .gallery_store
-                    .add_image(
-                        &record.id,
-                        &entry.relative_path,
-                        &abs_path.to_string_lossy(),
-                        &entry.checksum,
-                        entry.width,
-                        entry.height,
-                        &entry.format,
-                        entry.size_bytes,
-                    )
-                    .is_ok()
-                {
-                    persisted += 1;
-                }
-            }
-
-            {
-                let mut guard = self
-                    .gallery_state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                *guard = Some(state);
-            }
-
-            let result = serde_json::json!({
-                "status": "organized",
-                "gallery_id": record.id,
-                "root_path": record.root_path,
-                "mode": record.mode,
-                "images_found": scan_result.added,
-                "total_images": scan_result.total,
-                "persisted": persisted,
-                "message": "Gallery ready. Use gallery_search to find photos by content."
+            let scan = state.scan(recursive, None);
+            let reconciled = self.gallery_store.reconcile(&record.id, &scan).map_err(map_gallery_store_error)?;
+            // Activation follows successful persistence. Failed validation/scan persistence
+            // cannot replace the previously active gallery.
+            *self.gallery_state.lock().map_err(|error| map_media_error(MediaError::Io(error.to_string())))? = Some(state);
+            let mut result = serde_json::json!({
+                "status": if scan.errors.is_empty() { "organized" } else { "degraded" },
+                "gallery_id": record.id, "root_path": record.root_path,
+                "mode": record.mode, "requested_mode": mode,
+                "mode_preserved": record.mode != mode,
+                "images_added": reconciled.added, "images_changed": reconciled.changed,
+                "images_restored": reconciled.restored, "images_missing": reconciled.missing,
+                "unchanged": reconciled.unchanged, "total_images": reconciled.total,
+                "scan_complete": scan.errors.is_empty(), "scan_errors": scan.errors,
             });
-
-            if auto_analyze && scan_result.added > 0 {
-                let new_indices: Vec<usize> = (0..scan_result.added as usize).collect();
-                let pipelines: Vec<String> =
-                    vec!["faces", "objects", "colors", "composition", "scene"]
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                let (analyzed, analyze_errors) =
-                    self.run_analysis_on_indices(&new_indices, &pipelines).await;
-                let mut r = result;
-                r["auto_analyzed"] = serde_json::json!(analyzed);
-                if !analyze_errors.is_empty() {
-                    r["analyze_errors"] = serde_json::json!(analyze_errors);
-                }
-                Ok(r)
-            } else {
-                Ok(result)
+            if auto_analyze && !reconciled.analysis_assets.is_empty() {
+                let pipelines = ["faces", "objects", "colors", "composition", "scene"].map(String::from);
+                let (analyzed, errors) = self.run_analysis_on_assets(&reconciled.analysis_assets, &pipelines).await;
+                result["auto_analyzed"] = serde_json::json!(analyzed);
+                result["analyze_errors"] = serde_json::json!(errors);
             }
+            Ok(result)
         })
         .await
     }
@@ -188,6 +99,8 @@ impl MediaServer {
                 Ok(ga) => Ok(serde_json::json!({
                     "gallery_id": ga.gallery_id,
                     "image_count": ga.image_count,
+                    "total_size_bytes": ga.total_size_bytes,
+                    "mode": ga.mode,
                     "root_path": ga.root_path.display().to_string(),
                 })),
                 Err(e) => Ok(serde_json::json!({
@@ -301,11 +214,8 @@ impl MediaServer {
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked.truncate(limit);
 
-        // One renderable ```media block per result so the agent can surface
-        // the matched gallery images inline. absolute_path is
-        // root_path.join(relative_path) — that is what gallery_organize
-        // stored at scan time (gallery.rs:94), so the D18 MediaWidget
-        // (PathMediaStorage) can read the file.
+        // In-root paths are relative; external imports retain absolute paths.
+        // Path::join handles both without inventing a root-relative external file.
         let display_hints: Vec<String> = ranked
             .iter()
             .map(|(rel, _, _)| {
@@ -313,16 +223,12 @@ impl MediaServer {
             })
             .collect();
 
-        let results: Vec<serde_json::Value> = ranked
-            .into_iter()
-            .map(|(path, score, matches)| {
-                serde_json::json!({
-                    "image": path,
-                    "score": score,
-                    "matching_tags": matches,
-                })
-            })
-            .collect();
+        let assets = self.gallery_store.list_assets(&ga.gallery_id, 0, i64::MAX as usize).map_err(map_gallery_store_error)?;
+        let results: Vec<serde_json::Value> = ranked.into_iter().filter_map(|(path, score, matches)| {
+            let image = assets.iter().find(|image| image.relative_path == path)?;
+            Some(serde_json::json!({ "image": path, "image_id": image.id, "metadata_stale": image.metadata_stale,
+                "score": score, "matching_tags": matches }))
+        }).collect();
 
         Ok(serde_json::json!({
             "query": query,
@@ -466,10 +372,11 @@ impl MediaServer {
             })
             .collect();
 
-        let results: Vec<serde_json::Value> = scored
-            .into_iter()
-            .map(|(path, score)| serde_json::json!({"image": path, "similarity": score}))
-            .collect();
+        let assets = self.gallery_store.list_assets(&ga.gallery_id, 0, i64::MAX as usize).map_err(map_gallery_store_error)?;
+        let results: Vec<serde_json::Value> = scored.into_iter().filter_map(|(path, score)| {
+            let image = assets.iter().find(|image| image.relative_path == path)?;
+            Some(serde_json::json!({"image": path, "image_id": image.id, "metadata_stale": image.metadata_stale, "similarity": score}))
+        }).collect();
 
         Ok(serde_json::json!({
             "query": query_label,
@@ -492,9 +399,12 @@ impl MediaServer {
         }): Parameters<GalleryRefreshRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_refresh", async {
-            let (gid, _old_count, added, total, persisted) = self
-                .rescan_existing_gallery(recursive)
-                .map_err(map_media_error)?;
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let (scan, reconciled) = self.rescan_gallery(&ga, recursive).map_err(map_media_error)?;
+            let gid = &ga.gallery_id;
+            let added = reconciled.added;
+            let total = reconciled.total;
+            let persisted = scan.entries.len();
 
             let mut pipeline_names = vec!["objects", "colors", "composition", "scene"];
             if include_faces {
@@ -505,7 +415,7 @@ impl MediaServer {
 
             let all_indices: Vec<usize> = (0..total as usize).take(max_images).collect();
             let (analyzed, analyze_errors) =
-                self.run_analysis_on_indices(&all_indices, &pipelines).await;
+                self.run_analysis_on_indices(&ga, &all_indices, &pipelines).await;
 
             let mut faces_matched = 0u32;
             let mut registry_count = 0usize;
@@ -519,7 +429,7 @@ impl MediaServer {
                 if let Some(folder) = crate::default_face_folder()
                     && folder.is_dir()
                 {
-                    match self.run_face_scan_folder(&folder, false).await {
+                    match self.run_face_scan_folder(&ga, &folder, false).await {
                         Ok(result) => {
                             face_scan = result;
                         }
@@ -530,32 +440,6 @@ impl MediaServer {
                 }
 
                 // Stage 2: match detected faces against the registry.
-                let ga = match self.access_gallery() {
-                    Ok(ga) => ga,
-                    Err(e) => {
-                        return Ok(serde_json::json!({
-                            "status": "refreshed",
-                            "gallery_id": gid,
-                            "scan": {
-                                "images_added": added,
-                                "total_images": total,
-                                "persisted": persisted,
-                            },
-                            "analysis": {
-                                "images_analyzed": analyzed,
-                                "pipelines": pipelines,
-                            },
-                            "face_matching": {
-                                "error": format!("{} — cannot match faces", e)
-                            },
-                            "errors": {
-                                "analysis": analyze_errors,
-                                "matching": serde_json::json!([]),
-                            },
-                        }));
-                    }
-                };
-
                 let registry = match self.gallery_store.list_faces(Some("valid")) {
                     Ok(faces) => faces,
                     Err(e) => {
@@ -577,6 +461,11 @@ impl MediaServer {
                 "gallery_id": gid,
                 "scan": {
                     "images_added": added,
+                    "images_changed": reconciled.changed,
+                    "images_missing": reconciled.missing,
+                    "images_restored": reconciled.restored,
+                    "complete": scan.errors.is_empty(),
+                    "errors": scan.errors,
                     "total_images": total,
                     "persisted": persisted,
                 },
@@ -655,20 +544,15 @@ impl MediaServer {
         execute_tool(self, "gallery_analyze", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
 
-            // NOTE: A benign race exists between access_gallery() snapshot and the loop below.
-            // If images are added/removed concurrently, resolve_image_id may fail for an index
-            // that was valid at snapshot time. These failures are silently skipped (continue),
-            // producing graceful degradation: at worst, a newly-added image is missed or a
-            // removed image is skipped. Holding the lock across the full analysis would block
-            // concurrent operations, so we accept this trade-off.
             let indices: Vec<usize> = match mode.as_str() {
                 "selection" => image_indices.unwrap_or_default(),
                 "all" => (0..ga.image_count as usize).collect(),
                 _ => {
                     let mut untagged = Vec::new();
                     for i in 0..ga.image_count as usize {
-                        if let Ok(image_id) = self.resolve_image_id(i) {
-                            match self.gallery_store.get_tags(&image_id) {
+                        let image = self.gallery_store.get_image(&ga.gallery_id, Some(i), None).map_err(map_gallery_store_error)?;
+                        {
+                            match self.gallery_store.get_tags(&image.id) {
                                 Ok(tags) if tags.is_empty() => untagged.push(i),
                                 Ok(_) => continue,
                                 // A store failure is not "untagged" — surfacing it
@@ -699,7 +583,7 @@ impl MediaServer {
                     .collect();
             let pipelines = pipelines.unwrap_or(all_pipelines);
 
-            let (analyzed, errors) = self.run_analysis_on_indices(&indices, &pipelines).await;
+            let (analyzed, errors) = self.run_analysis_on_indices(&ga, &indices, &pipelines).await;
 
             let vision_label = self
                 .resolve_vision_model()
@@ -874,7 +758,7 @@ impl MediaServer {
                 )));
             }
 
-            self.run_face_scan_folder(&folder, force).await
+            self.run_face_scan_folder(&self.access_gallery().map_err(map_media_error)?, &folder, force).await
         })
         .await
     }
@@ -938,15 +822,8 @@ impl MediaServer {
             // the inline-renderable display_hints; relative_path stays in the
             // result as a human-readable image identifier.
             let mut dated_images: Vec<(String, String, String)> = Vec::new();
-            for idx in 0..ga.image_count as usize {
-                let img = match self
-                    .gallery_store
-                    .get_image(&ga.gallery_id, Some(idx), None)
-                {
-                    Ok(i) => i,
-                    Err(_) => continue,
-                };
-
+            let assets = self.gallery_store.list_assets(&ga.gallery_id, 0, i64::MAX as usize).map_err(map_gallery_store_error)?;
+            for img in assets {
                 if let Some(ref terms) = search_terms {
                     // A store failure must not silently drop images from the
                     // timeline — propagate so the operator sees the DB error.
@@ -1117,6 +994,9 @@ impl MediaServer {
                 .map(|(i, image)| {
                     serde_json::json!({
                         "index": offset + i,
+                        "id": image.id,
+                        "missing": image.missing,
+                        "metadata_stale": image.metadata_stale,
                         "path": image.absolute_path,
                         "media_type": image.media_type,
                         "width": image.width,
@@ -1141,16 +1021,17 @@ impl MediaServer {
     )]
     pub async fn gallery_asset_detail(
         &self,
-        Parameters(GalleryAssetDetailRequest { image_index }): Parameters<
+        Parameters(GalleryAssetDetailRequest { image_index, image_id }): Parameters<
             GalleryAssetDetailRequest,
         >,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_asset_detail", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
-            let image = self
-                .gallery_store
-                .get_image(&ga.gallery_id, Some(image_index), None)
-                .map_err(|e| map_media_error(e.into()))?;
+            let image = match (image_index, image_id) {
+                (Some(index), None) => self.gallery_store.get_image(&ga.gallery_id, Some(index), None),
+                (None, Some(id)) => self.gallery_store.get_by_id(&ga.gallery_id, &id),
+                _ => return Err(McpToolError::invalid_argument("Supply exactly one of image_index or image_id")),
+            }.map_err(map_gallery_store_error)?;
             let tags = self
                 .gallery_store
                 .get_tags(&image.id)
@@ -1313,13 +1194,13 @@ impl MediaServer {
                 }
             };
             let ga = self.access_gallery().map_err(map_media_error)?;
-            let file_path = std::path::Path::new(&path);
+            let file_path = std::path::Path::new(&path).canonicalize().map_err(|error| McpToolError::invalid_argument(format!("{path}: {error}")))?;
             if !file_path.exists() {
                 return Err(McpToolError::invalid_argument(format!(
                     "{kind} file not found: {path}"
                 )));
             }
-            let bytes = std::fs::read(file_path).map_err(|e| {
+            let bytes = std::fs::read(&file_path).map_err(|e| {
                 McpToolError::invalid_argument(format!("Failed to read {kind} file: {e}"))
             })?;
             let hash = {
@@ -1343,7 +1224,7 @@ impl MediaServer {
                 .add_media(
                     &ga.gallery_id,
                     &filename,
-                    &path,
+                    &file_path.to_string_lossy(),
                     &hash,
                     width.unwrap_or(0),
                     height.unwrap_or(0),
@@ -1502,14 +1383,15 @@ impl MediaServer {
         >,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_list_album_members", async {
-            let image_ids = self
-                .gallery_store
-                .list_album_members(&album_id)
-                .map_err(|e| map_media_error(e.into()))?;
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let image_ids = self.gallery_store.list_album_members(&album_id).map_err(map_gallery_store_error)?;
+            let assets = self.gallery_store.list_assets(&ga.gallery_id, 0, i64::MAX as usize).map_err(map_gallery_store_error)?;
+            let image_indices: Vec<usize> = assets.iter().enumerate().filter_map(|(index, image)| image_ids.contains(&image.id).then_some(index)).collect();
             Ok(serde_json::json!({
                 "album_id": album_id,
                 "image_ids": image_ids,
-                "count": image_ids.len(),
+                "image_indices": image_indices,
+                "count": image_indices.len(),
             }))
         })
         .await
