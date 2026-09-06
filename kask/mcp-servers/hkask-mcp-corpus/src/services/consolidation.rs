@@ -452,6 +452,9 @@ impl ConsolidationService {
             }
         }
 
+        // Even an unsuccessful re-embed must surface concurrent invalidation.
+        write.ensure_active()?;
+
         // Phase 5: Write output
         let mut out = String::new();
         for chunk in &consolidated {

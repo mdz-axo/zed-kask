@@ -78,7 +78,7 @@ impl InferencePort for RecordingPort {
                     vec![
                         1.0;
                         if self.wrong_dimension {
-                            1
+                            crate::embedding_dim() + 1
                         } else {
                             crate::embedding_dim()
                         }
@@ -258,7 +258,7 @@ async fn retrieval_consolidation_survives_restart() {
     .expect("tagged");
     request.chunks_jsonl = path.to_string_lossy().into();
     content(server.corpus_embed(Parameters(request)).await);
-    let request = crate::tools::corpus::ConsolidateChunksRequest {
+    let request = || crate::tools::corpus::ConsolidateChunksRequest {
         tagged_jsonl: path.to_string_lossy().into(),
         output: directory
             .path()
@@ -273,8 +273,21 @@ async fn retrieval_consolidation_survives_restart() {
         max_chunks_per_cluster: 10,
         dry_run: false,
     };
-    let summary = content(server.corpus_consolidate_chunks(Parameters(request)).await);
-    assert_eq!(summary["reembedded"], 1, "{summary}");
+    for _ in 0..2 {
+        let summary = content(
+            server
+                .corpus_consolidate_chunks(Parameters(request()))
+                .await,
+        );
+        assert_eq!(summary["reembedded"], 1, "{summary}");
+    }
+    assert!(
+        port.inputs
+            .lock()
+            .expect("inputs")
+            .iter()
+            .any(|input| input == &format!("[unclassified] {SYNTHESIZED}"))
+    );
     let fresh = self::server(port);
     for current in [&server, &fresh] {
         let result = content(
@@ -484,18 +497,15 @@ async fn retrieval_invalid_vectors_do_not_publish() {
             ..Default::default()
         });
         let server = server(port);
-        let summary = content(
-            server
-                .corpus_embed(Parameters(embed_request(
-                    directory.path(),
-                    "memory.db",
-                    ORIGINAL,
-                )))
-                .await,
-        );
-        assert_eq!(summary["total"], 1);
+        let request = embed_request(directory.path(), "memory.db", ORIGINAL);
+        let rows = ["corpus:test:1", "corpus:test:2"]
+            .map(|entity_ref| json!({"entity_ref":entity_ref,"text":ORIGINAL}).to_string())
+            .join("\n");
+        std::fs::write(&request.chunks_jsonl, rows).expect("two chunks");
+        let summary = content(server.corpus_embed(Parameters(request)).await);
+        assert_eq!(summary["total"], 2);
         assert_eq!(summary["embedded"], 0);
-        assert_eq!(summary["failed"], 1);
+        assert_eq!(summary["failed"], 2);
         let store = crate::helpers::open_memory_store(
             &directory.path().join("memory.db").to_string_lossy(),
             PASSPHRASE,
@@ -532,7 +542,8 @@ async fn retrieval_inflight_embed_is_cancelled() {
             }
             release.notify_one();
             Ok(())
-        }).expect("embedding and invalidation complete");
+        })
+        .expect("embedding and invalidation complete");
         let result = content(Ok(result.0));
         assert_eq!(result["embedded"], 0);
         assert_eq!(result["failed"], 1);
@@ -608,7 +619,8 @@ async fn retrieval_inflight_hydration_cannot_republish() {
                 release.notify_one();
                 Ok(())
             }
-        ).expect("query and invalidation complete");
+        )
+        .expect("query and invalidation complete");
         let result = content(Ok(result.0));
         assert_eq!(result["results"], json!([]));
         assert!(result.get("answer_error").is_some());

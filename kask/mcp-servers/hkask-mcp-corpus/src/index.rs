@@ -46,6 +46,10 @@ impl DurableWrite {
     pub fn is_cancelled(&self) -> bool {
         self.publication.is_cancelled()
     }
+
+    pub fn ensure_active(&self) -> Result<(), McpToolError> {
+        PassageIndex::check_publication(&self.publication)
+    }
 }
 
 #[derive(Default)]
@@ -72,12 +76,7 @@ impl PassageIndex {
             .map_err(|_| McpToolError::internal("Passage index mutex poisoned")) // rr0044-ok: poisoned internal state
     }
 
-    fn begin(
-        &self,
-        origin: Origin,
-        references: Vec<String>,
-    ) -> Result<Arc<Publication>, McpToolError> {
-        let mut state = self.lock()?;
+    fn begin(state: &mut IndexState, origin: Origin, references: Vec<String>) -> Arc<Publication> {
         let publication = Arc::new(Publication {
             origin,
             references,
@@ -85,7 +84,7 @@ impl PassageIndex {
         });
         state.active.retain(|entry| entry.strong_count() > 0);
         state.active.push(Arc::downgrade(&publication));
-        Ok(publication)
+        publication
     }
 
     pub fn begin_durable(
@@ -94,8 +93,9 @@ impl PassageIndex {
         passphrase: &str,
         references: Vec<String>,
     ) -> Result<DurableWrite, McpToolError> {
+        let mut state = self.lock()?;
         let store = open_memory_store(path, passphrase)?;
-        let publication = self.begin(database_origin(path)?, references)?;
+        let publication = Self::begin(&mut state, database_origin(path)?, references);
         Ok(DurableWrite { store, publication })
     }
 
@@ -104,7 +104,12 @@ impl PassageIndex {
         source: &str,
         references: Vec<String>,
     ) -> Result<Arc<Publication>, McpToolError> {
-        self.begin(Origin::Ephemeral(source.into()), references)
+        let mut state = self.lock()?;
+        Ok(Self::begin(
+            &mut state,
+            Origin::Ephemeral(source.into()),
+            references,
+        ))
     }
 
     /// expect: Completed writes are searchable once, with their original passage text.
@@ -157,11 +162,13 @@ impl PassageIndex {
     ) -> Result<usize, McpToolError> {
         let mut state = self.lock()?;
         Self::check_publication(publication)?;
+        let Origin::Ephemeral(source) = &publication.origin else {
+            return Err(McpToolError::invalid_argument(
+                "Ephemeral publication requires an ephemeral origin",
+            ));
+        };
         for (position, ((entity_ref, text), embedding)) in passages.iter().zip(vectors).enumerate()
         {
-            let Origin::Ephemeral(source) = &publication.origin else {
-                unreachable!("ephemeral permit required")
-            };
             state.passages.insert(
                 (publication.origin.clone(), entity_ref.clone()),
                 IndexedPassage {
@@ -224,11 +231,20 @@ impl PassageIndex {
         Ok(())
     }
 
-    pub fn retrieve(&self, query: &[f32], k: usize, min_score: f32) -> Result<Retrieval, McpToolError> {
+    pub fn retrieve(
+        &self,
+        query: &[f32],
+        k: usize,
+        min_score: f32,
+    ) -> Result<Retrieval, McpToolError> {
         let state = self.lock()?;
         Ok(Retrieval {
             total_indexed: state.passages.len(),
-            missing_text: state.passages.values().filter(|passage| passage.text.is_none()).count(),
+            missing_text: state
+                .passages
+                .values()
+                .filter(|passage| passage.text.is_none())
+                .count(),
             matches: search_passages(state.passages.values(), query, k, min_score),
         })
     }
@@ -295,7 +311,10 @@ impl PassageIndex {
             )
         })?;
         let mut purged_h_mems = 0;
-        for h_mem in h_mems {
+        for h_mem in h_mems
+            .into_iter()
+            .filter(|h_mem| h_mem.entity.starts_with(prefix))
+        {
             store.delete_h_mem(&h_mem.id).map_err(|error| map_memory_store_error(error, "h_mem purge partially applied; embeddings already purged and cache invalidated"))?;
             purged_h_mems += 1;
         }
@@ -338,10 +357,23 @@ pub(crate) struct Retrieval {
     pub matches: Vec<RetrievedPassage>,
 }
 
-pub(crate) fn search_passages<'a>(passages: impl Iterator<Item = &'a IndexedPassage>, query: &[f32], k: usize, min_score: f32) -> Vec<RetrievedPassage> {
-    let mut scored: Vec<_> = passages.map(|passage| (crate::cosine_similarity(query, &passage.embedding), passage))
-        .filter(|(score, _)| min_score <= 0.0 || *score >= min_score).collect();
+pub(crate) fn search_passages<'a>(
+    passages: impl Iterator<Item = &'a IndexedPassage>,
+    query: &[f32],
+    k: usize,
+    min_score: f32,
+) -> Vec<RetrievedPassage> {
+    let mut scored: Vec<_> = passages
+        .map(|passage| (crate::cosine_similarity(query, &passage.embedding), passage))
+        .filter(|(score, _)| min_score <= 0.0 || *score >= min_score)
+        .collect();
     scored.sort_by(|left, right| right.0.total_cmp(&left.0));
     scored.truncate(k);
-    scored.into_iter().map(|(score, passage)| RetrievedPassage { score, passage: passage.clone() }).collect()
+    scored
+        .into_iter()
+        .map(|(score, passage)| RetrievedPassage {
+            score,
+            passage: passage.clone(),
+        })
+        .collect()
 }
