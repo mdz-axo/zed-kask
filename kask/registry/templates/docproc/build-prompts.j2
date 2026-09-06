@@ -3,9 +3,9 @@
 {#
 [inference]
   This template produces the system+user prompt for QA generation.
-  It provides CONTEXT only — the output format is specified by generate-qa.j2
-  which wraps this prompt as the passage text in corpus_generate_qa_batch.
-  Do NOT include an output_contract here — it would conflict with generate-qa.j2.
+  It provides context and task instructions. The prompt builder appends the
+  canonical QA response contract once; both batch transports forward the
+  prepared system/user messages unchanged. Do not add another response contract here.
 #}
 <system>
 You are a training data generator. Given a primary passage, generate ONE question-answer pair grounded in the passage's actual content. Calibrate question depth to the expertise level indicated in the ontological context below.

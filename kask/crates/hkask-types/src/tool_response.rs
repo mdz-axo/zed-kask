@@ -165,7 +165,14 @@ pub fn display_hints_from_output_text(text: &str) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
         return Vec::new();
     };
-    let payload = unwrap_tool_envelope(value);
+    display_hints_from_output_value(&value)
+}
+
+/// Extract display hints from a structured tool result without serializing it.
+/// Text transports should use [`display_hints_from_output_text`] as their adapter.
+#[must_use]
+pub fn display_hints_from_output_value(value: &Value) -> Vec<String> {
+    let payload = unwrap_tool_envelope(value.clone());
     let mut hints = Vec::new();
     if let Some(hint) = payload.get("display_hint").and_then(|h| h.as_str()) {
         hints.push(hint.to_string());
@@ -221,6 +228,33 @@ mod tests {
             error_kind_from_display("Invocation failed: [unavailable] yt-dlp missing"),
             "unavailable"
         );
+    }
+
+    /// expect: [P7] Structured results and the live text adapter expose the
+    /// same hints, whether or not the transport carries a content envelope.
+    #[test]
+    fn display_hints_value_and_text_adapters_agree() {
+        let payload = serde_json::json!({
+            "display_hint": "first",
+            "display_hints": ["second", 42, null, "third"],
+        });
+        for output in [payload.clone(), serde_json::json!({"content": payload})] {
+            assert_eq!(
+                display_hints_from_output_value(&output),
+                ["first", "second", "third"]
+            );
+            assert_eq!(
+                display_hints_from_output_value(&output),
+                display_hints_from_output_text(&output.to_string())
+            );
+        }
+        for output in [
+            Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({"ok": true}),
+        ] {
+            assert!(display_hints_from_output_value(&output).is_empty());
+        }
     }
 
     #[test]

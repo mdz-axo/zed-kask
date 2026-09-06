@@ -9,6 +9,25 @@ use crate::types::{
 };
 use crate::*;
 
+/// Decode the `job_list` wire contract at a client boundary. The payload is
+/// an array of complete job records, not an object containing `jobs`.
+///
+/// expect: A broken queue response must not look like an empty queue.
+/// [P7] Motivating: server and panel share one response contract.
+/// pre: output is the tool's serialized response.
+/// post: valid arrays (including empty) decode; malformed data and tool errors fail.
+pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, String> {
+    let value: serde_json::Value = serde_json::from_str(output)
+        .map_err(|error| format!("invalid job_list response: {error}"))?;
+    let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+    if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
+        return Err(error.message);
+    }
+    serde_json::from_value(payload).map_err(|error| {
+        format!("invalid job_list response (expected an array of job records): {error}")
+    })
+}
+
 /// Marks a job `failed` when dropped without being defused — a panic or
 /// abort inside the spawned generation task must not leave the record in
 /// "running" forever (the operator could not distinguish a live job from a
@@ -308,6 +327,95 @@ impl MediaServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoInference;
+
+    impl hkask_types::InferencePort for NoInference {
+        fn generate(
+            &self,
+            _: &str,
+            _: &hkask_types::template::LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            panic!("job_list must not invoke inference")
+        }
+    }
+
+    /// expect: [P7] Actual server responses decode with the same contract the
+    /// queue consumes, including valid empty lists and preserved job details.
+    #[tokio::test]
+    async fn job_list_response_round_trips_through_client_decoder()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoInference),
+            Arc::new(Mutex::new(None)),
+            Arc::new(GalleryStore::from_driver(driver)?),
+            crate::templates::create_env()?,
+            FfmpegRunner::detect(),
+            YtDlpRunner::detect(),
+            crate::jobs::new_job_store(),
+        );
+        let response = server
+            .job_list(Parameters(JobListRequest {
+                status: None,
+                limit: None,
+            }))
+            .await?;
+        assert!(parse_job_list_response(&response)?.is_empty());
+        {
+            let mut store = server.job_store.lock().map_err(|error| error.to_string())?;
+            for (id, status, created_at) in [
+                ("older", "completed", "2026-09-04T00:00:00Z"),
+                ("newer", "running", "2026-09-05T00:00:00Z"),
+            ] {
+                store.insert(
+                    id.into(),
+                    JobRecord {
+                        id: id.into(),
+                        op: "generate_image".into(),
+                        status: status.into(),
+                        created_at: created_at.into(),
+                        completed_at: None,
+                        result: Some(serde_json::json!({"output": "/tmp/雪.png"})),
+                        error: None,
+                    },
+                );
+            }
+        }
+        let response = server
+            .job_list(Parameters(JobListRequest {
+                status: None,
+                limit: None,
+            }))
+            .await?;
+        let jobs = parse_job_list_response(&response)?;
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].id, "newer");
+        assert_eq!(jobs[1].id, "older");
+        assert_eq!(
+            jobs[0].result,
+            Some(serde_json::json!({"output": "/tmp/雪.png"}))
+        );
+        let response = server
+            .job_list(Parameters(JobListRequest {
+                status: Some("completed".into()),
+                limit: Some(1),
+            }))
+            .await?;
+        let jobs = parse_job_list_response(&response)?;
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, "older");
+        Ok(())
+    }
 
     #[test]
     fn job_store_starts_empty() {

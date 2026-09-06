@@ -19,6 +19,7 @@ use std::collections::HashSet;
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v1::ToolCallId;
 use gpui::{Context, Entity, Render, SharedString, Window};
+use hkask_mcp_media::types::JobRecord;
 use serde_json::Value;
 use ui::{Icon, IconName, Label, LabelSize, prelude::*};
 use util::ResultExt as _;
@@ -41,15 +42,6 @@ pub struct MediaAsset {
     /// The gallery index other gallery tools accept (`image_index`).
     /// `None` for conversation-surfaced assets not yet in the gallery index.
     pub gallery_index: Option<usize>,
-}
-
-/// One generation-job row (from `job_list`).
-#[derive(Clone, Debug)]
-struct JobRow {
-    id: String,
-    op: String,
-    status: String,
-    created_at: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +73,7 @@ pub struct MediaViewer {
     gallery_total: Option<u64>,
     /// Gallery listing pagination cursor.
     gallery_offset: usize,
-    jobs: Vec<JobRow>,
+    jobs: Vec<JobRecord>,
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
     detail: Option<Value>,
     /// Two-step delete confirmation: the asset awaiting confirmation.
@@ -129,7 +121,6 @@ impl MediaViewer {
             self.processed_tool_results.clear();
         }
         self.thread = Some(thread.downgrade());
-        let mut new_selection = None;
         let mut gallery_mutated = false;
         {
             let thread = thread.read(cx);
@@ -148,29 +139,10 @@ impl MediaViewer {
                 {
                     gallery_mutated = true;
                 }
-                let Value::String(text) = output else {
-                    continue;
-                };
-                for hint in hkask_types::tool_response::display_hints_from_output_text(text) {
-                    let Some(asset) = asset_from_hint(&hint, &tool) else {
-                        continue;
-                    };
-                    if self
-                        .assets
-                        .iter()
-                        .any(|existing| existing.body == asset.body)
-                    {
-                        continue;
-                    }
-                    self.assets.push(asset);
-                    new_selection = Some(self.assets.len() - 1);
-                }
+                self.ingest_tool_result(output, &tool);
             }
         }
-        if let Some(ix) = new_selection {
-            self.selected = Some(ix);
-            self.detail = None; // stale detail for the previous selection
-        }
+
         // Only while the Library is on screen: switching to the tab already
         // reloads it (`tab_button`), so reloading from other tabs would be
         // wasted dispatches.
@@ -185,10 +157,18 @@ impl MediaViewer {
     /// the newest — the same ingestion `ingest_thread` applies to thread
     /// tool results, reused for viewer-initiated edits so a trimmed clip or
     /// concatenation surfaces immediately.
-    fn merge_tool_result(&mut self, output_text: &str, tool: &str) {
+    /// expect: Show each completed artifact regardless of the tool transport.
+    /// [P7] Motivating: structured and text transports share the viewer ingress.
+    /// pre: output is an ACP raw output or an invoker response.
+    /// post: new valid assets are selected; repeated bodies do not duplicate.
+    pub fn ingest_tool_result(&mut self, output: &Value, tool: &str) {
+        let hints = match output {
+            Value::String(text) => hkask_types::tool_response::display_hints_from_output_text(text),
+            value => hkask_types::tool_response::display_hints_from_output_value(value),
+        };
         let tool: SharedString = tool.into();
         let mut new_selection = None;
-        for hint in hkask_types::tool_response::display_hints_from_output_text(output_text) {
+        for hint in hints {
             let Some(asset) = asset_from_hint(&hint, &tool) else {
                 continue;
             };
@@ -229,7 +209,7 @@ impl MediaViewer {
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
                 this.update(cx, |this, cx| {
-                    this.merge_tool_result(&text, tool);
+                    this.ingest_tool_result(&Value::String(text), tool);
                     this.status = None;
                     cx.notify();
                 })
@@ -415,37 +395,15 @@ impl MediaViewer {
             invoker.invoke_tool(MEDIA_SERVER, "job_list", serde_json::json!({ "limit": 20 }));
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
-                let payload = hkask_types::tool_response::parse_tool_response(&text);
+                let jobs = hkask_mcp_media::tools::jobs::parse_job_list_response(&text);
                 this.update(cx, |this, cx| {
-                    this.jobs = payload
-                        .as_ref()
-                        .and_then(|p| p.get("jobs"))
-                        .and_then(|j| j.as_array())
-                        .map(|rows| {
-                            rows.iter()
-                                .filter_map(|row| {
-                                    Some(JobRow {
-                                        id: row.get("id")?.as_str()?.to_string(),
-                                        op: row
-                                            .get("op")
-                                            .and_then(|o| o.as_str())
-                                            .unwrap_or("?")
-                                            .to_string(),
-                                        status: row
-                                            .get("status")
-                                            .and_then(|s| s.as_str())
-                                            .unwrap_or("?")
-                                            .to_string(),
-                                        created_at: row
-                                            .get("created_at")
-                                            .and_then(|c| c.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    match jobs {
+                        Ok(jobs) => {
+                            this.jobs = jobs;
+                            this.status = None;
+                        }
+                        Err(error) => this.status = Some(format!("job_list failed: {error}")),
+                    }
                     cx.notify();
                 })
                 .log_err();
@@ -1222,17 +1180,10 @@ fn asset_from_hint(hint: &str, tool: &SharedString) -> Option<MediaAsset> {
     let trimmed = hint.trim();
     let after_fence = trimmed.strip_prefix("```media")?;
     let body = after_fence.trim().strip_suffix("```")?.trim().to_string();
-    let value: Value = serde_json::from_str(&body).ok()?;
-    let kind = value
-        .get("kind")
-        .and_then(|k| k.as_str())
-        .unwrap_or("image")
-        .to_string();
-    let src = value
-        .get("src")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
+    let payload = hkask_media_widget::MediaBlockBody::parse(&body).ok()?;
+    payload.to_media_ref().ok()?;
+    let kind = payload.kind;
+    let src = payload.src;
     Some(MediaAsset {
         body,
         src,
@@ -1308,6 +1259,178 @@ mod tests {
         format!("```media\n{body}\n```")
     }
 
+    /// expect: [P7] MediaViewer::ingest_tool_result makes new artifacts visible
+    /// without an unrelated render; replaying an existing artifact stays quiet.
+    #[gpui::test]
+    fn ingest_tool_result_notifies_observers_only_for_new_assets(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            let notifications = notifications.clone();
+            cx.observe(&viewer, move |_, _| {
+                notifications.set(notifications.get() + 1);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(notifications.get(), 0);
+
+        for (index, source) in ["/tmp/structured.png", "/tmp/text.png"]
+            .into_iter()
+            .enumerate()
+        {
+            let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
+                serde_json::json!({"output": source}),
+                "generate_image",
+                "image",
+                serde_json::json!({}),
+                None,
+            );
+            let output = if index == 0 {
+                output
+            } else {
+                Value::String(output.to_string())
+            };
+            viewer.update(cx, |viewer, _| {
+                viewer.ingest_tool_result(&output, "generate_image")
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                notifications.get(),
+                index + 1,
+                "new artifact must notify GPUI observers"
+            );
+
+            viewer.update(cx, |viewer, _| {
+                viewer.ingest_tool_result(&output, "generate_image")
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                notifications.get(),
+                index + 1,
+                "duplicate must not request another redraw"
+            );
+        }
+        viewer.update(cx, |viewer, _| {
+            viewer.ingest_tool_result(&serde_json::json!({"status": "ok"}), "gallery_status");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            notifications.get(),
+            2,
+            "hint-free output does not change the view"
+        );
+    }
+
+    /// expect: [P7] The public viewer ingress accepts both live transports,
+    /// retains metadata, selects new assets, and does not duplicate replays.
+    #[gpui::test]
+    fn ingest_tool_result_accepts_structured_and_text_transports(cx: &mut gpui::TestAppContext) {
+        let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
+            serde_json::json!({"output": "/tmp/雪/quote\"-back\\slash\nimage.png"}),
+            "generate_image",
+            "image",
+            serde_json::json!({"prompt": "snow"}),
+            None,
+        );
+        let wrapped = serde_json::json!({"content": output});
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, _| {
+            viewer.detail = Some(serde_json::json!({"stale": true}));
+            viewer.ingest_tool_result(&wrapped, "generate_image");
+            assert_eq!(viewer.assets.len(), 1);
+            assert_eq!(viewer.selected, Some(0));
+            assert!(viewer.detail.is_none());
+            viewer.ingest_tool_result(&Value::String(wrapped.to_string()), "generate_image");
+            viewer.ingest_tool_result(&output, "generate_image");
+            assert_eq!(viewer.assets.len(), 1);
+            let second = hkask_mcp_media::media_block::media_block("video", "/tmp/second.mp4");
+            viewer.ingest_tool_result(
+                &serde_json::json!({"display_hints": [second]}),
+                "generate_video",
+            );
+            assert_eq!(viewer.selected, Some(1));
+            assert_eq!(viewer.assets[1].src, "/tmp/second.mp4");
+        });
+    }
+
+    struct JobListInvoker(String);
+
+    impl hkask_tool_invoker::ToolInvoker for JobListInvoker {
+        fn invoke_tool(
+            &self,
+            server: &str,
+            tool: &str,
+            args: Value,
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
+            assert_eq!(server, MEDIA_SERVER);
+            assert_eq!(tool, "job_list");
+            assert_eq!(args, serde_json::json!({"limit": 20}));
+            gpui::Task::ready(Ok(self.0.clone()))
+        }
+    }
+
+    /// expect: [P7] Queue refresh distinguishes an empty queue from a broken
+    /// response, and preserves the last good rows when refresh fails.
+    #[gpui::test]
+    fn load_jobs_surfaces_array_rows_and_response_failures(cx: &mut gpui::TestAppContext) {
+        struct RestoreInvoker(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
+        impl Drop for RestoreInvoker {
+            fn drop(&mut self) {
+                hkask_tool_invoker::set_tool_invoker(self.0.take());
+            }
+        }
+        let _restore = RestoreInvoker(hkask_tool_invoker::shared_tool_invoker());
+        let record = hkask_mcp_media::types::JobRecord {
+            id: "job-1".into(),
+            op: "generate_image".into(),
+            status: "running".into(),
+            created_at: "2026-09-05T00:00:00Z".into(),
+            completed_at: None,
+            result: None,
+            error: None,
+        };
+        let viewer = cx.new(|_| MediaViewer::new());
+        let response = serde_json::json!({"content": [record]}).to_string();
+        hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(response))));
+        viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(viewer.jobs.len(), 1);
+            assert_eq!(viewer.jobs[0].id, "job-1");
+            assert!(viewer.status.is_none());
+        });
+        for response in [
+            "not json",
+            "{}",
+            r#"{"content":{"jobs":[]}}"#,
+            r#"{"content":[{"id":"broken"}]}"#,
+            r#"{"error":"job store unavailable","kind":"unavailable"}"#,
+        ] {
+            hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
+                response.into(),
+            ))));
+            viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, _| {
+                assert_eq!(viewer.jobs.len(), 1, "failed refresh preserves known jobs");
+                let status = viewer.status.as_deref().expect("visible failure");
+                assert!(status.contains("job_list"));
+                if response.contains("job store unavailable") {
+                    assert!(status.contains("job store unavailable"));
+                }
+            });
+        }
+        hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
+            r#"{"content":[]}"#.into(),
+        ))));
+        viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(viewer.jobs.is_empty());
+            assert!(viewer.status.is_none());
+        });
+    }
+
     #[test]
     fn asset_from_hint_parses_kind_and_src() {
         let asset = asset_from_hint(
@@ -1320,6 +1443,58 @@ mod tests {
         assert_eq!(asset.tool, "video_fetch");
         assert!(asset.body.starts_with('{'));
         assert!(asset.gallery_index.is_none());
+    }
+
+    /// expect: [P7] Invalid media never becomes a selectable phantom asset.
+    #[test]
+    fn asset_from_hint_rejects_missing_src_and_unsupported_kind() {
+        for body in [
+            r#"{"kind":"image"}"#,
+            r#"{"kind":"hologram","src":"/tmp/x"}"#,
+        ] {
+            assert!(asset_from_hint(&hint(body), &"generate_image".into()).is_none());
+        }
+    }
+
+    /// expect: [P7] Server-authored hints preserve paths and provenance in both consumers.
+    #[test]
+    fn server_hint_round_trips_through_viewer_and_widget() -> anyhow::Result<()> {
+        let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
+        for kind in ["image", "svg", "video", "audio"] {
+            let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
+                serde_json::json!({"output": source}),
+                "generate_image",
+                kind,
+                serde_json::json!({"prompt": "雪\n\""}),
+                Some("span-1".into()),
+            );
+            let hint = output["display_hint"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("missing hint"))?;
+            let asset = asset_from_hint(hint, &"generate_image".into())
+                .ok_or_else(|| anyhow::anyhow!("missing asset"))?;
+            let body = hkask_media_widget::MediaBlockBody::parse(&asset.body)?;
+            assert_eq!(asset.src, source);
+            assert_eq!(body.to_media_ref()?.src(), source);
+            assert_eq!(body.kind, kind);
+            assert_eq!(body.ontology.as_deref(), Some("omc:CreativeWork"));
+            assert_eq!(body.provenance.tool.as_deref(), Some("generate_image"));
+            assert_eq!(body.provenance.span_id.as_deref(), Some("span-1"));
+            assert_eq!(
+                body.provenance.args,
+                serde_json::json!({"prompt": "雪\n\""})
+            );
+            // Additional metadata stays in the original body handed to the renderer.
+            let mut extended: Value = serde_json::from_str(&asset.body)?;
+            extended["width"] = serde_json::json!(640);
+            extended["height"] = serde_json::json!(480);
+            extended["caption"] = serde_json::json!("雪\n\"");
+            let extended_hint = self::hint(&extended.to_string());
+            let asset = asset_from_hint(&extended_hint, &"generate_image".into())
+                .ok_or_else(|| anyhow::anyhow!("extended body rejected"))?;
+            assert_eq!(serde_json::from_str::<Value>(&asset.body)?, extended);
+        }
+        Ok(())
     }
 
     #[test]
@@ -1515,7 +1690,7 @@ mod edit_tests {
         })
         .to_string();
 
-        viewer.merge_tool_result(&output, "video_clip");
+        viewer.ingest_tool_result(&Value::String(output), "video_clip");
 
         assert_eq!(viewer.assets.len(), 1, "the clip must surface as an asset");
         let selected = viewer
@@ -1540,8 +1715,9 @@ mod edit_tests {
         })
         .to_string();
 
-        viewer.merge_tool_result(&output, "video_clip");
-        viewer.merge_tool_result(&output, "video_clip");
+        let output = Value::String(output);
+        viewer.ingest_tool_result(&output, "video_clip");
+        viewer.ingest_tool_result(&output, "video_clip");
 
         assert_eq!(
             viewer.assets.len(),
@@ -1556,9 +1732,12 @@ mod edit_tests {
     #[test]
     fn merge_tool_result_ignores_output_without_display_hint() {
         let mut viewer = MediaViewer::new();
-        viewer.merge_tool_result("{\"content\": {\"status\": \"clipped\"}}", "video_clip");
+        viewer.ingest_tool_result(
+            &serde_json::json!({"content": {"status": "clipped"}}),
+            "video_clip",
+        );
         assert!(viewer.assets.is_empty());
-        viewer.merge_tool_result("not json at all", "video_clip");
+        viewer.ingest_tool_result(&Value::String("not json at all".into()), "video_clip");
         assert!(viewer.assets.is_empty());
     }
 }
@@ -1594,7 +1773,7 @@ mod viewer_layout_tests {
         })
         .to_string();
         viewer.update(cx, |viewer, _| {
-            viewer.merge_tool_result(&output, "video_fetch")
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch")
         });
         let asset_count = viewer.update(cx, |viewer, cx| {
             let count = viewer.assets.len();
@@ -1743,7 +1922,7 @@ mod viewer_layout_tests {
         })
         .to_string();
         viewer.update(cx, |viewer, _| {
-            viewer.merge_tool_result(&output, "video_fetch")
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch")
         });
 
         let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {

@@ -44,9 +44,34 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 | `upscale_image` | Upscale an image to higher resolution |
 | `generate_video` | Generate a short video from a text prompt. Describe the scene you want to see in motion |
 
+## Tool-result contracts
+
+The approved media wire cleanup (2026-09-05) keeps `job_list`'s existing
+`{"content": [JobRecord, ...]}` response. The Queue calls
+`tools::jobs::parse_job_list_response` and uses the existing `JobRecord` type:
+empty arrays are valid; missing fields, malformed responses, and tool errors
+surface a panel status instead of silently clearing the queue.
+
+`display_hint` / `display_hints` contain JSON-serialized fenced media blocks.
+The viewer consumes structured raw outputs directly through
+`hkask_types::tool_response::display_hints_from_output_value`; text transports
+use `display_hints_from_output_text`. Both viewer and widget validate bodies
+with the widget's `MediaBlockBody` parser and media-kind resolver. `src` is
+required. Ontology and provenance are intentional optional metadata; the
+viewer retains the original JSON body, including dimensions and other fields.
+Quotes, backslashes, newlines, and Unicode in paths are serialized, not
+interpolated into JSON. No provider routing or GPUI layout changes accompany
+this contract repair.
+
+Pins: `media_blocks_round_trip_escaped_paths`,
+`job_list_response_round_trips_through_client_decoder`, and the media viewer's
+`ingest_tool_result_accepts_structured_and_text_transports`,
+`load_jobs_surfaces_array_rows_and_response_failures`, and
+`server_hint_round_trips_through_viewer_and_widget` tests.
+
 ## Configuration
 
-This server routes media generation through the inference IPC bridge to the zed process's `MediaRouter`. Vision-LLM calls (describe, analyze, face validation) also route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY` directly (that is read by the zed process).
+Media generation is child-local: `LazyInferencePort::media_generate` calls the media process's `MediaRouter` using its env-injected `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` (D35). Vision/chat/embed calls use the inference IPC bridge to zed's `LanguageModelRegistry`; media generation does not make that IPC round-trip.
 
 | Variable | Default | Description |
 |---|---|---|

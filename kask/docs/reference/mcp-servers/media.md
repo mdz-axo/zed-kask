@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-04
+last_updated: 2026-09-05
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -19,13 +19,13 @@ Tool count and every tool name below were verified against `#[tool(...)]`-annota
 
 ## Architecture
 
-The server is a thin binary over a library: `src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`src/hkask_mcp_media.rs:459-556`). All LLM and media-generation calls route through a single `InferencePort` — through zed's `LanguageModelRegistry` via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to a standalone router with env-var keys otherwise (`src/hkask_mcp_media.rs:462-468`).
+The server is a thin binary over a library: `src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`src/hkask_mcp_media.rs:459-556`). The single `InferencePort` separates two routes (D35): vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`; `media_generate` dispatches child-locally through `LazyInferencePort` to the media process's `MediaRouter` using env-injected provider keys. Media generation never makes the IPC round-trip.
 
 ```mermaid
 flowchart TD
     binary["main.rs binary<br/>#[tokio::main] → run()"]
     run["run()<br/>hkask_mcp_media.rs:459"]
-    port["resolve_inference_port<br/>IPC bridge or standalone router"]
+    port["InferencePort: vision/chat/embed via IPC; media generation child-local"]
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
     server["MediaServer<br/>7 state fields"]
@@ -74,7 +74,7 @@ status: VERIFIED
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB` (`src/hkask_mcp_media.rs:470-489`). There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback silently degraded every subsequent tool call to "gallery empty" — a broken feedback loop (`src/hkask_mcp_media.rs:473-479`). The file DB is unencrypted (gallery metadata is not a secret) and therefore does **not** use `HKASK_DB_PASSPHRASE` (`src/hkask_mcp_media.rs:479-480`).
 
-**Credentials:** one optional credential declared to `run_server` — `OPENROUTER_API_KEY`, "OpenRouter API key for vision LLMs" (`src/hkask_mcp_media.rs:550-553`). The kask-side registration allowlists `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY` (`kask/crates/kask_bridge/src/mcp_servers.rs:413`); both are optional because vision LLMs normally route through the IPC bridge to zed's `LanguageModelRegistry`, so the media process does not read API keys directly (`kask/crates/kask_bridge/src/mcp_servers.rs:409-412`).
+**Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`. These env-injected keys serve the child-local `MediaRouter`; vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — the media process does read provider keys for media generation (D35).
 
 **Environment variables** (all optional; the eight `HKASK_MEDIA_*_MODEL` vars resolve through the server's `models` module — `None` when unset, no constant fallback; callers fail visibly naming the env var, `src/hkask_mcp_media.rs:78-116`):
 
@@ -124,6 +124,20 @@ raw provider response overflowed the model's context (the 2026-08-31
 context bomb: two ~65K-token base64 results breached the 262144-token
 limit on the following turn). A persist failure surfaces as a tool error
 (`AssetPersistence` → `internal`); the raw payload is never the fallback.
+
+**Display-hint contract (approved wire cleanup, 2026-09-05):** `media_block`
+and `media_block_with_omc` serialize JSON rather than interpolating paths.
+`display_hint` is one fenced media block; `display_hints` is an array of them.
+Structured raw outputs use `hkask_types::tool_response::display_hints_from_output_value`;
+the live text transport uses `display_hints_from_output_text` as its adapter.
+Both viewer and widget use `MediaBlockBody` plus its media-kind resolver,
+rejecting missing `src` and unsupported kinds consistently. Ontology and
+provenance remain intentional optional metadata. The viewer retains the
+original body, including dimensions and additional metadata. Pins:
+`media_blocks_round_trip_escaped_paths` (server),
+`server_hint_round_trips_through_viewer_and_widget` and
+`ingest_tool_result_accepts_structured_and_text_transports` (viewer).
+No routing or layout change is part of this repair.
 
 ### Gallery management (`tools/gallery.rs`, 27 tools)
 
@@ -208,12 +222,22 @@ limit on the following turn). A persist failure surfaces as a tool error
 
 ### Async job queue (`tools/jobs.rs`, 4 tools)
 
+**Response contract (approved wire cleanup, 2026-09-05):** `job_list` retains
+its `{"content": [JobRecord, ...]}` envelope, newest first, with optional status
+filter and limit. There is no `jobs` wrapper. The Queue uses the existing
+`types::JobRecord` and `tools::jobs::parse_job_list_response`; malformed data
+and server errors produce a visible status while retaining the last good rows.
+An empty array is a valid empty queue. The actual server-response-to-decoder
+round-trip is pinned by `job_list_response_round_trips_through_client_decoder`;
+UI dispatch and state by `load_jobs_surfaces_array_rows_and_response_failures`
+in `crates/media_panel/src/media_viewer.rs`.
+
 | Tool | Line | Description |
 |------|------|-------------|
-| `job_submit` | 67 | Submit an async media generation job; returns a job ID immediately, poll `job_status` for completion. Accepts only asset-producing ops (generate_image, image_to_image, upscale, remove_background, generate_video, image_to_video, generate_speech). |
-| `job_list` | 220 | List generation jobs with status; optional filter (queued, running, completed, failed, cancelled). |
-| `job_status` | 249 | Status of a specific generation job by ID. |
-| `job_cancel` | 274 | Cancel a running or queued generation job by ID. |
+| `job_submit` | 86 | Submit an async media generation job; returns a job ID immediately, poll `job_status` for completion. Accepts only asset-producing ops (generate_image, image_to_image, upscale, remove_background, generate_video, image_to_video, generate_speech). |
+| `job_list` | 239 | List generation jobs with status; optional filter (queued, running, completed, failed, cancelled). |
+| `job_status` | 268 | Status of a specific generation job by ID. |
+| `job_cancel` | 293 | Cancel a running or queued generation job by ID. |
 
 ### Workflows (`tools/workflows.rs`, 4 tools)
 

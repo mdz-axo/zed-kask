@@ -8,17 +8,16 @@
 //! The block body carries OMC concept tags + server-authoritative provenance
 //! (tool, server, args, span_id) so the media widget can dispatch the
 //! OMC-driven "Explain" affordance and compose-back the "I disagree" gesture.
-//! Both fields are additive (`#[serde(default)]` on the widget side) —
-//! existing blocks without them still parse and render, just without the
-//! new affordances.
+//! Ontology and provenance are intentional optional metadata: blocks without
+//! them render without explain/compose-back affordances. JSON serialization
+//! preserves paths and metadata verbatim, including quotes and newlines.
 
 use crate::omc;
 
 /// Format a ```media fenced block for inclusion in tool responses.
 ///
 /// The block body is a JSON object: `{"kind","src","ontology","provenance"}`.
-/// `ontology` and `provenance` are optional — older blocks without them still
-/// parse (the widget uses `#[serde(default)]`).
+/// `ontology` and `provenance` are optional metadata, supplied by the enriched writer.
 ///
 /// ```text
 /// ```media
@@ -26,7 +25,7 @@ use crate::omc;
 /// ```
 /// ```
 pub fn media_block(kind: &str, src: &str) -> String {
-    format!("```media\n{{\"kind\":\"{kind}\",\"src\":\"{src}\"}}\n```")
+    media_block_with_omc(kind, src, None, None)
 }
 
 /// Format a ```media block with an OMC concept tag and provenance.
@@ -42,15 +41,13 @@ pub fn media_block_with_omc(
     omc: Option<&str>,
     provenance: Option<&Provenance>,
 ) -> String {
-    let mut body = format!("{{\"kind\":\"{kind}\",\"src\":\"{src}\"");
+    let mut body = serde_json::json!({"kind": kind, "src": src});
     if let Some(omc) = omc {
-        body.push_str(&format!(",\"ontology\":\"{omc}\""));
+        body["ontology"] = serde_json::json!(omc);
     }
-    if let Some(prov) = provenance {
-        body.push_str(",\"provenance\":");
-        body.push_str(&serde_json::to_string(prov).unwrap_or_else(|_| "null".into()));
+    if let Some(provenance) = provenance {
+        body["provenance"] = serde_json::json!(provenance);
     }
-    body.push('}');
     format!("```media\n{body}\n```")
 }
 
@@ -145,6 +142,36 @@ pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: [P7] Paths and provenance survive the production display-hint writer.
+    #[test]
+    fn media_blocks_round_trip_escaped_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
+        let provenance = Provenance::for_tool(
+            "generate_image",
+            serde_json::json!({"prompt": "quote\"\n雪"}),
+            Some("span-1".into()),
+        );
+        for block in [
+            media_block("image", source),
+            media_block_with_omc("image", source, Some("omc:CreativeWork"), Some(&provenance)),
+        ] {
+            let body = block
+                .strip_prefix("```media\n")
+                .ok_or("missing fence")?
+                .strip_suffix("\n```")
+                .ok_or("missing closing fence")?;
+            let payload: serde_json::Value = serde_json::from_str(body)?;
+            assert_eq!(payload["src"], source);
+            assert_eq!(payload["kind"], "image");
+            if let Some(record) = payload.get("provenance") {
+                assert_eq!(record["args"], provenance.args);
+                assert_eq!(record["span_id"], "span-1");
+                assert_eq!(payload["ontology"], "omc:CreativeWork");
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_media_block_format() {
