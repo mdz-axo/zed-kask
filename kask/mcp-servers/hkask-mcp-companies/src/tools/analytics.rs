@@ -504,20 +504,32 @@ impl CompaniesServer {
 
             let profile = self.fetch_profile(&req.symbol).await?;
             let prepared = match crate::valuation_service::prepare_dcf(
-                self, &req.symbol, &profile, types::ProjectionAssumptionOverrides::from(&req),
-            ).await {
+                self,
+                &req.symbol,
+                &profile,
+                types::ProjectionAssumptionOverrides::from(&req),
+            )
+            .await
+            {
                 Ok(prepared) => prepared,
                 Err(error) => return error.into_tool_result(),
             };
             let crate::valuation_service::PreparedDcf {
-                history: hist, assumptions, model, current_price, provenance, warnings,
+                history: hist,
+                assumptions,
+                model,
+                current_price,
+                provenance,
+                warnings,
             } = prepared;
             let shares = hist.shares_outstanding;
 
             // Compute signal quality and emit Regulation span (G2: FinGPT low-SNR handling)
             let signal_quality = hist.signal_quality();
             crate::data_quality::emit_data_quality_span(
-                &req.symbol, "dcf_valuation", &signal_quality,
+                &req.symbol,
+                "dcf_valuation",
+                &signal_quality,
             );
 
             // Generate forecast ID for later decomposition
@@ -558,7 +570,8 @@ impl CompaniesServer {
             output["provenance"] = provenance;
             output["warnings"] = serde_json::json!(warnings);
             Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
-        }).await
+        })
+        .await
     }
 
     #[tool(

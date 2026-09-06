@@ -9,7 +9,7 @@ use serde_json::Value;
 
 // ── Typed projection views ───────────────────────────────────────
 //
-// `companies_get` returns these typed views over the retained raw `Value` so
+// Server typed readers project the retained normalized `Value` so
 // that field-name knowledge concentrates in one place (the accessor bodies)
 // rather than leaking into every tool handler as `v.get("companyName")`.
 // Each view holds the normalized raw payload and exposes typed accessors.

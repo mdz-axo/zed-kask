@@ -12,44 +12,54 @@ pub(super) struct FixtureHttp {
 }
 
 impl FixtureHttp {
-    pub(super) async fn start(response: impl Fn(&str) -> (u16, Value) + Send + Sync + 'static) -> Self {
+    pub(super) async fn start(
+        response: impl Fn(&str) -> (u16, Value) + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_async(move |path| std::future::ready(response(&path))).await
+    }
+
+    async fn start_async<F, R>(response: F) -> Self
+    where
+        F: Fn(String) -> R + Send + Sync + 'static,
+        R: std::future::Future<Output = (u16, Value)> + Send + 'static,
+    {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind fixture");
         let origin = format!("http://{}", listener.local_addr().expect("fixture address"));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
+        let response = Arc::new(response);
         let task = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
             loop {
-                let (mut stream, _) = listener.accept().await.expect("accept fixture request");
-                let mut request = Vec::new();
-                loop {
-                    let mut buffer = [0; 4096];
-                    let length = stream.read(&mut buffer).await.expect("read request");
-                    if length == 0 {
-                        break;
+                tokio::select! {
+                    result = connections.join_next(), if !connections.is_empty() => {
+                        result.expect("connection result").expect("fixture connection task");
                     }
-                    request.extend_from_slice(&buffer[..length]);
-                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
-                        break;
+                    accepted = listener.accept() => {
+                        let (mut stream, _) = accepted.expect("accept fixture request");
+                        let recorded = recorded.clone();
+                        let response = response.clone();
+                        connections.spawn(async move {
+                            let mut request = Vec::new();
+                            loop {
+                                let mut buffer = [0; 4096];
+                                let length = stream.read(&mut buffer).await.expect("read request");
+                                if length == 0 { break; }
+                                request.extend_from_slice(&buffer[..length]);
+                                if request.windows(4).any(|part| part == b"\r\n\r\n") { break; }
+                            }
+                            let request = String::from_utf8(request).expect("HTTP request text");
+                            let path = request.split_whitespace().nth(1).expect("request path").to_string();
+                            recorded.lock().expect("requests lock").push(path.clone());
+                            let (status, body) = response(path).await;
+                            let body = body.to_string();
+                            let response = format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                            stream.write_all(response.as_bytes()).await.expect("write response");
+                        });
                     }
                 }
-                let request = String::from_utf8(request).expect("HTTP request text");
-                let path = request.split_whitespace().nth(1).expect("request path");
-                recorded
-                    .lock()
-                    .expect("requests lock")
-                    .push(path.to_string());
-                let (status, body) = response(path);
-                let body = body.to_string();
-                let response = format!(
-                    "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .expect("write response");
             }
         });
         Self {
@@ -286,10 +296,10 @@ fn financial_fixture(path: &str) -> (u16, Value) {
         endpoint,
         "/fmp/income-statement" | "/fmp/balance-sheet-statement" | "/fmp/cash-flow-statement"
     ) {
-        let rows: Vec<_> = [("2025", 1000000000.0), ("2024", 900000000.0), ("2023", 810000000.0)].into_iter().map(|(year, revenue)| {
+        let rows: Vec<_> = [("2025", 1000000000.0), ("2024", 1000000000.0 / 1.1), ("2023", 1000000000.0 / 1.1 / 1.08)].into_iter().map(|(year, revenue)| {
             match endpoint {
-                "/fmp/income-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"revenue":revenue,"costOfRevenue":revenue*0.6,"grossProfit":revenue*0.4,"depreciationAndAmortization":revenue*0.03,"incomeTaxExpense":revenue*0.074,"incomeBeforeTax":revenue*0.37,"weightedAverageShsOutDil":100000000.0}),
-                "/fmp/balance-sheet-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"totalCurrentAssets":revenue*0.3,"totalCurrentLiabilities":revenue*0.15,"cashAndCashEquivalents":revenue*0.05,"longTermDebt":revenue*0.2,"totalStockholdersEquity":revenue*0.5}),
+                "/fmp/income-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"revenue":revenue,"costOfRevenue":revenue*0.6,"grossProfit":revenue*0.4,"depreciationAndAmortization":revenue*0.03,"sellingGeneralAndAdministrativeExpenses":revenue*0.1375,"interestExpense":revenue*0.045,"incomeTaxExpense":revenue*0.0375,"incomeBeforeTax":revenue*0.1875,"netIncome":revenue*0.15,"ebitda":revenue*0.2625,"weightedAverageShsOutDil":100000000.0}),
+                "/fmp/balance-sheet-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"totalCurrentAssets":revenue*0.3,"totalCurrentLiabilities":revenue*0.15,"cashAndCashEquivalents":revenue*0.05,"longTermDebt":revenue*0.2,"totalStockholdersEquity":revenue*0.75,"totalAssets":revenue*1.1,"totalLiabilities":revenue*0.35}),
                 _ => json!({"date":format!("{year}-12-31"),"calendarYear":year,"capitalExpenditure":-revenue*0.04}),
             }
         }).collect();
@@ -374,28 +384,45 @@ async fn eodhd_normalization_is_provider_pure_in_both_orders_and_after_reopen() 
     for typed_first in [false, true] {
         let directory = tempfile::tempdir().expect("temporary directory");
         let fixture = FixtureHttp::start(|path| {
-            if path.starts_with("/eodhd/fundamentals/") { (200, eodhd_fixture()) }
-            else { (500, json!({"error":"FMP must not supplement EODHD"})) }
-        }).await;
-        providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-            let first = server(directory.path());
-            if typed_first { first.fetch_key_metrics("GLOBAL.LSE", 2).await.expect("typed metrics"); }
-            let output = metrics_tool(&first, "GLOBAL.LSE", 2).await;
-            assert_eq!(output["data"].as_array().expect("annual metrics").len(), 2);
-            let metrics = first.fetch_key_metrics("GLOBAL.LSE", 2).await.expect("typed metrics");
-            assert_eq!(metrics.pe_ratio(), Some(20.0));
-            assert_eq!(metrics.price_to_book(), Some(4.0));
-            assert_eq!(metrics.price_to_sales(), Some(3.0));
-            assert_eq!(metrics.ev_to_ebitda(), Some(10.5));
-            assert_eq!(metrics.raw()[0]["grossProfitMargin"], 0.4);
-            assert_eq!(metrics.raw()[0]["roic"], 0.125);
-            assert!((metrics.revenue_growth().expect("growth") - 1.0/9.0).abs() < 1e-12);
-            assert_eq!(output["provider"], "EODHD");
-            assert!(output["warnings"].to_string().contains("approximates"));
-            drop(first);
-            assert_eq!(metrics_tool(&server(directory.path()), "GLOBAL.LSE", 2).await, output);
-            assert_eq!(fixture.count(), 1);
-        }).await;
+            if path.starts_with("/eodhd/fundamentals/") {
+                (200, eodhd_fixture())
+            } else {
+                (500, json!({"error":"FMP must not supplement EODHD"}))
+            }
+        })
+        .await;
+        providers::TEST_HTTP_ORIGIN
+            .scope(fixture.origin.clone(), async {
+                let first = server(directory.path());
+                if typed_first {
+                    first
+                        .fetch_key_metrics("GLOBAL.LSE", 2)
+                        .await
+                        .expect("typed metrics");
+                }
+                let output = metrics_tool(&first, "GLOBAL.LSE", 2).await;
+                assert_eq!(output["data"].as_array().expect("annual metrics").len(), 2);
+                let metrics = first
+                    .fetch_key_metrics("GLOBAL.LSE", 2)
+                    .await
+                    .expect("typed metrics");
+                assert_eq!(metrics.pe_ratio(), Some(20.0));
+                assert_eq!(metrics.price_to_book(), Some(4.0));
+                assert_eq!(metrics.price_to_sales(), Some(3.0));
+                assert_eq!(metrics.ev_to_ebitda(), Some(10.5));
+                assert_eq!(metrics.raw()[0]["grossProfitMargin"], 0.4);
+                assert_eq!(metrics.raw()[0]["roic"], 0.125);
+                assert!((metrics.revenue_growth().expect("growth") - 1.0 / 9.0).abs() < 1e-12);
+                assert_eq!(output["provider"], "EODHD");
+                assert!(output["warnings"].to_string().contains("approximates"));
+                drop(first);
+                assert_eq!(
+                    metrics_tool(&server(directory.path()), "GLOBAL.LSE", 2).await,
+                    output
+                );
+                assert_eq!(fixture.count(), 1);
+            })
+            .await;
     }
 }
 
@@ -405,14 +432,23 @@ async fn eodhd_missing_debt_leaves_ev_multiple_absent() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|_| {
         let mut value = eodhd_fixture();
-        value["Financials"]["Balance_Sheet"]["yearly"]["2025-12-31"].as_object_mut().expect("balance").remove("netDebt");
+        value["Financials"]["Balance_Sheet"]["yearly"]["2025-12-31"]
+            .as_object_mut()
+            .expect("balance")
+            .remove("netDebt");
         (200, value)
-    }).await;
-    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-        let metrics = server(directory.path()).fetch_key_metrics("GLOBAL.LSE", 2).await.expect("metrics");
-        assert_eq!(metrics.pe_ratio(), Some(20.0));
-        assert_eq!(metrics.ev_to_ebitda(), None);
-    }).await;
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let metrics = server(directory.path())
+                .fetch_key_metrics("GLOBAL.LSE", 2)
+                .await
+                .expect("metrics");
+            assert_eq!(metrics.pe_ratio(), Some(20.0));
+            assert_eq!(metrics.ev_to_ebitda(), None);
+        })
+        .await;
 }
 
 /// expect: [P5] Targets and peers reuse the same cached data despite later provider changes.
@@ -420,33 +456,79 @@ async fn eodhd_missing_debt_leaves_ev_multiple_absent() {
 async fn target_and_peers_share_cache_and_learning_policy() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/") { (200, eodhd_fixture()) } else { financial_fixture(path) }
-    }).await;
-    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-        let first = server(directory.path());
-        let profile = first.fetch_profile("PEER").await.expect("prime peer profile");
-        let metrics = first.fetch_key_metrics("PEER", 1).await.expect("prime peer metrics");
-        // Force subsequent live acquisitions to EODHD: warmed FMP data must
-        // remain the same for either role until its TTL expires.
-        for symbol in ["PEER", "LEARNED"] {
-            for _ in 0..5 { first.learning.lock().expect("learning").record(symbol, Provider::Fmp, Some(1)); }
+        if path.starts_with("/eodhd/") {
+            (200, eodhd_fixture())
+        } else {
+            financial_fixture(path)
         }
-        let output = comparable(&first, json!({"symbol":"ACME","peers":"PEER,LEARNED"})).await;
-        assert_eq!(output["comparison"][1]["price"], json!(profile.price()));
-        assert_eq!(output["comparison"][1]["pe_ratio"], json!(metrics.pe_ratio()));
-        assert_eq!(output["comparison"][1]["provenance"]["key_metrics"], "FMP");
-        assert_eq!(output["comparison"][2]["provenance"]["key_metrics"], "EODHD");
-        assert_eq!(output["comparison"][2]["pe_ratio"], 20.0);
-        assert!(!fixture.requests.lock().expect("requests").iter().any(|request| request.starts_with("/fmp/") && request.contains("symbol=LEARNED")));
-        let peer_requests = fixture.requests.lock().expect("requests").iter().filter(|request| request.contains("symbol=PEER&")).count();
-        assert_eq!(peer_requests, 4, "peer profile+metrics must be fetched only while priming");
-        let calls = fixture.count();
-        drop(first);
-        let reopened = server(directory.path());
-        let warm = comparable(&reopened, json!({"symbol":"ACME","peers":"PEER,LEARNED"})).await;
-        assert_eq!(warm, output);
-        assert_eq!(fixture.count(), calls, "entire comparison should be warm after reopen");
-    }).await;
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let first = server(directory.path());
+            let profile = first
+                .fetch_profile("PEER")
+                .await
+                .expect("prime peer profile");
+            let metrics = first
+                .fetch_key_metrics("PEER", 1)
+                .await
+                .expect("prime peer metrics");
+            // Force subsequent live acquisitions to EODHD: warmed FMP data must
+            // remain the same for either role until its TTL expires.
+            for symbol in ["PEER", "LEARNED"] {
+                for _ in 0..5 {
+                    first
+                        .learning
+                        .lock()
+                        .expect("learning")
+                        .record(symbol, Provider::Fmp, Some(1));
+                }
+            }
+            let output = comparable(&first, json!({"symbol":"ACME","peers":"PEER,LEARNED"})).await;
+            assert_eq!(output["comparison"][1]["price"], json!(profile.price()));
+            assert_eq!(
+                output["comparison"][1]["pe_ratio"],
+                json!(metrics.pe_ratio())
+            );
+            assert_eq!(output["comparison"][1]["provenance"]["key_metrics"], "FMP");
+            assert_eq!(
+                output["comparison"][2]["provenance"]["key_metrics"],
+                "EODHD"
+            );
+            assert_eq!(output["comparison"][2]["pe_ratio"], 20.0);
+            assert!(
+                !fixture
+                    .requests
+                    .lock()
+                    .expect("requests")
+                    .iter()
+                    .any(|request| request.starts_with("/fmp/")
+                        && request.contains("symbol=LEARNED"))
+            );
+            let peer_requests = fixture
+                .requests
+                .lock()
+                .expect("requests")
+                .iter()
+                .filter(|request| request.contains("symbol=PEER&"))
+                .count();
+            assert_eq!(
+                peer_requests, 4,
+                "peer profile+metrics must be fetched only while priming"
+            );
+            let calls = fixture.count();
+            drop(first);
+            let reopened = server(directory.path());
+            let warm = comparable(&reopened, json!({"symbol":"ACME","peers":"PEER,LEARNED"})).await;
+            assert_eq!(warm, output);
+            assert_eq!(
+                fixture.count(),
+                calls,
+                "entire comparison should be warm after reopen"
+            );
+        })
+        .await;
 }
 
 /// expect: [P9] Failed peers remain identified; no invented provider or zero multiples.
@@ -454,23 +536,46 @@ async fn target_and_peers_share_cache_and_learning_policy() {
 async fn failed_and_empty_peers_are_visible() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
-        if path.contains("BROKEN") { (503, json!({"error":"fixture peer unavailable"})) }
-        else if path.contains("EMPTY") { (200, json!([])) }
-        else { financial_fixture(path) }
-    }).await;
-    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-        let output = comparable(&server(directory.path()), json!({"symbol":"ACME","peers":"BROKEN,EMPTY,../bad"})).await;
-        let rows = output["comparison"].as_array().expect("rows");
-        assert_eq!(rows.len(), 4);
-        for row in rows.iter().skip(1) {
-            assert!(row["errors"].as_array().is_some_and(|errors| !errors.is_empty()), "{row}");
-            assert!(row["price"].is_null());
-            assert!(row["pe_ratio"].is_null());
+        if path.contains("BROKEN") {
+            (503, json!({"error":"fixture peer unavailable"}))
+        } else if path.contains("EMPTY") {
+            (200, json!([]))
+        } else {
+            financial_fixture(path)
         }
-        assert_eq!(rows[1]["symbol"], "BROKEN");
-        assert_eq!(rows[1]["provenance"], json!({}));
-        assert!(!fixture.requests.lock().expect("requests").iter().any(|path| path.contains("bad")));
-    }).await;
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let output = comparable(
+                &server(directory.path()),
+                json!({"symbol":"ACME","peers":"BROKEN,EMPTY,../bad"}),
+            )
+            .await;
+            let rows = output["comparison"].as_array().expect("rows");
+            assert_eq!(rows.len(), 4);
+            for row in rows.iter().skip(1) {
+                assert!(
+                    row["errors"]
+                        .as_array()
+                        .is_some_and(|errors| !errors.is_empty()),
+                    "{row}"
+                );
+                assert!(row["price"].is_null());
+                assert!(row["pe_ratio"].is_null());
+            }
+            assert_eq!(rows[1]["symbol"], "BROKEN");
+            assert_eq!(rows[1]["provenance"], json!({}));
+            assert!(
+                !fixture
+                    .requests
+                    .lock()
+                    .expect("requests")
+                    .iter()
+                    .any(|path| path.contains("bad"))
+            );
+        })
+        .await;
 }
 
 /// expect: [P9] Unsupported sectors and inadequate inputs fail explicitly in both DCF views.
@@ -481,25 +586,62 @@ async fn dcf_guards_agree_between_tools() {
         let fixture = FixtureHttp::start(move |path| {
             let (status, mut data) = financial_fixture(path);
             if path.starts_with("/fmp/profile") {
-                if case == "sector" { data[0]["sector"] = json!("Financial Services"); }
-                if case == "price" { data[0].as_object_mut().expect("profile").remove("price"); }
-                if case == "shares" { data[0].as_object_mut().expect("profile").remove("sharesOutstanding"); }
+                if case == "sector" {
+                    data[0]["sector"] = json!("Financial Services");
+                }
+                if case == "price" {
+                    data[0].as_object_mut().expect("profile").remove("price");
+                }
+                if case == "shares" {
+                    data[0]
+                        .as_object_mut()
+                        .expect("profile")
+                        .remove("sharesOutstanding");
+                }
             }
             if path.starts_with("/fmp/income-statement") {
-                if case == "history" { data.as_array_mut().expect("income").truncate(1); }
-                if case == "shares" { for row in data.as_array_mut().expect("income") { row.as_object_mut().expect("income row").remove("weightedAverageShsOutDil"); } }
+                if case == "history" {
+                    data.as_array_mut().expect("income").truncate(1);
+                }
+                if case == "shares" {
+                    for row in data.as_array_mut().expect("income") {
+                        row.as_object_mut()
+                            .expect("income row")
+                            .remove("weightedAverageShsOutDil");
+                    }
+                }
             }
             (status, data)
-        }).await;
-        providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let standalone = content(&server.dcf_valuation(Parameters(serde_json::from_value(json!({"symbol":"ACME"})).expect("request"))).await.expect("DCF tool"));
-            let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
-            assert!(standalone["error"].is_string(), "{case}: {standalone}");
-            assert_eq!(comparison["dcf_overlay"], standalone, "{case}");
-            let expected = match case { "sector" => "financial-sector", "history" => "at least 2 years", "price" => "current price", _ => "shares outstanding" };
-            assert!(standalone["error"].as_str().expect("error text").contains(expected));
-        }).await;
+        })
+        .await;
+        providers::TEST_HTTP_ORIGIN
+            .scope(fixture.origin.clone(), async {
+                let server = server(directory.path());
+                let standalone = content(
+                    &server
+                        .dcf_valuation(Parameters(
+                            serde_json::from_value(json!({"symbol":"ACME"})).expect("request"),
+                        ))
+                        .await
+                        .expect("DCF tool"),
+                );
+                let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
+                assert!(standalone["error"].is_string(), "{case}: {standalone}");
+                assert_eq!(comparison["dcf_overlay"], standalone, "{case}");
+                let expected = match case {
+                    "sector" => "financial-sector",
+                    "history" => "at least 2 years",
+                    "price" => "current price",
+                    _ => "shares outstanding",
+                };
+                assert!(
+                    standalone["error"]
+                        .as_str()
+                        .expect("error text")
+                        .contains(expected)
+                );
+            })
+            .await;
     }
 }
 
@@ -508,15 +650,28 @@ async fn dcf_guards_agree_between_tools() {
 async fn invalid_dcf_assumptions_agree_between_tools() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(financial_fixture).await;
-    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-        let server = server(directory.path());
-        let request = json!({"symbol":"ACME","peers":"PEER","discount_rate":0.10,"terminal_growth":0.12});
-        let standalone = server.dcf_valuation(Parameters(serde_json::from_value(request.clone()).expect("request"))).await.expect_err("invalid DCF");
-        let comparison = server.comparable_analysis(Parameters(serde_json::from_value(request).expect("request"))).await.expect_err("invalid overlay");
-        assert_eq!(standalone.kind, hkask_types::McpErrorKind::InvalidArgument);
-        assert_eq!(comparison.kind, standalone.kind);
-        assert_eq!(comparison.message, standalone.message);
-    }).await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request =
+                json!({"symbol":"ACME","peers":"PEER","discount_rate":0.10,"terminal_growth":0.12});
+            let standalone = server
+                .dcf_valuation(Parameters(
+                    serde_json::from_value(request.clone()).expect("request"),
+                ))
+                .await
+                .expect_err("invalid DCF");
+            let comparison = server
+                .comparable_analysis(Parameters(
+                    serde_json::from_value(request).expect("request"),
+                ))
+                .await
+                .expect_err("invalid overlay");
+            assert_eq!(standalone.kind, hkask_types::McpErrorKind::InvalidArgument);
+            assert_eq!(comparison.kind, standalone.kind);
+            assert_eq!(comparison.message, standalone.message);
+        })
+        .await;
 }
 
 /// expect: [P9] Fallback provenance identifies the provider that actually supplied cached metrics.
@@ -526,22 +681,41 @@ async fn fallback_provenance_survives_reopen_in_both_directions() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let fixture = FixtureHttp::start(move |path| {
             if expected_provider == "EODHD" {
-                if path.starts_with("/fmp/") { (503, json!({"error":"FMP unavailable"})) }
-                else { (200, eodhd_fixture()) }
-            } else if path.starts_with("/eodhd/") { (503, json!({"error":"EODHD unavailable"})) }
-            else { fmp_fixture(path) }
-        }).await;
-        providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-            let first = server(directory.path());
-            let output = metrics_tool(&first, symbol, 2).await;
-            assert_eq!(output["provider"], expected_provider);
-            assert_eq!(output["data"][0]["priceToEarningsRatio"], 20.0);
-            let calls = fixture.count();
-            drop(first);
-            assert_eq!(metrics_tool(&server(directory.path()), symbol, 2).await, output);
-            assert_eq!(fixture.count(), calls);
-            assert!(!fixture.requests.lock().expect("requests").iter().any(|request| request.contains(".US.US")));
-        }).await;
+                if path.starts_with("/fmp/") {
+                    (503, json!({"error":"FMP unavailable"}))
+                } else {
+                    (200, eodhd_fixture())
+                }
+            } else if path.starts_with("/eodhd/") {
+                (503, json!({"error":"EODHD unavailable"}))
+            } else {
+                fmp_fixture(path)
+            }
+        })
+        .await;
+        providers::TEST_HTTP_ORIGIN
+            .scope(fixture.origin.clone(), async {
+                let first = server(directory.path());
+                let output = metrics_tool(&first, symbol, 2).await;
+                assert_eq!(output["provider"], expected_provider);
+                assert_eq!(output["data"][0]["priceToEarningsRatio"], 20.0);
+                let calls = fixture.count();
+                drop(first);
+                assert_eq!(
+                    metrics_tool(&server(directory.path()), symbol, 2).await,
+                    output
+                );
+                assert_eq!(fixture.count(), calls);
+                assert!(
+                    !fixture
+                        .requests
+                        .lock()
+                        .expect("requests")
+                        .iter()
+                        .any(|request| request.contains(".US.US"))
+                );
+            })
+            .await;
     }
 }
 
@@ -550,14 +724,82 @@ async fn fallback_provenance_survives_reopen_in_both_directions() {
 async fn malformed_supplements_are_visible() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/fmp/ratios") || path.starts_with("/fmp/financial-growth") { (200, json!({"unexpected":"object"})) }
-        else { fmp_fixture(path) }
-    }).await;
-    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-        let output = metrics_tool(&server(directory.path()), "ACME", 2).await;
-        assert_eq!(output["warnings"].as_array().expect("warnings").len(), 2);
-        assert!(output["warnings"].to_string().contains("expected an array"));
-        assert!(output["data"][0]["priceToEarningsRatio"].is_null());
-        assert!(output["data"][0]["revenueGrowth"].is_null());
-    }).await;
+        if path.starts_with("/fmp/ratios") || path.starts_with("/fmp/financial-growth") {
+            (200, json!({"unexpected":"object"}))
+        } else {
+            fmp_fixture(path)
+        }
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let output = metrics_tool(&server(directory.path()), "ACME", 2).await;
+            assert_eq!(output["warnings"].as_array().expect("warnings").len(), 2);
+            assert!(output["warnings"].to_string().contains("expected an array"));
+            assert!(output["data"][0]["priceToEarningsRatio"].is_null());
+            assert!(output["data"][0]["revenueGrowth"].is_null());
+        })
+        .await;
+}
+
+/// expect: [P5] One slow peer does not serialize the remaining peer acquisitions.
+#[tokio::test]
+async fn peer_acquisition_is_concurrent() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let fixture = FixtureHttp::start_async(move |path| {
+        let barrier = barrier.clone();
+        async move {
+            if path.starts_with("/fmp/profile")
+                && (path.contains("symbol=FIRST&") || path.contains("symbol=SECOND&"))
+            {
+                barrier.wait().await;
+            }
+            financial_fixture(&path)
+        }
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let output = comparable(
+                &server(directory.path()),
+                json!({"symbol":"ACME","peers":"FIRST,SECOND"}),
+            )
+            .await;
+            for row in output["comparison"].as_array().expect("rows") {
+                assert_eq!(
+                    row["errors"],
+                    json!([]),
+                    "both peer profiles must reach the barrier concurrently: {row}"
+                );
+                assert_eq!(row["price"], 30.0);
+            }
+        })
+        .await;
+}
+
+/// expect: [P9] An unavailable overlay does not hide usable peer comparisons.
+#[tokio::test]
+async fn overlay_acquisition_error_preserves_comparison_table() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/fmp/income-statement") || path.starts_with("/eodhd/") {
+            (503, json!({"error":"statements unavailable"}))
+        } else {
+            financial_fixture(path)
+        }
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let output = comparable(
+                &server(directory.path()),
+                json!({"symbol":"ACME","peers":"PEER"}),
+            )
+            .await;
+            assert_eq!(output["comparison"][1]["pe_ratio"], 20.0);
+            assert!(output["dcf_overlay"]["error"].is_string());
+            assert!(output["dcf_overlay"]["kind"].is_string());
+        })
+        .await;
 }

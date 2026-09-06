@@ -79,7 +79,9 @@ impl CompaniesServer {
         .await
     }
 
-    #[tool(description = "Get key metrics")]
+    #[tool(
+        description = "Get normalized annual key metrics. Returns data rows, actual provider (FMP/EODHD), and warnings for missing supplements or provider approximations, including on cache hits."
+    )]
     pub async fn key_metrics(
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,

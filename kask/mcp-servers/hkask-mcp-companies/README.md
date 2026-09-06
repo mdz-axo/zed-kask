@@ -132,10 +132,23 @@ src/
 - DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition.
 - Some derived responses include a `fibo` map. Raw provider payloads are returned without a FIBO mapping, and emitted identifiers are compact strings rather than a JSON-LD context.
 
+### Acquisition and DCF preparation decision — 2026-09-06
+
+Operator-approved acquisition/valuation slice, preserving the typed-view intent of `160cef9fab`, the two-layer cache of `43e28cc484`, and visible data gaps from `b8057bb2f4`:
+
+- `CompaniesServer::fetch_response` owns acquisition, learning-aware routing and cache policy. Raw readers and typed readers use the same normalized metrics. FMP ratios/growth join by fiscal date; EODHD metrics come only from EODHD annual statements, with approximation warnings (including its existing simplified ROIC).
+- The public `key_metrics` content is now `{data: [...], provider: "FMP" | "EODHD", warnings: [...]}` (plus ontology). Consumers of the former bare array must read `data`. Other raw financial-data tools retain their existing output shapes.
+- Acquisition cache keys use `normalized-v1:` and store the normalized payload, actual provider and warnings together. This supersedes the ambiguous raw/enriched cache representation: existing rows are ignored, not migrated or deleted. Endpoint TTLs and the second-layer concept extraction remain; the concept-cache wire/remove decision is not part of this change. No research/portfolio data is deleted.
+- Targets and concurrent peers share the server acquisition path. Comparison rows include endpoint provenance, warnings and explicit errors; absent metrics are omitted rather than zeroed. Cached warnings remain visible after reopening the server.
+- `valuation_service::prepare_dcf` owns typed financial inputs, history, sector/price/share/history guards and common assumption preparation for standalone DCF and comparable overlays. Identical inputs and common request assumptions produce identical intrinsic value, price and margin of safety. Tool handlers retain formatting and forecast persistence; EP, Monte Carlo and the other valuation methods remain distinct. Missing price/shares now produce explicit DCF unavailability rather than nominal zero-price/share fallbacks. An overlay provider outage preserves the comparison table with an explicit overlay error; invalid assumptions remain typed request errors.
+
 ## Validation
 
+Offline library suite (including loopback HTTP fixtures at the actual provider boundary):
+
 ```bash
-cargo test -p hkask-mcp-companies
+env -u HKASK_FMP_API_KEY -u HKASK_EODHD_API_KEY cargo test -p hkask-mcp-companies --lib
+GITHUB_ACTIONS=1 ./script/clippy -p hkask-mcp-companies
 ```
 
-The suite includes unit and persistence-level tests for provider-error handling, valuation request validation, portfolio owner isolation, and import/attachment limits. End-to-end MCP wire-format coverage remains future work.
+`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, and DCF equivalence/guards. The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.

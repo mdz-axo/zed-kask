@@ -4,8 +4,7 @@ use crate::{
     CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
     projected_terminal_multiple, providers, research_store::PersistedForecast, scenarios,
-    superforecast, types, validate_symbol,
-    valuation_service::extract_historical_arrays,
+    superforecast, types, validate_symbol, valuation_service::extract_historical_arrays,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::time::now_rfc3339;
@@ -207,9 +206,19 @@ impl CompaniesServer {
         profile: &CompanyProfile,
     ) -> Result<serde_json::Value, McpToolError> {
         let prepared = match crate::valuation_service::prepare_dcf(
-            self, &req.symbol, profile, types::ProjectionAssumptionOverrides::from(req),
-        ).await {
+            self,
+            &req.symbol,
+            profile,
+            types::ProjectionAssumptionOverrides::from(req),
+        )
+        .await
+        {
             Ok(prepared) => prepared,
+            Err(crate::valuation_service::DcfPreparationError::Tool(error))
+                if error.kind != hkask_types::McpErrorKind::InvalidArgument =>
+            {
+                return Ok(serde_json::json!({"error": error.message, "kind": error.kind}));
+            }
             Err(error) => return error.into_tool_result(),
         };
         Ok(serde_json::json!({

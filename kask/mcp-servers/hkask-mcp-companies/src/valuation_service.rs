@@ -151,22 +151,45 @@ struct FinancialInputs<'a> {
 impl FinancialInputs<'_> {
     fn history(&self, symbol: &str) -> Result<HistoricalSnapshot, DcfPreparationError> {
         let Some((income, balance, cash_flow, metrics, profile)) = extract_historical_arrays(
-            &self.income, &self.balance, &self.cash_flow, self.metrics.raw(), self.profile,
+            &self.income,
+            &self.balance,
+            &self.cash_flow,
+            self.metrics.raw(),
+            self.profile,
         ) else {
-            return Err(DcfPreparationError::Unavailable(serde_json::json!({"symbol":symbol,"error":"insufficient data for DCF"})));
+            return Err(DcfPreparationError::Unavailable(
+                serde_json::json!({"symbol":symbol,"error":"insufficient data for DCF"}),
+            ));
         };
         // The older model has a nominal share-count fallback. DCF preparation
         // must not turn missing shares into a seemingly valid per-share value.
-        let shares = income.first().and_then(|entry| entry.get("weightedAverageShsOutDil").or_else(|| entry.get("weightedAverageShsOut")))
-            .or_else(|| metrics.first().and_then(|entry| entry.get("weightedAverageShsOutDil").or_else(|| entry.get("weightedAverageShsOut"))))
+        let shares = income
+            .first()
+            .and_then(|entry| {
+                entry
+                    .get("weightedAverageShsOutDil")
+                    .or_else(|| entry.get("weightedAverageShsOut"))
+            })
+            .or_else(|| {
+                metrics.first().and_then(|entry| {
+                    entry
+                        .get("weightedAverageShsOutDil")
+                        .or_else(|| entry.get("weightedAverageShsOut"))
+                })
+            })
             .or_else(|| profile.get("sharesOutstanding"))
             .and_then(serde_json::Value::as_f64);
         if !shares.is_some_and(|value| value.is_finite() && value > 0.0) {
-            return Err(DcfPreparationError::Unavailable(serde_json::json!({"symbol":symbol,"error":"missing or invalid shares outstanding for DCF"})));
+            return Err(DcfPreparationError::Unavailable(
+                serde_json::json!({"symbol":symbol,"error":"missing or invalid shares outstanding for DCF"}),
+            ));
         }
-        let history = HistoricalSnapshot::from_api_json(income, balance, cash_flow, metrics, profile);
+        let history =
+            HistoricalSnapshot::from_api_json(income, balance, cash_flow, metrics, profile);
         if history.revenue.len() < 2 {
-            return Err(DcfPreparationError::Unavailable(serde_json::json!({"symbol":symbol,"error":"insufficient historical data - need at least 2 years of revenue"})));
+            return Err(DcfPreparationError::Unavailable(
+                serde_json::json!({"symbol":symbol,"error":"insufficient historical data - need at least 2 years of revenue"}),
+            ));
         }
         Ok(history)
     }
@@ -178,12 +201,19 @@ pub(crate) enum DcfPreparationError {
 }
 
 impl From<hkask_mcp_server::server::McpToolError> for DcfPreparationError {
-    fn from(error: hkask_mcp_server::server::McpToolError) -> Self { Self::Tool(error) }
+    fn from(error: hkask_mcp_server::server::McpToolError) -> Self {
+        Self::Tool(error)
+    }
 }
 
 impl DcfPreparationError {
-    pub(crate) fn into_tool_result(self) -> Result<serde_json::Value, hkask_mcp_server::server::McpToolError> {
-        match self { Self::Tool(error) => Err(error), Self::Unavailable(value) => Ok(value) }
+    pub(crate) fn into_tool_result(
+        self,
+    ) -> Result<serde_json::Value, hkask_mcp_server::server::McpToolError> {
+        match self {
+            Self::Tool(error) => Err(error),
+            Self::Unavailable(value) => Ok(value),
+        }
     }
 }
 
@@ -210,11 +240,18 @@ pub(crate) async fn prepare_dcf(
     profile: &crate::CompanyProfile,
     overrides: crate::types::ProjectionAssumptionOverrides,
 ) -> Result<PreparedDcf, DcfPreparationError> {
-    if let Some(error) = crate::financial_model::financial_sector_guard(profile, symbol, "dcf_valuation") {
+    if let Some(error) =
+        crate::financial_model::financial_sector_guard(profile, symbol, "dcf_valuation")
+    {
         return Err(DcfPreparationError::Unavailable(error));
     }
-    let Some(current_price) = profile.price().filter(|price| price.is_finite() && *price > 0.0) else {
-        return Err(DcfPreparationError::Unavailable(serde_json::json!({"symbol":symbol,"error":"missing or invalid current price for DCF"})));
+    let Some(current_price) = profile
+        .price()
+        .filter(|price| price.is_finite() && *price > 0.0)
+    else {
+        return Err(DcfPreparationError::Unavailable(
+            serde_json::json!({"symbol":symbol,"error":"missing or invalid current price for DCF"}),
+        ));
     };
     let (income, balance, cash_flow, metrics) = tokio::try_join!(
         server.fetch_response("income_statement", symbol, &[("limit", "5")]),
@@ -227,14 +264,32 @@ pub(crate) async fn prepare_dcf(
         "income_statement": income.provider, "balance_sheet": balance.provider,
         "cash_flow_statement": cash_flow.provider, "key_metrics": metrics.provider,
     });
-    let warnings = income.warnings.into_iter().chain(balance.warnings).chain(cash_flow.warnings).chain(metrics.warnings).collect();
+    let warnings = income
+        .warnings
+        .into_iter()
+        .chain(balance.warnings)
+        .chain(cash_flow.warnings)
+        .chain(metrics.warnings)
+        .collect();
     let inputs = FinancialInputs {
-        income: income.value, balance: balance.value, cash_flow: cash_flow.value,
-        metrics: crate::KeyMetrics::from_raw(metrics.value), profile,
+        income: income.value,
+        balance: balance.value,
+        cash_flow: cash_flow.value,
+        metrics: crate::KeyMetrics::from_raw(metrics.value),
+        profile,
     };
     let history = inputs.history(symbol)?;
     let assumptions = ProjectionAssumptions::from_history_with_overrides(&history, overrides)
-        .map_err(|error| hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string()))?;
+        .map_err(|error| {
+            hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string())
+        })?;
     let model = crate::financial_model::project_model(&history, &assumptions, current_price);
-    Ok(PreparedDcf { history, assumptions, model, current_price, provenance, warnings })
+    Ok(PreparedDcf {
+        history,
+        assumptions,
+        model,
+        current_price,
+        provenance,
+        warnings,
+    })
 }

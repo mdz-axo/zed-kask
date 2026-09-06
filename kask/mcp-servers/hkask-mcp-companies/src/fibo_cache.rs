@@ -16,7 +16,10 @@
 //! Design: the cache sits between the MCP tool handlers and the provider
 //! abstraction (`providers::companies_get`). On a cache hit (fresh entry
 //! within TTL), the raw response is returned without an HTTP call. On a miss,
-//! the provider fetch is stored in both layers. The concept store is
+//! the provider fetch is stored in both layers. `CompaniesServer` versions its
+//! acquisition keys (`normalized-v1:`) and stores a payload/provider/warnings
+//! envelope in layer 1; layer 2 extracts only the normalized financial payload.
+//! Old unversioned entries are not read by that acquisition path. The concept store is
 //! populated opportunistically — if extraction fails, the raw cache still
 //! serves the response.
 //!

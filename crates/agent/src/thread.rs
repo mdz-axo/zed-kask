@@ -4453,6 +4453,19 @@ impl Thread {
 
         let error_message = format!("Error parsing input JSON: {json_parse_error}");
 
+        // Failure-signal rule: a tool-call argument parse failure at stream
+        // end is the truncation signature — the model's output ended mid-JSON
+        // and the provider reported finish_reason="stop" (the D36 drain), so
+        // the MaxTokens path never fires and the turn looks clean. Warn with
+        // the raw-input length so the operator can distinguish a truncated
+        // large payload (split it) from model parameter-dropping.
+        log::warn!(
+            "Tool '{}' arguments failed to parse — likely truncated at stream end (no MaxTokens stop reason): {} (raw input {} chars)",
+            tool_use.name,
+            json_parse_error,
+            raw_input.len()
+        );
+
         if tool.supports_input_streaming()
             && let Some(mut sender) = self
                 .running_turn

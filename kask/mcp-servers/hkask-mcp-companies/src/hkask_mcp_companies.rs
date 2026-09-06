@@ -559,14 +559,24 @@ mod tool_behavior_tests {
     async fn moat_check_valid_symbol_surfaces_structured_error_on_fetch_failure() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let fixture = crate::acquisition_tests::FixtureHttp::start(|_| {
-            (503, serde_json::json!({"error":"fixture provider unavailable"}))
-        }).await;
-        providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
-            let server = crate::acquisition_tests::server(directory.path());
-            let error = server.moat_check(Parameters(SymbolRequest { symbol: "AAPL".into() }))
-                .await.expect_err("provider failure must be surfaced");
-            assert!(!error.message.is_empty());
-        }).await;
+            (
+                503,
+                serde_json::json!({"error":"fixture provider unavailable"}),
+            )
+        })
+        .await;
+        providers::TEST_HTTP_ORIGIN
+            .scope(fixture.origin.clone(), async {
+                let server = crate::acquisition_tests::server(directory.path());
+                let error = server
+                    .moat_check(Parameters(SymbolRequest {
+                        symbol: "AAPL".into(),
+                    }))
+                    .await
+                    .expect_err("provider failure must be surfaced");
+                assert!(!error.message.is_empty());
+            })
+            .await;
     }
 
     /// `resolve_symbol` needs at least one of company name / ticker — an
