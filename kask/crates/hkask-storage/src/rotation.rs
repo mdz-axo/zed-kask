@@ -286,7 +286,7 @@ pub fn rotate_passphrase(
 /// only the vector index from canonical rows avoids preserving an incomplete
 /// derived index. No destination is published until all checks succeed.
 fn copy_all_tables(
-    source_pool: &r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+    source_pool: &r2d2::Pool<crate::SqliteConnectionManager>,
     source_path: &str,
     new_path: &str,
     new_passphrase: &str,

@@ -348,35 +348,30 @@ for the full layout spec.
 
 ## Passphrase rotation
 
-`rotate_passphrase` (`rotation.rs:122-297`) atomically re-encrypts a
-SQLCipher DB under a new passphrase without data loss. The process:
+`rotation.rs::rotate_passphrase` re-encrypts a quiesced database using
+SQLCipher's schema export, rebuilding KNN and checking foreign keys/integrity
+before replacement. Individual renames are atomic; the full file sequence and
+multiple databases/keychain are **not** crash-atomic.
 
-1. Validates the new passphrase (non-empty, ≥ 8 chars,
-   `rotation.rs:127-136`); a no-op if old equals new (`rotation.rs:138-146`).
-2. Opens the source DB with the old passphrase (verifies it via the pool's
-   probe connection, `rotation.rs:163-177`).
-3. Creates `<db>.new` with the new passphrase. Under the native KDF the
-   salt lives in the DB header — there is no salt file to manage
-   (`rotation.rs:186-196`).
-4. Copies all user tables + `sqlite_sequence` via `INSERT INTO ... SELECT`
-   (`copy_all_tables` at `rotation.rs:486`). `vec0` shadow tables are NOT
-   copied — they are rebuilt from `schema.sql` on first open of the new DB.
-5. Drops both pools (releases file locks), then atomically renames:
-   `<db>` → `<db>.old`, `<db>.new` → `<db>` (`rotation.rs:247-262`), and
-   deletes `.old` on success (`rotation.rs:266`).
+| Enforcement | Location / behavior |
+|---|---|
+| Participating consumer quiescence | `core/connection.rs::database_lease` / `QuiescedDatabase`; exclusive lease is required through replacement. `LeasedSqliteConnection` drops the SQLite handle before its shared lease, including idle connections whose pool manager has already dropped. |
+| Recovery files | `rotation.rs::ensure_no_recovery_artifacts`; existing `.new`/`.old` and sidecars yield `RecoveryRequired` without cleanup. Normal pool opens also refuse unresolved artifacts. |
+| Path identity | Source is canonicalized for lease and replacement; symlinks remain aliases of the canonical target. Hard-link aliases are refused. |
+| Missing source | Refused before SQLCipher opens; startup cannot create an empty replacement while a backup awaits recovery. |
+| Single-file export failure | Original remains under its old key; only artifacts created by this attempt are cleaned up. |
+| Replacement failure | Backup restoration is attempted; failure names the retained recovery path. |
 
-**Failure safety**: if any step before the rename fails, the `.new`
-artifacts are deleted and the original DB is untouched
-(`rotation.rs:209-217`). If the DB rename fails after `<db>` → `<db>.old`
-succeeds, the code attempts to restore `<db>.old` back to `<db>`
-(`rotation.rs:254-262`). The caller (the settings UI) writes the new
-passphrase to the keychain ONLY after rotation returns `Ok(())` — a failed
-rotation leaves the old passphrase in effect.
+Leases use an empty `<canonical-db>.maintenance-lock` file, never unlinked during
+normal operation. The lease protocol does not cover older binaries or direct
+SQLite callers. `SqliteConnectionManager` is exported by `hkask-storage`; its
+pooled connection dereferences to `rusqlite::Connection` while retaining ownership.
 
-The bridge layer wraps rotation in `rotate_all_kask_db_passphrases`
-(`kask_bridge/src/identity.rs`), which rotates every kask SQLCipher DB
-(curator, swarm memory, kata-kanban, research, training) with rollback
-on failure.
+`kask_bridge::rotate_all_kask_db_passphrases` still enumerates only five fixed
+paths and uses best-effort rollback. The approved T11 maintenance restart,
+external/caller-path inventory, all-DB journal, key-authority recovery, and visible
+reopen/resume are not yet implemented. Single-file tests are not certification
+of live settings rotation.
 
 ## See also
 

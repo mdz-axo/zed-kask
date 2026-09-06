@@ -125,6 +125,12 @@ hkask_mcp_server::mcp_server!(
 
 use hkask_mcp_portfolio::map_portfolio_error;
 
+// v2 excludes pre-sanitizer envelopes whose warnings may contain credentials.
+// Keep older rows on disk, but never read or log them through acquisition.
+fn acquisition_cache_key(extra: &[(&str, &str)]) -> String {
+    format!("normalized-v2:{}", fibo_cache::hash_params(extra))
+}
+
 impl CompaniesServer {
     /// expect: [P5] Every reader sees the same normalized data and actual source.
     /// pre: logical provider endpoint; post: cache hits retain provenance and warnings.
@@ -134,9 +140,7 @@ impl CompaniesServer {
         symbol: &str,
         extra: &[(&str, &str)],
     ) -> Result<providers::ProviderResponse, McpToolError> {
-        // Version the acquisition representation, not the database: old raw-only
-        // rows must never masquerade as normalized, provenance-carrying responses.
-        let params_hash = format!("normalized-v1:{}", fibo_cache::hash_params(extra));
+        let params_hash = acquisition_cache_key(extra);
         if let Some(cache) = &self.fibo_cache {
             if let Some(cached) = cache.get_raw(symbol, tool, &params_hash) {
                 match serde_json::from_value::<providers::ProviderResponse>(cached) {

@@ -51,7 +51,7 @@ fn exec_discard(
 /// original job parameters (and `training_submit` retrain mode to
 /// pre-register adapter metadata).
 pub(crate) struct JobStore {
-    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+    pool: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
 }
 
 impl JobStore {
@@ -62,7 +62,7 @@ impl JobStore {
     /// post: the training_jobs table and restart-recovery columns exist.
     /// [P4] Constraining: persistence initialization fails explicitly rather than weakening boundaries.
     pub fn new(
-        pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+        pool: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
     ) -> Result<Self, JobStoreError> {
         let store = Self { pool };
         store.init_schema()?;
@@ -111,7 +111,7 @@ impl JobStore {
 
     fn lock(
         &self,
-    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>, JobStoreError> {
+    ) -> Result<r2d2::PooledConnection<hkask_storage::SqliteConnectionManager>, JobStoreError> {
         self.pool
             .get()
             .map_err(|e| JobStoreError::Storage(format!("pool get: {}", e)))

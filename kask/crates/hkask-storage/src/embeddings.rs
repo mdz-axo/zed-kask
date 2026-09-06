@@ -55,8 +55,8 @@ impl From<rusqlite::Error> for EmbeddingError {
         EmbeddingError::Storage(e)
     }
 }
+use crate::SqliteConnectionManager;
 use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 
 use std::sync::Arc;
 

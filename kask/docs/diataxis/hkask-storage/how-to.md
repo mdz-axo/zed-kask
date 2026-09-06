@@ -153,54 +153,37 @@ Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
 
 ## Rotate a DB passphrase
 
-To re-encrypt a SQLCipher DB under a new passphrase (e.g., after a key
-compromise or routine rotation), use `rotate_passphrase`
-(`rotation.rs:122`). The bridge layer wraps this in
-`rotate_all_kask_db_passphrases` (`kask_bridge/src/identity.rs:219`),
-which rotates every shared-passphrase DB (curator, swarm memory,
-kata-kanban, research, training) in one call — resolving the old
-passphrase from the keychain and each DB path from the data dir, with
-best-effort rollback of already-rotated DBs on failure.
+**Do not use the current settings path to rotate valuable live databases.**
+Core-review T11's maintenance-restart workflow is approved (2026-09-06), but its
+inventory, operation drain, offline journal, key publication, and reopen/resume
+orchestration are not yet implemented. The current bridge enumerates five fixed
+DB paths; it does not discover all caller-supplied corpus paths or provide
+multi-database/keychain crash atomicity.
 
-The rotation is atomic and fail-safe:
+For an already-quiesced, isolated database, `rotation.rs::rotate_passphrase`:
 
-1. Validates the new passphrase (≥ 8 chars, different from old).
-2. Opens the source DB with the old passphrase (verifies it via the probe
-   connection in `file_pool`).
-3. Creates `<db>.new` with the new passphrase; copies all user tables +
-   `sqlite_sequence`. Under the native KDF the salt lives in the DB
-   header — there is no salt file to manage. `vec0` shadow tables are
-   rebuilt from `schema.sql` on first open of the new DB.
-4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`, then
-   deletes `.old`.
-5. On any pre-rename failure, the `.new` artifacts are deleted and the
-   original DB is untouched; if the rename fails after `<db>` → `<db>.old`,
-   the code attempts to restore the backup.
+1. Validates the passphrase and refuses existing `.old`/`.new` recovery artifacts
+   or sidecars. It never creates a missing source as an empty database.
+2. Canonicalizes the source (hard-link aliases are refused) and acquires an
+   exclusive lease. Participating pool owners must have closed their connections;
+   `core/connection.rs::LeasedSqliteConnection` retains shared leases until close.
+3. Uses SQLCipher `sqlcipher_export`, preserves schema/FTS/rowids, rebuilds KNN
+   from canonical embedding rows, and validates foreign keys and integrity before
+   replacement. Export failure preserves the old source.
+4. Closes rotation connections and replaces files while retaining the exclusive
+   lease. Failed replacement attempts backup restoration. A failed restoration
+   requires explicit recovery; the next open/retry preserves the remaining files.
 
-The caller (settings UI) writes the new passphrase to the keychain ONLY
-after `Ok(())` — a failed rotation leaves the old passphrase in effect.
+The empty `<canonical-db>.maintenance-lock` file has a stable inode and must not
+be deleted to bypass a lock. Older binaries/direct SQLite opens do not participate;
+the caller must still establish quiescence for those consumers. Closing only the
+`Database` facade is insufficient while any pool/connection clone survives.
 
-**From the settings UI**: use the Security sub-page. It rotates every
-kask SQLCipher DB (one shared passphrase — there is no separate
-swarm-memory rotation) before saving the new passphrase.
-
-**From code**:
-
-```rust,ignore
-use kask_bridge::rotate_all_kask_db_passphrases;
-
-// Rotate every shared-passphrase DB. The old passphrase is resolved
-// from the keychain; the new passphrase must be >=8 chars.
-rotate_all_kask_db_passphrases("new-passphrase")?;
-
-// After rotation succeeds, write the new passphrase to the keychain
-// and nudge MCP servers to restart.
-```
-
-Run the rotation tests with `cargo test -p hkask-storage rotation` (the
-test module at `rotation.rs:800` covers data preservation, wrong-old-
-passphrase failure safety, short-passphrase rejection, no-op rotation,
-artifact cleanup, and the legacy-KDF migration at `rotation.rs:972,997`).
+Run `cargo test --offline --locked -p hkask-storage --lib -- --test-threads=1`
+with temporary data/artifact roots. Tests cover RSS FTS and KNN recall after
+reopen, pool/connection lifetime and process leases, preserved recovery artifacts,
+wrong-key rejection, and failed preservation. They do not certify the unfinished
+T11 maintenance workflow.
 
 ## See also
 

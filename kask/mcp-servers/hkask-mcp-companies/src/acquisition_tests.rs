@@ -828,8 +828,8 @@ async fn review_transport_timeout_redacts_key_on_cold_and_warm_cache() {
                 rusqlite::Connection::open(directory.path().join("cache.db"))
                     .expect("cache DB")
                     .query_row(
-                        "SELECT raw_response FROM fibo_raw_cache WHERE endpoint = 'key_metrics'",
-                        [],
+                        "SELECT raw_response FROM fibo_raw_cache WHERE endpoint = 'key_metrics' AND params_hash = ?1",
+                        [acquisition_cache_key(&[("limit", "2")])],
                         |row| row.get(0),
                     )
                     .expect("persisted cache row");
@@ -1083,4 +1083,98 @@ fn review_history_retains_nominal_missing_shares_fallback() {
         None
     );
     assert_eq!(history.shares_outstanding, 1000.0);
+}
+
+/// expect: [P1] Pre-sanitizer cached warnings must never be returned or logged.
+#[tokio::test]
+async fn legacy_presanitizer_cache_is_not_returned_or_logged() {
+    use tracing::instrument::WithSubscriber;
+
+    const SENTINEL: &str = "fixture-fmp-LEGACY-SENTINEL";
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(fmp_fixture).await;
+    let legacy_key = format!(
+        "normalized-v1:{}",
+        fibo_cache::hash_params(&[("limit", "2")])
+    );
+    let legacy = json!({
+        "value": [{"date":"2025-12-31","roic":99.0}],
+        "provider": "FMP",
+        "warnings": [format!("FMP ratios: {}", json!({
+            "kind":"unavailable",
+            "error":format!("FMP request failed: error sending request for url (https://financialmodelingprep.com/stable/ratios?symbol=ACME&apikey={SENTINEL})")
+        }))],
+    });
+    let first = server(directory.path());
+    let cache = first.fibo_cache.as_ref().expect("cache");
+    cache.store_raw("ACME", "key_metrics", &legacy_key, &legacy, "FMP");
+    assert_eq!(
+        cache.get_raw("ACME", "key_metrics", &legacy_key),
+        Some(legacy.clone()),
+        "legacy fixture must be fresh and readable before acquisition"
+    );
+
+    let log_path = directory.path().join("acquisition.log");
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(Mutex::new(
+            std::fs::File::create(&log_path).expect("log file"),
+        ))
+        .finish();
+    let (cold, warm, current) = providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            tracing::warn!("scoped-acquisition-capture-active");
+            let cold = metrics_tool(&first, "ACME", 2).await;
+            drop(first);
+            let reopened = server(directory.path());
+            let warm = metrics_tool(&reopened, "ACME", 2).await;
+            let cache = reopened.fibo_cache.as_ref().expect("reopened cache");
+            let current = cache
+                .get_raw(
+                    "ACME",
+                    "key_metrics",
+                    &acquisition_cache_key(&[("limit", "2")]),
+                )
+                .expect("current cache entry");
+            assert_eq!(
+                cache.get_raw("ACME", "key_metrics", &legacy_key),
+                Some(legacy),
+                "old bytes remain; invalidation must not delete them"
+            );
+            (cold, warm, current)
+        })
+        .with_subscriber(subscriber)
+        .await;
+
+    let logs = std::fs::read_to_string(&log_path).expect("captured logs");
+    assert!(
+        logs.contains("scoped-acquisition-capture-active"),
+        "scoped tracing must actually capture events"
+    );
+    assert!(
+        !logs.contains(SENTINEL) && !logs.contains("apikey"),
+        "pre-sanitizer credentials reached tracing"
+    );
+    assert_eq!(
+        fixture.count(),
+        3,
+        "must fetch base/ratios/growth, then reuse the safe warm entry"
+    );
+    assert_eq!(cold, warm);
+    assert_eq!(cold["data"][0]["roic"], 0.18);
+    assert_eq!(cold["data"][0]["priceToEarningsRatio"], 20.0);
+    assert_eq!(cold["warnings"], json!([]));
+    for (surface, value) in [
+        ("cold output", cold),
+        ("warm output", warm),
+        ("current cache", current),
+    ] {
+        let text = value.to_string();
+        assert!(
+            !text.contains(SENTINEL) && !text.contains("apikey"),
+            "{surface} contains pre-sanitizer credentials"
+        );
+    }
 }

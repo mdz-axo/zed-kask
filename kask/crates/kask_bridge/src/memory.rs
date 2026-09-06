@@ -2370,7 +2370,7 @@ pub(crate) mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self.inner.as_any()
         }
-        fn sqlite_pool(&self) -> Option<&r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>> {
+        fn sqlite_pool(&self) -> Option<&r2d2::Pool<hkask_storage::SqliteConnectionManager>> {
             self.inner.sqlite_pool()
         }
     }

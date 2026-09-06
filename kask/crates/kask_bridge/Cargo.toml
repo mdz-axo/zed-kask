@@ -19,7 +19,7 @@ hkask-memory.workspace = true
 hkask-storage.workspace = true
 hkask-event-store.workspace = true
 r2d2.workspace = true
-r2d2_sqlite.workspace = true
+
 hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true

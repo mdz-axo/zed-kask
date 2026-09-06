@@ -16,6 +16,85 @@
 
 use thiserror::Error;
 
+/// SQLite's connection is dropped before its lease. Keeping the lease on the
+/// pool manager alone is insufficient: r2d2 drops that manager before idle
+/// connections, and background pool workers can outlive the public pool handle.
+pub struct LeasedSqliteConnection {
+    connection: rusqlite::Connection,
+    _lease: Option<std::sync::Arc<std::fs::File>>,
+}
+
+impl std::ops::Deref for LeasedSqliteConnection {
+    type Target = rusqlite::Connection;
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+impl std::ops::DerefMut for LeasedSqliteConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
+    }
+}
+
+/// r2d2 manager whose connections retain the optional maintenance lease.
+/// Unencrypted file and in-memory pools use the same type without a lease.
+pub struct SqliteConnectionManager {
+    inner: r2d2_sqlite::SqliteConnectionManager,
+    lease: Option<std::sync::Arc<std::fs::File>>,
+}
+
+impl SqliteConnectionManager {
+    pub fn file(path: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            inner: r2d2_sqlite::SqliteConnectionManager::file(path),
+            lease: None,
+        }
+    }
+
+    pub fn memory() -> Self {
+        Self {
+            inner: r2d2_sqlite::SqliteConnectionManager::memory(),
+            lease: None,
+        }
+    }
+
+    pub fn with_init<F>(self, initialize: F) -> Self
+    where
+        F: Fn(&mut rusqlite::Connection) -> rusqlite::Result<()> + Send + Sync + 'static,
+    {
+        Self {
+            inner: self.inner.with_init(initialize),
+            ..self
+        }
+    }
+
+    fn with_lease(mut self, lease: std::sync::Arc<std::fs::File>) -> Self {
+        self.lease = Some(lease);
+        self
+    }
+}
+
+impl r2d2::ManageConnection for SqliteConnectionManager {
+    type Connection = LeasedSqliteConnection;
+    type Error = rusqlite::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(LeasedSqliteConnection {
+            connection: self.inner.connect()?,
+            _lease: self.lease.clone(),
+        })
+    }
+
+    fn is_valid(&self, connection: &mut Self::Connection) -> Result<(), Self::Error> {
+        self.inner.is_valid(&mut connection.connection)
+    }
+
+    fn has_broken(&self, connection: &mut Self::Connection) -> bool {
+        self.inner.has_broken(&mut connection.connection)
+    }
+}
+
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
 pub(crate) const DEFAULT_EMBEDDING_DIM: usize = 1024;
 pub fn embedding_dim() -> usize {
@@ -107,7 +186,7 @@ pub struct Database {
     extensions: Option<String>,
     maintenance_lease: Option<std::sync::Arc<std::fs::File>>,
     /// Cached r2d2 pool — created on first `sqlite_pool()` call.
-    pool_cache: std::sync::Mutex<Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>>,
+    pool_cache: std::sync::Mutex<Option<r2d2::Pool<SqliteConnectionManager>>>,
 }
 
 impl Database {
@@ -262,9 +341,7 @@ impl Database {
     /// - Schema initialization on the first connection
     ///
     /// For in-memory databases, creates an unencrypted pool.
-    pub fn sqlite_pool(
-        &self,
-    ) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
+    pub fn sqlite_pool(&self) -> Result<r2d2::Pool<SqliteConnectionManager>, DatabaseError> {
         {
             let cached = self
                 .pool_cache
@@ -312,13 +389,11 @@ impl Database {
         Ok(())
     }
 
-    fn in_memory_pool(
-        &self,
-    ) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
+    fn in_memory_pool(&self) -> Result<r2d2::Pool<SqliteConnectionManager>, DatabaseError> {
         // Use max_size(1) because SqliteConnectionManager::memory() creates
         // a separate in-memory database per connection. A pool size >1 would
         // scatter writes across independent databases.
-        let manager = r2d2_sqlite::SqliteConnectionManager::memory().with_init(|conn| {
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
             // Load sqlite-vec per-connection before schema init (vec0 tables).
             init_sqlite_vec_on(conn)?;
             conn.execute_batch("PRAGMA foreign_keys = ON;")
@@ -337,7 +412,7 @@ impl Database {
         Ok(pool)
     }
 
-    fn file_pool(&self) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
+    fn file_pool(&self) -> Result<r2d2::Pool<SqliteConnectionManager>, DatabaseError> {
         let lease = match &self.maintenance_lease {
             Some(lease) => lease.clone(),
             None => database_lease(&self.path, false)?,
@@ -365,25 +440,24 @@ impl Database {
 
         let path = self.path.clone();
 
-        let manager = r2d2_sqlite::SqliteConnectionManager::file(&path).with_init(move |conn| {
-            // The manager lives as long as any pool clone or checked-out
-            // connection, unlike the Database facade that handed it out.
-            let _lease = &lease;
-            // Load sqlite-vec per-connection (before schema init — vec0).
-            init_sqlite_vec_on(conn)?;
-            conn.execute_batch(&key_pragma)?;
-            // Standard WAL PRAGMAs — busy_timeout MUST precede journal_mode = WAL
-            // (see super::database::init_wal_pragmas for rationale).
-            conn.execute_batch(crate::database::WAL_PRAGMA_BATCH)?;
-            // Additional performance tuning for the main registry DB pool.
-            conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;
+        let manager = SqliteConnectionManager::file(&path)
+            .with_lease(lease)
+            .with_init(move |conn| {
+                // Load sqlite-vec per-connection (before schema init — vec0).
+                init_sqlite_vec_on(conn)?;
+                conn.execute_batch(&key_pragma)?;
+                // Standard WAL PRAGMAs — busy_timeout MUST precede journal_mode = WAL
+                // (see super::database::init_wal_pragmas for rationale).
+                conn.execute_batch(crate::database::WAL_PRAGMA_BATCH)?;
+                // Additional performance tuning for the main registry DB pool.
+                conn.execute_batch(
+                    "PRAGMA synchronous = NORMAL;
                      PRAGMA mmap_size = 268435456;
                      PRAGMA cache_size = -65536;
                      PRAGMA wal_autocheckpoint = 256;
                      PRAGMA auto_vacuum = INCREMENTAL;",
-            )
-        });
+                )
+            });
 
         let pool_size = match std::env::var("HKASK_DB_POOL_SIZE") {
             Ok(raw) => match raw.parse::<u32>() {
@@ -557,6 +631,112 @@ pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "The SQLite connection retains its maintenance lease after the pool manager is gone" [P1]
+    #[test]
+    fn connection_lease_outlives_manager() {
+        use r2d2::ManageConnection;
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = directory
+            .path()
+            .join("lease.db")
+            .to_string_lossy()
+            .into_owned();
+        let lease = database_lease(&path, false).expect("shared lease");
+        let manager = SqliteConnectionManager::file(&path)
+            .with_lease(lease)
+            .with_init(|connection| {
+                connection.execute_batch(
+                    "PRAGMA key = 'test-passphrase'; CREATE TABLE retained(value INTEGER);",
+                )
+            });
+        let connection = manager.connect().expect("connection");
+        drop(manager);
+        assert!(
+            QuiescedDatabase::acquire(&path).is_err(),
+            "a live connection must retain the shared lease independently of its manager"
+        );
+        connection
+            .execute("INSERT INTO retained VALUES (7)", [])
+            .expect("last write");
+        drop(connection);
+        let exclusive = QuiescedDatabase::acquire(&path).expect("connection closed");
+        let database = exclusive.open("test-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        let value: i64 = pool
+            .get()
+            .expect("connection")
+            .query_row("SELECT value FROM retained", [], |row| row.get(0))
+            .expect("retained write");
+        assert_eq!(value, 7);
+    }
+
+    /// expect: "An editor or MCP process cannot rotate a database retained by another participating process" [P1]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "Isolated subprocess lock probe; child is killed and reaped on a five-second deadline"
+    )]
+    fn maintenance_lease_coordinates_processes() {
+        const CHILD_PATH: &str = "HKASK_TEST_MAINTENANCE_LEASE_PATH";
+        const CHILD_EXPECTED: &str = "HKASK_TEST_MAINTENANCE_LEASE_EXPECTED";
+        if let Ok(path) = std::env::var(CHILD_PATH) {
+            assert!(std::path::Path::new(&path).starts_with(std::env::temp_dir()));
+            let result = QuiescedDatabase::acquire(&path);
+            let blocked = std::env::var(CHILD_EXPECTED).expect("child expectation") == "blocked";
+            assert_eq!(result.is_err(), blocked);
+            return;
+        }
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = directory
+            .path()
+            .join("shared.db")
+            .to_string_lossy()
+            .into_owned();
+        let database = open_or_repair(&path, "test-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        let probe = |expected: &str| {
+            let mut child =
+                std::process::Command::new(std::env::current_exe().expect("test binary"))
+                    .args([
+                        "--exact",
+                        "core::connection::tests::maintenance_lease_coordinates_processes",
+                        "--nocapture",
+                    ])
+                    .env(CHILD_PATH, &path)
+                    .env(CHILD_EXPECTED, expected)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("spawn lock probe");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if child.try_wait().expect("probe status").is_some() {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().expect("kill timed-out probe");
+                    child.wait().expect("reap probe");
+                    panic!("maintenance lease probe exceeded deadline");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let output = child.wait_with_output().expect("probe output");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "the named probe must actually run"
+            );
+        };
+        drop(database);
+        probe("blocked");
+        drop(pool);
+        probe("available");
+    }
 
     fn temp_db_path(name: &str) -> String {
         let dir = std::env::temp_dir().join(format!(

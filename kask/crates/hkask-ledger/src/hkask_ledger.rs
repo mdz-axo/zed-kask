@@ -380,7 +380,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, Arc<Ledger>) {
         let directory = tempfile::tempdir().expect("temporary ledger directory");
         let manager =
-            r2d2_sqlite::SqliteConnectionManager::file(directory.path().join("ledger.db"))
+            hkask_storage::SqliteConnectionManager::file(directory.path().join("ledger.db"))
                 .with_init(|connection| {
                     init_wal_pragmas(connection)?;
                     connection.execute_batch("PRAGMA foreign_keys = ON;")?;

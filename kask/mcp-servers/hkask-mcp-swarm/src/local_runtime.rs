@@ -101,7 +101,7 @@ impl LazyEventStore {
                 ))
             })?;
         }
-        let manager = r2d2_sqlite::SqliteConnectionManager::file(&self.db_path)
+        let manager = hkask_storage::SqliteConnectionManager::file(&self.db_path)
             .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
         let pool = r2d2::Pool::builder()
             .max_size(4)
@@ -188,7 +188,7 @@ impl LocalSwarmRuntime {
                 ))
             })?;
         }
-        let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path)
+        let manager = hkask_storage::SqliteConnectionManager::file(db_path)
             .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
         let pool = r2d2::Pool::builder()
             .max_size(4)

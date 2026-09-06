@@ -40,7 +40,7 @@ pub trait DatabaseDriver: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 
     /// Access the SQLite connection pool, if this is a SqliteDriver.
-    fn sqlite_pool(&self) -> Option<&r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>> {
+    fn sqlite_pool(&self) -> Option<&r2d2::Pool<crate::SqliteConnectionManager>> {
         None
     }
 

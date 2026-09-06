@@ -7,8 +7,8 @@
 use super::driver::DatabaseDriver;
 use super::types::DbError;
 use super::value::{DbRow, DbValue};
+use crate::SqliteConnectionManager;
 use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use std::sync::Arc;
 
 /// Standard SQLite PRAGMAs for WAL-mode connections.

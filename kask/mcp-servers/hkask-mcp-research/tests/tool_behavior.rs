@@ -225,7 +225,7 @@ fn make_server_without_db() -> ResearchServer {
 }
 
 fn make_server_with_rss_db() -> ResearchServer {
-    let manager = r2d2_sqlite::SqliteConnectionManager::memory();
+    let manager = hkask_storage::SqliteConnectionManager::memory();
     let pool = r2d2::Pool::builder()
         .max_size(1)
         .build(manager)
@@ -757,18 +757,16 @@ fn deep_search_request() -> SearchRequest {
     }
 }
 
-
 /// Success contract: the LLM's per-candidate scores reach the caller
 /// (descending score order) and the output names `mode: "llm"` with no
 /// reason.
 #[tokio::test]
 async fn deep_search_llm_rerank_reorders_results() {
-    let server =
-        make_server_with_pool_and_port(
-            Arc::new(FixedResultsPool),
-            Arc::new(ScoringInferencePort),
-            Some("test-rerank-model"),
-        );
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(ScoringInferencePort),
+        Some("test-rerank-model"),
+    );
     let output = parse(&ok(server
         .web_search(Parameters(deep_search_request()))
         .await));
@@ -803,12 +801,11 @@ async fn deep_search_llm_rerank_reorders_results() {
 /// fallback.
 #[tokio::test]
 async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
-    let server =
-        make_server_with_pool_and_port(
-            Arc::new(FixedResultsPool),
-            Arc::new(FailingInferencePort),
-            Some("test-rerank-model"),
-        );
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(FailingInferencePort),
+        Some("test-rerank-model"),
+    );
     let output = parse(&ok(server
         .web_search(Parameters(deep_search_request()))
         .await));
@@ -848,12 +845,11 @@ async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
 /// Non-deep strategies do not rerank — no rerank field in the output.
 #[tokio::test]
 async fn quick_search_has_no_rerank_field() {
-    let server =
-        make_server_with_pool_and_port(
-            Arc::new(FixedResultsPool),
-            Arc::new(FailingInferencePort),
-            Some("test-rerank-model"),
-        );
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(FailingInferencePort),
+        Some("test-rerank-model"),
+    );
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     let output = parse(&ok(server.web_search(Parameters(request)).await));

@@ -73,7 +73,7 @@ impl TrainingServer {
                          (swarm_eval_agent_local) first"
                 )));
             }
-            let manager = r2d2_sqlite::SqliteConnectionManager::file(&events_path)
+            let manager = hkask_storage::SqliteConnectionManager::file(&events_path)
                 .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
             let pool = r2d2::Pool::builder()
                 .max_size(2)

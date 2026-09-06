@@ -52,7 +52,7 @@ hkask_mcp_server::mcp_server!(
         pub pool: Arc<dyn WebSearchPort>,
         pub cache: Arc<ResponseCache>,
         pub rate_limiter: RateLimiter,
-        pub rss_db: Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
+        pub rss_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
         pub rss_client: Client,
         /// Inference port for the deep strategy's templated LLM rerank.
         /// Resolved via `hkask_inference::resolve_inference_port()` — a
@@ -72,7 +72,7 @@ hkask_mcp_server::mcp_server!(
 // ── RSS helpers ──
 
 pub(crate) fn spawn_db<F, T>(
-    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+    pool: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
     f: F,
 ) -> tokio::task::JoinHandle<Result<T, anyhow::Error>>
 where
