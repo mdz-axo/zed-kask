@@ -2991,15 +2991,21 @@ mod gallery_lifecycle_tests {
         fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<hkask_types::ports::ModelEntry>, hkask_types::InferenceError>> + Send + '_>> {
             Box::pin(async { Ok(vec![hkask_types::ports::ModelEntry { prefixed_name: "OpenRouter/test-vision".into(), model: "test-vision".into(), supports_vision: true }]) })
         }
-        fn generate_vision(&self, _prompt: &str, images: &[String], _parameters: &hkask_types::template::LLMParameters, _model: Option<&str>)
+        fn generate_vision(&self, prompt: &str, images: &[String], _parameters: &hkask_types::template::LLMParameters, _model: Option<&str>)
             -> Pin<Box<dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
             assert!(!images.is_empty());
+            let text = if prompt.contains("Return ONLY a JSON array") { "[]" }
+                else if prompt.contains("color palette") && prompt.contains("JSON object") {
+                    r#"{"colors":[],"palette_style":"neutral","temperature":"balanced","saturation":"muted"}"#
+                } else if prompt.contains("JSON object") {
+                    r#"{"focal_point":"center","rule_of_thirds":"centered","leading_lines":"none","depth_of_field":"deep","perspective":"eye level","framing":"none","symmetry":"balanced","negative_space":"none"}"#
+                } else { "Test caption" }.to_string();
             Box::pin(async move {
                 if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     self.entered.notify_one();
                     self.resume.notified().await;
                 }
-                Ok(hkask_types::InferenceResult { text: "Test caption".into(), model: "test-vision".into(), usage: Default::default(),
+                Ok(hkask_types::InferenceResult { text, model: "test-vision".into(), usage: Default::default(),
                     finish_reason: "stop".into(), tool_calls: vec![], reasoning: None, cost_usd: None })
             })
         }
@@ -3047,4 +3053,80 @@ mod gallery_lifecycle_tests {
         assert!(server.gallery_store.get_by_id(&records[0].gallery_id, &records[0].id)?.metadata_stale);
         Ok(())
     }
+    /// expect: Successful complete reanalysis clears staleness only for the analyzed revision. [P1]
+    #[tokio::test]
+    async fn complete_reanalysis_refreshes_matching_revision() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().join("root"); std::fs::create_dir(&root)?;
+        png(&root.join("a.png"), 1);
+        let vision = Arc::new(BarrierVision::new());
+        vision.resume.notify_one();
+        let server = server(&fixture.path().join("gallery.sqlite"), vision);
+        organize(&server, &root, true).await?;
+        png(&root.join("a.png"), 2);
+        organize(&server, &root, true).await?;
+        let gallery = server.access_gallery()?;
+        let image = server.gallery_store.get_image(&gallery.gallery_id, Some(0), None)?;
+        assert!(image.metadata_stale);
+        let (count, errors) = server.run_analysis_on_indices(&gallery, &[0], &["objects".into(), "colors".into(), "composition".into(), "scene".into()]).await;
+        assert_eq!(count, 1, "{errors:?}"); assert!(errors.is_empty());
+        assert!(!server.gallery_store.get_by_id(&gallery.gallery_id, &image.id)?.metadata_stale);
+        assert!(server.gallery_store.get_tags(&image.id)?.iter().any(|tag| tag.value == "Test caption"));
+        Ok(())
+    }
+
+    /// expect: Downloads finishing after a gallery switch stay in their captured gallery, including variants. [P1]
+    #[tokio::test]
+    async fn generated_completion_keeps_gallery_snapshot() -> TestResult {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let fixture = tempfile::tempdir()?;
+        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", fixture.path()); }
+        let result: TestResult = async {
+            let first = fixture.path().join("first"); let second = fixture.path().join("second");
+            std::fs::create_dir(&first)?; std::fs::create_dir(&second)?;
+            let source = fixture.path().join("source.png"); png(&source, 1);
+            let bytes = std::fs::read(source)?;
+            let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), Arc::new(BarrierVision::new())));
+            organize(&server, &first, true).await?;
+            let original = server.access_gallery()?.gallery_id;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let resume = Arc::new(tokio::sync::Notify::new());
+            let download = {
+                let entered = entered.clone(); let resume = resume.clone();
+                tokio::spawn(async move {
+                    for index in 0..2 {
+                        let (mut stream, _) = listener.accept().await?;
+                        let mut request = [0; 1024]; stream.read(&mut request).await?;
+                        if index == 0 { entered.notify_one(); resume.notified().await; }
+                        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).as_bytes()).await?;
+                        stream.write_all(&bytes).await?;
+                    }
+                    Ok::<(), std::io::Error>(())
+                })
+            };
+            let persistence = {
+                let server = server.clone();
+                tokio::spawn(async move {
+                    crate::assets::persist_and_slim_result(&server.gallery_state, &server.gallery_store,
+                        &serde_json::json!({"data":[{"url":format!("http://{address}/one")},{"url":format!("http://{address}/two")}]}), "image").await
+                })
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+            organize(&server, &second, true).await?;
+            resume.notify_one();
+            persistence.await??; download.await??;
+            assert_eq!(server.gallery_store.count_assets(&original)?, 2);
+            assert_eq!(server.access_gallery()?.image_count, 0);
+            organize(&server, &first, true).await?;
+            assert_eq!(server.access_gallery()?.image_count, 2, "outside-root generated outputs survive image scans");
+            Ok(())
+        }.await;
+        unsafe { match prior { Some(value) => std::env::set_var("HKASK_ARTIFACTS_DIR", value), None => std::env::remove_var("HKASK_ARTIFACTS_DIR") } }
+        result
+    }
+
 }

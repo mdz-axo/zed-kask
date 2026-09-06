@@ -91,7 +91,7 @@ impl MediaServer {
         Ok((record, validation))
     }
 
-    /// Import a reference image file into the current gallery (idempotent by
+    /// Import a reference image file into the captured gallery (idempotent by
     /// canonical path) and return its gallery `image_id` plus a base64 data URL
     /// suitable for vision LLM calls. Used by `face_scan_folder`.
     ///

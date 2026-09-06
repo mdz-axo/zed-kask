@@ -1,20 +1,21 @@
-//! Security sub-page — DB passphrase rotation for all kask memory databases.
-//!
-//! Shows the current DB passphrase status (configured/not configured) and
-//! provides an input field to change the passphrase. On confirm, EVERY
-//! kask SQLCipher database (curator, swarm memory, kata-kanban, research,
-//! training) is re-encrypted with the new passphrase (via
-//! `kask_bridge::rotate_all_kask_db_passphrases`), the new passphrase is
-//! written to the keychain (`kask://credentials/hkask_db_passphrase`),
-//! and MCP servers are nudged to restart with the new passphrase.
-//!
-//! There is ONE passphrase — the swarm memory DB opens with the same
-//! `HKASK_DB_PASSPHRASE` (no separate Swarm-page field).
-
+//! D9: explicit, read-only inventory gate for database passphrase maintenance.
+//! Confirmation is not rotation; the shutdown/recovery coordinator is still pending.
 use super::*;
+use settings::Settings as _;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
-/// The credential URL for the DB passphrase in zed's keychain.
-const DB_PASSPHRASE_URL: &str = "kask://credentials/hkask_db_passphrase";
+#[derive(Default)]
+struct InventoryState {
+    additional: String,
+    exclusions: String,
+    preview: Option<Arc<kask_bridge::DatabaseInventory>>,
+    confirmed: Option<kask_bridge::ConfirmedInventory>,
+    error: Option<String>,
+    busy: bool,
+    generation: u64,
+}
+impl gpui::Global for InventoryState {}
 
 pub(crate) fn render_security_page(
     _settings_window: &SettingsWindow,
@@ -22,172 +23,196 @@ pub(crate) fn render_security_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    super::ensure_keychain_prefetch(cx);
-    let credentials_provider = zed_credentials::global(cx);
-    let db_passphrase_configured = has_credential(
-        &credentials_provider,
-        &[DB_PASSPHRASE_URL],
-        "HKASK_DB_PASSPHRASE",
-    );
-
-    // DB passphrase — keychain-backed. Shows "Configured" card if the
-    // passphrase exists, or an input field to set/change it. On confirm,
-    // the DB is rotated before the keychain write so a rotation failure
-    // leaves the old passphrase intact.
-    let db_passphrase_card = if db_passphrase_configured {
-        v_flex()
-            .gap_2()
-            .child(
-                ConfiguredApiCard::new(
-                    "kask-security-db-passphrase-reset",
-                    "DB Passphrase Configured",
-                )
-                .button_label("Change Passphrase")
-                .button_tab_index(0)
-                .into_any_element(),
+    if !cx.has_global::<InventoryState>() {
+        cx.set_global(InventoryState::default());
+    }
+    let state = cx.global::<InventoryState>();
+    let busy = state.busy;
+    let preview = state.preview.clone();
+    let error = state.error.clone();
+    let confirmed = state
+        .confirmed
+        .as_ref()
+        .map(|receipt| receipt.rotate_paths().len());
+    let mut content = v_flex().gap_3().min_w_0()
+        .child(SettingsSectionHeader::new("Database Passphrase Maintenance"))
+        .child(Label::new("Review the complete shared-key database inventory before maintenance. Preview and confirmation do not open databases, read keys, or change the passphrase.").size(LabelSize::Small))
+        .child(Label::new("Add historical/external database paths as a JSON array of absolute paths. Directory symlinks are not searched. The catalogue and lease markers cannot discover every database created by older or independent programs.").size(LabelSize::Small))
+        .child(SettingsInputField::new("kask-maintenance-additional-paths").with_placeholder("[]").aria_label("Additional absolute database paths as JSON")
+            .on_confirm(|value, _, cx| update_input(true, value.unwrap_or_default(), cx)))
+        .child(Label::new("Exclude independent-key or unencrypted databases using a JSON object mapping each absolute path to its reason. Configured shared-key databases cannot be excluded.").size(LabelSize::Small))
+        .child(SettingsInputField::new("kask-maintenance-exclusions").with_placeholder("{}").aria_label("Database exclusions with reasons as JSON")
+            .on_confirm(|value, _, cx| update_input(false, value.unwrap_or_default(), cx)))
+        .child(Button::new("kask-maintenance-preview", if busy { "Reading inventory…" } else { "Preview inventory" }).disabled(busy)
+            .on_click(|_, _, cx| start_review(false, cx)));
+    if let Some(preview) = preview {
+        content = content.child(
+            Label::new(format!(
+                "{} database paths; {} searched roots",
+                preview.entries.len(),
+                preview.search_roots.len()
+            ))
+            .size(LabelSize::Small),
+        );
+        content = content.child(
+            gpui::uniform_list(
+                "kask-maintenance-paths",
+                preview.entries.len(),
+                move |range, _, _| {
+                    preview
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .skip(range.start)
+                        .take(range.len())
+                        .map(|(index, entry)| {
+                            let status = if entry.recovery_artifact.is_some() {
+                                "RECOVERY REQUIRED"
+                            } else if !entry.exists {
+                                "MISSING — will not create"
+                            } else if entry.configured {
+                                "CONFIGURED"
+                            } else {
+                                "REVIEW KEY SCOPE"
+                            };
+                            div()
+                                .id(("maintenance-path", index))
+                                .h_8()
+                                .min_w_0()
+                                .overflow_x_scroll()
+                                .whitespace_nowrap()
+                                .text_sm()
+                                .child(format!("{status}: {}", entry.path.display()))
+                        })
+                        .collect()
+                },
             )
-            .child(
-                v_flex().gap_0p5().child(
-                    Label::new(
-                        "The DB passphrase encrypts every kask SQLCipher database \
-                         (curator, swarm memory, kata-kanban, research, training). \
-                         It is provisioned on first run with the default \
-                         'allostery'. To change it, enter a new passphrase below \
-                         (>=8 chars) — the DB will be re-encrypted atomically before the \
-                         new passphrase is saved. If rotation fails, the old passphrase \
-                         remains in effect.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                ),
-            )
-            .child(
-                SettingsInputField::new("kask-security-db-passphrase-change")
-                    .tab_index(0)
-                    .with_placeholder("new-passphrase")
-                    .aria_label("New DB Passphrase")
-                    .confirm_on_focus_out()
-                    .on_confirm(move |value, _window, cx| {
-                        if let Some(pw) = value.filter(|v| !v.is_empty()) {
-                            spawn_db_passphrase_rotation(&pw, cx).detach();
-                        }
-                    }),
-            )
-            .into_any_element()
+            .h(px(240.0))
+            .w_full(),
+        );
+        content = content.child(
+            Button::new("kask-maintenance-confirm", "Confirm inventory")
+                .disabled(busy)
+                .on_click(|_, window, cx| confirm_prompt(window, cx)),
+        );
+    }
+    if let Some(error) = error {
+        content = content.child(Label::new(error).color(Color::Error).size(LabelSize::Small));
+    }
+    if let Some(count) = confirmed {
+        content = content.child(Label::new(format!("Inventory confirmed for {count} existing databases. No rotation occurred. Maintenance restart and recovery orchestration are not yet available; the unsafe live-rotation action is disabled.")).size(LabelSize::Small));
     } else {
-        v_flex()
-            .gap_2()
-            .child(
-                v_flex().gap_0p5().child(Label::new("DB Passphrase")).child(
-                    Label::new(
-                        "The DB passphrase encrypts every kask SQLCipher database \
-                         (curator, swarm memory, kata-kanban, research, training). \
-                         It is provisioned on first run with the default \
-                         'allostery'. If no passphrase is configured, set one \
-                         below (>=8 chars). The DB will be re-encrypted atomically before \
-                         the new passphrase is saved. If rotation fails, the old passphrase \
-                         remains in effect. Or set HKASK_DB_PASSPHRASE and restart Zed.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                ),
-            )
-            .child(
-                SettingsInputField::new("kask-security-db-passphrase-input")
-                    .tab_index(0)
-                    .with_placeholder("allostery")
-                    .aria_label("DB Passphrase")
-                    .confirm_on_focus_out()
-                    .on_confirm(move |value, _window, cx| {
-                        if let Some(pw) = value.filter(|v| !v.is_empty()) {
-                            spawn_db_passphrase_rotation(&pw, cx).detach();
-                        }
-                    }),
-            )
-            .into_any_element()
-    };
-
+        content = content.child(Label::new("Maintenance restart is being implemented. No database/keychain mutation can be started from this page yet.").size(LabelSize::Small).color(Color::Muted));
+    }
     v_flex()
         .id("kask-security-page")
         .size_full()
         .pt_2p5()
         .px_8()
         .pb_16()
-        .gap_4()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(
-            v_flex()
-                .gap_1()
-                .child(SettingsSectionHeader::new("Security"))
-                .child(
-                    Label::new(
-                        "Manage SQLCipher passphrases for kask memory databases. \
-                         Changing a passphrase re-encrypts the database atomically — \
-                         the old DB is preserved until the new one is verified, so no \
-                         data is lost on failure. After rotation, MCP servers restart \
-                         automatically with the new passphrase.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                ),
-        )
-        .child(Divider::horizontal())
-        .child(db_passphrase_card)
+        .child(content)
         .into_any_element()
 }
 
-/// Spawn a DB passphrase rotation task.
-///
-/// This runs the rotation on a background thread (it does file I/O and SQL
-/// operations that can take seconds), then writes the new passphrase to the
-/// keychain and nudges MCP servers to restart. Rotation failures are logged
-/// at `warn` level — the old passphrase remains in effect.
-///
-/// The rotation MUST complete before the keychain write — if the rotation
-/// fails, we do NOT write the new passphrase, so the old one stays in the
-/// keychain and MCP servers continue using it.
-fn spawn_db_passphrase_rotation(new_passphrase: &str, cx: &mut App) -> Task<()> {
-    let new_passphrase = new_passphrase.to_string();
-    let credentials_provider = zed_credentials::global(cx);
-    cx.spawn(async move |cx| {
-        // 1. Rotate EVERY kask DB that uses the shared passphrase (curator,
-        //    swarm memory, kanban, research, training). This runs on the
-        //    background executor because it does file I/O and SQL. The
-        //    rotation resolves the old passphrase from the keychain
-        //    internally and rolls back on failure.
-        let passphrase_for_rotation = new_passphrase.clone();
-        let rotation_result = cx
-            .background_spawn(async move {
-                kask_bridge::rotate_all_kask_db_passphrases(&passphrase_for_rotation)
-            })
-            .await;
+fn update_input(additional: bool, value: String, cx: &mut App) {
+    let state = cx.global_mut::<InventoryState>();
+    if additional {
+        state.additional = value;
+    } else {
+        state.exclusions = value;
+    }
+    state.generation = state.generation.saturating_add(1);
+    state.preview = None;
+    state.confirmed = None;
+    state.error = None;
+    cx.refresh_windows();
+}
 
-        match rotation_result {
-            Ok(()) => {
-                log::info!("DB passphrase rotation succeeded — writing new passphrase to keychain");
-                // 2. Write the new passphrase to the keychain. This triggers
-                //    nudge_mcp_servers via write_credential, which restarts
-                //    MCP servers with the new passphrase.
-                let url = DB_PASSPHRASE_URL.to_string();
-                let _ = credentials_provider
-                    .write_credentials(&url, "kask", new_passphrase.as_bytes(), &cx)
-                    .await
-                    .log_err();
-                // Mark as recently written so the UI shows "Configured".
-                mark_recently_written(&url);
-                // 3. Nudge MCP servers to restart with the new passphrase.
-                cx.update(|cx| nudge_mcp_servers(cx));
-            }
-            Err(error) => {
-                log::warn!(
-                    "DB passphrase rotation failed — the old passphrase remains in effect. \
-                     The new passphrase was NOT saved to the keychain. Error: {error}"
-                );
-                // Also update the UI to show the error. We can't show a toast
-                // from here, but the tracing span surfaces in the logs.
-                // The operator can check the logs for the failure reason.
-            }
+fn confirm_prompt(window: &mut Window, cx: &mut App) {
+    let generation = cx.global::<InventoryState>().generation;
+    let answer = window.prompt(gpui::PromptLevel::Warning, "Confirm database key scope and completeness?", Some("I have included all historical/external shared-key databases. Every non-excluded existing path uses the shared passphrase; each exclusion is independent and justified. This confirms inventory only, not rotation."), &["Confirm inventory", "Cancel"], cx);
+    cx.spawn(async move |cx| {
+        if answer.await == Ok(0) {
+            cx.update(|cx| {
+                if cx.global::<InventoryState>().generation == generation {
+                    start_review(true, cx);
+                } else {
+                    cx.global_mut::<InventoryState>().error =
+                        Some("Inputs changed; preview and confirm again.".into());
+                    cx.refresh_windows();
+                }
+            });
         }
     })
+    .detach();
+}
+
+fn start_review(confirm: bool, cx: &mut App) {
+    let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+    let state = cx.global_mut::<InventoryState>();
+    if state.busy {
+        return;
+    }
+    state.busy = true;
+    state.error = None;
+    state.confirmed = None;
+    state.generation = state.generation.saturating_add(1);
+    let generation = state.generation;
+    let additional = state.additional.clone();
+    let exclusions = state.exclusions.clone();
+    let previous = state.preview.clone();
+    cx.refresh_windows();
+    cx.spawn(async move |cx| {
+        let result = cx
+            .background_spawn(async move {
+                let additional: Vec<PathBuf> =
+                    serde_json::from_str(if additional.trim().is_empty() {
+                        "[]"
+                    } else {
+                        &additional
+                    })
+                    .map_err(|error| format!("Invalid additional paths JSON: {error}"))?;
+                let exclusions: BTreeMap<PathBuf, String> =
+                    serde_json::from_str(if exclusions.trim().is_empty() {
+                        "{}"
+                    } else {
+                        &exclusions
+                    })
+                    .map_err(|error| format!("Invalid exclusions JSON: {error}"))?;
+                let current = kask_bridge::preview_database_inventory(&settings, &additional)
+                    .map_err(|error| error.to_string())?;
+                let receipt = if confirm {
+                    Some(
+                        previous
+                            .ok_or_else(|| "Preview the inventory first".to_string())?
+                            .confirm(&current, &exclusions, true)
+                            .map_err(|error| error.to_string())?,
+                    )
+                } else {
+                    None
+                };
+                Ok::<_, String>((Arc::new(current), receipt))
+            })
+            .await;
+        cx.update(|cx| {
+            let state = cx.global_mut::<InventoryState>();
+            state.busy = false;
+            if state.generation == generation {
+                match result {
+                    Ok((preview, receipt)) => {
+                        state.preview = Some(preview);
+                        state.confirmed = receipt;
+                    }
+                    Err(error) => {
+                        state.error = Some(error);
+                        state.confirmed = None;
+                    }
+                }
+            }
+            cx.refresh_windows();
+        });
+    })
+    .detach();
 }

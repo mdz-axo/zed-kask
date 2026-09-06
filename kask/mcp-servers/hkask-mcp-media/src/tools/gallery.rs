@@ -1387,6 +1387,7 @@ impl MediaServer {
             let image_ids = self.gallery_store.list_album_members(&album_id).map_err(map_gallery_store_error)?;
             let assets = self.gallery_store.list_assets(&ga.gallery_id, 0, i64::MAX as usize).map_err(map_gallery_store_error)?;
             let image_indices: Vec<usize> = assets.iter().enumerate().filter_map(|(index, image)| image_ids.contains(&image.id).then_some(index)).collect();
+            let image_ids: Vec<&str> = image_indices.iter().map(|index| assets[*index].id.as_str()).collect();
             Ok(serde_json::json!({
                 "album_id": album_id,
                 "image_ids": image_ids,

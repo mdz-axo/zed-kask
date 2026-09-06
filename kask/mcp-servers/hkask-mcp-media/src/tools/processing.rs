@@ -847,9 +847,9 @@ impl MediaServer {
                 }
             }
 
-            // Clean up temp files regardless of import success.
+            // The indexed copies are durable; only the extraction scratch files are removed.
             for frame in &frames {
-                let _ = std::fs::remove_file(frame);
+                std::fs::remove_file(frame).map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
             }
 
             if imported.is_empty() {

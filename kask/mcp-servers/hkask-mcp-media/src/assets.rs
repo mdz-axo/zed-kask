@@ -35,9 +35,8 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
 /// the path, with a warning naming the skipped indexing). Returns the local
 /// file path on success.
 ///
-/// Takes the gallery Arcs rather than `&MediaServer` so the background job
-/// task (`job_submit`) — which cannot borrow the server — persists through
-/// the same path as the synchronous tools.
+/// Takes an immutable activation snapshot so neither downloads nor multiple
+/// variants can retarget to a gallery activated while persistence is awaiting.
 ///
 /// `kind` is "image", "video", or "audio" — determines the file extension.
 /// `result` is the raw provider response JSON. The recognized shapes:
@@ -147,9 +146,8 @@ pub(crate) async fn persist_generated_asset(
         "Generated asset persisted"
     );
 
-    // Index in the gallery (all media types). Best-effort: without an
-    // organized gallery the asset is still persisted and its path returned —
-    // the warning names the degradation so it is surfaced, never silent.
+    // Gallery-less generation still returns its saved path with a warning.
+    // A configured gallery's persistence failure propagates with that saved path.
     let media_type = match kind {
         "video" => "video",
         "audio" => "audio",
