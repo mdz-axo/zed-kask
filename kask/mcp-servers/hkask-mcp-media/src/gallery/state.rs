@@ -103,12 +103,13 @@ impl GalleryState {
                         path.display()
                     )));
                 }
-                let bytes = crate::read_image_capped(&path.to_string_lossy())?;
+                let absolute_path = path.to_str().ok_or_else(|| crate::MediaError::Io(format!("Non-UTF-8 asset path: {}", path.display())))?.to_string();
+                let bytes = crate::read_image_capped(&absolute_path)?;
                 let image = image::load_from_memory(&bytes).map_err(|error| {
                     crate::MediaError::Io(format!("Decode {}: {error}", path.display()))
                 })?;
                 Ok(AssetObservation {
-                    absolute_path: path.to_string_lossy().into_owned(),
+                    absolute_path,
                     hash: format!("{:x}", Sha256::digest(&bytes)),
                     width: image.width(),
                     height: image.height(),

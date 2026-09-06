@@ -16,6 +16,7 @@ pub struct SettingsInputField {
     initial_text: Option<String>,
     placeholder: Option<SharedString>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
+    change: Option<Rc<dyn Fn(String, &mut App)>>,
     tab_index: Option<isize>,
     use_buffer_font: bool,
     display_confirm_button: bool,
@@ -41,6 +42,7 @@ impl SettingsInputField {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            change: None,
             tab_index: None,
             use_buffer_font: false,
             display_confirm_button: false,
@@ -69,6 +71,13 @@ impl SettingsInputField {
         confirm: impl Fn(Option<String>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.confirm = Some(Rc::new(confirm));
+        self
+    }
+
+    /// Observe edits immediately when a form must invalidate a preview before
+    /// focus leaves the input. Existing confirmation behavior is unchanged.
+    pub fn on_change(mut self, change: impl Fn(String, &mut App) + 'static) -> Self {
+        self.change = Some(Rc::new(change));
         self
     }
 
@@ -171,6 +180,15 @@ impl RenderOnce for SettingsInputField {
                             confirm(text, window, cx);
                         },
                     )
+                    .detach();
+                }
+
+                if let Some(change) = self.change.clone() {
+                    cx.subscribe_self(move |editor, event: &editor::EditorEvent, cx| {
+                        if matches!(event, editor::EditorEvent::BufferEdited) {
+                            change(editor.text(cx), cx);
+                        }
+                    })
                     .detach();
                 }
 

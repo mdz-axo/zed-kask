@@ -75,7 +75,8 @@ their store modules' `init_schema` methods.
 | `GalleryStore` / `GalleryMode` | `kask/crates/hkask-storage/src/gallery.rs:36,185` |
 | `GalleryRecord` / `ImageRecord` / `TagRecord` | `kask/crates/hkask-storage/src/gallery.rs:71-104` |
 | `FaceRegistryRecord` / `WorkflowRecord` / `GenerationRecord` | `kask/crates/hkask-storage/src/gallery.rs:111-178` |
-| `GalleryStore::init_schema` (multi-table) | `kask/crates/hkask-storage/src/gallery.rs:193-270` |
+| `GalleryStore::init_schema` (multi-table + forward gallery schema update) | `kask/crates/hkask-storage/src/gallery.rs`, `init_schema` |
+| `GalleryStore::{open,reconcile,persist_analysis}` | `kask/crates/hkask-storage/src/gallery.rs` — canonical identity and single-connection transactions |
 | `RegulationArchive` | `kask/crates/hkask-storage/src/regulation_store.rs:70-104` |
 | `DecayConfig` / `WeightedEvent` | `kask/crates/hkask-storage/src/regulation_store.rs:16-46` |
 | `ALGEDONIC_SPAN_CATEGORIES` | `kask/crates/hkask-storage/src/regulation_store.rs:57-66` |
@@ -90,6 +91,31 @@ their store modules' `init_schema` methods.
 | `EscalationQueue` resolve/dismiss by output | `kask/crates/hkask-storage/src/escalation.rs:331-416` |
 | `EscalationError` enum | `kask/crates/hkask-storage/src/escalation.rs:62-67` |
 | Core schema (`schema.sql`) | `kask/crates/hkask-storage/src/core/sql/schema.sql:1-27` |
+
+## Gallery persistence contract — operator decision 2026-09-06
+
+`GalleryStore::open` validates a canonical directory and reuses its durable ID and
+stored mode. `GalleryScan` carries physical `AssetObservation`s plus depth,
+extensions and errors; `reconcile` holds one SQLite IMMEDIATE transaction for all
+upserts and safe absence transitions. Path identity is unique per gallery. Hash
+changes preserve metadata and mark `metadata_stale`; equal-content copies at
+distinct paths are not merged. Reappearance restores a retained missing ID.
+
+The approved missing policy retains all rows and relations. Active counts,
+`list_assets`, `get_image`, gallery tags and album positions exclude `missing`.
+`get_by_id` includes missing records for inspection. Listing and positional lookup
+both order by `(added_at, id)`. Counts and total size are aggregates, not cached
+columns. `persist_analysis` atomically checks gallery/ID/hash before committing
+tags and complete-analysis freshness.
+
+`init_schema` performs a forward-only metadata-preserving update: canonical paths,
+status columns and the unique identity index. Duplicate canonical roots/assets
+fail explicitly rather than deleting or silently merging annotations. Old cached
+count columns are dropped; there is no legacy read path or replacement database.
+Tests: `path_upsert_retains_annotations_and_deterministic_positions`,
+`forward_schema_preserves_data_and_refuses_duplicate_identity`, and the media
+server's real-file `gallery_lifecycle_tests` (including rollback and async binding).
+See [media lifecycle](../../reference/mcp-servers/media.md#gallery-lifecycle--ratified-2026-09-06).
 
 ## Class diagram — the driver port and its stores
 

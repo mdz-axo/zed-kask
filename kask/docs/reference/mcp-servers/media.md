@@ -118,6 +118,52 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides via `
 
 **Image size cap:** gallery images larger than 32 MiB are rejected before base64 encoding to prevent OOM (`MAX_IMAGE_READ_BYTES`, `src/hkask_mcp_media.rs:54-58`).
 
+## Gallery lifecycle — ratified 2026-09-06
+
+The operator approved **retain-and-mark-missing**, not deletion or compatibility
+shims. This restores the restart-hydration intent stated in `a3496b7164` and
+supersedes the create-only activation / insert-only rescan behavior.
+
+- `gallery_organize(path)` validates a canonical, readable directory, opens or
+  creates that identity, reconciles, then activates it. Restart alone selects no
+  gallery. Reopening preserves the existing mode and reports `requested_mode`,
+  effective `mode`, and `mode_preserved`; failure preserves the prior activation.
+- Identity is `(gallery_id, canonical absolute path)`. Same-path observations keep
+  IDs and `added_at`; a changed hash updates physical attributes and marks retained
+  annotations `metadata_stale`. Distinct paths with equal bytes remain distinct.
+- Missing records retain tags, albums, face associations and lineage. Normal
+  active counts/list/search/timeline/album positions exclude them; reappearance
+  restores the same ID. `gallery_asset_detail` accepts exactly one of active
+  `image_index` or stable `image_id`, so missing records remain inspectable.
+- Scans never mutate source bytes. Only complete coverage can infer absence:
+  supported images inside the root and selected depth. External imports/generated
+  files, audio/video and `.hkask-gallery` metadata directories are excluded.
+  Decode/read/walk errors and skipped symlinks produce a degraded report and
+  suppress all absence inference for that scan.
+- Active counts and size derive from SQLite rows. List and index lookup share
+  `(added_at, id)` ordering. Listing exposes `id`, `missing`, `metadata_stale`;
+  tag/semantic search exposes `image_id` and `metadata_stale`. The existing Detail
+  inspector renders these flags without a layout redesign.
+- Scans and vision target captured galleries/asset records. Auto-analysis consumes
+  actual added/changed/restored records, not guessed index ranges. Complete
+  successful analysis clears staleness only when the captured hash still matches;
+  partial analysis cannot certify all retained metadata. Completion-time downloads
+  capture one gallery for all variants.
+
+Enforcement: `GalleryStore::{open,reconcile,persist_analysis,get_by_id,list_assets}`
+in `kask/crates/hkask-storage/src/gallery.rs`; `GalleryState::scan` in
+`src/gallery/state.rs`; activation in `src/tools/gallery.rs`; analysis snapshots
+in `src/images.rs`; generated completion in `src/assets.rs`.
+
+The forward schema update preserves metadata while adding status flags,
+canonicalizing identities and enforcing path uniqueness. Cached count/size columns
+are removed. Conflicting duplicate identities produce an explicit open failure,
+not a silent merge or DB deletion. All subsequent reads use the current schema.
+Storage API callers use `open` and pass one canonical asset path to insertion.
+No providers, generation-job lifecycle, or D35 child-local routing changes are
+part of this decision. See the server README's gallery lifecycle section for
+regression test names.
+
 ## Tool reference
 
 Grouped by `tools/` module. "Line" cites the `pub async fn` signature in the group's source file. Descriptions are condensed from each tool's `#[tool(description = ...)]` doc comment.
@@ -171,7 +217,7 @@ No routing or layout change is part of this repair.
 | `gallery_timeline` | 927 | Organize gallery images by time period using EXIF dates; grouped by year, month, or decade. |
 | `gallery_record_generation` | 1026 | Record generation lineage for a gallery image (prompt, model, provider, seed, params) so it can be reproduced or varied later; image must already be indexed. |
 | `gallery_lineage` | 1079 | Show the recorded generation lineage for a gallery image; `lineage: null` if none recorded. |
-| `gallery_asset_detail` | 1108 | Complete details for a gallery asset — record, tags, lineage, face associations in one call; the inspector-panel data source. |
+| `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing records and status flags; the inspector-panel data source. |
 | `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
 | `gallery_delete_image` | 1205 | Delete an image from the gallery index; by default index-only, `delete_file=true` also removes the file. |
 | `gallery_add_media` | 1256 | Import a video or audio file into the gallery index (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
@@ -272,7 +318,7 @@ Non-tool modules hold shared implementation, re-exported for the `tools/` group 
 | Mapper | Classification |
 |--------|----------------|
 | `map_media_error` (`src/error.rs:96-114`) | `GalleryNotInitialized`, `ImageNotFound` → `invalid_argument` (user error); `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable`; `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template`, `AssetPersistence`, `SidecarNotFound`, `SidecarInvalid`, `FaceRegistration` → `internal` |
-| `map_gallery_store_error` (`src/error.rs:120-131`) | `NotFound` → `not_found`; infra errors → shared `map_infra_error`; `InvalidMode`, `AlreadyExists` → `invalid_argument` (caller-fixable) |
+| `map_gallery_store_error` (`src/error.rs:120-131`) | `NotFound` → `not_found`; infra errors → shared `map_infra_error`; `InvalidMode`, `InvalidPath`, `Conflict` → `invalid_argument` (caller-fixable) |
 | `map_image_open_error` (`src/error.rs:138-148`) | missing file → `not_found`; permission failure → `permission_denied`; other I/O and decode failures → `internal` |
 | `classify_inference_error` (`src/error.rs:176-182`) | typed `InferenceError::NotConfigured` → `permission_denied` (missing credential/provider, matching the canonical `hkask-mcp-swarm` pattern); every other failure → `unavailable` |
 | `classify_embedding_error` (`src/error.rs:189-195`) | credential-missing substrings → `permission_denied` (string-matched — `EmbeddingGenerationError` has no typed `NotConfigured` variant yet, `src/error.rs:150-160`); otherwise → `unavailable` |

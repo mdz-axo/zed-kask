@@ -39,10 +39,10 @@ pub(crate) fn render_security_page(
         .child(Label::new("Review the complete shared-key database inventory before maintenance. Preview and confirmation do not open databases, read keys, or change the passphrase.").size(LabelSize::Small))
         .child(Label::new("Add historical/external database paths as a JSON array of absolute paths. Directory symlinks are not searched. The catalogue and lease markers cannot discover every database created by older or independent programs.").size(LabelSize::Small))
         .child(SettingsInputField::new("kask-maintenance-additional-paths").with_placeholder("[]").aria_label("Additional absolute database paths as JSON")
-            .on_confirm(|value, _, cx| update_input(true, value.unwrap_or_default(), cx)))
+            .on_change(|value, cx| update_input(true, value, cx)))
         .child(Label::new("Exclude independent-key or unencrypted databases using a JSON object mapping each absolute path to its reason. Configured shared-key databases cannot be excluded.").size(LabelSize::Small))
         .child(SettingsInputField::new("kask-maintenance-exclusions").with_placeholder("{}").aria_label("Database exclusions with reasons as JSON")
-            .on_confirm(|value, _, cx| update_input(false, value.unwrap_or_default(), cx)))
+            .on_change(|value, cx| update_input(false, value, cx)))
         .child(Button::new("kask-maintenance-preview", if busy { "Reading inventory…" } else { "Preview inventory" }).disabled(busy)
             .on_click(|_, _, cx| start_review(false, cx)));
     if let Some(preview) = preview {
@@ -118,6 +118,14 @@ pub(crate) fn render_security_page(
 
 fn update_input(additional: bool, value: String, cx: &mut App) {
     let state = cx.global_mut::<InventoryState>();
+    if (if additional {
+        &state.additional
+    } else {
+        &state.exclusions
+    }) == &value
+    {
+        return;
+    }
     if additional {
         state.additional = value;
     } else {
@@ -134,7 +142,7 @@ fn confirm_prompt(window: &mut Window, cx: &mut App) {
     let generation = cx.global::<InventoryState>().generation;
     let answer = window.prompt(gpui::PromptLevel::Warning, "Confirm database key scope and completeness?", Some("I have included all historical/external shared-key databases. Every non-excluded existing path uses the shared passphrase; each exclusion is independent and justified. This confirms inventory only, not rotation."), &["Confirm inventory", "Cancel"], cx);
     cx.spawn(async move |cx| {
-        if answer.await == Ok(0) {
+        if matches!(answer.await, Ok(0)) {
             cx.update(|cx| {
                 if cx.global::<InventoryState>().generation == generation {
                     start_review(true, cx);

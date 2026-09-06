@@ -145,7 +145,8 @@ fn asset_path(path: &str) -> Result<PathBuf, GalleryStoreError> {
         return Err(GalleryStoreError::InvalidPath(path.display().to_string()));
     }
     match path.canonicalize() {
-        Ok(path) => Ok(path),
+        Ok(path) if path.to_str().is_some() => Ok(path),
+        Ok(path) => Err(GalleryStoreError::InvalidPath(format!("Non-UTF-8 canonical path: {}", path.display()))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut normalized = PathBuf::new();
             for component in path.components() {
@@ -434,7 +435,7 @@ impl GalleryStore {
         std::fs::read_dir(&root).map_err(|error| {
             GalleryStoreError::InvalidPath(format!("{}: {error}", root.display()))
         })?;
-        let root = root.to_string_lossy().into_owned();
+        let root = root.to_str().ok_or_else(|| GalleryStoreError::InvalidPath("Non-UTF-8 canonical gallery root".into()))?.to_string();
         let now = now_rfc3339();
         self.driver.execute(
             "INSERT INTO galleries (id, root_path, mode, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
@@ -473,7 +474,6 @@ impl GalleryStore {
     pub fn add_image(
         &self,
         gallery_id: &str,
-        relative_path: &str,
         absolute_path: &str,
         hash: &str,
         width: u32,
@@ -483,7 +483,6 @@ impl GalleryStore {
     ) -> std::result::Result<ImageRecord, GalleryStoreError> {
         self.add_media(
             gallery_id,
-            relative_path,
             absolute_path,
             hash,
             width,
@@ -501,7 +500,6 @@ impl GalleryStore {
     pub fn add_media(
         &self,
         gallery_id: &str,
-        _relative_path: &str,
         absolute_path: &str,
         hash: &str,
         width: u32,
@@ -1603,7 +1601,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc123",
                 100,
@@ -1632,7 +1629,6 @@ mod tests {
         store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "aaa",
                 100,
@@ -1644,7 +1640,6 @@ mod tests {
         store
             .add_image(
                 &gallery.id,
-                "b.png",
                 "/tmp/g/b.png",
                 "bbb",
                 300,
@@ -1675,7 +1670,6 @@ mod tests {
         store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1704,7 +1698,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1735,7 +1728,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1770,7 +1762,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1805,7 +1796,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1837,7 +1827,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1872,7 +1861,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1907,7 +1895,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1945,7 +1932,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -1977,7 +1963,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "a.png",
                 "/tmp/g/a.png",
                 "abc",
                 100,
@@ -2009,7 +1994,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "out.png",
                 "/tmp/gen/out.png",
                 "hash1",
                 512,
@@ -2065,7 +2049,6 @@ mod tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "x.png",
                 "/tmp/gen2/x.png",
                 "hash2",
                 100,
@@ -2124,7 +2107,7 @@ mod tests {
                 )
                 .unwrap();
             let img = store
-                .add_image(&gallery.id, "a.png", "/tmp/gal/a.png", "h", 1, 1, "png", 1)
+                .add_image(&gallery.id, "/tmp/gal/a.png", "h", 1, 1, "png", 1)
                 .unwrap();
             store
                 .record_generation(
@@ -2165,18 +2148,18 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
         let path = directory.path().join("a.png").to_string_lossy().into_owned();
-        let first = store.add_image(&gallery.id, "ignored", &path, "hash", 1, 1, "png", 10)?;
+        let first = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
         store.tag_image(&first.id, "caption", "Keep", 1.0, "user")?;
         let album = store.create_album(&gallery.id, "Keep", None)?;
         store.add_to_album(&album.id, &first.id)?;
-        let repeated = store.add_image(&gallery.id, "ignored", &path, "hash", 1, 1, "png", 10)?;
+        let repeated = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
         assert_eq!(first.id, repeated.id); assert_eq!(first.added_at, repeated.added_at);
         assert_eq!(store.get(&gallery.id)?.total_size_bytes, 10);
-        let changed = store.add_image(&gallery.id, "ignored", &path, "changed", 2, 2, "png", 20)?;
+        let changed = store.add_image(&gallery.id, &path, "changed", 2, 2, "png", 20)?;
         assert!(changed.metadata_stale); assert_eq!(changed.id, first.id);
         assert_eq!(store.get_tags(&first.id)?.len(), 1); assert_eq!(store.list_album_members(&album.id)?, vec![first.id.clone()]);
         let other = directory.path().join("b.png").to_string_lossy().into_owned();
-        let copy = store.add_image(&gallery.id, "ignored", &other, "changed", 2, 2, "png", 20)?;
+        let copy = store.add_image(&gallery.id, &other, "changed", 2, 2, "png", 20)?;
         assert_ne!(copy.id, first.id);
         store.driver.execute("UPDATE gallery_images SET added_at = 'same-time' WHERE gallery_id = ?1", &[gallery.id.clone().into()])?;
         let listed = store.list_assets(&gallery.id, 0, 10)?;
@@ -2193,7 +2176,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
         let path = directory.path().join("a.png").to_string_lossy().into_owned();
-        let image = store.add_image(&gallery.id, "a.png", &path, "hash", 1, 1, "png", 10)?;
+        let image = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
         store.tag_image(&image.id, "caption", "Original annotation", 1.0, "user")?;
         store.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
             ALTER TABLE gallery_images DROP COLUMN missing;

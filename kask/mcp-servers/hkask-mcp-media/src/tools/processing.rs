@@ -1041,7 +1041,6 @@ impl MediaServer {
             if let Ok(ga) = self.access_gallery() {
                 if let Err(e) = self.gallery_store.add_media(
                     &ga.gallery_id,
-                    &filename,
                     &local_path,
                     &hash,
                     0,

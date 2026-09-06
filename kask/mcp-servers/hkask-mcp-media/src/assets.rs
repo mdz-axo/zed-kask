@@ -169,7 +169,7 @@ pub(crate) async fn persist_generated_asset(
         (0, 0)
     };
     gallery_store.add_media(
-        gallery_id, &filename, &path.to_string_lossy(), &hash, width, height,
+        gallery_id, &path.to_string_lossy(), &hash, width, height,
         ext, bytes.len() as u64, media_type,
     ).map_err(|error| MediaError::AssetPersistence(format!("File saved at {}, but indexing failed: {error}", path.display())))?;
 

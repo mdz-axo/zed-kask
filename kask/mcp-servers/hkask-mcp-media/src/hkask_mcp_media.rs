@@ -699,7 +699,6 @@ mod integration_tests {
             store
                 .add_image(
                     &gallery.id,
-                    &entry.absolute_path,
                     &temp.path().join(&entry.absolute_path).to_string_lossy(),
                     &entry.hash,
                     entry.width,
@@ -906,7 +905,6 @@ mod integration_tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "alice.jpg",
                 "/tmp/test-gallery/alice.jpg",
                 "hash1",
                 400,
@@ -946,7 +944,6 @@ mod integration_tests {
         let img1 = store
             .add_image(
                 &gallery.id,
-                "a.jpg",
                 "/tmp/a.jpg",
                 "h1",
                 100,
@@ -958,7 +955,6 @@ mod integration_tests {
         let img2 = store
             .add_image(
                 &gallery.id,
-                "b.jpg",
                 "/tmp/b.jpg",
                 "h2",
                 100,
@@ -997,7 +993,6 @@ mod integration_tests {
         let img = store
             .add_image(
                 &gallery.id,
-                "gen.png",
                 temp.path().join("gen.png").to_str().unwrap(),
                 "hash-gen",
                 64,
@@ -1056,7 +1051,6 @@ mod integration_tests {
         let other = store
             .add_image(
                 &gallery.id,
-                "other.png",
                 temp.path().join("other.png").to_str().unwrap(),
                 "hash-other",
                 64,

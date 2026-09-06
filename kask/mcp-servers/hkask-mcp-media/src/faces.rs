@@ -129,17 +129,12 @@ impl MediaServer {
 
         let image = image::load_from_memory(&data).map_err(|error| MediaError::Io(error.to_string()))?;
         let (width, height) = (image.width(), image.height());
-        let relative_path = abs_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| abs_path.to_string_lossy().to_string());
         let size_bytes = data.len() as u64;
 
         let record = self
             .gallery_store
             .add_image(
                 &ga.gallery_id,
-                &relative_path,
                 &abs_path.to_string_lossy(),
                 &hash,
                 width,

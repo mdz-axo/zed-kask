@@ -1209,11 +1209,6 @@ impl MediaServer {
                 hasher.update(&bytes);
                 format!("{:x}", hasher.finalize())
             };
-            let filename = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(&format!("file.{fallback_ext}"))
-                .to_string();
             let ext = file_path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1223,7 +1218,6 @@ impl MediaServer {
                 .gallery_store
                 .add_media(
                     &ga.gallery_id,
-                    &filename,
                     &file_path.to_string_lossy(),
                     &hash,
                     width.unwrap_or(0),
