@@ -130,12 +130,13 @@ pub struct BatchInferenceResult {
 /// Result of a batch submission.
 pub struct BatchResult {
     /// Results keyed by `custom_id`. `Ok` for successes, `Err(message)` for
-    /// failures. Every prompt in the input batch has an entry here — failures
-    /// are NOT dropped, so the caller can report accurate failure counts.
+    /// failures. Duplicate identities and ambiguous responses are failures.
+    /// Only returned identities appear here; callers must detect missing or
+    /// unsolicited identities against the requested batch.
     pub results: std::collections::HashMap<String, Result<BatchInferenceResult, String>>,
-    /// Number of prompts that succeeded.
+    /// Number of unique returned identities that succeeded.
     pub succeeded: usize,
-    /// Number of prompts that failed.
+    /// Number of unique returned identities that failed.
     pub failed: usize,
 }
 
@@ -559,8 +560,6 @@ async fn download_batch_results(
 
 fn parse_batch_results(content: &str) -> Result<BatchResult, BatchError> {
     let mut results = std::collections::HashMap::new();
-    let mut succeeded = 0;
-    let mut failed = 0;
 
     for line in content.lines() {
         if line.trim().is_empty() {
@@ -569,46 +568,48 @@ fn parse_batch_results(content: &str) -> Result<BatchResult, BatchError> {
         let result_line: BatchResultLine =
             serde_json::from_str(line).map_err(|e| BatchError::ParseLine { source: e })?;
 
-        if let Some(resp) = result_line.response {
-            if let Some(choice) = resp.body.choices.first() {
-                let text = choice.message.content.clone();
-                let total_tokens = resp.body.usage.map(|u| u.total_tokens).unwrap_or(0);
-                results.insert(
-                    result_line.custom_id,
-                    Ok(BatchInferenceResult { text, total_tokens }),
-                );
-                succeeded += 1;
-            } else {
-                results.insert(
-                    result_line.custom_id.clone(),
-                    Err("batch result has no choices".to_string()),
-                );
-                failed += 1;
-                tracing::warn!(
-                    target: "hkask.inference.batch",
-                    custom_id = %result_line.custom_id,
-                    "Batch result has no choices"
-                );
+        let entry = match results.entry(result_line.custom_id) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                // Never allow a later response to restore an ambiguous identity.
+                let error = format!("duplicate custom_id '{}' in batch results", entry.key());
+                tracing::warn!(target: "hkask.inference.batch", error = %error, "Batch result error");
+                *entry.get_mut() = Err(error);
+                continue;
             }
-        } else if let Some(err) = result_line.error {
-            let err_msg = err.message;
-            results.insert(result_line.custom_id.clone(), Err(err_msg.clone()));
-            failed += 1;
+            std::collections::hash_map::Entry::Vacant(entry) => entry,
+        };
+        let result = match (result_line.response, result_line.error) {
+            (Some(_), Some(error)) => Err(format!(
+                "malformed batch result: both response and error present: {}",
+                error.message
+            )),
+            (Some(response), None) => match response.body.choices.first() {
+                Some(choice) => Ok(BatchInferenceResult {
+                    text: choice.message.content.clone(),
+                    total_tokens: response
+                        .body
+                        .usage
+                        .map(|usage| usage.total_tokens)
+                        .unwrap_or(0),
+                }),
+                None => Err("batch result has no choices".to_string()),
+            },
+            (None, Some(error)) => Err(error.message),
+            (None, None) => Err("unknown batch result format".to_string()),
+        };
+        if let Err(error) = &result {
             tracing::warn!(
                 target: "hkask.inference.batch",
-                custom_id = %result_line.custom_id,
-                error = %err_msg,
+                custom_id = %entry.key(),
+                error = %error,
                 "Batch result error"
             );
-        } else {
-            results.insert(
-                result_line.custom_id.clone(),
-                Err("unknown batch result format".to_string()),
-            );
-            failed += 1;
         }
+        entry.insert(result);
     }
 
+    let succeeded = results.values().filter(|result| result.is_ok()).count();
+    let failed = results.len() - succeeded;
     tracing::info!(
         target: "hkask.inference.batch",
         succeeded,
@@ -713,6 +714,115 @@ mod tests {
         assert_eq!(result.failed, 1);
         assert!(result.results.get("ok").is_some_and(|r| r.is_ok()));
         assert!(result.results.get("bad").is_some_and(|r| r.is_err()));
+    }
+
+    #[test]
+    fn parse_duplicate_ids_remain_failed_in_any_order() {
+        let success = r#"{"custom_id":"qa-1","response":{"body":{"choices":[{"message":{"content":"valid QA"}}],"usage":{"total_tokens":42}}}}"#;
+        let failure = r#"{"custom_id":"qa-1","error":{"message":"provider refused"}}"#;
+        let other = r#"{"custom_id":"qa-2","response":{"body":{"choices":[{"message":{"content":"other QA"}}]}}}"#;
+        for entries in [
+            vec![success, success],
+            vec![success, failure],
+            vec![failure, success],
+            vec![failure, failure],
+            vec![success, success, success],
+            vec![success, failure, success],
+            vec![failure, success, failure, success],
+        ] {
+            let content = entries
+                .into_iter()
+                .chain([other])
+                .collect::<Vec<_>>()
+                .join("\n");
+            let result = parse_batch_results(&content).expect("valid JSONL");
+            let error = result.results["qa-1"]
+                .as_ref()
+                .expect_err("duplicate must fail");
+            assert!(error.contains("duplicate"), "{error}");
+            assert!(result.results["qa-2"].is_ok());
+            assert_eq!((result.succeeded, result.failed), (1, 1));
+            assert_eq!(result.succeeded + result.failed, result.results.len());
+        }
+    }
+
+    #[test]
+    fn parse_response_with_error_is_malformed() {
+        for choices in [r#"[{"message":{"content":"valid QA"}}]"#, "[]"] {
+            let content = format!(
+                r#"{{"custom_id":"qa-1","response":{{"body":{{"choices":{choices}}}}},"error":{{"message":"provider refused"}}}}"#
+            );
+            let result = parse_batch_results(&content).expect("valid JSONL");
+            let error = result.results["qa-1"]
+                .as_ref()
+                .expect_err("ambiguous result must fail");
+            assert!(
+                error.contains("response") && error.contains("error"),
+                "{error}"
+            );
+            assert!(
+                error.contains("provider refused"),
+                "preserve provider error: {error}"
+            );
+            assert_eq!((result.succeeded, result.failed), (0, 1));
+        }
+    }
+
+    #[test]
+    fn parse_failures_satisfy_ipc_error_contract() {
+        use hkask_types::inference_ipc::BatchResultEntry;
+
+        let qa = serde_json::json!({"qa_pairs": [
+            {"question": "First question?", "answer": "Grounded answer one.", "bloom_level": "factual"},
+            {"question": "Second question?", "answer": "Grounded answer two.", "bloom_level": "factual"}
+        ]}).to_string();
+        let success = serde_json::json!({
+            "custom_id": "duplicate",
+            "response": {"body": {"choices": [{"message": {"content": qa}}]}}
+        });
+        let mut malformed = success.clone();
+        malformed["custom_id"] = serde_json::json!("malformed");
+        malformed["error"] = serde_json::json!({"message": "refused"});
+        let content = format!("{success}\n{success}\n{malformed}\n");
+        let result = parse_batch_results(&content).expect("valid JSONL");
+        // The bridge's GenerateBatch dispatch maps these variants verbatim.
+        // Keep the parser private and pin that IPC contract here; the corpus
+        // batch_response_failures_have_truthful_totals test pins consumption.
+        let entries: Vec<BatchResultEntry> = result
+            .results
+            .into_iter()
+            .map(|(custom_id, result)| match result {
+                Ok(success) => BatchResultEntry {
+                    custom_id,
+                    text: Some(success.text),
+                    total_tokens: success.total_tokens,
+                    error: None,
+                },
+                Err(error) => BatchResultEntry {
+                    custom_id,
+                    text: None,
+                    total_tokens: 0,
+                    error: Some(error),
+                },
+            })
+            .collect();
+        let wire = serde_json::to_string(&entries).expect("serialize IPC entries");
+        let decoded: Vec<BatchResultEntry> =
+            serde_json::from_str(&wire).expect("decode IPC entries");
+        assert_eq!(decoded.len(), 2);
+        for entry in decoded {
+            assert!(
+                entry.text.is_none(),
+                "{} must not supply successful QA text",
+                entry.custom_id
+            );
+            assert!(
+                entry.error.is_some(),
+                "{} must surface failure",
+                entry.custom_id
+            );
+            assert_eq!(entry.total_tokens, 0);
+        }
     }
 
     #[test]

@@ -264,6 +264,30 @@ mod tests {
         }
     }
 
+    fn fixture_directory() -> std::io::Result<tempfile::TempDir> {
+        // Stay within corpus path containment without exposing transient files to Git.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/qa-batch-test");
+        std::fs::create_dir_all(&root)?;
+        tempfile::tempdir_in(root)
+    }
+
+    /// expect: QA tests leave no untracked fixtures, even if a run is interrupted.
+    /// [P5] Motivating: Test artifacts belong under the ignored build directory.
+    #[test]
+    fn fixture_directory_is_contained_and_cleaned() -> std::io::Result<()> {
+        let directory = fixture_directory()?;
+        let path = directory.path().to_path_buf();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/qa-batch-test");
+        assert!(
+            path.starts_with(root),
+            "fixture escaped the ignored test directory"
+        );
+        std::fs::write(path.join("fixture.jsonl"), "{}\n")?;
+        drop(directory);
+        assert!(!path.exists(), "fixture was not removed on drop");
+        Ok(())
+    }
+
     fn fixture(
         directory: &tempfile::TempDir,
         prompts: &[PreparedQaPrompt],
@@ -304,7 +328,7 @@ mod tests {
             prepared("qa-2", "second question"),
         ];
         for model in ["offline-model", "offline-model:batch"] {
-            let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+            let directory = fixture_directory()?;
             let request = fixture(&directory, &prompts, model)?;
             let output = request.output.clone();
             let router = Arc::new(RecordingPort::default());
@@ -416,7 +440,7 @@ mod tests {
         }
         for model in ["offline-model", "offline-model:batch"] {
             for bad in &invalid_records {
-                let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+                let directory = fixture_directory()?;
                 let request = fixture(&directory, &[], model)?;
                 std::fs::write(&request.prompts_jsonl, format!("{good}\n{bad}\n"))?;
                 std::fs::write(&request.output, "unchanged")?;
@@ -433,7 +457,7 @@ mod tests {
                 assert_eq!(std::fs::read_to_string(output)?, "unchanged");
             }
         }
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let request = fixture(&directory, &[], "offline-model")?;
         assert!(read_prompts(&request.prompts_jsonl).is_err());
         std::fs::write(&request.prompts_jsonl, format!("{good}\nnot JSON\n"))?;
@@ -467,7 +491,7 @@ mod tests {
             ]),
             ..Default::default()
         });
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let request = fixture(&directory, &prompts, "offline-model:batch")?;
         let output = request.output.clone();
         let summary = QaBatchService::new(router)
@@ -515,7 +539,7 @@ mod tests {
             }]),
             ..Default::default()
         });
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let request = fixture(
             &directory,
             &[prepared("qa-1", "user")],
@@ -539,7 +563,7 @@ mod tests {
             prepared("qa-3", "provider-error"),
             prepared("qa-4", "valid"),
         ];
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let request = fixture(&directory, &prompts, "offline-model")?;
         let output = request.output.clone();
         let router = Arc::new(RecordingPort::default());
@@ -580,7 +604,7 @@ mod tests {
     async fn builder_records_round_trip_through_both_transports()
     -> Result<(), Box<dyn std::error::Error>> {
         use crate::services::prompt_builder::{BuildPromptsRequest, PromptBuilderService};
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let tagged = directory.path().join("tagged.jsonl");
         std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "source":"source.txt", "text":"The passage supplies a verifiable fact.", "concepts":["fact"], "salience":0.5}).to_string())?;
         for max_prompts in [0, 2, 4] {
@@ -664,7 +688,7 @@ mod tests {
     #[tokio::test]
     async fn output_is_preflighted_for_both_transports() -> Result<(), Box<dyn std::error::Error>> {
         for model in ["offline-model", "offline-model:batch"] {
-            let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+            let directory = fixture_directory()?;
             let mut request = fixture(&directory, &[prepared("qa-1", "user")], model)?;
             request.output = directory.path().to_string_lossy().into();
             let router = Arc::new(RecordingPort::default());
@@ -683,7 +707,7 @@ mod tests {
     /// expect: [P8] Duplicate prompt identities must fail before generation, even for a shared chunk.
     #[test]
     fn duplicate_prompt_ids_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let directory = fixture_directory()?;
         let path = directory.path().join("prompts.jsonl");
         let record = json!({
             "prompt_id": "qa-1", "chunk_ref": "chunk-1", "source": "source.txt",

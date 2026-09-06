@@ -122,6 +122,7 @@ impl MediaViewer {
         }
         self.thread = Some(thread.downgrade());
         let mut gallery_mutated = false;
+        let mut tool_results = Vec::new();
         {
             let thread = thread.read(cx);
             for entry in thread.entries() {
@@ -139,8 +140,12 @@ impl MediaViewer {
                 {
                     gallery_mutated = true;
                 }
-                self.ingest_tool_result(output, &tool);
+                tool_results.push((output.clone(), tool));
             }
+        }
+        // Release the thread read before borrowing the viewer context to notify.
+        for (output, tool) in tool_results {
+            self.ingest_tool_result(&output, &tool, cx);
         }
 
         // Only while the Library is on screen: switching to the tab already
@@ -160,8 +165,9 @@ impl MediaViewer {
     /// expect: Show each completed artifact regardless of the tool transport.
     /// [P7] Motivating: structured and text transports share the viewer ingress.
     /// pre: output is an ACP raw output or an invoker response.
-    /// post: new valid assets are selected; repeated bodies do not duplicate.
-    pub fn ingest_tool_result(&mut self, output: &Value, tool: &str) {
+    /// post: new valid assets are selected and notify GPUI observers;
+    /// repeated bodies neither duplicate nor request a redraw.
+    pub fn ingest_tool_result(&mut self, output: &Value, tool: &str, cx: &mut Context<Self>) {
         let hints = match output {
             Value::String(text) => hkask_types::tool_response::display_hints_from_output_text(text),
             value => hkask_types::tool_response::display_hints_from_output_value(value),
@@ -185,6 +191,7 @@ impl MediaViewer {
         if let Some(ix) = new_selection {
             self.selected = Some(ix);
             self.detail = None;
+            cx.notify();
         }
     }
 
@@ -209,7 +216,7 @@ impl MediaViewer {
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
                 this.update(cx, |this, cx| {
-                    this.ingest_tool_result(&Value::String(text), tool);
+                    this.ingest_tool_result(&Value::String(text), tool, cx);
                     this.status = None;
                     cx.notify();
                 })
@@ -1290,8 +1297,8 @@ mod tests {
             } else {
                 Value::String(output.to_string())
             };
-            viewer.update(cx, |viewer, _| {
-                viewer.ingest_tool_result(&output, "generate_image")
+            viewer.update(cx, |viewer, cx| {
+                viewer.ingest_tool_result(&output, "generate_image", cx)
             });
             cx.run_until_parked();
             assert_eq!(
@@ -1300,8 +1307,8 @@ mod tests {
                 "new artifact must notify GPUI observers"
             );
 
-            viewer.update(cx, |viewer, _| {
-                viewer.ingest_tool_result(&output, "generate_image")
+            viewer.update(cx, |viewer, cx| {
+                viewer.ingest_tool_result(&output, "generate_image", cx)
             });
             cx.run_until_parked();
             assert_eq!(
@@ -1310,8 +1317,8 @@ mod tests {
                 "duplicate must not request another redraw"
             );
         }
-        viewer.update(cx, |viewer, _| {
-            viewer.ingest_tool_result(&serde_json::json!({"status": "ok"}), "gallery_status");
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&serde_json::json!({"status": "ok"}), "gallery_status", cx);
         });
         cx.run_until_parked();
         assert_eq!(
@@ -1334,19 +1341,20 @@ mod tests {
         );
         let wrapped = serde_json::json!({"content": output});
         let viewer = cx.new(|_| MediaViewer::new());
-        viewer.update(cx, |viewer, _| {
+        viewer.update(cx, |viewer, cx| {
             viewer.detail = Some(serde_json::json!({"stale": true}));
-            viewer.ingest_tool_result(&wrapped, "generate_image");
+            viewer.ingest_tool_result(&wrapped, "generate_image", cx);
             assert_eq!(viewer.assets.len(), 1);
             assert_eq!(viewer.selected, Some(0));
             assert!(viewer.detail.is_none());
-            viewer.ingest_tool_result(&Value::String(wrapped.to_string()), "generate_image");
-            viewer.ingest_tool_result(&output, "generate_image");
+            viewer.ingest_tool_result(&Value::String(wrapped.to_string()), "generate_image", cx);
+            viewer.ingest_tool_result(&output, "generate_image", cx);
             assert_eq!(viewer.assets.len(), 1);
             let second = hkask_mcp_media::media_block::media_block("video", "/tmp/second.mp4");
             viewer.ingest_tool_result(
                 &serde_json::json!({"display_hints": [second]}),
                 "generate_video",
+                cx,
             );
             assert_eq!(viewer.selected, Some(1));
             assert_eq!(viewer.assets[1].src, "/tmp/second.mp4");
@@ -1674,71 +1682,78 @@ mod edit_tests {
     /// inside) must surface as a new selected asset, the same way thread
     /// tool results do. Ground truth for the shape: the server's
     /// `enrich_with_omc_and_provenance` (hkask-mcp-media/src/media_block.rs).
-    #[test]
-    fn merge_tool_result_surfaces_clip_as_new_selected_asset() {
-        let mut viewer = MediaViewer::new();
-        let output = serde_json::json!({
-            "content": {
-                "status": "clipped",
-                "source": "/tmp/source.mp4",
-                "start_sec": 10.0,
-                "end_sec": 40.0,
-                "duration": 30.0,
-                "output": "/tmp/clip.mp4",
-                "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
-            }
-        })
-        .to_string();
+    #[gpui::test]
+    fn merge_tool_result_surfaces_clip_as_new_selected_asset(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let output = serde_json::json!({
+                "content": {
+                    "status": "clipped",
+                    "source": "/tmp/source.mp4",
+                    "start_sec": 10.0,
+                    "end_sec": 40.0,
+                    "duration": 30.0,
+                    "output": "/tmp/clip.mp4",
+                    "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
+                }
+            })
+            .to_string();
 
-        viewer.ingest_tool_result(&Value::String(output), "video_clip");
+            viewer.ingest_tool_result(&Value::String(output), "video_clip", cx);
 
-        assert_eq!(viewer.assets.len(), 1, "the clip must surface as an asset");
-        let selected = viewer
-            .selected
-            .expect("the new asset must be auto-selected");
-        assert_eq!(viewer.assets[selected].src, "/tmp/clip.mp4");
-        assert_eq!(viewer.assets[selected].kind, "video");
-        assert_eq!(viewer.assets[selected].tool, "video_clip");
+            assert_eq!(viewer.assets.len(), 1, "the clip must surface as an asset");
+            let selected = viewer
+                .selected
+                .expect("the new asset must be auto-selected");
+            assert_eq!(viewer.assets[selected].src, "/tmp/clip.mp4");
+            assert_eq!(viewer.assets[selected].kind, "video");
+            assert_eq!(viewer.assets[selected].tool, "video_clip");
+        });
     }
 
     /// Dedup: re-ingesting the same result must not duplicate the asset
     /// (the same discipline `ingest_thread` applies to thread results).
-    #[test]
-    fn merge_tool_result_deduplicates_by_body() {
-        let mut viewer = MediaViewer::new();
-        let output = serde_json::json!({
-            "content": {
-                "status": "clipped",
-                "output": "/tmp/clip.mp4",
-                "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
-            }
-        })
-        .to_string();
+    #[gpui::test]
+    fn merge_tool_result_deduplicates_by_body(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let output = serde_json::json!({
+                "content": {
+                    "status": "clipped",
+                    "output": "/tmp/clip.mp4",
+                    "display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/tmp/clip.mp4\"}\n```"
+                }
+            })
+            .to_string();
 
-        let output = Value::String(output);
-        viewer.ingest_tool_result(&output, "video_clip");
-        viewer.ingest_tool_result(&output, "video_clip");
+            let output = Value::String(output);
+            viewer.ingest_tool_result(&output, "video_clip", cx);
+            viewer.ingest_tool_result(&output, "video_clip", cx);
 
-        assert_eq!(
-            viewer.assets.len(),
-            1,
-            "identical results must not duplicate"
-        );
+            assert_eq!(
+                viewer.assets.len(),
+                1,
+                "identical results must not duplicate"
+            );
+        });
     }
 
     /// A result without a display_hint (or unparseable output) must not
     /// crash or add phantom assets — it is a no-op the status line already
     /// covers by clearing on success.
-    #[test]
-    fn merge_tool_result_ignores_output_without_display_hint() {
-        let mut viewer = MediaViewer::new();
-        viewer.ingest_tool_result(
-            &serde_json::json!({"content": {"status": "clipped"}}),
-            "video_clip",
-        );
-        assert!(viewer.assets.is_empty());
-        viewer.ingest_tool_result(&Value::String("not json at all".into()), "video_clip");
-        assert!(viewer.assets.is_empty());
+    #[gpui::test]
+    fn merge_tool_result_ignores_output_without_display_hint(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(
+                &serde_json::json!({"content": {"status": "clipped"}}),
+                "video_clip",
+                cx,
+            );
+            assert!(viewer.assets.is_empty());
+            viewer.ingest_tool_result(&Value::String("not json at all".into()), "video_clip", cx);
+            assert!(viewer.assets.is_empty());
+        });
     }
 }
 
@@ -1772,8 +1787,8 @@ mod viewer_layout_tests {
             }
         })
         .to_string();
-        viewer.update(cx, |viewer, _| {
-            viewer.ingest_tool_result(&Value::String(output), "video_fetch")
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
         });
         let asset_count = viewer.update(cx, |viewer, cx| {
             let count = viewer.assets.len();
@@ -1921,8 +1936,8 @@ mod viewer_layout_tests {
             }
         })
         .to_string();
-        viewer.update(cx, |viewer, _| {
-            viewer.ingest_tool_result(&Value::String(output), "video_fetch")
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
         });
 
         let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {

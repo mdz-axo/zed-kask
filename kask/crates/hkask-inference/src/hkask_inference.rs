@@ -118,6 +118,37 @@ impl LazyInferencePort {
     fn new() -> Self {
         Self {}
     }
+
+    fn resolve_direct_generation(
+        model_override: Option<&str>,
+    ) -> Result<(DirectEmbeddingPort, String), hkask_types::InferenceError> {
+        // Resolve the visible model before choosing its provider endpoint.
+        // Both chat entry points must use the same chain after IPC is unavailable.
+        let model = match model_override {
+            Some(model) => model.to_string(),
+            None => {
+                let configured = crate::config::InferenceConfig::from_env().default_model;
+                if configured.trim().is_empty() {
+                    return Err(hkask_types::InferenceError::NotConfigured(
+                        "no default model configured — set \
+                         kask.models.default_model (injected as \
+                         HKASK_DEFAULT_MODEL) or pass an explicit model; \
+                         kask never falls back to a hidden code constant"
+                            .to_string(),
+                    ));
+                }
+                configured
+            }
+        };
+        let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
+            hkask_types::InferenceError::Connection(format!(
+                "model '{model}': no provider prefix matched and no \
+                 provider credentials resolved — use a provider-prefixed \
+                 model or configure the provider"
+            ))
+        })?;
+        Ok((port, model))
+    }
 }
 
 impl hkask_types::InferencePort for LazyInferencePort {
@@ -205,37 +236,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
                     )
                     .await;
             }
-            // Fall back to direct HTTP. Resolve the model FIRST (the
-            // visible chain: explicit override → `kask.models.default_model`
-            // → typed error — never a code constant), then construct the
-            // port FROM that model so the provider endpoint always matches
-            // the model actually called. The prior code built the port from
-            // a separate stored embedding model — the endpoint could
-            // mismatch the per-call model, and the stored model was itself
-            // a hidden default.
-            let model_str = match model_override {
-                Some(model) => model.to_string(),
-                None => {
-                    let configured = crate::config::InferenceConfig::from_env().default_model;
-                    if configured.trim().is_empty() {
-                        return Err(hkask_types::InferenceError::NotConfigured(
-                            "no default model configured — set \
-                             kask.models.default_model (injected as \
-                             HKASK_DEFAULT_MODEL) or pass an explicit model; \
-                             kask never falls back to a hidden code constant"
-                                .to_string(),
-                        ));
-                    }
-                    configured
-                }
-            };
-            let port = DirectEmbeddingPort::try_new(&model_str).ok_or_else(|| {
-                hkask_types::InferenceError::Connection(format!(
-                    "model '{model_str}': no provider prefix matched and no \
-                     provider credentials resolved — use a provider-prefixed \
-                     model or configure the provider"
-                ))
-            })?;
+            let (port, model_str) = Self::resolve_direct_generation(model_override.as_deref())?;
             port.generate_with_model(&prompt, &params, Some(model_str.as_str()), tools.as_deref())
                 .await
         })
@@ -277,20 +278,9 @@ impl hkask_types::InferencePort for LazyInferencePort {
                     )
                     .await;
             }
-            // Fall back to the trait default: flatten to string and delegate
-            // to generate_with_model (which tries DirectEmbeddingPort).
-            let prompt = messages
-                .iter()
-                .map(|m| format!("{}: {}", m.role, m.content))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            self.generate_with_model(
-                &prompt,
-                &params,
-                model_override.as_deref(),
-                tools.as_deref(),
-            )
-            .await
+            let (port, model) = Self::resolve_direct_generation(model_override.as_deref())?;
+            port.generate_with_messages(&messages, &params, Some(&model), tools.as_deref())
+                .await
         })
     }
 
@@ -588,6 +578,28 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 + '_,
         >,
     > {
+        self.generate_with_messages(
+            &[hkask_types::ChatMessage::user(prompt)],
+            parameters,
+            model_override,
+            _tools,
+        )
+    }
+
+    fn generate_with_messages(
+        &self,
+        messages: &[hkask_types::ChatMessage],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
         // Resolve the model — the visible chain only (the operator's
         // spec: no hidden code constant may be the effective inference
         // model):
@@ -641,13 +653,13 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         let temperature = parameters.temperature;
         let top_p = parameters.top_p;
         let thinking_allowed = parameters.thinking_allowed;
-        let prompt = prompt.to_string();
+        let messages = messages.to_vec();
 
         Box::pin(async move {
             let uri = format!("{api_url}/chat/completions");
             let mut body = serde_json::json!({
                 "model": model_id,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "temperature": temperature,
                 "top_p": top_p,
             });
@@ -919,6 +931,188 @@ mod tests {
     use super::*;
     use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
 
+    fn prepared_chat_messages() -> Vec<hkask_types::ChatMessage> {
+        vec![
+            hkask_types::ChatMessage::system("  prepared system\nDo not rewrite.  "),
+            hkask_types::ChatMessage::user("Original user: α\n\nsource"),
+            hkask_types::ChatMessage {
+                role: "assistant".into(),
+                content: "prior answer".into(),
+            },
+            hkask_types::ChatMessage {
+                role: "tool".into(),
+                content: "tool output".into(),
+            },
+            hkask_types::ChatMessage::user("follow-up"),
+        ]
+    }
+
+    #[tokio::test]
+    async fn chat_fallback_preserves_roles_and_model() {
+        use hkask_types::InferencePort;
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+        // Use the real ports in an env-cleared subprocess. Its HTTP proxy is
+        // our loopback listener, not an Ollama instance or a paid provider.
+        // No test thread mutates the parent environment or ambient socket.
+        if let Ok(case) = std::env::var("HKASK_INFERENCE_CHAT_TEST_CASE") {
+            let parameters = hkask_types::template::LLMParameters::default();
+            let messages = prepared_chat_messages();
+            let direct =
+                DirectEmbeddingPort::try_new("ollama/offline-test-model").expect("local port");
+            let lazy = resolve_inference_port().await;
+            let model = (case == "explicit").then_some("ollama/explicit-test-model");
+            for port in [&direct as &dyn InferencePort, lazy.as_ref()] {
+                let result = port
+                    .generate_with_messages(&messages, &parameters, model, None)
+                    .await;
+                if case == "missing" {
+                    assert!(
+                        matches!(result, Err(hkask_types::InferenceError::NotConfigured(message))
+                        if message.contains("HKASK_DEFAULT_MODEL"))
+                    );
+                } else {
+                    assert_eq!(result.expect("captured chat response").text, "captured");
+                }
+                let result = port
+                    .generate_with_model("  plain prompt\n", &parameters, model, None)
+                    .await;
+                if case == "missing" {
+                    assert!(
+                        matches!(result, Err(hkask_types::InferenceError::NotConfigured(message))
+                        if message.contains("HKASK_DEFAULT_MODEL"))
+                    );
+                } else {
+                    assert_eq!(result.expect("captured plain response").text, "captured");
+                }
+            }
+            return;
+        }
+
+        for case in ["explicit", "configured", "missing"] {
+            let directory = tempfile::tempdir().expect("isolated socket directory");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("capture listener");
+            let proxy = format!(
+                "http://{}",
+                listener.local_addr().expect("listener address")
+            );
+            let capture = tokio::spawn(async move {
+                let mut requests = Vec::new();
+                for _ in 0..if case == "missing" { 0 } else { 4 } {
+                    let (stream, _) = listener.accept().await.expect("captured connection");
+                    let mut stream = BufReader::new(stream);
+                    let mut request_line = String::new();
+                    stream
+                        .read_line(&mut request_line)
+                        .await
+                        .expect("request line");
+                    assert!(
+                        request_line
+                            .starts_with("POST http://localhost:11434/v1/chat/completions "),
+                        "{request_line}"
+                    );
+                    let mut content_length = None;
+                    loop {
+                        let mut header = String::new();
+                        assert_ne!(stream.read_line(&mut header).await.expect("header"), 0);
+                        if header == "\r\n" {
+                            break;
+                        }
+                        if let Some((name, value)) = header.split_once(':') {
+                            assert!(
+                                !name.eq_ignore_ascii_case("authorization"),
+                                "no real credentials"
+                            );
+                            if name.eq_ignore_ascii_case("content-length") {
+                                content_length =
+                                    Some(value.trim().parse::<usize>().expect("content length"));
+                            }
+                        }
+                    }
+                    let mut body = vec![0; content_length.expect("JSON content length")];
+                    stream.read_exact(&mut body).await.expect("JSON body");
+                    requests.push(
+                        serde_json::from_slice::<serde_json::Value>(&body).expect("request JSON"),
+                    );
+                    let response = r#"{"choices":[{"message":{"content":"captured"},"finish_reason":"stop"}]}"#;
+                    stream.write_all(format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()
+                    ).as_bytes()).await.expect("capture response");
+                }
+                requests
+            });
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "tests::chat_fallback_preserves_roles_and_model",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env("HKASK_INFERENCE_CHAT_TEST_CASE", case)
+                    .env(INFERENCE_SOCKET_ENV, directory.path().join("missing.sock"))
+                    .env(
+                        "HKASK_DEFAULT_MODEL",
+                        if case == "missing" {
+                            ""
+                        } else {
+                            "ollama/configured-test-model"
+                        },
+                    )
+                    .env("http_proxy", &proxy)
+                    .env("HTTP_PROXY", &proxy)
+                    .env("ALL_PROXY", &proxy)
+                    .env("NO_PROXY", "")
+                    .env("no_proxy", "")
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("offline child deadline")
+            .expect("run isolated child");
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let requests = tokio::time::timeout(std::time::Duration::from_secs(2), capture)
+                .await
+                .expect("capture deadline")
+                .expect("capture task");
+            assert_eq!(requests.len(), if case == "missing" { 0 } else { 4 });
+            for (index, request) in requests.iter().enumerate() {
+                let expected_messages = if index % 2 == 0 {
+                    prepared_chat_messages()
+                } else {
+                    vec![hkask_types::ChatMessage::user("  plain prompt\n")]
+                };
+                assert_eq!(
+                    request["messages"],
+                    serde_json::to_value(expected_messages).expect("messages"),
+                    "{case} request {index}"
+                );
+                assert_eq!(
+                    request["model"],
+                    if case == "explicit" {
+                        "explicit-test-model"
+                    } else {
+                        "configured-test-model"
+                    }
+                );
+                let parameters = hkask_types::template::LLMParameters::default();
+                assert_eq!(
+                    request["temperature"],
+                    serde_json::json!(parameters.temperature)
+                );
+                assert_eq!(request["top_p"], serde_json::json!(parameters.top_p));
+            }
+        }
+    }
+
     /// The research server resolves its inference port via
     /// `resolve_inference_port()` and routes the deep-strategy rerank through
     /// it. Two layers once silently dropped the capability, each inheriting
@@ -938,14 +1132,14 @@ mod tests {
     /// guaranteed-nonexistent path for the duration, so the bridge-down
     /// branch runs deterministically regardless of whether a live zed
     /// process (possibly a stale build) is on the other end of the ambient
-    /// socket. No other test in this binary reads this env var.
+    /// socket. Other socket-env readers run in isolated subprocesses.
     #[tokio::test]
     async fn lazy_inference_port_overrides_rerank() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let dead_socket = temp_dir.path().join("nonexistent.sock");
         let prior = std::env::var(INFERENCE_SOCKET_ENV).ok();
         // Edition 2024: env mutation is unsafe; safe here because no other
-        // test in this binary reads INFERENCE_SOCKET_ENV.
+        // test in this process reads INFERENCE_SOCKET_ENV.
         unsafe {
             std::env::set_var(INFERENCE_SOCKET_ENV, &dead_socket);
         }
