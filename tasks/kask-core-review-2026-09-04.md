@@ -1,7 +1,7 @@
 # Kask core review and improvement plan
 
 - Date: 2026-09-04
-- Status: **19/20 tasks verified — T04 and T13–T17 closed by the 2026-09-05 acceptance runs below; T11 remains unimplemented at its maintenance-restart design checkpoint. Not full review completion.**
+- Status: **19/20 tasks verified — T11 maintenance restart is approved and in progress. Its storage quiescence/recovery prerequisite is verified; the complete maintenance lifecycle remains incomplete. Not full review completion.**
 - Scope: all 18 crates under `kask/crates`, with deeper inspection of critical paths and selected production consumers outside that directory
 - Initial baseline: `535e9b2b8b523a933af41248deaf0bdb02bf7b12`
 - Validation baseline: `a3496b7164fc1a49e050a245e8ea12d6633d9c88`
@@ -9,6 +9,94 @@
 - Document type: review/proposal (`bibo:Document`); process: review → adjudicate → propose → operator decision → implementation → verification
 
 All source paths below are relative to the repository root. Line citations describe the reviewed snapshot. HEAD advanced externally during inspection; `git diff 535e9b2b8b HEAD --stat -- kask/crates` was empty at the coordinator's verification. Existing uncommitted work was not changed by this review. No source changes or fixes were made. This new report does not replace `tasks/plan.md`, `tasks/todo.md`, or any canonical design specification.
+
+## T11 implementation checkpoint — 2026-09-06
+
+**Operator confirmation:** after rebuilding/restarting, the operator instructed
+“please proceed with confirmation and next steps”, then explicitly “please proceed
+with T11”, allowing the separate companies agent to continue in its own scope.
+This ratifies the maintenance-restart and explicit inventory-confirmation experience
+below and confirms the preceding 19-task checkpoint. **Do not ask again for D5
+strategy approval.** The coding agent owns the remaining implementation and tests.
+The prior session's goal record was absent after restart; no missing goal was
+retroactively scored. The current T11 goal is `425200ed-8331-443c-b3fa-eb5889deebeb`.
+
+### T11-A — verified storage prerequisite
+
+- `rotate_passphrase` now returns `RecoveryRequired` for existing `.new`/`.old`
+  files or sidecars before opening or cleaning the source. The old cleanup test
+  was replaced by preservation tests; the new regression failed on the previous
+  implementation. Missing sources and dangling recovery symlinks cannot create
+  an empty replacement or redirect export. Normal startup opens also refuse
+  unresolved recovery artifacts.
+- SQLCipher connections hold shared OS file leases on
+  `<canonical-db>.maintenance-lock`; rotation requires an exclusive lease through
+  replacement. Symlink aliases use the canonical target; hard-link aliases are
+  refused. These empty lock files must never be unlinked to bypass contention.
+- Ownership is on `LeasedSqliteConnection`, not merely on `Database` or the pool
+  manager. Investigation of r2d2 0.8.10 found manager destruction precedes idle
+  connection destruction. SQLite client-data destructors also run before final
+  native close, so that shortcut was rejected. The Rust owner drops its SQLite
+  connection before its lease. A direct manager-drop regression and a bounded,
+  reaped subprocess test pin the lifetime and cross-process exclusion.
+- `hkask-storage::SqliteConnectionManager` now supplies the pooled connection
+  type. The affected storage, bridge, ledger, research, training and swarm call
+  sites were updated together; no companies source was edited. Unencrypted pools
+  use the same connection type without a maintenance lease. Removed five obsolete
+  direct `r2d2_sqlite` dependencies; storage remains its sole Kask consumer.
+
+This is **not** the complete T11 maintenance workflow. Leases refuse active
+participating consumers; they do not drain operations or close the editor/children.
+Older binaries and direct SQLite opens do not participate. All-DB inventory,
+backup journal, key authority, and visible reopen/resume remain required.
+
+### Remaining implementation sequence (approved; owner: coding agent)
+
+| Slice | User-visible outcome / acceptance gate | Depends on |
+|---|---|---|
+| T11-B: Confirm inventory | Preview canonical shared-key paths plus registered/historical external corpus paths; operator explicitly reconciles independent-key/excluded paths. Tests refuse omitted/unconfirmed paths and deduplicate aliases. No mutation before confirmation. | T11-A |
+| T11-C: Enter maintenance | Stop new admission, settle existing work, retain remote job identifiers without replay, save workspace, and wait for editor/managed-child exit. Delayed-writer tests must retain the last committed write; old/uncooperative consumers must be refused rather than assumed closed. | T11-B |
+| T11-D: Activate verified copies | Offline helper holds all inventory leases, preserves all originals, verifies every candidate including RSS/FTS and KNN/h_mem recall, and journals each activation. Crash/failure injection at every per-file boundary leaves recoverable originals. No key publication here. | T11-C |
+| T11-E: Establish key authority | Publish only after all databases succeed; read back ambiguous write results. Test failures before/after actual key write, rollback failures and unavailable read-back with disposable credentials. Unknown authority stays in maintenance. | T11-D |
+| T11-F: Resume visibly | Reopen all consumers with established authority, restore workspace, and clear maintenance only after verified readiness. Reopen failure remains recoverable; no replay of unknown effects. Run the complete T11 matrix before checking its top-level box. | T11-E |
+
+These are safe working increments of the existing T11 contract, not reduced
+scope or abandoned findings. Checkpoint after each increment: targeted tests,
+app build, scoped lint, and original task-list evidence. No background work is
+implied by this sequence.
+
+### Verification actually run for T11-A
+
+Temporary data/artifact roots were used; the swarm smoke fixture also received
+a temporary `CARGO_TARGET_TMPDIR`. No live databases, keyring entries, or paid
+provider calls were used. All Cargo commands were bounded and sequential.
+
+- `cargo test --offline --locked -p hkask-storage -p hkask-memory -p hkask-ledger -p kask_bridge --lib -- --test-threads=1`
+  — **50 storage + 30 memory + 3 ledger + 182 bridge passed**.
+- `cargo test --offline --locked -p hkask-mcp-research --test tool_behavior -- --test-threads=1`
+  — **26 passed** through the research tool fixtures.
+- `cargo test --offline --locked -p hkask-mcp-training --lib -- --test-threads=1`
+  — **15 passed**.
+- `cargo test --offline --locked -p hkask-mcp-swarm --lib smoke_tests -- --test-threads=1`
+  — **6 passed**, including the actual funding/balance/history path.
+- `cargo test --offline --locked -p hkask-mcp-curator --test tool_behavior -- --test-threads=1`
+  — **26 passed**. **Total: 338 tests.** Earlier `adapters::tests` and
+  `consent::tests` filters selected zero tests and are not counted as evidence.
+- `cargo check --offline --locked -p hkask-storage -p hkask-ledger -p kask_bridge -p hkask-mcp-research -p hkask-mcp-training -p hkask-mcp-swarm --tests`
+  — **passed**, covering the typed pool call-site migration.
+- `cargo check --offline --locked -p zed` — **passed**.
+- `./script/clippy --offline --locked -p hkask-storage -p hkask-memory -p hkask-ledger -p kask_bridge -p hkask-mcp-server -p hkask-mcp-research -p hkask-mcp-training -p hkask-mcp-swarm`
+  — **passed**, including Kask-only cargo-machete, typos and buf checks.
+- One initial non-locked, offline storage test run updated the lockfile after
+  the five dependency removals; subsequent runs were locked. External tooling
+  committed/staged intermediate changes (`f29a5b90fd`, then the connection-owner
+  correction in `e901521a0c`); the agent did not stage or commit. Evidence applies
+  to the complete tested working tree. Later media/inference work is a separate
+  stream and is not certified by these runs.
+
+**Learning:** retaining a pool manager does not prove that a resource outlives
+connection teardown. Pin the actual connection owner and destruction order,
+including idle connections and worker-held references.
 
 ## Continuation checkpoint — 2026-09-05 (19/20 verified)
 
@@ -99,14 +187,15 @@ remint revoked authority, a one-result sensor can hide recovery, and re-sensing
 can erase the human action needed to interpret later evidence. A committed
 implementation or an immediate green helper test does not close those contracts.
 
-### T11 design checkpoint — proposal awaiting experience confirmation
+### T11 design checkpoint — ratified 2026-09-06; lifecycle not yet implemented
 
 **Not implemented; do not use live settings rotation as a verification probe.**
 The confirmed D5 outcome remains visible maintenance, settled writers, closed
 consumers, preservation of every shared-key DB before key publication, and visible
-reopen/resume or recoverable failure. The precise restart interaction is the
-remaining operator decision. Recommendation: **maintenance restart**, not a new
-in-process revocable-store framework.
+reopen/resume or recoverable failure. The operator approved **maintenance restart**
+and explicit inventory confirmation after rebuilding/restarting (2026-09-06),
+rather than a new in-process revocable-store framework. The T11-A checkpoint above
+records implemented prerequisites; the target lifecycle below remains incomplete.
 
 Known ownership inventory (paths are resolved overrides, not necessarily defaults):
 
@@ -128,7 +217,7 @@ here use unencrypted SQLite, not this key; a database suffix alone does not make
 it part of shared-key rotation. This table is a source inventory, not an enforced
 consumer registry or an exhaustive discovery of historical external paths.
 
-Proposed operator experience and failure contract:
+Approved target experience and failure contract (not all implemented):
 
 1. Show the exact database inventory and pending work before maintenance. Include
    registered external paths and require explicit reconciliation of historical
@@ -158,15 +247,16 @@ Proposed operator experience and failure contract:
    state; retry/restart does not replay uncertain tool effects. Clear maintenance
    only after all consumers report ready.
 
-Required isolated acceptance matrix (all still outstanding for T11): admission
+Required isolated acceptance matrix for full T11 (T11-A covers only the storage
+prerequisites described above): admission
 and in-flight write preservation; editor/child drain; every inventory path and
 external-path omission refusal; per-DB copy/verify failure; activation crash at
 each boundary; rollback failure; keychain failure before/after actual write;
 consumer-reopen failure; restart recovery. Use temporary SQLCipher fixtures,
 disposable credentials, and the T09/T10 RSS/KNN round trips. No live keyring test.
 
-**Risk/owner:** operator confirms the restart experience and external-path
-inventory interaction; coding agent then implements and verifies this lifecycle.
+**Risk/owner:** coding agent implements and verifies the approved restart and
+external-path inventory lifecycle. No further D5 strategy approval is outstanding.
 Until then settings rotation can race live handles, omit corpus DBs, or mark the
 UI configured after keychain-write failure (`security.rs:173–180`). Treat it as
 unsafe for valuable live data. No lifecycle closure is claimed from this design.

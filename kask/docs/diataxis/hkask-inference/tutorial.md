@@ -22,7 +22,7 @@ retries the bridge on every call and falls back to a direct-HTTP port
   request; newline-delimited JSON correlated by `id`. The zed process
   holds the API keys and the guard.
 - `LazyInferencePort` — what `resolve_inference_port()` actually returns.
-  Bridge-first on every call; per-method fallbacks behind it.
+  Bridge-first on non-media calls; per-method fallbacks behind it.
 - `DirectEmbeddingPort` — the standalone fallback for `generate`/`embed`:
   OpenAI-compatible HTTP with env-var keys.
 
@@ -32,7 +32,9 @@ retries the bridge on every call and falls back to a direct-HTTP port
 flowchart TD
     A[Step 1: resolve_inference_port at startup] --> B[LazyInferencePort, no connection yet]
     B --> C[Step 2: call an InferencePort method]
-    C --> D{Step 3: bridge reachable?}
+    C -- non-media --> D{Step 3: bridge reachable?}
+    C -- media_generate --> M[Child-local MediaRouter]
+    M --> G
     D -- yes --> E[IPC roundtrip to zed LanguageModelRegistry]
     D -- no --> F[Step 3b: per-method fallback]
     E --> G[Step 4: result returns to MCP server]
@@ -85,9 +87,16 @@ let result = inference
     .await;
 ```
 
-## Step 3: The port routes — bridge first, fallback second
+## Step 3: The port routes — media locally, other calls bridge first
 
-Each `LazyInferencePort` method tries `InferenceIpcClient::from_env()`
+`media_generate` always uses the child-local `MediaRouter`. Configure a
+full `OpenRouter/...` or `DeepInfra/...` model for the operation: only that
+provider receives the request, with no automatic cross-provider retry.
+Background removal/upscale instead use fixed DeepInfra models and reject
+overrides. This is the operator-ratified 2026-09-06 policy; chat routing is
+unchanged.
+
+Except for media, each `LazyInferencePort` method tries `InferenceIpcClient::from_env()`
 (`inference_ipc_client.rs:330`) first:
 
 - **Bridge reachable** — the call becomes an IPC roundtrip
@@ -102,8 +111,6 @@ Each `LazyInferencePort` method tries `InferenceIpcClient::from_env()`
     (`hkask_inference.rs:337`), which matches the model's prefix against
     `DIRECT_EMBEDDING_PROVIDERS` (`:359`) and calls the OpenAI-compatible
     endpoint directly with an env-var key.
-  - `media_generate` → a standalone `MediaRouter`
-    (`hkask_inference.rs:287-289`).
   - `generate_vision`, `list_models`, `generate_batch` → a socket-named
     `Connection` error (`:233`, `:265`) — never an empty success. In
     particular `list_models` returns `Err`, not `Ok(Vec::new())`, so a

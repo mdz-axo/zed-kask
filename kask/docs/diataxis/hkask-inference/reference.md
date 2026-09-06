@@ -12,13 +12,13 @@ mds_categories: [domain, composition]
 
 `hkask-inference` is the MCP-server-side inference crate. Its primary path is
 the IPC bridge: MCP server child processes route chat, vision, embedding,
-batch, media, tool dispatch, and worktree spawn back to zed's
+batch, tool dispatch, and worktree spawn back to zed's
 `LanguageModelRegistry` over a Unix socket (`HKASK_INFERENCE_SOCKET`),
 instead of holding API keys. The crate also contains a **lazy fallback
 layer** (`LazyInferencePort` → `DirectEmbeddingPort` / standalone
-`MediaRouter`) for servers that start before the socket exists or run
+`MediaRouter`, always child-local for media) for servers that start before the socket exists or run
 outside zed's governed launch, a **batch API router** (OpenRouter /
-DeepInfra), a **pluggable media-provider registry** with 7-dimension scored
+DeepInfra), a **pluggable media-provider registry** with strict provider-qualified
 selection, and the `openai_compat` response-body redaction utility.
 
 ## Source citations
@@ -33,7 +33,7 @@ intentionally absent.
 
 | Symbol | Location |
 |--------|----------|
-| module list (`batch` … `scoring`) | `kask/crates/hkask-inference/src/hkask_inference.rs:29-38` |
+| module list (`batch` … `rerank`) | `kask/crates/hkask-inference/src/hkask_inference.rs:29-38` |
 | public re-exports (`InferenceConfig`, `ProviderId`, `InferenceIpcClient`) | `kask/crates/hkask-inference/src/hkask_inference.rs:41-42` |
 | `IPC_BRIDGE_UNAVAILABLE` const | `kask/crates/hkask-inference/src/hkask_inference.rs:49` |
 | `connect_bridge` (private) | `kask/crates/hkask-inference/src/hkask_inference.rs:60` |
@@ -112,22 +112,18 @@ in the settings `Default` impls (operator ruling 2026-09-04):
 `KaskCorpusSettings::default` for the embedding model) and
 `hkask-services-core/src/standalone_settings.rs` (`HkaskSettings::default`).
 
-### `media_router.rs`, `media_providers.rs`, `provider.rs`, `scoring.rs`, `batch.rs`, `openai_compat.rs`
+### `media_router.rs`, `media_providers.rs`, `provider.rs`, `batch.rs`, `openai_compat.rs`
 
 | Symbol | Location |
 |--------|----------|
-| `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs:43` |
-| `MediaRouter::new` | `kask/crates/hkask-inference/src/media_router.rs:59` |
-| `BRIDGE_ERROR` const | `kask/crates/hkask-inference/src/media_router.rs:237` |
-| `impl InferencePort for MediaRouter` | `kask/crates/hkask-inference/src/media_router.rs:240` |
-| `DeepInfraMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:43` |
-| `OpenRouterMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:466` |
-| `MediaOp` enum (8 ops) | `kask/crates/hkask-inference/src/provider.rs:24` |
-| `MediaProvider` trait | `kask/crates/hkask-inference/src/provider.rs:81` |
-| `ProviderRegistry` | `kask/crates/hkask-inference/src/provider.rs:105` |
-| `ProviderRegistry::execute` | `kask/crates/hkask-inference/src/provider.rs:156` |
-| `ProviderScore` / `ScoreWeights` / `ScoredProvider` | `kask/crates/hkask-inference/src/scoring.rs:15`, `:27`, `:53` |
-| `select_scored` | `kask/crates/hkask-inference/src/scoring.rs:86` |
+| `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs:10` |
+| `MediaRouter::new` | `kask/crates/hkask-inference/src/media_router.rs:26` |
+| `DeepInfraMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:60` |
+| `OpenRouterMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:460` |
+| `MediaOp` enum (10 ops) | `kask/crates/hkask-inference/src/provider.rs:13` |
+| `MediaProvider` trait | `kask/crates/hkask-inference/src/provider.rs:154` |
+| `ProviderRegistry` | `kask/crates/hkask-inference/src/provider.rs:180` |
+| `ProviderRegistry::execute` | `kask/crates/hkask-inference/src/provider.rs:197` |
 | `BatchProvider` enum | `kask/crates/hkask-inference/src/batch.rs:51` |
 | `detect_batch_provider` | `kask/crates/hkask-inference/src/batch.rs:89` |
 | `BatchResult` | `kask/crates/hkask-inference/src/batch.rs:130` |
@@ -184,9 +180,9 @@ classDiagram
         +try_new(embedding_model) Option~Self~
     }
     class MediaRouter {
-        +registry: ProviderRegistry
+        -registry: ProviderRegistry
         +new(config) Self
-        +generate_image(...) Result
+        +media_generate(...) Result
     }
     class UnavailableToolDispatch {
         +invoke_tool(...) Err
@@ -198,7 +194,7 @@ classDiagram
     InferenceConfig --> ProviderId : default_provider
     LazyInferencePort ..> InferenceIpcClient : tries bridge per call
     LazyInferencePort ..> DirectEmbeddingPort : chat/embed fallback
-    LazyInferencePort ..> MediaRouter : media fallback
+    LazyInferencePort ..> MediaRouter : child-local media
     resolve_inference_port() --> LazyInferencePort
     resolve_tool_dispatch_port() ..> UnavailableToolDispatch : bridge down
     resolve_worktree_spawn_port() ..> UnavailableWorktreeSpawn : bridge down
@@ -285,7 +281,7 @@ first-segment-only) into `ModelEntry { prefixed_name, model }`.
 ## Lazy fallback layer
 
 `resolve_inference_port` (`hkask_inference.rs:94`) returns a
-`LazyInferencePort` (`:102`) — not a resolve-once stub. Each call
+`LazyInferencePort` (`:102`) — not a resolve-once stub. Each non-media call
 re-attempts `InferenceIpcClient::from_env()`; on failure:
 
 - `generate_with_model` / `embed` fall back to `DirectEmbeddingPort`
@@ -295,8 +291,8 @@ re-attempts `InferenceIpcClient::from_env()`; on failure:
   `hkask-inference` cannot depend on `kask_bridge` without inverting the
   D8 seam) and calls the OpenAI-compatible `/chat/completions` and
   `/embeddings` endpoints directly with env-var keys.
-- `media_generate` (`:271`) falls back to a standalone `MediaRouter`
-  (`media_router.rs:43`) built from `InferenceConfig::from_env()`.
+- `media_generate` bypasses IPC unconditionally, using the child-local
+  `MediaRouter` built from `InferenceConfig::from_env()`.
 - `generate_vision` returns a clear `Connection` error (no fallback);
   `list_models` and `generate_batch` are bridge-only and return
   socket-named `Connection` errors (`:233`, `:265`).
@@ -305,34 +301,60 @@ This eliminates the resolve-once-at-startup problem where a corpus MCP
 server started before the IPC socket existed and never re-resolved
 (`resolve_inference_port` doc comment, `hkask_inference.rs:86-93`).
 
-## Media generation stack
+## Media routing policy — operator decision 2026-09-06
 
-`MediaRouter` (`media_router.rs:43`) handles only media ops — chat, vision,
-and embed routed to it return the `BRIDGE_ERROR` message (`:237`). Its
-`InferencePort` impl (`:240`) is the only production path: media
-generation is child-local (`LazyInferencePort::media_generate` → the
-`LOCAL_MEDIA_ROUTER` OnceLock, `hkask_inference.rs`), reading the MCP
-server process's env-injected keys (`DEEPINFRA_API_KEY` /
-`OPENROUTER_API_KEY`). The former IPC route (`call_media_generate` →
-zed-side `MediaRouter`) was deleted 2026-08-31: the zed process env never
-contains the keys, so every IPC-routed media call failed with "no
-provider configured" even with keys installed.
+The selected model is authoritative: `params.model` when present, otherwise
+that operation's configured environment model. Selectable operations require
+`OpenRouter/<provider-local-model>` or `DeepInfra/<provider-local-model>`.
+Full provider names are ASCII case-insensitive; the remainder may contain a
+vendor slash and is preserved exactly. Bare models, short aliases (`OR/`,
+`DI/`), blank overrides, unknown providers, and whitespace are invalid.
 
-`MediaRouter::new` (`media_router.rs:59`) registers `DeepInfraMediaProvider`
-(`media_providers.rs:43`) first (preferred) and
-`OpenRouterMediaProvider` (`media_providers.rs:466`) second, only when
-their API keys are present; an empty registry warns. Dispatch goes through
-`ProviderRegistry::execute` (`provider.rs:156`): when multiple providers
-support the op, the primary is chosen by `scoring::select_scored`
-(`scoring.rs:86`, emits the `reg.media.select` span at `:126`) and the
-fallback chain is ordered by descending weighted score. The 7 dimensions
-(`ProviderScore`, `scoring.rs:15`) default to weights task_fit 0.30,
-quality 0.20, control 0.15, reliability 0.15, cost 0.10, latency 0.05,
-continuity 0.05 (`ScoreWeights::default`, `scoring.rs:37-49`). Note:
-`score_provider` (`scoring.rs:77`) currently returns a neutral baseline
-for every provider — provider-specific scoring arms are **not yet
-implemented**; with the neutral baseline, multi-provider selection
-effectively falls to registration order among equal scores.
+| Operation | Environment model when no override is supplied |
+|---|---|
+| `generate_image`, `image_to_image` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
+| `generate_speech` | `HKASK_MEDIA_TTS_MODEL` |
+| `transcribe` | `HKASK_MEDIA_STT_MODEL` |
+| `generate_video`, `image_to_video` | `HKASK_MEDIA_VIDEO_MODEL` |
+| `chat_audio` | `HKASK_MEDIA_AUDIO_CHAT_MODEL` |
+| `chat_json` | `HKASK_MEDIA_STRUCTURED_PASS_MODEL` |
+
+`ProviderRegistry::execute` resolves once, verifies the named provider is
+registered and supports the operation, and calls exactly that provider with
+only the provider-local model. No scoring, registration-order selection,
+automatic cross-provider retry, or hidden default substitution remains.
+The selected provider's errors return unchanged. Missing configuration or a
+selected key names its environment variable (`NotConfigured`); invalid
+selection is `Model`. Media MCP maps those to `permission_denied` and
+`invalid_argument`, respectively; provider 401/403 remains `Auth` →
+`permission_denied`.
+
+`remove_background` and `upscale` use the fixed DeepInfra native endpoints
+`Bria/remove_background` and `latentconsistency/upscale`. They need
+`DEEPINFRA_API_KEY`, not a model env var, and reject model overrides.
+OpenRouter does not serve image-to-image or TTS in these adapters;
+DeepInfra does not serve `chat_audio` or `chat_json`.
+
+This decision supersedes `d660f3b754` (scoring/automatic fallback) and
+`8cc79c797e` (registration-order routing), not `f86cf19a70` (child-local
+media). `LazyInferencePort::media_generate` still uses the child-local
+`MediaRouter`; foreground media behavior and chat/vision/embed/IPC routes
+are unchanged. The router is now media-only, with one inherent
+`media_generate` entry point rather than a fake chat `InferencePort` impl.
+
+**Migration:** qualify existing bare/short-alias media model settings and
+replay overrides with the intended full provider name; install that
+provider's key. Remove overrides from fixed-model operations. Settings
+remain the source of defaults; standalone callers must configure the env
+model or pass an override. The current STT settings default remains
+`OpenRouter/openai/whisper-large-v3-turbo`; image, video, and TTS settings
+have no default. No compatibility fallback is provided.
+
+Offline pins: `media_routing_tests` exercises all eight selectable ops,
+invalid selections, absent keys, fixed ops, typed failures, real adapter
+HTTP payloads, and child-local `LazyInferencePort` with zero IPC calls.
+`hkask-mcp-media/src/error.rs` pins real router 401/403 → tool
+`permission_denied` and invalid model → `invalid_argument`.
 
 ## Batch API
 
@@ -392,8 +414,8 @@ defense-in-depth). Consumers include the MCP `classify_http_error` helper
   `resolve_inference_port()` + `resolve_tool_dispatch_port()`.
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:1743`
   — calls `resolve_worktree_spawn_port()`.
-- `kask_bridge` — holds the server side (`inference_ipc_server.rs`) and a
-  zed-side `MediaRouter` (`inference_chat.rs:198`).
+- `kask_bridge` — holds the non-media IPC server (`inference_ipc_server.rs`);
+  media dispatch is child-local, not hosted by the bridge.
 
 ## See also
 

@@ -74,6 +74,19 @@ status: VERIFIED
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB` (`src/hkask_mcp_media.rs:470-489`). There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback silently degraded every subsequent tool call to "gallery empty" — a broken feedback loop (`src/hkask_mcp_media.rs:473-479`). The file DB is unencrypted (gallery metadata is not a secret) and therefore does **not** use `HKASK_DB_PASSPHRASE` (`src/hkask_mcp_media.rs:479-480`).
 
+**Routing decision (2026-09-06):** `params.model` overrides the operation's
+env model. Selectable ops require full `OpenRouter/...` or `DeepInfra/...`
+qualification (ASCII case-insensitive provider name, nonempty local model,
+no whitespace). No bare/short-alias fallback, scoring, registration-order
+selection, or automatic cross-provider retry remains. This supersedes
+`d660f3b754` and `8cc79c797e`; child-local media (`f86cf19a70`) and foreground
+media behavior remain unchanged. Background removal/upscale use fixed
+DeepInfra native endpoints, need only its key, and reject model overrides.
+Invalid model selection maps to `invalid_argument`; missing config/key or
+provider 401/403 maps to `permission_denied`. For migration, qualify saved
+media model settings/replays and remove fixed-op model overrides. See the
+[inference policy](../../diataxis/hkask-inference/reference.md#media-routing-policy--operator-decision-2026-09-06).
+
 **Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`. These env-injected keys serve the child-local `MediaRouter`; vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — the media process does read provider keys for media generation (D35).
 
 **Environment variables** (all optional; the eight `HKASK_MEDIA_*_MODEL` vars resolve through the server's `models` module — `None` when unset, no constant fallback; callers fail visibly naming the env var, `src/hkask_mcp_media.rs:78-116`):

@@ -36,6 +36,9 @@ pub mod openai_compat;
 pub mod provider;
 pub mod rerank;
 
+#[cfg(test)]
+mod media_routing_tests;
+
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;

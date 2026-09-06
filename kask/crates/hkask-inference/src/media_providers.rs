@@ -17,8 +17,9 @@
 //! ## OpenRouter
 //!
 //! OpenRouter provides dedicated endpoints for media generation:
-//! - **Image generation**: `/v1/chat/completions` with image-generation models
-//! - **TTS**: `/v1/audio/speech` (OpenAI-compatible, returns raw audio bytes)
+//! - **Image generation**: `/v1/images` (base64 image responses)
+//! - **Audio/structured chat**: `/v1/chat/completions`
+//! - **TTS and image-to-image**: not supported by this adapter
 //! - **STT**: `/v1/audio/transcriptions` (base64 JSON input, returns JSON)
 //! - **Video generation**: `/v1/videos` (async submit+poll, returns video URL)
 

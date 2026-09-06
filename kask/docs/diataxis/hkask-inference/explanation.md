@@ -17,7 +17,7 @@ worktree spawn back to zed's `LanguageModelRegistry` over a Unix socket
 directly. But the crate is no longer bridge-only: since the lazy-fallback
 refactor, `resolve_inference_port()` (`hkask_inference.rs:95`) returns a
 `LazyInferencePort` (`hkask_inference.rs:103`) that re-attempts the bridge
-on **every call** and falls back to a direct-HTTP port when the socket is
+on **every non-media call** and falls back to a direct-HTTP port when the socket is
 unavailable; `media_generate` is always child-local (media APIs are not
 LanguageModel calls, and the zed process never holds the media keys). This
 document explains why the bridge is the primary path, why the fallbacks
@@ -51,12 +51,12 @@ prefix-based.
 stateDiagram-v2
     [*] --> Resolve: MCP server startup calls resolve_inference_port
     Resolve --> Lazy: LazyInferencePort (no connection yet)
-    Lazy --> Bridge: each call retries InferenceIpcClient::from_env
+    Lazy --> Bridge: non-media call retries InferenceIpcClient::from_env
     Bridge --> BridgeOk: socket reachable
     Bridge --> Fallback: socket unset/unreachable
-    BridgeOk --> [*]: chat/vision/embed/batch/media via zed
+    BridgeOk --> [*]: chat/vision/embed/batch via zed
     Fallback --> Direct: generate/embed -> DirectEmbeddingPort (env keys)
-    Fallback --> MediaRouter: media_generate -> standalone MediaRouter
+    Lazy --> MediaRouter: media_generate -> child-local MediaRouter
     Fallback --> NamedErr: vision/list_models/batch -> socket-named Err
     Direct --> [*]
     MediaRouter --> [*]
@@ -136,6 +136,13 @@ more:
   zed's multimodal providers; model listing needs zed's registry; batch
   needs the zed side to hold the provider Batch API keys
   (`inference_ipc_client.rs:443-447`).
+
+Media provider selection is separate from chat's prefix/default-provider
+rules. The 2026-09-06 operator decision supersedes scoring and automatic
+fallback (`d660f3b754`, `8cc79c797e`): the full provider-qualified model
+selects exactly one provider. Failures retain their type and never send
+media to another provider. Fixed background removal/upscale stay on
+DeepInfra; see the [routing contract](reference.md#media-routing-policy--operator-decision-2026-09-06).
 
 ## Why the stubs are never silent
 

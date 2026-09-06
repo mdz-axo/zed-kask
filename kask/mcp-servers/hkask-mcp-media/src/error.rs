@@ -181,14 +181,19 @@ fn is_credential_missing_error(message: &str) -> bool {
 /// `InferenceError::Auth` variant — HTTP 401/403 from a provider: the key is
 /// present but invalid, expired, or unauthorized for the resource, which is
 /// an authorization failure to fix, not a transient outage to retry).
-/// Every other failure (transient outage, model error, JSON parse, circuit
-/// open) stays `unavailable`. The full error message is preserved so the
-/// operator can diagnose.
+/// Invalid model selection maps to `invalid_argument`, overload to
+/// `rate_limited`, and timeout to `timeout`. Other failures (connection,
+/// JSON parse, circuit open) stay `unavailable`. Messages are preserved.
 pub fn classify_inference_error(prefix: &str, error: InferenceError) -> McpToolError {
     let message = format!("{}: {}", prefix, error);
     match error {
         InferenceError::NotConfigured(_) | InferenceError::Auth(_) => {
             McpToolError::permission_denied(message)
+        }
+        InferenceError::Model(_) => McpToolError::invalid_argument(message),
+        InferenceError::Overloaded(_) => McpToolError::rate_limited(message),
+        InferenceError::Timeout(_) => {
+            McpToolError::new(hkask_types::McpErrorKind::Timeout, message)
         }
         _ => McpToolError::unavailable(message),
     }
@@ -212,6 +217,126 @@ pub fn classify_embedding_error(prefix: &str, error: EmbeddingGenerationError) -
 mod tests {
     use super::*;
     use hkask_types::McpErrorKind;
+
+    /// expect: "An invalid media model is a fixable argument, not an outage."
+    /// [P1] Motivating; dcterms:identifier: classify_inference_error
+    #[tokio::test]
+    async fn real_router_model_error_is_invalid_argument() {
+        let router = hkask_inference::media_router::MediaRouter::new(
+            hkask_inference::InferenceConfig::default(),
+        );
+        let error = router
+            .media_generate(
+                "generate_image",
+                &hkask_types::MediaGenerateParams {
+                    model: Some("unqualified-model".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("invalid routing");
+        assert_eq!(
+            classify_inference_error("Image generation failed", error).kind,
+            McpErrorKind::InvalidArgument
+        );
+    }
+
+    /// expect: "A rejected provider key reaches the media tool as permission_denied."
+    /// [P4] Motivating; dcterms:identifier: classify_inference_error
+    #[tokio::test]
+    async fn real_router_http_auth_reaches_media_tool_mapper() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        for provider in ["DeepInfra", "OpenRouter"] {
+            for status in [401, 403] {
+                let selected = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("selected HTTP");
+                let unselected = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("unselected HTTP");
+                let selected_url = format!("http://{}", selected.local_addr().expect("address"));
+                let unselected_url =
+                    format!("http://{}", unselected.local_addr().expect("address"));
+                let response = tokio::spawn(async move {
+                    let (stream, _) = selected.accept().await.expect("selected request");
+                    let mut stream = BufReader::new(stream);
+                    let mut line = String::new();
+                    let mut length = 0;
+                    loop {
+                        line.clear();
+                        stream.read_line(&mut line).await.expect("request headers");
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse().expect("content length");
+                        }
+                    }
+                    stream
+                        .read_exact(&mut vec![0; length])
+                        .await
+                        .expect("request body");
+                    stream.get_mut().write_all(format!("HTTP/1.1 {status} Unauthorized\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrejected").as_bytes()).await.expect("auth response");
+                });
+                let router = hkask_inference::media_router::MediaRouter::new(
+                    hkask_inference::InferenceConfig {
+                        deepinfra_api_key: "sentinel-deepinfra".into(),
+                        openrouter_api_key: "sentinel-openrouter".into(),
+                        deepinfra_base_url: if provider == "DeepInfra" {
+                            selected_url.clone()
+                        } else {
+                            unselected_url.clone()
+                        },
+                        openrouter_base_url: if provider == "OpenRouter" {
+                            selected_url
+                        } else {
+                            unselected_url
+                        },
+                        ..Default::default()
+                    },
+                );
+                let error = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    router.media_generate(
+                        "generate_image",
+                        &hkask_types::MediaGenerateParams {
+                            model: Some(format!("{provider}/vendor/model")),
+                            prompt: Some("test".into()),
+                            ..Default::default()
+                        },
+                    ),
+                )
+                .await
+                .expect("bounded routing")
+                .expect_err("provider rejects credential");
+                assert!(matches!(error, InferenceError::Auth(_)));
+                let mapped = classify_inference_error("Image generation failed", error);
+                assert_eq!(mapped.kind, McpErrorKind::PermissionDenied);
+                assert!(mapped.message.contains("rejected"));
+                assert!(!mapped.message.contains("sentinel-"));
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(10), unselected.accept())
+                        .await
+                        .is_err()
+                );
+                response.await.expect("HTTP task");
+            }
+        }
+    }
+
+    #[test]
+    fn overload_and_timeout_keep_actionable_kinds() {
+        assert_eq!(
+            classify_inference_error("media", InferenceError::Overloaded("busy".into())).kind,
+            McpErrorKind::RateLimited
+        );
+        assert_eq!(
+            classify_inference_error("media", InferenceError::Timeout("deadline".into())).kind,
+            McpErrorKind::Timeout
+        );
+    }
 
     /// Pins the authorization-failure classification: a rejected credential
     /// (typed `InferenceError::Auth` — HTTP 401/403 from a provider) surfaces

@@ -48,9 +48,7 @@ impl std::str::FromStr for MediaOp {
             "transcribe" => Ok(Self::Transcribe),
             "chat_audio" => Ok(Self::ChatAudio),
             "chat_json" => Ok(Self::ChatJson),
-            other => Err(InferenceError::Model(format!(
-                "unknown media op: {other}"
-            ))),
+            other => Err(InferenceError::Model(format!("unknown media op: {other}"))),
         }
     }
 }
@@ -207,17 +205,18 @@ impl ProviderRegistry {
                 Some(model) => model.clone(),
                 None => std::env::var(variable).map_err(|_| {
                     InferenceError::NotConfigured(format!(
-                        "set {variable} or pass a provider-qualified model for {}", op.as_str()
+                        "set {variable} or pass a provider-qualified model for {}",
+                        op.as_str()
                     ))
                 })?,
             };
-            let invalid_model = || InferenceError::Model(
+            let invalid_model = || {
+                InferenceError::Model(
                 "media models require OpenRouter/<model> or DeepInfra/<model>; use full provider names, a nonempty model, and no whitespace".into()
-            );
+            )
+            };
             let (prefix, local_model) = model.split_once('/').ok_or_else(invalid_model)?;
-            if model.chars().any(char::is_whitespace)
-                || local_model.split('/').any(str::is_empty)
-            {
+            if model.chars().any(char::is_whitespace) || local_model.split('/').any(str::is_empty) {
                 return Err(invalid_model());
             }
             let selected = if prefix.eq_ignore_ascii_case("OpenRouter") {
@@ -232,16 +231,22 @@ impl ProviderRegistry {
         } else {
             if params.model.is_some() {
                 return Err(InferenceError::Model(format!(
-                    "{} uses a fixed DeepInfra model; remove the model override", op.as_str()
+                    "{} uses a fixed DeepInfra model; remove the model override",
+                    op.as_str()
                 )));
             }
             ("deepinfra", "DEEPINFRA_API_KEY")
         };
-        let mut matching = self.providers.iter()
+        let mut matching = self
+            .providers
+            .iter()
             .filter(|provider| provider.id().eq_ignore_ascii_case(provider_name));
-        let provider = matching.next().ok_or_else(|| InferenceError::NotConfigured(format!(
-            "{provider_name} is not configured for {}; set {credential}", op.as_str()
-        )))?;
+        let provider = matching.next().ok_or_else(|| {
+            InferenceError::NotConfigured(format!(
+                "{provider_name} is not configured for {}; set {credential}",
+                op.as_str()
+            ))
+        })?;
         if matching.next().is_some() {
             return Err(InferenceError::Model(format!(
                 "ambiguous media provider registration: {provider_name}"
@@ -249,7 +254,8 @@ impl ProviderRegistry {
         }
         if !provider.supports(op) {
             return Err(InferenceError::Model(format!(
-                "{provider_name} does not support {}; choose a supported provider-qualified model", op.as_str()
+                "{provider_name} does not support {}; choose a supported provider-qualified model",
+                op.as_str()
             )));
         }
         provider.execute(op, &params).await

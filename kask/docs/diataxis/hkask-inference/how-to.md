@@ -12,8 +12,8 @@ mds_categories: [composition]
 
 `hkask-inference` routes MCP-server inference to zed's
 `LanguageModelRegistry` over a Unix socket (`HKASK_INFERENCE_SOCKET`),
-with lazy direct-HTTP fallbacks for chat/embed and standalone media when
-the bridge is unavailable. This guide covers the two things a developer
+with lazy direct-HTTP fallbacks for chat/embed when the bridge is
+unavailable, and unconditional child-local media dispatch. This guide covers the two things a developer
 configures in this crate: **wiring an MCP server to the bridge** via the
 per-port resolvers, and **adding a chat provider** (a `ProviderId`
 variant + prefix + config fields — the backend is served by zed or the
@@ -55,11 +55,11 @@ direct-fallback table, not a new struct in this crate).
 ```mermaid
 flowchart TD
     A[Call resolve_inference_port at startup] --> B[LazyInferencePort returned immediately]
-    B --> C{Each call: HKASK_INFERENCE_SOCKET reachable?}
+    B --> C{Non-media call: HKASK_INFERENCE_SOCKET reachable?}
     C -- yes --> D[InferenceIpcClient roundtrip to zed]
     C -- no --> E{Method}
     E -- generate/embed --> F[DirectEmbeddingPort direct HTTP]
-    E -- media_generate --> G[Standalone MediaRouter]
+    B -- media_generate --> G[Child-local MediaRouter]
     E -- vision/list/batch --> H[Socket-named Connection error]
     D --> I[Result to caller]
     F --> I

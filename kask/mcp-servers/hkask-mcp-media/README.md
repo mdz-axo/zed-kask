@@ -73,14 +73,36 @@ Pins: `media_blocks_round_trip_escaped_paths`,
 
 Media generation is child-local: `LazyInferencePort::media_generate` calls the media process's `MediaRouter` using its env-injected `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` (D35). Vision/chat/embed calls use the inference IPC bridge to zed's `LanguageModelRegistry`; media generation does not make that IPC round-trip.
 
-| Variable | Default | Description |
-|---|---|---|
-| `HKASK_MEDIA_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | Text-to-speech (Kokoro via DeepInfra) |
-| `HKASK_MEDIA_STT_MODEL` | `DeepInfra/openai/whisper-large-v3` | Speech-to-text (Whisper Large v3 via DeepInfra) |
-| `HKASK_MEDIA_VISION_MODEL` | `OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision model (Qwen3-VL via OpenRouter) |
-| `HKASK_MEDIA_IMAGE_GEN_MODEL` | `DeepInfra/black-forest-labs/FLUX-2-klein-4b` | Image generation model override |
+Routing policy was ratified on **2026-09-06**, superseding `d660f3b754`
+(scoring/automatic fallback) and `8cc79c797e` (registration order), while
+preserving `f86cf19a70` (child-local media). Explicit `params.model` wins;
+otherwise the operation's env model applies. Use full `OpenRouter/...` or
+`DeepInfra/...` model names (ASCII case-insensitive provider names); bare
+models, short aliases, and blank/whitespace-invalid values are rejected.
+Only the selected provider is called, with its local model ID. There is no
+automatic cross-provider retry on any error.
 
-All models are open-weight. Provider prefixes (`OR/`, `KC/`, etc.) route to the appropriate inference backend.
+| Variable | Settings default | Operations |
+|---|---|---|
+| `HKASK_MEDIA_IMAGE_GEN_MODEL` | unset | image generation and image-to-image |
+| `HKASK_MEDIA_VIDEO_MODEL` | unset | text-to-video and image-to-video |
+| `HKASK_MEDIA_TTS_MODEL` | unset | speech (DeepInfra only) |
+| `HKASK_MEDIA_STT_MODEL` | `OpenRouter/openai/whisper-large-v3-turbo` | transcription |
+| `HKASK_MEDIA_AUDIO_CHAT_MODEL` | unset | audio chat (OpenRouter only) |
+| `HKASK_MEDIA_STRUCTURED_PASS_MODEL` | unset | structured chat (OpenRouter only) |
+
+Settings inject resolved defaults into the child; standalone calls need env
+configuration or an explicit override. Background removal and upscale use
+fixed DeepInfra native models, require `DEEPINFRA_API_KEY`, need no model
+env var, and reject model overrides. Missing selected credentials/config
+and HTTP 401/403 are `permission_denied`; invalid model/provider selection
+is `invalid_argument`, never a retryable outage. Image-to-image is
+DeepInfra-only in the current adapters. Vision/chat/embed are unchanged.
+
+**Migration:** qualify bare/short-alias media model settings and saved replay
+overrides with a full provider name; configure that provider's key. Remove
+model overrides for background removal/upscale. See the
+[inference routing contract](../../crates/hkask-inference/README.md#media-routing-policy--operator-decision-2026-09-06).
 
 ## Face recognition — design decision
 

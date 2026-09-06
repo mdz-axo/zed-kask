@@ -79,8 +79,10 @@ mod tests {
     #[tokio::test]
     async fn media_generate_unknown_op_errors() {
         let router = MediaRouter::new(InferenceConfig::default());
-        assert!(matches!(router.media_generate("nonsense_op", &MediaGenerateParams::default()).await,
-            Err(InferenceError::Model(message)) if message.contains("unknown media op")));
+        assert!(
+            matches!(router.media_generate("nonsense_op", &MediaGenerateParams::default()).await,
+            Err(InferenceError::Model(message)) if message.contains("unknown media op"))
+        );
     }
 
     /// expect: "Missing keys name the selected provider, never another provider."
@@ -88,12 +90,23 @@ mod tests {
     #[tokio::test]
     async fn media_generate_no_provider_errors_clearly() {
         let router = MediaRouter::new(InferenceConfig::default());
-        for (model, key) in [("OpenRouter/vendor/model", "OPENROUTER_API_KEY"),
-                             ("DeepInfra/vendor/model", "DEEPINFRA_API_KEY")] {
-            let error = router.media_generate("generate_image", &MediaGenerateParams {
-                model: Some(model.into()), ..Default::default()
-            }).await.expect_err("no credentials");
-            assert!(matches!(error, InferenceError::NotConfigured(message) if message.contains(key)));
+        for (model, key) in [
+            ("OpenRouter/vendor/model", "OPENROUTER_API_KEY"),
+            ("DeepInfra/vendor/model", "DEEPINFRA_API_KEY"),
+        ] {
+            let error = router
+                .media_generate(
+                    "generate_image",
+                    &MediaGenerateParams {
+                        model: Some(model.into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect_err("no credentials");
+            assert!(
+                matches!(error, InferenceError::NotConfigured(message) if message.contains(key))
+            );
         }
     }
 }
