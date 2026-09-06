@@ -125,15 +125,7 @@ pub(crate) fn build_dcf_response(
             "current_price": current_price,
             "margin_of_safety": margin_of_safety,
         },
-        "data_quality": {
-            "overall_confidence": signal_quality.overall_confidence,
-            "revenue_growth": serde_json::json!(signal_quality.revenue_growth),
-            "gross_margin": serde_json::json!(signal_quality.gross_margin),
-            "da_to_revenue": serde_json::json!(signal_quality.da_to_revenue),
-            "capex_to_revenue": serde_json::json!(signal_quality.capex_to_revenue),
-            "nwc_to_revenue": serde_json::json!(signal_quality.nwc_to_revenue),
-            "tax_rate": serde_json::json!(signal_quality.tax_rate),
-        },
+        "data_quality": signal_quality,
         "framework": "Two-stage 11-line-item DCF: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
     })
 }
@@ -163,22 +155,7 @@ impl FinancialInputs<'_> {
         };
         // The older model has a nominal share-count fallback. DCF preparation
         // must not turn missing shares into a seemingly valid per-share value.
-        let shares = income
-            .first()
-            .and_then(|entry| {
-                entry
-                    .get("weightedAverageShsOutDil")
-                    .or_else(|| entry.get("weightedAverageShsOut"))
-            })
-            .or_else(|| {
-                metrics.first().and_then(|entry| {
-                    entry
-                        .get("weightedAverageShsOutDil")
-                        .or_else(|| entry.get("weightedAverageShsOut"))
-                })
-            })
-            .or_else(|| profile.get("sharesOutstanding"))
-            .and_then(serde_json::Value::as_f64);
+        let shares = crate::financial_model::resolve_shares_outstanding(income, metrics, profile);
         if !shares.is_some_and(|value| value.is_finite() && value > 0.0) {
             return Err(DcfPreparationError::Unavailable(
                 serde_json::json!({"symbol":symbol,"error":"missing or invalid shares outstanding for DCF"}),
@@ -219,6 +196,7 @@ impl DcfPreparationError {
 
 pub(crate) struct PreparedDcf {
     pub history: HistoricalSnapshot,
+    pub signal_quality: ModelInputQuality,
     pub assumptions: ProjectionAssumptions,
     pub model: ProjectedModel,
     pub current_price: f64,
@@ -279,6 +257,7 @@ pub(crate) async fn prepare_dcf(
         profile,
     };
     let history = inputs.history(symbol)?;
+    let signal_quality = history.signal_quality();
     let assumptions = ProjectionAssumptions::from_history_with_overrides(&history, overrides)
         .map_err(|error| {
             hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string())
@@ -286,6 +265,7 @@ pub(crate) async fn prepare_dcf(
     let model = crate::financial_model::project_model(&history, &assumptions, current_price);
     Ok(PreparedDcf {
         history,
+        signal_quality,
         assumptions,
         model,
         current_price,

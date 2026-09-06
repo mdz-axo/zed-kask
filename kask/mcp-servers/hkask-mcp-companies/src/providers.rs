@@ -25,28 +25,21 @@ use serde_json::Value;
 // so a missing `mktCap` is distinguishable from a zero market cap.
 pub(crate) struct CompanyProfile {
     raw: Value,
-    provider: Option<Provider>,
+    provider: Provider,
 }
 
 impl CompanyProfile {
     /// Wrap a normalized profile payload. The value is expected to be the
     /// FMP-shaped array (`[{"companyName": ...}]`); an empty array means the
     /// provider returned no profile.
-    pub fn from_raw(raw: Value) -> Self {
-        Self {
-            raw,
-            provider: None,
-        }
-    }
-
     pub(crate) fn from_response(response: ProviderResponse) -> Self {
         Self {
             raw: response.value,
-            provider: Some(response.provider),
+            provider: response.provider,
         }
     }
 
-    pub(crate) fn provider(&self) -> Option<Provider> {
+    pub(crate) fn provider(&self) -> Provider {
         self.provider
     }
 
@@ -702,6 +695,20 @@ fn emit_provider_reg(tool: &str, symbol: &str, provider: &str, was_normalised: b
 
 // ── FMP API caller ─────────────────────────────────────────────────
 
+// Provider request URLs carry credentials. Strip them before an error can enter
+// public warnings, logs or the acquisition cache; retain the URL-free cause chain.
+fn provider_transport_error(
+    provider: &str,
+    endpoint: &str,
+    operation: &str,
+    error: reqwest::Error,
+) -> McpToolError {
+    let error = anyhow::Error::new(error.without_url());
+    McpToolError::unavailable(format!(
+        "{provider} {endpoint} {operation} failed: {error:#}"
+    ))
+}
+
 async fn fmp_get(
     client: &reqwest::Client,
     path: &str,
@@ -718,13 +725,13 @@ async fn fmp_get(
         .query(&query)
         .send()
         .await
-        .map_err(|e| McpToolError::unavailable(format!("FMP request failed: {e}")))?;
+        .map_err(|error| provider_transport_error("FMP", path, "request", error))?;
 
     let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| McpToolError::unavailable(format!("response body read failed: {e}")))?;
+        .map_err(|error| provider_transport_error("FMP", path, "response body read", error))?;
     if !status.is_success() {
         return Err(classify_http_error("FMP", status, &body));
     }
@@ -751,13 +758,13 @@ async fn eodhd_get(
         .query(&query)
         .send()
         .await
-        .map_err(|e| McpToolError::unavailable(format!("EODHD request failed: {e}")))?;
+        .map_err(|error| provider_transport_error("EODHD", path, "request", error))?;
 
     let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| McpToolError::unavailable(format!("response body read failed: {e}")))?;
+        .map_err(|error| provider_transport_error("EODHD", path, "response body read", error))?;
     if !status.is_success() {
         return Err(classify_http_error("EODHD", status, &body));
     }

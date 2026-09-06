@@ -44,6 +44,80 @@ fn validate_unit_interval(name: &str, value: f64) -> Result<(), McpToolError> {
     }
 }
 
+/// Targets and peers must report the same missing-data condition. Only real,
+/// nonempty provider payloads become typed views; failures never invent profiles.
+fn build_comparison_row(
+    symbol: &str,
+    profile: Result<providers::ProviderResponse, McpToolError>,
+    metrics: Result<providers::ProviderResponse, McpToolError>,
+) -> (serde_json::Value, Option<CompanyProfile>) {
+    let mut errors = Vec::new();
+    let mut provenance = serde_json::Map::new();
+    let mut warnings = Vec::new();
+    let mut validate =
+        |endpoint: &str, result: Result<providers::ProviderResponse, McpToolError>| match result {
+            Ok(response) => {
+                provenance.insert(endpoint.into(), serde_json::json!(response.provider));
+                warnings.extend(response.warnings.iter().cloned());
+                if response.value.as_array().is_none_or(|rows| rows.is_empty()) {
+                    errors.push(
+                        serde_json::json!({"endpoint": endpoint, "error": "no data returned"}),
+                    );
+                    None
+                } else {
+                    Some(response)
+                }
+            }
+            Err(error) => {
+                errors.push(serde_json::json!({"endpoint": endpoint, "error": error.message, "kind": error.kind}));
+                None
+            }
+        };
+    let profile = validate("company_profile", profile).map(CompanyProfile::from_response);
+    let metrics =
+        validate("key_metrics", metrics).map(|response| KeyMetrics::from_raw(response.value));
+    let mut row = serde_json::json!({
+        "symbol": symbol,
+        "name": profile.as_ref().and_then(CompanyProfile::company_name).unwrap_or(""),
+        "provenance": provenance,
+        "warnings": warnings,
+        "errors": errors,
+    });
+    for (field, value) in [
+        ("price", profile.as_ref().and_then(CompanyProfile::price)),
+        (
+            "market_cap",
+            profile.as_ref().and_then(CompanyProfile::market_cap),
+        ),
+        ("pe_ratio", metrics.as_ref().and_then(KeyMetrics::pe_ratio)),
+        (
+            "price_to_book",
+            metrics.as_ref().and_then(KeyMetrics::price_to_book),
+        ),
+        (
+            "price_to_sales",
+            metrics.as_ref().and_then(KeyMetrics::price_to_sales),
+        ),
+        (
+            "ev_to_ebitda",
+            metrics.as_ref().and_then(KeyMetrics::ev_to_ebitda),
+        ),
+        (
+            "dividend_yield",
+            metrics.as_ref().and_then(KeyMetrics::dividend_yield),
+        ),
+        (
+            "revenue_growth",
+            metrics.as_ref().and_then(KeyMetrics::revenue_growth),
+        ),
+    ] {
+        if let Some(value) = value {
+            row[field] = serde_json::json!(value);
+        }
+    }
+    (row, profile)
+}
+
 #[tool_router(router = valuation_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
@@ -56,17 +130,10 @@ impl CompaniesServer {
         execute_tool(self, "comparable_analysis", async {
             validate_symbol(&req.symbol)?;
 
-            // 1. Fetch target company profile and key_metrics as typed views.
-            //    A missing field is `None`, not a silent zero — the field-name
-            //    knowledge lives in the `CompanyProfile`/`KeyMetrics` accessors.
             let profile_response = self.fetch_response("company_profile", &req.symbol, &[]).await?;
-            let metrics_response = self.fetch_response("key_metrics", &req.symbol, &[("limit", "1")]).await?;
-            let provenance = serde_json::json!({"company_profile": profile_response.provider, "key_metrics": metrics_response.provider});
-            let warnings: Vec<_> = profile_response.warnings.iter().cloned().chain(metrics_response.warnings).collect();
-            let profile = CompanyProfile::from_response(profile_response);
-            let metrics = KeyMetrics::from_raw(metrics_response.value);
-
-            if profile.first().is_none() {
+            let metrics_response = self.fetch_response("key_metrics", &req.symbol, &[("limit", "1")]).await;
+            let (target, profile) = build_comparison_row(&req.symbol, Ok(profile_response), metrics_response);
+            let Some(profile) = profile else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "company profile not found"}));
             };
 
@@ -108,71 +175,9 @@ impl CompaniesServer {
                 (symbol, profile, metrics)
             })).await;
 
-            // 4. Build comparison table. Field-name knowledge lives in the
-            //    `CompanyProfile`/`KeyMetrics` accessors, not inline here.
-            let build_row = |sym: &str, profile: &CompanyProfile, metrics: &KeyMetrics| -> serde_json::Value {
-                let mut row = serde_json::json!({
-                    "symbol": sym,
-                    "name": profile.company_name().unwrap_or(""),
-                });
-                if let Some(v) = profile.price() {
-                    row["price"] = serde_json::json!(v);
-                }
-                if let Some(v) = profile.market_cap() {
-                    row["market_cap"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.pe_ratio() {
-                    row["pe_ratio"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.price_to_book() {
-                    row["price_to_book"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.price_to_sales() {
-                    row["price_to_sales"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.ev_to_ebitda() {
-                    row["ev_to_ebitda"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.dividend_yield() {
-                    row["dividend_yield"] = serde_json::json!(v);
-                }
-                if let Some(v) = metrics.revenue_growth() {
-                    row["revenue_growth"] = serde_json::json!(v);
-                }
-                row
-            };
-
-            let mut target = build_row(&req.symbol, &profile, &metrics);
-            target["provenance"] = provenance;
-            target["warnings"] = serde_json::json!(warnings);
-            target["errors"] = serde_json::json!([]);
             let mut comparison = vec![target];
             for (symbol, profile, metrics) in peer_data {
-                let mut errors = Vec::new();
-                let mut provenance = serde_json::Map::new();
-                let mut warnings = Vec::new();
-                let mut payload = |endpoint: &str, result: Result<providers::ProviderResponse, McpToolError>| {
-                    match result {
-                        Ok(response) => {
-                            if response.value.as_array().is_none_or(|rows| rows.is_empty()) {
-                                errors.push(serde_json::json!({"endpoint": endpoint, "error": "no data returned"}));
-                            }
-                            provenance.insert(endpoint.into(), serde_json::json!(response.provider));
-                            warnings.extend(response.warnings);
-                            response.value
-                        }
-                        Err(error) => {
-                            errors.push(serde_json::json!({"endpoint": endpoint, "error": error.message, "kind": error.kind}));
-                            serde_json::Value::Null
-                        }
-                    }
-                };
-                let profile = CompanyProfile::from_raw(payload("company_profile", profile));
-                let metrics = KeyMetrics::from_raw(payload("key_metrics", metrics));
-                let mut row = build_row(symbol, &profile, &metrics);
-                row["provenance"] = serde_json::json!(provenance);
-                row["warnings"] = serde_json::json!(warnings);
-                row["errors"] = serde_json::json!(errors);
+                let (row, _) = build_comparison_row(symbol, profile, metrics);
                 comparison.push(row);
             }
 
@@ -225,6 +230,7 @@ impl CompaniesServer {
             "intrinsic_per_share": prepared.model.intrinsic_per_share,
             "current_price": prepared.current_price,
             "margin_of_safety": prepared.margin_of_safety(),
+            "data_quality": prepared.signal_quality,
             "provenance": prepared.provenance,
             "warnings": prepared.warnings,
         }))

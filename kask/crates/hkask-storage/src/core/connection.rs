@@ -88,6 +88,8 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
+    #[error("Database maintenance lease unavailable for {path}: {reason}")]
+    MaintenanceLease { path: String, reason: String },
 }
 
 /// Database handle — path, passphrase, and whether it's a new file.
@@ -103,6 +105,7 @@ pub struct Database {
     path: String,
     passphrase: String,
     extensions: Option<String>,
+    maintenance_lease: Option<std::sync::Arc<std::fs::File>>,
     /// Cached r2d2 pool — created on first `sqlite_pool()` call.
     pool_cache: std::sync::Mutex<Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>>,
 }
@@ -150,6 +153,7 @@ impl Database {
             path: path.to_string(),
             passphrase: passphrase.to_string(),
             extensions: extensions.map(|s| s.to_string()),
+            maintenance_lease: None,
             pool_cache: std::sync::Mutex::new(None),
         })
     }
@@ -171,6 +175,7 @@ impl Database {
             path: String::from(":memory:"),
             passphrase: String::new(),
             extensions: extensions.map(|s| s.to_string()),
+            maintenance_lease: None,
             pool_cache: std::sync::Mutex::new(None),
         })
     }
@@ -333,6 +338,10 @@ impl Database {
     }
 
     fn file_pool(&self) -> Result<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>, DatabaseError> {
+        let lease = match &self.maintenance_lease {
+            Some(lease) => lease.clone(),
+            None => database_lease(&self.path, false)?,
+        };
         // SQLCipher native passphrase KDF. The passphrase is passed as a
         // SQL string literal (single quotes doubled) — SQLCipher derives
         // the page key via PBKDF2 internally and stores the salt in the DB
@@ -357,6 +366,9 @@ impl Database {
         let path = self.path.clone();
 
         let manager = r2d2_sqlite::SqliteConnectionManager::file(&path).with_init(move |conn| {
+            // The manager lives as long as any pool clone or checked-out
+            // connection, unlike the Database facade that handed it out.
+            let _lease = &lease;
             // Load sqlite-vec per-connection (before schema init — vec0).
             init_sqlite_vec_on(conn)?;
             conn.execute_batch(&key_pragma)?;
@@ -414,10 +426,95 @@ impl Database {
     }
 }
 
+/// The exclusive lease is acquired before any rotation connection is opened
+/// and remains held through replacement. Its private path prevents opening an
+/// unrelated database under this lease.
+pub(crate) struct QuiescedDatabase {
+    path: String,
+    lease: std::sync::Arc<std::fs::File>,
+}
+
+impl QuiescedDatabase {
+    pub(crate) fn acquire(path: &str) -> Result<Self, DatabaseError> {
+        Ok(Self {
+            path: path.into(),
+            lease: database_lease(path, true)?,
+        })
+    }
+
+    pub(crate) fn open(&self, passphrase: &str) -> Result<Database, DatabaseError> {
+        let mut database = Database::open(&self.path, passphrase)?;
+        database.maintenance_lease = Some(self.lease.clone());
+        Ok(database)
+    }
+}
+
+fn database_lease(
+    path: &str,
+    exclusive: bool,
+) -> Result<std::sync::Arc<std::fs::File>, DatabaseError> {
+    // Keep the lease inode stable across database renames. Never unlink this
+    // file: unlinking would let two owners lock different inodes for one DB.
+    let path = std::path::Path::new(path);
+    let canonical = if path.exists() {
+        std::fs::canonicalize(path)
+    } else {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::canonicalize(parent)
+            .map(|parent| parent.join(path.file_name().unwrap_or_default()))
+    }
+    .map_err(|error| DatabaseError::MaintenanceLease {
+        path: path.display().to_string(),
+        reason: error.to_string(),
+    })?;
+    let mut lock_path = canonical.as_os_str().to_os_string();
+    lock_path.push(".maintenance-lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| DatabaseError::MaintenanceLease {
+            path: canonical.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    let result = if exclusive {
+        file.try_lock()
+    } else {
+        file.try_lock_shared()
+    };
+    result.map_err(|error| DatabaseError::MaintenanceLease {
+        path: canonical.display().to_string(),
+        reason: format!(
+            "{error}; close existing database consumers or finish maintenance before retrying"
+        ),
+    })?;
+    if !exclusive {
+        let canonical_path = canonical
+            .to_str()
+            .ok_or_else(|| DatabaseError::MaintenanceLease {
+                path: canonical.display().to_string(),
+                reason: "Canonical database path is not UTF-8".into(),
+            })?;
+        crate::rotation::ensure_no_recovery_artifacts(canonical_path).map_err(|error| {
+            DatabaseError::MaintenanceLease {
+                path: canonical_path.into(),
+                reason: error.to_string(),
+            }
+        })?;
+    }
+    Ok(std::sync::Arc::new(file))
+}
+
 impl Drop for Database {
     fn drop(&mut self) {
         // Only emit close for real databases (not :memory:).
-        // The pool is dropped here, closing all connections.
+        // Dropping this facade releases only its cached pool reference. Other
+        // pool clones and checked-out connections retain the shared lease.
         if self.path != ":memory:" {
             tracing::info!(
                 target: "reg.storage",

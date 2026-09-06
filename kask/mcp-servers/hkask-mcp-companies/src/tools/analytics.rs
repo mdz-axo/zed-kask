@@ -516,6 +516,7 @@ impl CompaniesServer {
             };
             let crate::valuation_service::PreparedDcf {
                 history: hist,
+                signal_quality,
                 assumptions,
                 model,
                 current_price,
@@ -524,8 +525,7 @@ impl CompaniesServer {
             } = prepared;
             let shares = hist.shares_outstanding;
 
-            // Compute signal quality and emit Regulation span (G2: FinGPT low-SNR handling)
-            let signal_quality = hist.signal_quality();
+            // Emit the same model quality carried by the comparable overlay.
             crate::data_quality::emit_data_quality_span(
                 &req.symbol,
                 "dcf_valuation",

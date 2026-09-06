@@ -180,6 +180,27 @@ pub(crate) struct HistoricalSnapshot {
     pub tax_rate: f64,
 }
 
+/// Resolve the first numeric share count in provider precedence order. Null,
+/// missing and nonnumeric fields cannot resolve; numeric zero/negative values
+/// remain explicit so DCF validation rejects them instead of hiding bad data.
+pub(crate) fn resolve_shares_outstanding(
+    income_statements: &[serde_json::Value],
+    key_metrics: &[serde_json::Value],
+    profile: &serde_json::Value,
+) -> Option<f64> {
+    let income = income_statements.first();
+    let metrics = key_metrics.first();
+    [
+        income.and_then(|entry| entry.get("weightedAverageShsOutDil")),
+        income.and_then(|entry| entry.get("weightedAverageShsOut")),
+        metrics.and_then(|entry| entry.get("weightedAverageShsOutDil")),
+        metrics.and_then(|entry| entry.get("weightedAverageShsOut")),
+        profile.get("sharesOutstanding"),
+    ]
+    .into_iter()
+    .find_map(|candidate| candidate.and_then(serde_json::Value::as_f64))
+}
+
 impl HistoricalSnapshot {
     /// Build from FMP/EODHD API JSON data.
     /// All arrays (income_statements, balance_sheets, cash_flows) are iterated
@@ -331,25 +352,8 @@ impl HistoricalSnapshot {
             dividends_paid.push((year.to_string(), div.abs()));
         }
 
-        // Shares outstanding: prefer diluted from income statement (FMP stable
-        // moved this from key-metrics to income-statement), fall back to basic
-        // weighted average, then key_metrics (legacy/EODHD), then profile.
-        let shares_outstanding = income_statements
-            .first()
-            .and_then(|e| {
-                e.get("weightedAverageShsOutDil")
-                    .or_else(|| e.get("weightedAverageShsOut"))
-                    .and_then(|v| v.as_f64())
-            })
-            .or_else(|| {
-                key_metrics.first().and_then(|e| {
-                    e.get("weightedAverageShsOutDil")
-                        .or_else(|| e.get("weightedAverageShsOut"))
-                        .and_then(|v| v.as_f64())
-                })
-            })
-            .or_else(|| profile.get("sharesOutstanding").and_then(|v| v.as_f64()))
-            .unwrap_or(1_000.0);
+        let shares_outstanding =
+            resolve_shares_outstanding(income_statements, key_metrics, profile).unwrap_or(1_000.0);
 
         // Tax rate from most recent tax_expense / pre_tax_income
         let tax_rate = if let (Some(&te), Some(&pi)) = (tax_expense.last(), pre_tax_income.last()) {

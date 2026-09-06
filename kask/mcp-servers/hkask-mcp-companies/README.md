@@ -142,6 +142,13 @@ Operator-approved acquisition/valuation slice, preserving the typed-view intent 
 - Targets and concurrent peers share the server acquisition path. Comparison rows include endpoint provenance, warnings and explicit errors; absent metrics are omitted rather than zeroed. Cached warnings remain visible after reopening the server.
 - `valuation_service::prepare_dcf` owns typed financial inputs, history, sector/price/share/history guards and common assumption preparation for standalone DCF and comparable overlays. Identical inputs and common request assumptions produce identical intrinsic value, price and margin of safety. Tool handlers retain formatting and forecast persistence; EP, Monte Carlo and the other valuation methods remain distinct. Missing price/shares now produce explicit DCF unavailability rather than nominal zero-price/share fallbacks. An overlay provider outage preserves the comparison table with an explicit overlay error; invalid assumptions remain typed request errors.
 
+Review hardening of this same slice:
+
+- FMP/EODHD acquisition transport errors remove the credential-bearing URL before formatting the cause chain for warnings, logs or cache. Provider, endpoint and operation context remain.
+- History and DCF preparation share one optional numeric share resolver: income diluted/basic → metrics diluted/basic → profile. Null/missing/nonnumeric candidates do not resolve; explicit numeric zero/negative values are not bypassed and DCF rejects nonpositive/nonfinite values. Other models retain their existing nominal fallback when no numeric source resolves.
+- `PreparedDcf` computes the existing `ModelInputQuality` once. Standalone and overlay serialize that same type under `data_quality`, including `quality_warning`; model-quality rules and projection math are unchanged.
+- One comparison-row builder validates both target and peer results. Empty/nonarray metrics produce an endpoint-specific error without hiding an available profile, comparison table or overlay.
+
 ## Validation
 
 Offline library suite (including loopback HTTP fixtures at the actual provider boundary):

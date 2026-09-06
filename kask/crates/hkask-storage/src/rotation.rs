@@ -17,18 +17,24 @@
 //! All other consumers, including in-process pools, must be closed BEFORE
 //! calling this function. They must reopen with the resulting authoritative
 //! key afterwards. Restarting only after rotation does not meet this
-//! precondition. Coordinated settings/curator quiescence is not implemented
-//! here (core-review T11 remains open).
+//! precondition. Rotation requires an exclusive per-path maintenance lease;
+//! pools created by this storage layer retain shared leases through all clones
+//! and checked-out connections. This refuses active cooperating consumers; it
+//! does not stop admission, drain work, or close them. Coordinated settings/
+//! curator maintenance restart remains unimplemented (core-review T11 open).
+//! Older binaries and direct SQLite opens do not participate in these leases.
 //!
 //! Individual same-directory renames are atomic on POSIX, but the sequence
 //! `<db>` → `<db>.old`, `<db>.new` → `<db>` is not a crash-atomic transaction.
 //! Restoration is attempted if the second rename fails; a failed restoration
 //! names the backup for operator recovery. This API does not provide
-//! multi-database/keychain crash atomicity.
+//! multi-database/keychain crash atomicity. Existing rotation artifacts cause
+//! `RecoveryRequired` before any source open or cleanup; they may be the only
+//! surviving copy and must be reconciled, never deleted by a retry.
 
 use std::path::Path;
 
-use crate::core::connection::{Database, DatabaseError};
+use crate::core::connection::{DatabaseError, QuiescedDatabase};
 
 /// Error type for passphrase rotation.
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +49,17 @@ pub enum RotationError {
     /// The new passphrase is invalid (too short, empty, etc.).
     #[error("Invalid new passphrase: {0}")]
     InvalidNewPassphrase(String),
+    #[error("Could not establish database quiescence for {path}: {source}")]
+    ConsumersActive {
+        path: String,
+        #[source]
+        source: DatabaseError,
+    },
+    /// An earlier rotation left files whose authority has not been reconciled.
+    #[error(
+        "Recovery required for {path}: existing artifact {artifact} was preserved; reconcile the previous rotation before retrying"
+    )]
+    RecoveryRequired { path: String, artifact: String },
     /// A filesystem operation failed during rotation.
     #[error("Filesystem error during rotation of {path}: {error}")]
     Filesystem { path: String, error: std::io::Error },
@@ -104,6 +121,40 @@ pub fn rotate_passphrase(
             new_passphrase.len()
         )));
     }
+    ensure_no_recovery_artifacts(db_path)?;
+    // Database::open creates missing files. Rotation must never manufacture a
+    // fresh empty source when an interrupted activation removed the original.
+    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error,
+    })?;
+    let db_path = canonical
+        .to_str()
+        .ok_or_else(|| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical database path is not UTF-8",
+            ),
+        })?;
+    ensure_no_recovery_artifacts(db_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(db_path).map_err(|error| RotationError::Filesystem {
+            path: db_path.into(),
+            error,
+        })?;
+        if metadata.nlink() != 1 {
+            return Err(RotationError::Filesystem {
+                path: db_path.into(),
+                error: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Rotation requires a single-link database; hard-link aliases do not share a path lease",
+                ),
+            });
+        }
+    }
     if old_passphrase == new_passphrase {
         // No-op — nothing to rotate. Return early so we don't touch the DB.
         tracing::info!(
@@ -117,11 +168,6 @@ pub fn rotate_passphrase(
     let new_path = format!("{db_path}.new");
     let old_backup = format!("{db_path}.old");
 
-    // Clean up any leftover .new/.old artifacts from a prior failed rotation.
-    // These are safe to delete because a successful rotation deletes them.
-    cleanup_artifact(&new_path, &format!("{new_path}.salt"));
-    cleanup_artifact(&old_backup, &format!("{old_backup}.salt"));
-
     // 1. Open the source DB with the old passphrase. This verifies the
     //    passphrase and gives us a connection to read from.
     tracing::info!(
@@ -129,12 +175,18 @@ pub fn rotate_passphrase(
         path = %db_path,
         "Starting passphrase rotation — opening source DB with old passphrase"
     );
-    let source_db = Database::open(db_path, old_passphrase).map_err(|e| {
-        RotationError::OldPassphraseMismatch {
-            path: db_path.to_string(),
-            source: e,
-        }
-    })?;
+    let quiesced =
+        QuiescedDatabase::acquire(db_path).map_err(|source| RotationError::ConsumersActive {
+            path: db_path.into(),
+            source,
+        })?;
+    let source_db =
+        quiesced
+            .open(old_passphrase)
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: db_path.to_string(),
+                source: e,
+            })?;
     // Force pool creation — this is where passphrase verification actually
     // happens (the probe connection in `file_pool` runs `SELECT count(*) FROM
     // sqlite_master`).
@@ -352,17 +404,37 @@ fn remove_artifact(path: &str) {
     }
 }
 
-/// Delete leftover `.new` / `.old` artifacts from a prior failed rotation.
-fn cleanup_artifact(db_path: &str, salt_path: &str) {
-    if Path::new(db_path).exists() {
-        remove_artifact(db_path);
+pub(crate) fn ensure_no_recovery_artifacts(db_path: &str) -> Result<(), RotationError> {
+    for suffix in [
+        ".new",
+        ".old",
+        ".new.salt",
+        ".old.salt",
+        ".new-wal",
+        ".old-wal",
+        ".new-shm",
+        ".old-shm",
+    ] {
+        let artifact = format!("{db_path}{suffix}");
+        // symlink_metadata also detects dangling links; exists() would miss
+        // them and let export follow a destination we do not own.
+        match std::fs::symlink_metadata(&artifact) {
+            Ok(_) => {
+                return Err(RotationError::RecoveryRequired {
+                    path: db_path.into(),
+                    artifact,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RotationError::Filesystem {
+                    path: artifact,
+                    error,
+                });
+            }
+        }
     }
-    if Path::new(salt_path).exists() {
-        remove_artifact(salt_path);
-    }
-    // Also clean up WAL/SHM files.
-    remove_artifact(&format!("{db_path}-wal"));
-    remove_artifact(&format!("{db_path}-shm"));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -724,20 +796,160 @@ pub(crate) mod tests {
         assert_eq!(count_hmems(&path, "same-passphrase"), 1);
     }
 
+    /// expect: "Rotation cannot replace a database retained by a pool clone or checked-out connection" [P1]
     #[test]
-    fn rotate_passphrase_cleans_up_prior_artifacts() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = make_test_db(dir.path(), "test.db", "old-passphrase");
+    fn rotate_passphrase_waits_for_every_pool_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let database = Database::open(&path, "old-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        let clone = pool.clone();
+        let connection = pool.get().expect("connection");
+        drop(database);
+        drop(pool);
+        assert!(matches!(
+            rotate_passphrase(&path, "old-passphrase", "new-passphrase"),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        drop(clone);
+        assert!(matches!(
+            rotate_passphrase(&path, "old-passphrase", "new-passphrase"),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        connection.execute("INSERT INTO hmems (id,entity,attribute,value,valid_from,owner_webid) VALUES ('last-write','entity','attr','value','2026-01-01T00:00:00Z','webid:test')", []).expect("last in-flight write");
+        drop(connection);
+        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("all consumers closed");
+        assert_eq!(count_hmems(&path, "new-passphrase"), 2);
+    }
 
-        // Simulate leftover artifacts from a prior failed rotation.
-        std::fs::write(format!("{path}.new"), b"garbage").expect("write");
-        std::fs::write(format!("{path}.old"), b"garbage-old").expect("write");
+    #[test]
+    fn rotation_exclusive_lease_blocks_new_pool_admission() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let lease = QuiescedDatabase::acquire(&path).expect("quiesced");
+        let consumer = Database::open(&path, "old-passphrase").expect("facade");
+        assert!(matches!(
+            consumer.sqlite_pool(),
+            Err(DatabaseError::MaintenanceLease { .. })
+        ));
+        drop(lease);
+        assert!(
+            consumer.sqlite_pool().is_ok(),
+            "consumer can retry after maintenance"
+        );
+    }
 
-        // Rotate — should clean up artifacts first.
-        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate");
-
+    #[cfg(unix)]
+    #[test]
+    fn rotation_canonicalizes_symlinks_and_rejects_hard_links() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let alias = directory.path().join("alias.db");
+        std::os::unix::fs::symlink(&path, &alias).expect("alias");
+        let database = Database::open(&path, "old-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        assert!(matches!(
+            rotate_passphrase(
+                alias.to_str().expect("path"),
+                "old-passphrase",
+                "new-passphrase"
+            ),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        drop(pool);
+        drop(database);
+        rotate_passphrase(
+            alias.to_str().expect("path"),
+            "old-passphrase",
+            "new-passphrase",
+        )
+        .expect("rotate canonical target");
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .expect("alias metadata")
+                .is_symlink()
+        );
         assert_eq!(count_hmems(&path, "new-passphrase"), 1);
-        assert!(!Path::new(&format!("{path}.old")).exists());
-        assert!(!Path::new(&format!("{path}.new")).exists());
+        let hard_link = directory.path().join("hard.db");
+        std::fs::hard_link(&path, &hard_link).expect("hard link");
+        let error = rotate_passphrase(&path, "new-passphrase", "third-passphrase")
+            .expect_err("ambiguous path leases");
+        assert!(error.to_string().contains("hard-link aliases"));
+        assert_eq!(count_hmems(&path, "new-passphrase"), 1);
+    }
+
+    /// expect: "Retrying rotation preserves prior recovery files rather than deleting them" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_prior_recovery_artifacts() {
+        for suffix in [
+            ".new",
+            ".old",
+            ".new.salt",
+            ".old.salt",
+            ".new-wal",
+            ".old-wal",
+            ".new-shm",
+            ".old-shm",
+        ] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+            let original = std::fs::read(&path).expect("original bytes");
+            let artifact = format!("{path}{suffix}");
+            std::fs::write(&artifact, &original).expect("recovery file");
+            let result = rotate_passphrase(&path, "old-passphrase", "new-passphrase");
+            assert!(result.is_err(), "must not overwrite {suffix}");
+            assert_eq!(
+                std::fs::read(&artifact).expect("artifact retained"),
+                original
+            );
+            assert_eq!(std::fs::read(&path).expect("source retained"), original);
+            assert!(
+                crate::open_or_repair(&path, "old-passphrase").is_err(),
+                "normal startup must wait for recovery"
+            );
+            std::fs::remove_file(&artifact)
+                .expect("remove only this test's artifact after assertions");
+            assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+        }
+    }
+
+    /// expect: "A crash between renames never turns my only backup into an empty replacement database" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_backup_when_source_is_missing() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let backup = format!("{path}.old");
+        std::fs::rename(&path, &backup).expect("simulate interrupted activation");
+        let original = std::fs::read(&backup).expect("backup bytes");
+        assert!(rotate_passphrase(&path, "old-passphrase", "new-passphrase").is_err());
+        assert!(
+            crate::open_or_repair(&path, "old-passphrase").is_err(),
+            "startup must not recreate a source while its backup awaits recovery"
+        );
+        assert!(
+            !Path::new(&path).exists(),
+            "must not create a fresh empty source"
+        );
+        assert_eq!(std::fs::read(&backup).expect("backup retained"), original);
+        assert_eq!(count_hmems(&backup, "old-passphrase"), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotate_passphrase_preserves_dangling_recovery_symlink() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let artifact = format!("{path}.new");
+        let target = directory.path().join("missing-target");
+        std::os::unix::fs::symlink(&target, &artifact).expect("symlink");
+        assert!(rotate_passphrase(&path, "old-passphrase", "new-passphrase").is_err());
+        assert_eq!(
+            std::fs::read_link(&artifact).expect("link retained"),
+            target
+        );
+        assert!(
+            !target.exists(),
+            "must not export through an unknown symlink"
+        );
     }
 }

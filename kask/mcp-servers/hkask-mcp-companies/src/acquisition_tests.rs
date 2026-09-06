@@ -803,3 +803,284 @@ async fn overlay_acquisition_error_preserves_comparison_table() {
         })
         .await;
 }
+
+/// expect: [P1] Transport failures must never publish or persist provider credentials.
+#[tokio::test]
+async fn review_transport_timeout_redacts_key_on_cold_and_warm_cache() {
+    const SENTINEL: &str = "fixture-fmp-SENTINEL-not-a-real-secret";
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start_async(|path| async move {
+        if path.starts_with("/fmp/ratios") {
+            std::future::pending::<()>().await;
+        }
+        fmp_fixture(&path)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let mut first = server(directory.path());
+            first.fmp_api_key = SENTINEL.into();
+            let cold = metrics_tool(&first, "ACME", 2).await;
+            assert_eq!(cold["data"][0]["roic"], 0.18);
+            assert_eq!(cold["data"][0]["revenueGrowth"], 0.1);
+            assert!(cold["data"][0]["priceToEarningsRatio"].is_null());
+            let serialized_cache: String =
+                rusqlite::Connection::open(directory.path().join("cache.db"))
+                    .expect("cache DB")
+                    .query_row(
+                        "SELECT raw_response FROM fibo_raw_cache WHERE endpoint = 'key_metrics'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .expect("persisted cache row");
+            let calls = fixture.count();
+            drop(first);
+            let warm = metrics_tool(&server(directory.path()), "ACME", 2).await;
+            assert_eq!(cold, warm);
+            assert_eq!(fixture.count(), calls);
+            for (surface, text) in [
+                ("cold output", cold.to_string()),
+                ("persisted cache", serialized_cache),
+                ("warm output", warm.to_string()),
+            ] {
+                assert!(
+                    !text.contains(SENTINEL)
+                        && !text.contains("apikey")
+                        && !text.contains("fixture-fmp"),
+                    "{surface} leaked the sentinel credential or its query parameter"
+                );
+            }
+            let warning = cold["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .find_map(|warning| {
+                    warning
+                        .as_str()
+                        .and_then(|text| text.strip_prefix("FMP ratios: "))
+                })
+                .expect("ratios warning");
+            let error: Value = serde_json::from_str(warning).expect("typed warning error");
+            assert_eq!(
+                error["kind"],
+                hkask_types::McpErrorKind::Unavailable.to_string()
+            );
+            let message = error["error"].as_str().expect("actionable message");
+            assert!(
+                message.contains("FMP")
+                    && message.contains("/ratios")
+                    && message.contains("timed out"),
+                "{message}"
+            );
+        })
+        .await;
+}
+
+async fn standalone_dcf(server: &CompaniesServer) -> Value {
+    content(
+        &server
+            .dcf_valuation(Parameters(
+                serde_json::from_value(json!({"symbol":"ACME"})).expect("request"),
+            ))
+            .await
+            .expect("DCF tool"),
+    )
+}
+
+async fn assert_null_shares_fallback(basic: bool) {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(move |path| {
+        let (status, mut value) = financial_fixture(path);
+        if path.starts_with("/fmp/income-statement") {
+            value[0]["weightedAverageShsOutDil"] = Value::Null;
+            if basic {
+                value[0]["weightedAverageShsOut"] = json!(80000000.0);
+            }
+        }
+        (status, value)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let standalone = standalone_dcf(&server).await;
+            assert_eq!(
+                standalone["history"]["shares_outstanding"],
+                if basic {
+                    json!(80000000.0)
+                } else {
+                    json!(100000000.0)
+                },
+                "{standalone}"
+            );
+            let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
+            for field in ["intrinsic_per_share", "current_price", "margin_of_safety"] {
+                assert!(standalone["valuation"][field].is_number());
+                assert_eq!(
+                    comparison["dcf_overlay"][field],
+                    standalone["valuation"][field]
+                );
+            }
+        })
+        .await;
+}
+
+/// expect: [P5] A null diluted share field must not hide available profile shares.
+#[tokio::test]
+async fn review_null_diluted_shares_fall_back_to_profile() {
+    assert_null_shares_fallback(false).await;
+}
+
+/// expect: [P5] Basic shares take precedence over profile shares when diluted is null.
+#[tokio::test]
+async fn review_null_diluted_shares_fall_back_to_basic() {
+    assert_null_shares_fallback(true).await;
+}
+
+/// expect: [P9] Missing capex is equally visible in standalone DCF and its comparable overlay.
+#[tokio::test]
+async fn review_overlay_reports_same_missing_capex_quality() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        let (status, mut value) = financial_fixture(path);
+        if path.starts_with("/fmp/cash-flow-statement") {
+            for row in value.as_array_mut().expect("cash flow") {
+                row.as_object_mut()
+                    .expect("cash flow row")
+                    .remove("capitalExpenditure");
+            }
+        }
+        (status, value)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let standalone = standalone_dcf(&server).await;
+            let quality = &standalone["data_quality"];
+            assert_eq!(quality["capex_to_revenue"]["confidence"], 0.0);
+            assert!(
+                quality["capex_to_revenue"]["confidence_note"]
+                    .as_str()
+                    .is_some_and(|note| note.contains("missing data"))
+            );
+            let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
+            assert_eq!(&comparison["dcf_overlay"]["data_quality"], quality);
+            for field in ["intrinsic_per_share", "current_price", "margin_of_safety"] {
+                assert!(standalone["valuation"][field].is_number());
+                assert_eq!(
+                    comparison["dcf_overlay"][field],
+                    standalone["valuation"][field]
+                );
+            }
+        })
+        .await;
+}
+
+/// expect: [P9] Empty target metrics are identified just like peer metrics, without hiding the overlay.
+#[tokio::test]
+async fn review_empty_target_metrics_report_endpoint_error() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/fmp/key-metrics") && path.contains("limit=1") {
+            (200, json!([]))
+        } else {
+            financial_fixture(path)
+        }
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let output = comparable(
+                &server(directory.path()),
+                json!({"symbol":"ACME","peers":"PEER"}),
+            )
+            .await;
+            assert_eq!(output["comparison"][0]["price"], 30.0);
+            assert!(output["dcf_overlay"]["intrinsic_per_share"].is_number());
+            let errors = &output["comparison"][0]["errors"];
+            assert!(
+                errors
+                    .as_array()
+                    .expect("target errors")
+                    .iter()
+                    .any(|error| error["endpoint"] == "key_metrics"),
+                "{output}"
+            );
+            assert_eq!(errors, &output["comparison"][1]["errors"]);
+            assert!(output["comparison"][0]["pe_ratio"].is_null());
+        })
+        .await;
+}
+
+/// expect: [P9] Invalid explicit numeric shares are rejected, not hidden by a valid fallback.
+#[tokio::test]
+async fn review_nonpositive_shares_do_not_fall_through() {
+    for shares in [0.0, -1.0] {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let fixture = FixtureHttp::start(move |path| {
+            let (status, mut value) = financial_fixture(path);
+            if path.starts_with("/fmp/income-statement") {
+                value[0]["weightedAverageShsOutDil"] = json!(shares);
+                value[0]["weightedAverageShsOut"] = json!(80000000.0);
+            }
+            (status, value)
+        })
+        .await;
+        providers::TEST_HTTP_ORIGIN
+            .scope(fixture.origin.clone(), async {
+                let server = server(directory.path());
+                let standalone = standalone_dcf(&server).await;
+                assert!(
+                    standalone["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains("shares outstanding"))
+                );
+                let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
+                assert_eq!(comparison["dcf_overlay"], standalone);
+            })
+            .await;
+    }
+}
+
+/// expect: [P5] Numeric metrics shares resolve before profile shares; null metrics diluted uses basic.
+#[tokio::test]
+async fn review_metrics_shares_fallback_matches_history() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        let (status, mut value) = financial_fixture(path);
+        if path.starts_with("/fmp/income-statement") {
+            value[0]["weightedAverageShsOutDil"] = Value::Null;
+        }
+        if path.starts_with("/fmp/key-metrics") {
+            value[0]["weightedAverageShsOutDil"] = Value::Null;
+            value[0]["weightedAverageShsOut"] = json!(90000000.0);
+        }
+        (status, value)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let standalone = standalone_dcf(&server).await;
+            assert_eq!(standalone["history"]["shares_outstanding"], 90000000.0);
+            let comparison = comparable(&server, json!({"symbol":"ACME","peers":"PEER"})).await;
+            assert_eq!(
+                comparison["dcf_overlay"]["intrinsic_per_share"],
+                standalone["valuation"]["intrinsic_per_share"]
+            );
+        })
+        .await;
+}
+
+/// expect: [P5] Other models retain the nominal fallback only when no numeric shares resolve.
+#[test]
+fn review_history_retains_nominal_missing_shares_fallback() {
+    let profile = json!({});
+    let history = financial_model::HistoricalSnapshot::from_api_json(&[], &[], &[], &[], &profile);
+    assert_eq!(
+        financial_model::resolve_shares_outstanding(&[], &[], &profile),
+        None
+    );
+    assert_eq!(history.shares_outstanding, 1000.0);
+}
