@@ -192,9 +192,8 @@ impl MediaServer {
         };
 
         for model in &models {
-            // Check the provider prefix in the model name (case-insensitive —
-            // the IPC bridge returns zed provider ids like "openrouter" (a
-            // standalone MediaRouter is media-only and returns no chat models).
+            // Match case-insensitively: the IPC model list uses zed provider
+            // ids such as "openrouter", not the display name "OpenRouter".
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
             if prefix.eq_ignore_ascii_case("openrouter") {
                 return Some(split_model_label(model.prefixed_name.clone()));

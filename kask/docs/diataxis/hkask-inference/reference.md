@@ -119,11 +119,11 @@ in the settings `Default` impls (operator ruling 2026-09-04):
 | `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs:10` |
 | `MediaRouter::new` | `kask/crates/hkask-inference/src/media_router.rs:26` |
 | `DeepInfraMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:60` |
-| `OpenRouterMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:460` |
+| `OpenRouterMediaProvider` | `kask/crates/hkask-inference/src/media_providers.rs:472` |
 | `MediaOp` enum (10 ops) | `kask/crates/hkask-inference/src/provider.rs:13` |
 | `MediaProvider` trait | `kask/crates/hkask-inference/src/provider.rs:154` |
-| `ProviderRegistry` | `kask/crates/hkask-inference/src/provider.rs:180` |
-| `ProviderRegistry::execute` | `kask/crates/hkask-inference/src/provider.rs:197` |
+| `ProviderRegistry` | `kask/crates/hkask-inference/src/provider.rs:206` |
+| `ProviderRegistry::execute` | `kask/crates/hkask-inference/src/provider.rs:223` |
 | `BatchProvider` enum | `kask/crates/hkask-inference/src/batch.rs:51` |
 | `detect_batch_provider` | `kask/crates/hkask-inference/src/batch.rs:89` |
 | `BatchResult` | `kask/crates/hkask-inference/src/batch.rs:130` |
@@ -308,7 +308,16 @@ that operation's configured environment model. Selectable operations require
 `OpenRouter/<provider-local-model>` or `DeepInfra/<provider-local-model>`.
 Full provider names are ASCII case-insensitive; the remainder may contain a
 vendor slash and is preserved exactly. Bare models, short aliases (`OR/`,
-`DI/`), blank overrides, unknown providers, and whitespace are invalid.
+`DI/`), blank overrides, and unknown providers are invalid.
+
+**URL-safety clarification (2026-09-06):** provider-local model components
+must be nonempty and cannot be `.` or `..`. Whitespace, control characters,
+`?`, `#`, backslash, and `%` (including URL escapes) are rejected as `Model`
+before any request, for explicit and env-selected models alike. Ordinary
+dots, hyphens, underscores, version colons, and Unicode names remain valid.
+The registry and direct adapters share this validation; native DeepInfra
+URLs append model identifiers as URL path segments, preserving the
+configured host/base path instead of parsing model text as URL syntax.
 
 | Operation | Environment model when no override is supplied |
 |---|---|

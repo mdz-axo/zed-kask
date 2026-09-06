@@ -713,3 +713,282 @@ async fn lazy_media_is_child_local_with_actual_settings_stt_default() {
     );
     assert_eq!(body["input_audio"]["data"], "UklGRg==");
 }
+
+const UNSAFE_LOCAL_MODELS: &[&str] = &[
+    "vendor/model#ignored",
+    "vendor/model?query=value",
+    "../../other",
+    "vendor/../other",
+    "vendor/./model",
+    "vendor/.",
+    "vendor/..",
+    ".",
+    "..",
+    "vendor\\model",
+    "vendor/model\\..\\other",
+    "vendor/%2e%2e/other",
+    "vendor/%2E/model",
+    "vendor/model%2fother",
+    "vendor/model%5cother",
+    "vendor/model%23fragment",
+    "vendor/model%3fquery",
+    "vendor/model%252e",
+    "vendor/model%",
+    "vendor/model\0",
+    "vendor/model\u{1}",
+    "vendor/model\u{7f}",
+    "vendor/model\u{9f}",
+    "vendor/model\r\n",
+];
+
+/// expect: "Unsafe selected models are rejected before any adapter runs."
+/// [P4] Motivating; pre: recording adapters registered for both provider names.
+/// post: every unsafe local model returns Model with zero adapter invocations.
+/// dcterms:identifier: ProviderRegistry::execute
+#[tokio::test]
+async fn model_url_safety_registry_rejects_before_adapter_entry() {
+    let calls = Calls::default();
+    let providers = registry(&calls, None, true);
+    for provider in ["DeepInfra", "OpenRouter"] {
+        for local_model in UNSAFE_LOCAL_MODELS {
+            assert!(matches!(
+                providers
+                    .execute(
+                        MediaOp::GenerateVideo,
+                        &params(&format!("{provider}/{local_model}"))
+                    )
+                    .await,
+                Err(InferenceError::Model(_))
+            ));
+        }
+    }
+    assert!(calls.lock().expect("adapter calls").is_empty());
+}
+
+fn model_url_safety_config(deepinfra: &HttpCapture, openrouter: &HttpCapture) -> InferenceConfig {
+    InferenceConfig {
+        deepinfra_api_key: "sentinel-deepinfra".into(),
+        openrouter_api_key: "sentinel-openrouter".into(),
+        deepinfra_base_url: deepinfra.url.clone(),
+        openrouter_base_url: openrouter.url.clone(),
+        ..Default::default()
+    }
+}
+
+/// expect: "A model cannot change my authenticated endpoint via URL syntax."
+/// [P4] Motivating; [P1] Constraining: do not silently change model identity.
+/// pre: actual adapters configured against loopback listeners.
+/// post: each unsafe explicit model returns Model and neither listener sees a request.
+/// dcterms:identifier: MediaRouter::media_generate
+#[tokio::test]
+async fn model_url_safety_rejects_explicit_models_without_http() {
+    let deepinfra = HttpCapture::start(200).await;
+    let openrouter = HttpCapture::start(200).await;
+    let router = MediaRouter::new(model_url_safety_config(&deepinfra, &openrouter));
+    let mut failures = Vec::new();
+    for provider in ["DeepInfra", "OpenRouter"] {
+        for local_model in UNSAFE_LOCAL_MODELS {
+            let model = format!("{provider}/{local_model}");
+            let result = tokio::time::timeout(
+                Duration::from_secs(3),
+                router.media_generate("generate_video", &params(&model)),
+            )
+            .await
+            .expect("bounded request");
+            if !matches!(result, Err(InferenceError::Model(_))) {
+                failures.push(format!("{model:?}: {result:?}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "expected Model before HTTP: {failures:#?}"
+    );
+    assert!(
+        deepinfra
+            .requests
+            .lock()
+            .expect("DeepInfra capture")
+            .is_empty()
+    );
+    assert!(
+        openrouter
+            .requests
+            .lock()
+            .expect("OpenRouter capture")
+            .is_empty()
+    );
+}
+
+/// expect: "Environment model selection has the same endpoint safety as an override."
+/// [P4] Motivating; pre: clean env-isolated subprocess with real loopback adapters.
+/// post: unsafe env model with params.model=None returns Model and sends no requests.
+/// dcterms:identifier: ProviderRegistry::execute
+#[tokio::test]
+async fn model_url_safety_rejects_env_models_without_http() {
+    if std::env::var_os("HKASK_MEDIA_ROUTING_TEST_CASE").is_some() {
+        let deepinfra = HttpCapture::start(200).await;
+        let openrouter = HttpCapture::start(200).await;
+        let router = MediaRouter::new(model_url_safety_config(&deepinfra, &openrouter));
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            router.media_generate("generate_video", &MediaGenerateParams::default()),
+        )
+        .await
+        .expect("bounded request");
+        assert!(
+            matches!(result, Err(InferenceError::Model(_))),
+            "expected Model before HTTP: {result:?}"
+        );
+        assert!(
+            deepinfra
+                .requests
+                .lock()
+                .expect("DeepInfra capture")
+                .is_empty()
+        );
+        assert!(
+            openrouter
+                .requests
+                .lock()
+                .expect("OpenRouter capture")
+                .is_empty()
+        );
+        return;
+    }
+    let mut failures = Vec::new();
+    for provider in ["DeepInfra", "OpenRouter"] {
+        // OS environment strings cannot contain NUL; the explicit/direct tests cover it.
+        for local_model in UNSAFE_LOCAL_MODELS
+            .iter()
+            .filter(|model| !model.contains('\0'))
+        {
+            let model = format!("{provider}/{local_model}");
+            let mut command = subprocess(
+                "model_url_safety_rejects_env_models_without_http",
+                "unsafe-env",
+            );
+            command.env("HKASK_MEDIA_VIDEO_MODEL", &model);
+            let output = tokio::time::timeout(
+                Duration::from_secs(10),
+                tokio::process::Command::from(command)
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("bounded child")
+            .expect("child output");
+            if !output.status.success() {
+                failures.push(format!(
+                    "{model:?}: {}",
+                    String::from_utf8_lossy(&output.stdout)
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "unsafe env failures: {failures:#?}");
+}
+
+/// expect: "Calling an adapter directly cannot bypass endpoint safety."
+/// [P4] Motivating; pre: real MediaProvider implementations, provider-local models.
+/// post: unsafe local models return Model before any HTTP, without registry dispatch.
+/// dcterms:identifier: MediaProvider::execute
+#[tokio::test]
+async fn model_url_safety_direct_adapters_cannot_bypass_validation() {
+    use crate::media_providers::{DeepInfraMediaProvider, OpenRouterMediaProvider};
+    let deepinfra = HttpCapture::start(200).await;
+    let openrouter = HttpCapture::start(200).await;
+    let config = model_url_safety_config(&deepinfra, &openrouter);
+    let client = Arc::new(reqwest::Client::new());
+    let providers: Vec<Box<dyn MediaProvider>> = vec![
+        Box::new(DeepInfraMediaProvider::new(&config, client.clone()).expect("DeepInfra adapter")),
+        Box::new(OpenRouterMediaProvider::new(&config, client).expect("OpenRouter adapter")),
+    ];
+    let mut failures = Vec::new();
+    for provider in providers {
+        for local_model in UNSAFE_LOCAL_MODELS {
+            let result = tokio::time::timeout(
+                Duration::from_secs(3),
+                provider.execute(MediaOp::GenerateVideo, &params(local_model)),
+            )
+            .await
+            .expect("bounded request");
+            if !matches!(result, Err(InferenceError::Model(_))) {
+                failures.push(format!("{} {local_model:?}: {result:?}", provider.id()));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "direct adapter safety failures: {failures:#?}"
+    );
+    assert!(
+        deepinfra
+            .requests
+            .lock()
+            .expect("DeepInfra capture")
+            .is_empty()
+    );
+    assert!(
+        openrouter
+            .requests
+            .lock()
+            .expect("OpenRouter capture")
+            .is_empty()
+    );
+}
+
+/// expect: "Legitimate model names keep their identity in every native endpoint."
+/// [P1] Motivating; [P4] Constraining: preserve configured base path and host.
+/// pre: real DeepInfra adapter, loopback base URL, local audio fixture.
+/// post: safe punctuation/vendor segments reach the exact native path, no other provider.
+/// dcterms:identifier: DeepInfraMediaProvider::execute
+#[tokio::test]
+async fn model_url_safety_preserves_native_model_identity() {
+    let directory = tempfile::tempdir().expect("audio directory");
+    let audio = directory.path().join("input.wav");
+    std::fs::write(&audio, b"RIFF").expect("audio fixture");
+    let deepinfra = HttpCapture::start(200).await;
+    let openrouter = HttpCapture::start(200).await;
+    let mut config = model_url_safety_config(&deepinfra, &openrouter);
+    config.deepinfra_base_url.push_str("/configured-prefix");
+    let router = MediaRouter::new(config);
+    for (local_model, encoded_path) in [
+        ("vendor/model.v1-rc_2:8b", "vendor/model.v1-rc_2:8b"),
+        ("vendor/.hidden-model", "vendor/.hidden-model"),
+        ("vendor/model..weights", "vendor/model..weights"),
+        ("vendor/model+variant@v1", "vendor/model+variant@v1"),
+        ("vendor/modèle", "vendor/mod%C3%A8le"),
+    ] {
+        for op in [
+            MediaOp::ImageToImage,
+            MediaOp::GenerateSpeech,
+            MediaOp::Transcribe,
+            MediaOp::GenerateVideo,
+            MediaOp::ImageToVideo,
+        ] {
+            let parameters = MediaGenerateParams {
+                model: Some(format!("DeepInfra/{local_model}")),
+                audio_url: Some(audio.to_string_lossy().into_owned()),
+                image_url: Some("https://example.invalid/input.png".into()),
+                ..Default::default()
+            };
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                router.media_generate(op.as_str(), &parameters),
+            )
+            .await
+            .expect("bounded request")
+            .expect("valid native model");
+            let requests = deepinfra.requests.lock().expect("capture");
+            let request = requests.last().expect("native request");
+            assert_eq!(
+                request.path,
+                format!("/configured-prefix/v1/inference/{encoded_path}")
+            );
+            assert!(request.headers.contains("Bearer sentinel-deepinfra"));
+        }
+    }
+    assert_eq!(deepinfra.requests.lock().expect("capture").len(), 25);
+    assert!(openrouter.requests.lock().expect("unselected").is_empty());
+}

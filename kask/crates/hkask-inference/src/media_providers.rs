@@ -25,7 +25,7 @@
 
 use crate::config::InferenceConfig;
 use crate::openai_compat::sanitize_error_body;
-use crate::provider::{MediaOp, MediaProvider};
+use crate::provider::{MediaOp, MediaProvider, validate_provider_local_model};
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
 use std::future::Future;
@@ -81,6 +81,24 @@ impl DeepInfraMediaProvider {
         })
     }
 
+    /// Append identifiers as path segments, never parse model text as a URL.
+    /// Keep the configured host/base path; validation also protects direct calls.
+    fn inference_url(&self, model: &str) -> Result<reqwest::Url, InferenceError> {
+        validate_provider_local_model(model)?;
+        let invalid_base = || {
+            InferenceError::NotConfigured(
+                "DEEPINFRA_BASE_URL must be an absolute hierarchical URL".into(),
+            )
+        };
+        let mut url = reqwest::Url::parse(&self.base_url).map_err(|_| invalid_base())?;
+        url.path_segments_mut()
+            .map_err(|_| invalid_base())?
+            .pop_if_empty()
+            .extend(["v1", "inference"])
+            .extend(model.split('/'));
+        Ok(url)
+    }
+
     /// POST JSON to a DeepInfra endpoint and return the JSON response.
     async fn post_json(&self, url: &str, body: Value) -> Result<Value, InferenceError> {
         let resp = self
@@ -111,10 +129,10 @@ impl DeepInfraMediaProvider {
         model: &str,
         body: Value,
     ) -> Result<bytes::Bytes, InferenceError> {
-        let url = format!("{}/v1/inference/{}", self.base_url, model);
+        let url = self.inference_url(model)?;
         let resp = self
             .client
-            .post(&url)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
@@ -175,18 +193,15 @@ impl DeepInfraMediaProvider {
         if let Some(m) = mask {
             body["mask_url"] = serde_json::json!(m);
         }
-        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
-            .await
+        let url = self.inference_url(model)?;
+        self.post_json(url.as_str(), body).await
     }
 
     /// Remove background via DeepInfra native inference endpoint (Bria RMBG 2.0).
     async fn remove_background(&self, image_url: &str) -> Result<Value, InferenceError> {
         let body = serde_json::json!({"image_url": image_url});
-        self.post_json(
-            &format!("{}/v1/inference/Bria/remove_background", self.base_url),
-            body,
-        )
-        .await
+        let url = self.inference_url("Bria/remove_background")?;
+        self.post_json(url.as_str(), body).await
     }
 
     /// Upscale an image via DeepInfra native inference endpoint.
@@ -195,11 +210,8 @@ impl DeepInfraMediaProvider {
         if let Some(s) = scale {
             body["outscale"] = serde_json::json!(s);
         }
-        self.post_json(
-            &format!("{}/v1/inference/latentconsistency/upscale", self.base_url),
-            body,
-        )
-        .await
+        let url = self.inference_url("latentconsistency/upscale")?;
+        self.post_json(url.as_str(), body).await
     }
 
     /// Generate speech via DeepInfra native inference API (Kokoro).
@@ -254,7 +266,7 @@ impl DeepInfraMediaProvider {
             _ => "application/octet-stream",
         };
 
-        let url = format!("{}/v1/inference/{}", self.base_url, model);
+        let url = self.inference_url(model)?;
 
         // Build multipart form: audio file + optional language parameter.
         let mut form = reqwest::multipart::Form::new().part(
@@ -272,7 +284,7 @@ impl DeepInfraMediaProvider {
 
         let resp = self
             .client
-            .post(&url)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
             .send()
@@ -307,8 +319,8 @@ impl DeepInfraMediaProvider {
         if let Some(dur) = duration {
             body["duration"] = serde_json::json!(dur);
         }
-        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
-            .await
+        let url = self.inference_url(model)?;
+        self.post_json(url.as_str(), body).await
     }
 
     /// Animate a still image into a video via DeepInfra native inference API.
@@ -328,8 +340,8 @@ impl DeepInfraMediaProvider {
         if let Some(dur) = duration {
             body["duration"] = serde_json::json!(dur);
         }
-        self.post_json(&format!("{}/v1/inference/{}", self.base_url, model), body)
-            .await
+        let url = self.inference_url(model)?;
+        self.post_json(url.as_str(), body).await
     }
 }
 
@@ -1009,8 +1021,11 @@ fn extract_chat_content(response: &Value) -> Option<String> {
 /// Adapters accept only the already resolved provider-local model. They must
 /// never rediscover a default after the registry selected a provider.
 fn resolved_model(params: &MediaGenerateParams) -> Result<&str, InferenceError> {
-    params.model.as_deref().filter(|model| !model.is_empty() && !model.chars().any(char::is_whitespace))
-        .ok_or_else(|| InferenceError::Model("media adapter requires a resolved provider-local model; call MediaRouter for configuration resolution".into()))
+    let model = params.model.as_deref().ok_or_else(|| InferenceError::Model(
+        "media adapter requires a resolved provider-local model; call MediaRouter for configuration resolution".into(),
+    ))?;
+    validate_provider_local_model(model)?;
+    Ok(model)
 }
 
 /// Detect audio format from a URL's file extension.

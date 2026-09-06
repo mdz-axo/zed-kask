@@ -49,7 +49,16 @@ that operation's configured environment model. Selectable operations require
 `OpenRouter/<provider-local-model>` or `DeepInfra/<provider-local-model>`.
 Full provider names are ASCII case-insensitive; the remainder may contain a
 vendor slash and is preserved exactly. Bare models, short aliases (`OR/`,
-`DI/`), blank overrides, unknown providers, and whitespace are invalid.
+`DI/`), blank overrides, and unknown providers are invalid.
+
+**URL-safety clarification (2026-09-06):** provider-local model components
+must be nonempty and cannot be `.` or `..`. Whitespace, control characters,
+`?`, `#`, backslash, and `%` (including URL escapes) are rejected as `Model`
+before any request, for explicit and env-selected models alike. Ordinary
+dots, hyphens, underscores, version colons, and Unicode names remain valid.
+The registry and direct adapters share this validation; native DeepInfra
+URLs append model identifiers as URL path segments, preserving the
+configured host/base path instead of parsing model text as URL syntax.
 
 | Operation | Environment model when no override is supplied |
 |---|---|

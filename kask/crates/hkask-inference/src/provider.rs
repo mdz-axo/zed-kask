@@ -164,6 +164,8 @@ pub trait MediaProvider: Send + Sync {
     /// selectable operations (no provider prefix). Fixed operations require
     /// `model: None`. Use `ProviderRegistry::execute` for user-facing models:
     /// adapters never resolve environment defaults or strip provider prefixes.
+    /// Both selection and adapter execution validate provider-local URL safety;
+    /// model components are identifiers, never query/fragment or traversal syntax.
     ///
     /// Implementations extract the fields they need from `params` (cloning
     /// owned `String`s into the future scope) and call their provider-specific
@@ -173,6 +175,30 @@ pub trait MediaProvider: Send + Sync {
         op: MediaOp,
         params: &'a MediaGenerateParams,
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>>;
+}
+
+/// Validate model identity before either JSON dispatch or native URL construction.
+/// Shared with direct adapters so bypassing the registry cannot bypass URL safety.
+///
+/// expect: "My model ID cannot change the authenticated request's endpoint."
+/// [P4] Motivating; [P1] Constraining: preserve valid model names, not URL syntax.
+/// pre: provider-local model, without a routing prefix.
+/// post: no empty/dot path components, URL delimiters/escapes, whitespace, or controls.
+pub(crate) fn validate_provider_local_model(model: &str) -> Result<(), InferenceError> {
+    if model
+        .split('/')
+        .any(|component| matches!(component, "" | "." | ".."))
+        || model.chars().any(|character| {
+            character.is_whitespace()
+                || character.is_control()
+                || matches!(character, '?' | '#' | '\\' | '%')
+        })
+    {
+        return Err(InferenceError::Model(
+            "media models require OpenRouter/<model> or DeepInfra/<model>; the provider-local model must have nonempty slash-separated components, no . or .. components, and no whitespace, control characters, ?, #, backslash, or % escapes".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Registered media backends, looked up by the selected provider's name.
@@ -216,9 +242,7 @@ impl ProviderRegistry {
             )
             };
             let (prefix, local_model) = model.split_once('/').ok_or_else(invalid_model)?;
-            if model.chars().any(char::is_whitespace) || local_model.split('/').any(str::is_empty) {
-                return Err(invalid_model());
-            }
+            validate_provider_local_model(local_model)?;
             let selected = if prefix.eq_ignore_ascii_case("OpenRouter") {
                 ("openrouter", "OPENROUTER_API_KEY")
             } else if prefix.eq_ignore_ascii_case("DeepInfra") {

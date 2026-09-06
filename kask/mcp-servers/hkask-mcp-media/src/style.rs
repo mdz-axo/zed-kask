@@ -3,9 +3,9 @@
 //! the user's text prompt before dispatch, so the agent gets Fooocus-style
 //! "zero-tuning" quality without manual prompt engineering.
 //!
-//! Presets are hardcoded (no file IO) for the first cut. `sampler` and
-//! `model_override` are deferred until `MediaGenerateParams` gains those
-//! fields and providers expose them in their APIs.
+//! Presets affect prompts only; they do not select providers or models.
+//! Media routing resolves `MediaGenerateParams::model` or the operation's
+//! configured model independently of the selected style.
 
 use hkask_types::MediaGenerateParams;
 
