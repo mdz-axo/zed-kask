@@ -104,7 +104,7 @@ impl CorpusServer {
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
-            ConsolidationService::new(Arc::clone(&self.inference_router))
+            ConsolidationService::new(Arc::clone(&self.inference_router), Arc::clone(&self.index))
                 .consolidate(ChunkConsolidationRequest {
                     tagged_jsonl: req.tagged_jsonl,
                     output: req.output,

@@ -20,8 +20,8 @@ use crate::batch::{
 use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
-    Arc, CorpusServer, IndexedPassage, McpToolError, Mutex, Parameters, default_embedding_model,
-    default_owner, execute_tool, extract_json_from_response, json, read_jsonl, tool, tool_router,
+    Arc, CorpusServer, McpToolError, Parameters, default_embedding_model, default_owner,
+    execute_tool, extract_json_from_response, json, read_jsonl, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::parse_qa_response;
@@ -224,7 +224,7 @@ impl CorpusServer {
     ) -> Result<serde_json::Value, McpToolError> {
         // Parse chunks: each line has entity_ref, source, text, word_count
         let chunks_values = read_jsonl::<serde_json::Value>(chunks_path, "chunks_jsonl")?;
-        let mut chunks: Vec<(String, String)> = Vec::new(); // (entity_ref, text)
+        let mut chunks: Vec<(String, String, String)> = Vec::new(); // (entity_ref, original text, embedding input)
         for (i, v) in chunks_values.iter().enumerate() {
             let entity_ref = v
                 .get("entity_ref")
@@ -245,7 +245,7 @@ impl CorpusServer {
                 continue;
             }
             let text = hkask_memory::text_chunking::sanitize_text(&text);
-            chunks.push((entity_ref, text));
+            chunks.push((entity_ref, text.clone(), text));
         }
 
         let total = chunks.len();
@@ -276,7 +276,7 @@ impl CorpusServer {
         // Chunks without tags get a neutral [unclassified] prefix to maintain
         // consistent token structure across all embeddings.
         if !tag_map.is_empty() {
-            for (entity_ref, text) in chunks.iter_mut() {
+            for (entity_ref, _, text) in chunks.iter_mut() {
                 let annotation = tag_map
                     .get(entity_ref)
                     .map(|s| s.as_str())
@@ -296,10 +296,14 @@ impl CorpusServer {
             )
         })?;
 
-        let store = crate::helpers::open_memory_store(db_path, passphrase)?;
+        let write = self.index.begin_durable(
+            db_path,
+            passphrase,
+            chunks.iter().map(|chunk| chunk.0.clone()).collect(),
+        )?;
 
         let batch = batch_size.max(1);
-        let batches: Vec<Vec<(String, String)>> =
+        let batches: Vec<Vec<(String, String, String)>> =
             chunks.chunks(batch).map(|c| c.to_vec()).collect();
         let num_batches = batches.len();
 
@@ -312,33 +316,32 @@ impl CorpusServer {
         // lower capacity is probed, not stampeded.
         let limiter = AdaptiveLimiter::new(crate::max_concurrency(), ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
-        let store = Arc::new(store);
+        let write = Arc::new(write);
         let model_name = Arc::new(model_name.clone());
 
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        // Collect (entity_ref, text, embedding) for in-memory index
-        // population after all batches complete.
-        let indexed_passages: Arc<Mutex<Vec<IndexedPassage>>> =
-            Arc::new(Mutex::new(Vec::with_capacity(total)));
+        let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         let mut join_set = tokio::task::JoinSet::new();
 
         for (batch_idx, chunk_batch) in batches.into_iter().enumerate() {
             let limiter = limiter.clone();
             let router = Arc::clone(&router);
-            let store = Arc::clone(&store);
+            let write = Arc::clone(&write);
+            let index = Arc::clone(&self.index);
+            let cancelled = Arc::clone(&cancelled);
             let model_name = Arc::clone(&model_name);
             let embedded = Arc::clone(&embedded);
             let failed = Arc::clone(&failed);
-            let indexed_passages = Arc::clone(&indexed_passages);
+
             let batch_len = chunk_batch.len();
 
             join_set.spawn(async move {
                 let slot = limiter.acquire().await;
 
-                let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
+                let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.2.clone()).collect();
                 let vectors = match retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
@@ -364,13 +367,17 @@ impl CorpusServer {
                     }
                 };
 
-                if vectors.is_empty() {
+                if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
+                    tracing::warn!(%error, "Invalid embedding batch response");
                     failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
 
                 for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
-                    if let Err(e) = store.store_embedding(&c.0, vector, &model_name, Some(&c.1)) {
+                    if let Err(e) = index.publish_durable(&write, &c.0, &c.1, vector, &model_name) {
+                        if write.is_cancelled() {
+                            cancelled.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if failed.load(std::sync::atomic::Ordering::Relaxed) <= 5 {
                             tracing::warn!(
@@ -383,14 +390,6 @@ impl CorpusServer {
                         continue;
                     }
                     embedded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    // Collect for in-memory index.
-                    if let Ok(mut idx) = indexed_passages.lock() {
-                        idx.push(IndexedPassage {
-                            text: c.1.clone(),
-                            metadata: json!({"entity_ref": &c.0}),
-                            embedding: vector.clone(),
-                        });
-                    }
                 }
             });
         }
@@ -407,21 +406,9 @@ impl CorpusServer {
         }
 
         let embedded = embedded.load(std::sync::atomic::Ordering::Relaxed);
-        let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
-
-        // Populate the in-memory vector index.
-        let mut passages = indexed_passages.lock().unwrap_or_else(|e| e.into_inner());
-        let passages = std::mem::take(&mut *passages);
-        if !passages.is_empty() {
-            let mut index = self.index.lock().unwrap_or_else(|e| e.into_inner());
-            let count = passages.len();
-            index.extend(passages);
-            tracing::info!(
-                target: "hkask.mcp.docproc.embed",
-                indexed = index.len(),
-                "In-memory index populated with {count} passages"
-            );
-        }
+        // Includes rows lost to a task panic, not just reported provider/store errors.
+        let failed = total - embedded;
+        let cancelled = cancelled.load(std::sync::atomic::Ordering::Relaxed);
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
@@ -429,12 +416,17 @@ impl CorpusServer {
             "Embedding complete"
         );
 
-        let result = json!({
+        let mut result = json!({
             "total": total,
             "embedded": embedded,
             "failed": failed,
+            "cancelled": cancelled,
             "model": model_name,
         });
+        if cancelled > 0 {
+            result["note"] =
+                json!("Publication cancelled by clear/purge; rerun to publish new data");
+        }
         let outcome = BatchOutcome::from_counts(failed, total);
         outcome.log_if_degraded("hkask.mcp.docproc.embed", "Embedding");
         Ok(result)

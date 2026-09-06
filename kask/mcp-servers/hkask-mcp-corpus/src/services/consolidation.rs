@@ -43,11 +43,18 @@ pub(crate) struct ChunkConsolidationRequest {
 /// full 5-phase consolidation pipeline.
 pub struct ConsolidationService {
     inference_router: Arc<dyn InferencePort>,
+    index: Arc<crate::index::PassageIndex>,
 }
 
 impl ConsolidationService {
-    pub fn new(inference_router: Arc<dyn InferencePort>) -> Self {
-        Self { inference_router }
+    pub(crate) fn new(
+        inference_router: Arc<dyn InferencePort>,
+        index: Arc<crate::index::PassageIndex>,
+    ) -> Self {
+        Self {
+            inference_router,
+            index,
+        }
     }
 
     /// Consolidate semantically related chunks via LLM synthesis.
@@ -78,9 +85,27 @@ impl ConsolidationService {
         let threshold = threshold as f32;
         let all_clusters = input.cluster_by_source(threshold, max_chunks_per_cluster);
         let chunks = input.chunks;
-        // Re-open for Phase 4 writes — `load_clusters` opens read-only for the
-        // embedding query and drops the handle.
-        let store = crate::helpers::open_memory_store(&db_path, &passphrase)?;
+        // Include both input and output identities: purging either cancels a
+        // synthesis already in flight instead of resurrecting its content.
+        let references = chunks
+            .iter()
+            .map(|chunk| chunk.entity_ref.clone())
+            .chain(
+                all_clusters
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cluster)| cluster.len() > 1)
+                    .map(|(position, cluster)| {
+                        format!(
+                            "corpus:researcher:consolidated:{}:{position}",
+                            chunks[cluster[0]].source
+                        )
+                    }),
+            )
+            .collect();
+        let write = self
+            .index
+            .begin_durable(&db_path, &passphrase, references)?;
 
         let total_members: usize = all_clusters.iter().map(|c| c.len()).sum();
         let absorbed = total_members - all_clusters.len();
@@ -210,7 +235,7 @@ impl ConsolidationService {
         let consolidated_texts: Vec<Option<String>> =
             results.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut consolidated: Vec<TaggedChunk> = Vec::with_capacity(all_clusters.len());
-        let mut reembed_texts: Vec<(String, String)> = Vec::new();
+        let mut reembed_texts: Vec<(String, String, String)> = Vec::new();
 
         for (ci, cluster) in all_clusters.iter().enumerate() {
             if cluster.len() == 1 {
@@ -334,7 +359,11 @@ impl ConsolidationService {
                         .collect();
                     format!("[{}] ", parts.join(" | "))
                 };
-                reembed_texts.push((entity_ref.clone(), format!("{}{}", annotation, text)));
+                reembed_texts.push((
+                    entity_ref.clone(),
+                    text.clone(),
+                    format!("{}{}", annotation, text),
+                ));
 
                 let word_count = text.split_whitespace().count();
                 consolidated.push(TaggedChunk {
@@ -359,21 +388,30 @@ impl ConsolidationService {
         let mut embedded_count = 0usize;
         let mut embed_failures = 0usize;
         if !reembed_texts.is_empty() {
-            // Fail-visible: with no embedding model configured, the re-embed
-            // phase reports the gap as a failure count + warn instead of
-            // silently using a hidden constant (the operator's
-            // no-hidden-models spec). The chunks remain entity-reachable,
-            // not similarity-reachable.
-            match hkask_inference::model_constants::embedding_model() {
+            // Same effective setting as corpus_embed/query (PM 2026-09-04).
+            match crate::default_embedding_model() {
                 Some(emb_model) => {
                     for batch in reembed_texts.chunks(50) {
-                        let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
+                        let texts: Vec<String> =
+                            batch.iter().map(|(_, _, text)| text.clone()).collect();
                         match self.inference_router.embed(&emb_model, &texts).await {
                             Ok(vectors) => {
-                                for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                                    if let Err(e) =
-                                        store.store_embedding(entity_ref, vector, &emb_model, None)
-                                    {
+                                if let Err(error) =
+                                    crate::index::validate_vectors(&vectors, batch.len())
+                                {
+                                    tracing::warn!(%error, "Invalid consolidated embedding response");
+                                    embed_failures += batch.len();
+                                    continue;
+                                }
+                                for ((entity_ref, text, _), vector) in
+                                    batch.iter().zip(vectors.iter())
+                                {
+                                    if let Err(e) = self.index.publish_durable(
+                                        &write, entity_ref, text, vector, &emb_model,
+                                    ) {
+                                        if write.is_cancelled() {
+                                            return Err(e);
+                                        }
                                         tracing::warn!(
                                             entity_ref = %entity_ref,
                                             error = %e,

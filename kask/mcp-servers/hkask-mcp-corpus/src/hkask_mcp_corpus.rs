@@ -27,9 +27,12 @@ pub(crate) mod compose;
 pub(crate) mod convert;
 pub(crate) mod corpus;
 mod helpers;
+mod index;
 pub(crate) mod inference_svc;
 pub(crate) mod ocr;
 pub(crate) mod path_safety;
+#[cfg(test)]
+mod retrieval_tests;
 
 pub(crate) mod services;
 pub(crate) mod template;
@@ -242,24 +245,16 @@ hkask_mcp_server::mcp_server!(
         pub inference_router: Arc<dyn InferencePort>,
         pub ocr_thresholds: ThresholdConfig,
         pub cv_accumulator: Mutex<Vec<crate::ocr::CrossValidation>>,
-        pub index: Mutex<Vec<IndexedPassage>>,
+        pub index: Arc<crate::index::PassageIndex>,
         pub llm_ocr: Arc<crate::ocr::llm_ocr::LlmOcrExecutor>,
         pub pipeline_executor: Arc<crate::ocr::PipelineExecutor>,
     }
 );
 
-/// A passage stored in the in-memory vector index with its embedding.
-#[derive(Debug, Clone)]
-pub(crate) struct IndexedPassage {
-    pub text: String,
-    pub metadata: serde_json::Value,
-    pub embedding: Vec<f32>,
-}
-
 // ── Server constructor + core methods ──────────────────────────────────────
 //
-// `has_ocr` and `index_passages` previously lived here; they moved to
-// `services::convert::ConvertService` (which now owns the OCR + index domain).
+// `has_ocr` and ephemeral embedding orchestration live in
+// `services::convert::ConvertService`; `index` owns shared passage state.
 // `#[tool]` methods in `tools/document.rs` construct a `ConvertService` and
 // delegate.
 
@@ -369,7 +364,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 inference_port,
                 ocr_thresholds,
                 Mutex::new(Vec::new()),
-                Mutex::new(Vec::new()),
+                Arc::default(),
                 llm_ocr,
                 pipeline_executor,
             ))
@@ -429,7 +424,7 @@ mod smoke {
             inference_port,
             ThresholdConfig::default(),
             Mutex::new(Vec::new()),
-            Mutex::new(Vec::new()),
+            Arc::default(),
             llm_ocr,
             pipeline_executor,
         )

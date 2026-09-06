@@ -1,7 +1,8 @@
 //! Storage and query tools — cache, passage query, similarity.
-use crate::helpers::{map_corpus_io_error, map_memory_store_error};
+use crate::helpers::map_corpus_io_error;
+use crate::index::RetrievedPassage;
 use crate::{
-    CorpusServer, IndexedPassage, LLMParameters, McpToolError, Parameters, cosine_similarity,
+    CorpusServer, LLMParameters, McpToolError, Parameters,
     execute_tool, json, render_docproc_template, tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -75,21 +76,10 @@ impl CorpusServer {
     )]
     /// Query the in-memory vector index for top-k relevant passages.
     ///
-    /// # Availability over consistency on poisoned lock
-    ///
-    /// If the index mutex is poisoned (a prior holder panicked), this method
-    /// recovers the inner state via `into_inner()` and serves the query
-    /// against possibly-half-mutated state rather than returning an error.
-    /// This is a deliberate availability-over-consistency choice: a poisoned
-    /// lock typically indicates a panic during a non-mutating read path, so
-    /// the index contents are likely intact, and refusing the query would
-    /// take the corpus offline for every subsequent caller until restart.
-    /// The two sibling recovery sites (`corpus_clear_index`, `corpus_purge_qa`)
-    /// immediately overwrite the index, so they are safe under the same
-    /// recovery. A panic during `corpus_chunk`'s incremental insert would
-    /// leave a partially-updated index; this method would still serve from
-    /// it — the worst case is stale or incomplete results, not corruption
-    /// (the index is rebuilt from the source JSONL on restart).
+    /// expect: Answers use retrieved original text even when result text is hidden.
+    /// [P8] Motivating: grounded answers independent of output projection.
+    /// pre: plain or Lisp query; post: generation receives normalized question and
+    /// usable passages, or answer_error reports why grounding was unavailable.
     pub async fn corpus_query(
         &self,
         Parameters(QueryRequest {
@@ -137,6 +127,8 @@ impl CorpusServer {
                 )
             })?;
 
+            self.index.hydrate_if_empty(db_path.as_deref(), passphrase.as_deref())?;
+
             let query_embedding = match self
                 .inference_router
                 .embed(&model_name, std::slice::from_ref(&nl_query))
@@ -157,95 +149,9 @@ impl CorpusServer {
                 ));
             }
 
-            // Search the index (scoped to drop guard before any await)
-            let (results, total_indexed) = {
-                let mut index = match self.index.lock() {
-                    Ok(i) => i,
-                    Err(poisoned) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.corpus",
-                            error = %poisoned,
-                            "index lock poisoned — recovering inner state"
-                        );
-                        poisoned.into_inner()
-                    }
-                };
-                if index.is_empty() {
-                    let Some(db_path) = db_path.as_deref() else {
-                        return Ok(json!({
-                            "query": query,
-                            "results": [],
-                            "total_indexed": 0,
-                            "note": "Index empty after restart. Provide db_path to search the memory DB.",
-                        }));
-                    };
-                    let passphrase = passphrase
-                        .unwrap_or_else(crate::helpers::default_corpus_passphrase);
-                    if passphrase.is_empty() {
-                        return Err(McpToolError::permission_denied(
-                            "HKASK_DB_PASSPHRASE not configured — corpus_query requires the DB passphrase. \
-                             Set it via the keychain (kask://credentials/hkask_db_passphrase) or environment variable."
-                        ));
-                    }
-                    let store = crate::helpers::open_memory_store(db_path, &passphrase)?;
-                    // A failed count must not read as "zero embeddings" —
-                    // a DB outage would masquerade as an empty corpus and
-                    // return success with no results.
-                    let total = store.embedding_count().map_err(|e| {
-                        McpToolError::internal(format!("embedding count read failed: {e}")) // rr0044-ok: infra-db-failure
-                    })?;
-                    if total == 0 {
-                        return Ok(json!({
-                            "query": query,
-                            "results": [],
-                            "total_indexed": 0,
-                        }));
-                    }
-                    // Hydrate the in-memory index from the DB so subsequent
-                    // queries return full passage text without re-opening the
-                    // DB. This loads all embeddings + text in one pass.
-                    let all_embeddings = store
-                        .all_embeddings_with_text()
-                        .map_err(|e| McpToolError::internal(format!("DB hydration failed: {e}")))?; // rr0044-ok: infra-db-failure
-                    let mut hydrated: Vec<IndexedPassage> = Vec::with_capacity(all_embeddings.len());
-                    for (entity_ref, vector, passage_text) in all_embeddings {
-                        let text = passage_text.unwrap_or_default();
-                        hydrated.push(IndexedPassage {
-                            text: text.clone(),
-                            metadata: json!({"entity_ref": entity_ref}),
-                            embedding: vector,
-                        });
-                    }
-                    tracing::info!(
-                        target: "hkask.mcp.corpus",
-                        hydrated = hydrated.len(),
-                        "In-memory index hydrated from DB"
-                    );
-                    // Search the hydrated passages in-memory.
-                    let results = search_passages(
-                        &hydrated,
-                        &query_embedding,
-                        k,
-                        min_score_val,
-                        include_text_flag,
-                    );
-                    // Move hydrated passages into the persistent in-memory index
-                    // so subsequent queries skip the DB hydration pass.
-                    let hydrated_count = hydrated.len();
-                    index.extend(hydrated);
-                    (results, hydrated_count)
-                } else {
-                    let results = search_passages(
-                        &index,
-                        &query_embedding,
-                        k,
-                        min_score_val,
-                        include_text_flag,
-                    );
-
-                    (results, index.len())
-                }
-            }; // guard dropped here
+            let crate::index::Retrieval { matches, total_indexed, missing_text } =
+                self.index.retrieve(&query_embedding, k, min_score_val)?;
+            let results: Vec<_> = matches.iter().map(|matched| matched.project(include_text_flag)).collect();
 
             let mut result = json!({
                 "query": nl_query,
@@ -253,25 +159,30 @@ impl CorpusServer {
                 "total_indexed": total_indexed,
             });
 
-            // Optionally generate an LLM-augmented answer
-            if gen_answer && !results.is_empty() {
-                let context: String = results
-                    .iter()
-                    .map(|r| r["text"].as_str().unwrap_or(""))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+            if total_indexed == 0 {
+                result["note"] = json!("Index empty. Provide db_path for empty-index hydration, or embed passages.");
+            }
+            if missing_text > 0 {
+                result["missing_passage_text"] = json!(missing_text);
+                result["note"] = json!("Some persisted embeddings have no passage_text (legacy or non-passage rows); omitted from answer context. Re-embed original sources to restore grounding.");
+            }
+            let context = matches.iter().filter_map(|matched| matched.passage.text.as_deref())
+                .filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+            if gen_answer && context.is_empty() {
+                result["answer_error"] = json!("No usable passage text retrieved; cannot generate a grounded answer. Re-embed original sources if persisted passage_text is missing.");
+            } else if gen_answer {
                 let context = crate::guard_content(&context);
 
                 // C10: Load prompt from registry template, fall back to inline if unavailable
                 let mut vars = std::collections::HashMap::new();
                 vars.insert("context", context.clone());
-                vars.insert("question", query.clone());
+                vars.insert("question", nl_query.clone());
                 let prompt = render_docproc_template("rag-answer", &vars);
                 let prompt = if prompt.is_empty() {
                     format!(
                         "{CONTENT_GUARD_INSTRUCTION}Answer the following question based on the provided context. If the context doesn't contain enough information, say so.\n\n\
                          Context:\n{context}\n\n\
-                         Question: {query}\n\n\
+                         Question: {nl_query}\n\n\
                          Answer:",
                         CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION
                     )
@@ -308,19 +219,7 @@ impl CorpusServer {
         Parameters(ClearIndexRequest {}): Parameters<ClearIndexRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_clear_index", async {
-            let mut index = match self.index.lock() {
-                Ok(i) => i,
-                Err(poisoned) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.corpus",
-                        error = %poisoned,
-                        "index lock poisoned — recovering inner state"
-                    );
-                    poisoned.into_inner()
-                }
-            };
-            let cleared = index.len();
-            index.clear();
+            let cleared = self.index.clear()?;
             Ok(json!({"cleared": cleared}))
         })
         .await
@@ -340,62 +239,7 @@ impl CorpusServer {
                      Set it via the keychain (kask://credentials/hkask_db_passphrase) or environment variable."
                 ));
             }
-            let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
-
-            let embeddings_before = match store.embedding_count() {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.corpus",
-                        error = %e,
-                        "Failed to read embedding_count before purge — returning 0 (signal stale)"
-                    );
-                    0
-                }
-            };
-
-            // Purge embeddings with matching entity_ref prefix
-            let purged_embeddings = store
-                .purge_by_prefix(&req.prefix)
-                .map_err(|e| map_memory_store_error(e, "Purge embeddings failed"))?;
-
-            // Purge all h_mems by entity prefix — assertions, training_qa_pairs,
-            // and any other attributes — so stale data from a previous pipeline
-            // run doesn't pollute the new run.
-            let mut purged_h_mems = 0usize;
-            let mut h_mem_errors = 0usize;
-
-            let h_mems = store
-                .h_mems_by_entity_prefix(&req.prefix)
-                .map_err(|e| map_memory_store_error(e, "Query h_mems by prefix failed"))?;
-            for h_mem in &h_mems {
-                match store.delete_h_mem(&h_mem.id) {
-                    Ok(()) => purged_h_mems += 1,
-                    Err(_) => h_mem_errors += 1,
-                }
-            }
-
-            let embeddings_after = match store.embedding_count() {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.corpus",
-                        error = %e,
-                        "Failed to read embedding_count after purge — returning 0 (signal stale)"
-                    );
-                    0
-                }
-            };
-
-            let result = json!({
-                "prefix": req.prefix,
-                "embeddings_before": embeddings_before,
-                "embeddings_purged": purged_embeddings,
-                "embeddings_after": embeddings_after,
-                "h_mems_purged": purged_h_mems,
-                "h_mem_errors": h_mem_errors,
-            });
-            Ok(result)
+            self.index.purge(&req.db_path, &req.passphrase, &req.prefix)
         })
         .await
     }
@@ -446,18 +290,16 @@ pub(crate) struct QueryRequest {
     /// Ignored when `query` is a Lisp S-expression.
     #[serde(default)]
     pub generate_answer: Option<bool>,
-    /// If true, include passage text in results. Only valid when `query`
-    /// is a Lisp S-expression (use `"include-text"` in the expression).
-    /// When `query` is a plain string, text is included by default when
-    /// the index is hydrated from the DB.
+    /// Include passage text in returned results (default false). Answer generation
+    /// always retains usable text internally. For Lisp use `"include-text"`.
     #[serde(default)]
     pub include_text: Option<bool>,
     /// Minimum score threshold (0.0–1.0). Only return matches with score
-    /// >= this value. Only valid when `query` is a Lisp S-expression.
+    /// >= this value. For Lisp use `"min-score"`.
     #[serde(default)]
     pub min_score: Option<f32>,
     /// Path to the memory DB for vector search when the in-memory index is empty
-    /// (e.g. after server restart). The in-memory index is populated by `corpus_embed`.
+    /// (e.g. after server restart). Ignored on a nonempty index; it does not switch DBs.
     #[serde(default)]
     pub db_path: Option<String>,
     /// Passphrase for the memory DB. Defaults to `HKASK_DB_PASSPHRASE`.
@@ -573,54 +415,30 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
     Ok((nl_query, top_k, include_text, min_score, generate_answer))
 }
 
-/// Search a slice of indexed passages by cosine similarity to a query
-/// embedding, with optional min-score filtering and text inclusion.
-///
-/// Extracted from `corpus_query` where the same score → sort → filter →
-/// truncate → serialize logic was duplicated between the hydrated-from-DB
-/// path and the in-memory-index path.
-fn search_passages(
-    passages: &[IndexedPassage],
-    query_embedding: &[f32],
-    k: usize,
-    min_score: f32,
-    include_text: bool,
-) -> Vec<serde_json::Value> {
-    let mut scored: Vec<(f32, &IndexedPassage)> = passages
-        .iter()
-        .map(|p| (cosine_similarity(query_embedding, &p.embedding), p))
-        .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    if min_score > 0.0 {
-        scored.retain(|(score, _)| *score >= min_score);
+impl RetrievedPassage {
+    fn project(&self, include_text: bool) -> serde_json::Value {
+        let mut result = json!({"metadata": self.passage.metadata, "score": self.score});
+        if self.passage.text.is_none() { result["text_available"] = json!(false); }
+        if include_text { result["text"] = json!(self.passage.text); }
+        result
     }
-    scored.truncate(k);
-    scored
-        .iter()
-        .map(|(score, p)| {
-            let mut entry = json!({
-                "metadata": p.metadata.clone(),
-                "score": score,
-            });
-            if include_text {
-                entry["text"] = json!(p.text.clone());
-            }
-            entry
-        })
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::IndexedPassage;
+    use crate::index::IndexedPassage;
 
     fn make_passage(text: &str, embedding: Vec<f32>) -> IndexedPassage {
         IndexedPassage {
-            text: text.to_string(),
+            text: Some(text.to_string()),
             metadata: json!({"entity_ref": "test:chunk:1"}),
             embedding,
         }
+    }
+
+    fn search_passages(passages: &[IndexedPassage], query: &[f32], k: usize, min_score: f32, include_text: bool) -> Vec<serde_json::Value> {
+        crate::index::search_passages(passages.iter(), query, k, min_score).iter().map(|matched| matched.project(include_text)).collect()
     }
 
     // ── search_passages ──────────────────────────────────────────────────

@@ -40,8 +40,8 @@ use crate::ocr::{
 use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
-    IndexedPassage, OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds, default_embedding_model,
-    max_concurrency, sanitize_links,
+    OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds, default_embedding_model, max_concurrency,
+    sanitize_links,
 };
 use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
 
@@ -56,8 +56,8 @@ pub enum PassageIndexError {
         #[source]
         source: hkask_types::EmbeddingGenerationError,
     },
-    #[error("index mutex poisoned — the index may be corrupted by a prior panic")]
-    IndexMutexPoisoned,
+    #[error("passage publication failed: {0}")]
+    Publication(McpToolError),
     #[error("{0}")]
     NotConfigured(String),
 }
@@ -66,9 +66,8 @@ pub enum PassageIndexError {
 ///
 /// `ConvertService` holds the cheaply-clonable state (inference router, OCR
 /// model, thresholds, pipeline executor) by value and the shared mutable
-/// accumulators (`cv_accumulator`, `index`) by reference, since `CorpusServer`'s
-/// struct definition (the `mcp_server!` macro) cannot change to wrap them in
-/// `Arc<Mutex>`. The service is short-lived: it is constructed inside a single
+/// accumulator and passage-index owner by reference. The service is
+/// short-lived: it is constructed inside a single
 /// `#[tool]` call and dropped when the call returns.
 pub(crate) struct ConvertService<'a> {
     inference_router: Arc<dyn InferencePort>,
@@ -76,7 +75,7 @@ pub(crate) struct ConvertService<'a> {
     ocr_thresholds: ThresholdConfig,
     pipeline_executor: Arc<PipelineExecutor>,
     cv_accumulator: &'a Mutex<Vec<CrossValidation>>,
-    index: &'a Mutex<Vec<IndexedPassage>>,
+    index: &'a crate::index::PassageIndex,
 }
 
 /// Successful page-pipeline OCR outcome: assembled text plus the
@@ -152,7 +151,7 @@ impl<'a> ConvertService<'a> {
         ocr_thresholds: ThresholdConfig,
         pipeline_executor: Arc<PipelineExecutor>,
         cv_accumulator: &'a Mutex<Vec<CrossValidation>>,
-        index: &'a Mutex<Vec<IndexedPassage>>,
+        index: &'a crate::index::PassageIndex,
     ) -> Self {
         Self {
             inference_router,
@@ -469,6 +468,16 @@ impl<'a> ConvertService<'a> {
                 )
             })?;
 
+        let publication = self
+            .index
+            .begin_ephemeral(
+                source_label,
+                passages
+                    .iter()
+                    .map(|(reference, _)| reference.clone())
+                    .collect(),
+            )
+            .map_err(PassageIndexError::Publication)?;
         let vectors = match self.inference_router.embed(&model_name, &texts).await {
             Ok(v) => v,
             Err(e) => {
@@ -483,31 +492,11 @@ impl<'a> ConvertService<'a> {
             }
         };
 
-        let mut index = match self.index.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.corpus",
-                    error = %e,
-                    "Failed to lock index for passage indexing — skipping. \
-                     The index mutex may be poisoned from a prior panic."
-                );
-                return Err(PassageIndexError::IndexMutexPoisoned);
-            }
-        };
-        for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
-        {
-            index.push(IndexedPassage {
-                text: passage_text.clone(),
-                metadata: serde_json::json!({
-                    "entity_ref": entity_ref,
-                    "source": source_label,
-                    "position": i,
-                }),
-                embedding,
-            });
-        }
-        Ok(passages.len())
+        crate::index::validate_vectors(&vectors, passages.len())
+            .map_err(PassageIndexError::Publication)?;
+        self.index
+            .publish_ephemeral(&publication, passages, vectors)
+            .map_err(PassageIndexError::Publication)
     }
 
     /// Convert a single document file to text, with OCR fallback.
@@ -1624,7 +1613,7 @@ mod ocr_guards {
     /// from the parameter); it only needs to exist for construction.
     fn test_service(port: Arc<dyn InferencePort>) -> ConvertService<'static> {
         let cv_accumulator: &'static Mutex<Vec<CrossValidation>> = Box::leak(Box::default());
-        let index: &'static Mutex<Vec<IndexedPassage>> = Box::leak(Box::default());
+        let index: &'static crate::index::PassageIndex = Box::leak(Box::default());
         let llm_executor = Arc::new(LlmOcrExecutor::new(Arc::clone(&port)));
         let pipeline_executor = Arc::new(PipelineExecutor::new(llm_executor));
         ConvertService::new(
