@@ -1,19 +1,8 @@
-//! Media provider abstraction — pluggable, multi-provider media generation.
-//!
-//! A [`MediaProvider`] serves a subset of [`MediaOp`]s. [`ProviderRegistry`]
-//! holds the registered providers in priority order and dispatches an op to
-//! the first provider that supports it, falling back to the next on runtime
-//! error. This is the registry that replaces the hardcoded two-field dispatch
-//! in `MediaRouter`: adding a provider = implement `MediaProvider` + register
-//! in `MediaRouter::new`; no dispatch edits.
-//!
-//! No implementations are currently registered (the former media backends
-//! were removed); the trait + registry remain the generic dispatch
-//! infrastructure for providers added in the future.
+//! Strict media routing: resolve the operation's model once, then dispatch to
+//! exactly the named provider. Provider errors retain their type; no fallback.
 
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
-use std::cmp::Ordering;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -44,7 +33,7 @@ pub enum MediaOp {
 ///
 /// expect: "The system maps string media ops to typed registry ops"
 /// pre:  op is a known media op string
-/// post: returns Ok(MediaOp), or Err(Connection) for an unknown op
+/// post: returns Ok(MediaOp), or Err(Model) for an unknown op
 impl std::str::FromStr for MediaOp {
     type Err = InferenceError;
     fn from_str(op: &str) -> Result<Self, Self::Err> {
@@ -59,7 +48,7 @@ impl std::str::FromStr for MediaOp {
             "transcribe" => Ok(Self::Transcribe),
             "chat_audio" => Ok(Self::ChatAudio),
             "chat_json" => Ok(Self::ChatJson),
-            other => Err(InferenceError::Connection(format!(
+            other => Err(InferenceError::Model(format!(
                 "unknown media op: {other}"
             ))),
         }
@@ -67,6 +56,18 @@ impl std::str::FromStr for MediaOp {
 }
 
 impl MediaOp {
+    pub(crate) fn model_env(self) -> Option<&'static str> {
+        match self {
+            Self::GenerateImage | Self::ImageToImage => Some("HKASK_MEDIA_IMAGE_GEN_MODEL"),
+            Self::GenerateSpeech => Some("HKASK_MEDIA_TTS_MODEL"),
+            Self::Transcribe => Some("HKASK_MEDIA_STT_MODEL"),
+            Self::GenerateVideo | Self::ImageToVideo => Some("HKASK_MEDIA_VIDEO_MODEL"),
+            Self::ChatAudio => Some("HKASK_MEDIA_AUDIO_CHAT_MODEL"),
+            Self::ChatJson => Some("HKASK_MEDIA_STRUCTURED_PASS_MODEL"),
+            Self::RemoveBackground | Self::Upscale => None,
+        }
+    }
+
     /// The canonical string name (matches `InferencePort::media_generate` op).
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -88,6 +89,49 @@ impl MediaOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct EchoProvider(&'static str);
+
+    impl MediaProvider for EchoProvider {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn supports(&self, _: MediaOp) -> bool {
+            true
+        }
+        fn execute<'a>(
+            &'a self,
+            _: MediaOp,
+            params: &'a MediaGenerateParams,
+        ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
+            Box::pin(
+                async move { Ok(serde_json::json!({"provider": self.0, "model": params.model})) },
+            )
+        }
+    }
+
+    /// expect: "My OpenRouter model never sends my media to DeepInfra."
+    /// [P1] Motivating: honor the user's selected provider.
+    /// dcterms:identifier: ProviderRegistry::execute
+    #[tokio::test]
+    async fn qualified_model_selects_provider_not_registration_order() {
+        let registry = ProviderRegistry::new(vec![
+            Arc::new(EchoProvider("deepinfra")),
+            Arc::new(EchoProvider("openrouter")),
+        ]);
+        let result = registry
+            .execute(
+                MediaOp::GenerateImage,
+                &MediaGenerateParams {
+                    model: Some("OpenRouter/black-forest-labs/flux.2-klein-4b".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("selected provider succeeds");
+        assert_eq!(result["provider"], "openrouter");
+        assert_eq!(result["model"], "black-forest-labs/flux.2-klein-4b");
+    }
 
     #[test]
     fn chat_audio_op_round_trips() {
@@ -113,11 +157,15 @@ pub trait MediaProvider: Send + Sync {
     /// Stable provider id (e.g. `"openrouter"`) for logging / audit.
     fn id(&self) -> &'static str;
 
-    /// Whether this provider can serve `op`. The registry uses this to filter
-    /// candidates before dispatch.
+    /// Whether this provider can serve `op`; never authorizes another provider.
     fn supports(&self, op: MediaOp) -> bool;
 
-    /// Execute `op` with the unified params.
+    /// Execute `op` with resolved params, not user-facing configuration.
+    ///
+    /// Direct callers must supply a nonempty provider-local `params.model` for
+    /// selectable operations (no provider prefix). Fixed operations require
+    /// `model: None`. Use `ProviderRegistry::execute` for user-facing models:
+    /// adapters never resolve environment defaults or strip provider prefixes.
     ///
     /// Implementations extract the fields they need from `params` (cloning
     /// owned `String`s into the future scope) and call their provider-specific
@@ -129,136 +177,81 @@ pub trait MediaProvider: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>>;
 }
 
-/// Ordered registry of media providers. Dispatches an op to the first
-/// supporting provider, falling back on runtime error.
-///
-/// Order matters: register the preferred provider first.
+/// Registered media backends, looked up by the selected provider's name.
+/// Registration order never grants permission to dispatch elsewhere.
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn MediaProvider>>,
 }
 
 impl ProviderRegistry {
-    /// Build a registry from an ordered list of providers.
     #[must_use]
     pub fn new(providers: Vec<Arc<dyn MediaProvider>>) -> Self {
         Self { providers }
     }
 
-    /// Whether at least one registered provider supports `op`.
-    #[must_use]
-    pub fn supports(&self, op: MediaOp) -> bool {
-        self.providers.iter().any(|p| p.supports(op))
-    }
-
-    /// Slice of all registered providers (for scored selection / iteration).
-    #[must_use]
-    pub fn providers(&self) -> &[Arc<dyn MediaProvider>] {
-        &self.providers
-    }
-
-    /// Number of registered providers.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.providers.len()
-    }
-
-    /// Whether the registry has no providers.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.providers.is_empty()
-    }
-
-    /// Execute `op`, trying providers in priority order that support it. On
-    /// error, falls back to the next supporting provider (with a `reg.inference`
-    /// warn). Returns the first success, or an error listing every provider
-    /// failure in attempt order.
-    ///
-    /// When multiple providers can serve `op`, the primary is chosen via the
-    /// 7-dimension scored engine (`scoring::select_scored`), which emits the
-    /// `reg.media.select` span, and the fallback chain is ordered by descending
-    /// weighted score. With a single candidate there is no selection to make —
-    /// the lone provider is used directly.
-    ///
-    /// expect: "The system routes media ops through the configured provider membrane"
-    /// pre:  at least one provider supports op (otherwise returns Connection error)
-    /// post: returns Ok(value) from the first succeeding provider
-    /// post: if all supporting providers fail → Err listing every provider
-    ///       failure in attempt order (the primary's error is not masked by
-    ///       the fallback's)
-    /// post: fallback attempts emit a `reg.inference` warn naming the failed provider
-    /// post: multi-provider ops emit a `reg.media.select` span with candidate scores
+    /// expect: "My media goes only to the provider I selected, including on failure."
+    /// [P1] Motivating: preserve the user's model and provider choice.
+    /// [P4] Constraining: no implicit cross-provider data transfer.
+    /// pre: model override or per-operation configuration uses a full provider prefix;
+    /// fixed-model operations carry no override.
+    /// post: at most one provider executes, with only the provider-local model;
+    /// invalid selection performs no request; provider errors return unchanged.
     pub async fn execute(
         &self,
         op: MediaOp,
         params: &MediaGenerateParams,
     ) -> Result<Value, InferenceError> {
-        let candidates: Vec<Arc<dyn MediaProvider>> = self
-            .providers
-            .iter()
-            .filter(|p| p.supports(op))
-            .map(Arc::clone)
-            .collect();
-        if candidates.is_empty() {
-            return Err(InferenceError::NotConfigured(format!(
-                "no provider configured for media op: {}",
-                op.as_str()
+        let mut params = params.clone();
+        let (provider_name, credential) = if let Some(variable) = op.model_env() {
+            let model = match params.model.as_ref() {
+                Some(model) => model.clone(),
+                None => std::env::var(variable).map_err(|_| {
+                    InferenceError::NotConfigured(format!(
+                        "set {variable} or pass a provider-qualified model for {}", op.as_str()
+                    ))
+                })?,
+            };
+            let invalid_model = || InferenceError::Model(
+                "media models require OpenRouter/<model> or DeepInfra/<model>; use full provider names, a nonempty model, and no whitespace".into()
+            );
+            let (prefix, local_model) = model.split_once('/').ok_or_else(invalid_model)?;
+            if model.chars().any(char::is_whitespace)
+                || local_model.split('/').any(str::is_empty)
+            {
+                return Err(invalid_model());
+            }
+            let selected = if prefix.eq_ignore_ascii_case("OpenRouter") {
+                ("openrouter", "OPENROUTER_API_KEY")
+            } else if prefix.eq_ignore_ascii_case("DeepInfra") {
+                ("deepinfra", "DEEPINFRA_API_KEY")
+            } else {
+                return Err(invalid_model());
+            };
+            params.model = Some(local_model.to_owned());
+            selected
+        } else {
+            if params.model.is_some() {
+                return Err(InferenceError::Model(format!(
+                    "{} uses a fixed DeepInfra model; remove the model override", op.as_str()
+                )));
+            }
+            ("deepinfra", "DEEPINFRA_API_KEY")
+        };
+        let mut matching = self.providers.iter()
+            .filter(|provider| provider.id().eq_ignore_ascii_case(provider_name));
+        let provider = matching.next().ok_or_else(|| InferenceError::NotConfigured(format!(
+            "{provider_name} is not configured for {}; set {credential}", op.as_str()
+        )))?;
+        if matching.next().is_some() {
+            return Err(InferenceError::Model(format!(
+                "ambiguous media provider registration: {provider_name}"
             )));
         }
-
-        // When multiple providers can serve the op, select the primary via the
-        // 7-dimension scored engine (which emits the `reg.media.select` span)
-        // and order the fallback chain by descending weighted score. With a
-        // single candidate there is no selection to make — use it directly
-        // so single-provider ops don't emit a spurious selection span.
-        let ordered: Vec<Arc<dyn MediaProvider>> = if candidates.len() > 1 {
-            let (chosen, scores) = crate::scoring::select_scored(self, op)?;
-            let chosen_id = chosen.id();
-            let mut by_score: Vec<Arc<dyn MediaProvider>> = Vec::with_capacity(candidates.len());
-            by_score.push(chosen);
-            // Remaining candidates, best weighted score first.
-            let mut remaining: Vec<&crate::scoring::ScoredProvider> =
-                scores.iter().filter(|s| s.id != chosen_id).collect();
-            remaining.sort_by(|a, b| {
-                b.weighted
-                    .partial_cmp(&a.weighted)
-                    .unwrap_or(Ordering::Equal)
-            });
-            for s in remaining {
-                if let Some(p) = self.providers.iter().find(|p| p.id() == s.id.as_str()) {
-                    by_score.push(Arc::clone(p));
-                }
-            }
-            by_score
-        } else {
-            candidates
-        };
-
-        let mut failures: Vec<String> = Vec::new();
-        for (idx, provider) in ordered.iter().enumerate() {
-            match provider.execute(op, params).await {
-                Ok(value) => return Ok(value),
-                Err(err) => {
-                    if idx + 1 < ordered.len() {
-                        tracing::warn!(
-                            target: "reg.inference",
-                            provider = provider.id(),
-                            op = op.as_str(),
-                            error = %err,
-                            "provider failed, falling back to next provider"
-                        );
-                    }
-                    failures.push(format!("{}: {err}", provider.id()));
-                }
-            }
+        if !provider.supports(op) {
+            return Err(InferenceError::Model(format!(
+                "{provider_name} does not support {}; choose a supported provider-qualified model", op.as_str()
+            )));
         }
-        // Every provider failure is listed in attempt order — returning only
-        // the last error masked the primary's (a 401 "invalid key" was hidden
-        // behind the fallback's "invalid model" 400, sending the operator
-        // debugging the wrong layer).
-        Err(InferenceError::Connection(format!(
-            "all providers failed for media op: {} — {}",
-            op.as_str(),
-            failures.join("; ")
-        )))
+        provider.execute(op, &params).await
     }
 }
