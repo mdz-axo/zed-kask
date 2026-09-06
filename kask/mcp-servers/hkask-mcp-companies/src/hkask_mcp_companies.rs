@@ -60,6 +60,8 @@ pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Prov
 mod forecast;
 pub(crate) mod learning;
 
+#[cfg(test)]
+mod acquisition_tests;
 pub(crate) mod research;
 mod scenarios;
 mod screener;
@@ -124,58 +126,89 @@ hkask_mcp_server::mcp_server!(
 use hkask_mcp_portfolio::map_portfolio_error;
 
 impl CompaniesServer {
+    /// expect: [P5] Every reader sees the same normalized data and actual source.
+    /// pre: logical provider endpoint; post: cache hits retain provenance and warnings.
+    async fn fetch_response(
+        &self,
+        tool: &str,
+        symbol: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<providers::ProviderResponse, McpToolError> {
+        // Version the acquisition representation, not the database: old raw-only
+        // rows must never masquerade as normalized, provenance-carrying responses.
+        let params_hash = format!("normalized-v1:{}", fibo_cache::hash_params(extra));
+        if let Some(cache) = &self.fibo_cache {
+            if let Some(cached) = cache.get_raw(symbol, tool, &params_hash) {
+                match serde_json::from_value::<providers::ProviderResponse>(cached) {
+                    Ok(response) => {
+                        for warning in &response.warnings {
+                            tracing::warn!(symbol, tool, "cached acquisition: {warning}");
+                        }
+                        return Ok(response);
+                    }
+                    Err(error) => {
+                        tracing::warn!(symbol, tool, "invalid acquisition cache entry: {error}")
+                    }
+                }
+            }
+        }
+        let learning = self
+            .learning
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let response = if tool == "key_metrics" {
+            providers::fetch_key_metrics(
+                &self.client,
+                symbol,
+                extra,
+                &self.fmp_api_key,
+                &self.eodhd_api_key,
+                Some(&learning),
+            )
+            .await?
+        } else {
+            providers::companies_get(
+                &self.client,
+                tool,
+                symbol,
+                &self.fmp_api_key,
+                &self.eodhd_api_key,
+                extra,
+                Some(&learning),
+            )
+            .await?
+        };
+        for warning in &response.warnings {
+            tracing::warn!(symbol, tool, "acquisition: {warning}");
+        }
+        if let Some(cache) = &self.fibo_cache {
+            let provider = response.provider.to_string();
+            let cached = serde_json::to_value(&response).map_err(|error| {
+                McpToolError::internal(format!("serialize acquisition: {error}"))
+            })?;
+            cache.store_raw(symbol, tool, &params_hash, &cached, &provider);
+            cache.extract_and_store_concepts(symbol, tool, &response.value, &provider);
+        }
+        Ok(response)
+    }
+
     async fn fetch(
         &self,
         tool: &str,
         symbol: &str,
         extra: &[(&str, &str)],
     ) -> Result<serde_json::Value, McpToolError> {
-        // FIBO cache: check for a fresh raw response before hitting the API.
-        let params_hash = fibo_cache::hash_params(extra);
-
-        if let Some(ref cache) = self.fibo_cache {
-            if let Some(cached) = cache.get_raw(symbol, tool, &params_hash) {
-                tracing::debug!("fibo_cache: hit for {symbol} {tool}");
-                return Ok(cached);
-            }
-        }
-
-        let l = self
-            .learning
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let response = providers::companies_get(
-            &self.client,
-            tool,
-            symbol,
-            &self.fmp_api_key,
-            &self.eodhd_api_key,
-            extra,
-            Some(&l),
-        )
-        .await?;
-        let provider_str = match response.provider {
-            providers::Provider::Fmp => "FMP",
-            providers::Provider::Eodhd => "EODHD",
-        };
-        let result = response.value;
-
-        // Store the fresh response in the FIBO cache and extract concepts.
-        if let Some(ref cache) = self.fibo_cache {
-            cache.store_raw(symbol, tool, &params_hash, &result, provider_str);
-            cache.extract_and_store_concepts(symbol, tool, &result, provider_str);
-        }
-
-        Ok(result)
+        Ok(self.fetch_response(tool, symbol, extra).await?.value)
     }
 
     /// Fetch a company profile as a typed `CompanyProfile` view. Concentrates
     /// field-name knowledge so tool handlers read `profile.market_cap()`
     /// instead of `v.get("mktCap").and_then(|v| v.as_f64())`.
     async fn fetch_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
-        let raw = self.fetch("company_profile", symbol, &[]).await?;
-        Ok(CompanyProfile::from_raw(raw))
+        Ok(CompanyProfile::from_response(
+            self.fetch_response("company_profile", symbol, &[]).await?,
+        ))
     }
 
     /// Fetch key metrics as a typed `KeyMetrics` view.
@@ -184,40 +217,11 @@ impl CompaniesServer {
         symbol: &str,
         limit: usize,
     ) -> Result<KeyMetrics, McpToolError> {
-        let limit_str = limit.to_string();
-        let params_hash = fibo_cache::hash_params(&[("limit", &limit_str)]);
-
-        // Check FIBO cache first.
-        if let Some(ref cache) = self.fibo_cache {
-            if let Some(cached) = cache.get_raw(symbol, "key_metrics", &params_hash) {
-                tracing::debug!("fibo_cache: hit for {symbol} key_metrics");
-                return Ok(KeyMetrics::from_raw(cached));
-            }
-        }
-
-        let l = self
-            .learning
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let metrics = providers::fetch_key_metrics(
-            &self.client,
-            symbol,
-            limit,
-            &self.fmp_api_key,
-            &self.eodhd_api_key,
-            Some(&l),
-        )
-        .await?;
-        let raw = metrics.raw().clone();
-
-        // Cache the merged key-metrics response and extract FIBO concepts.
-        if let Some(ref cache) = self.fibo_cache {
-            cache.store_raw(symbol, "key_metrics", &params_hash, &raw, "FMP");
-            cache.extract_and_store_concepts(symbol, "key_metrics", &raw, "FMP");
-        }
-
-        Ok(KeyMetrics::from_raw(raw))
+        let limit = limit.to_string();
+        Ok(KeyMetrics::from_raw(
+            self.fetch("key_metrics", symbol, &[("limit", &limit)])
+                .await?,
+        ))
     }
 
     /// Fetch historical prices as a typed `HistoricalPriceView` view.
@@ -459,11 +463,6 @@ mod tool_behavior_tests {
         )
     }
 
-    fn parse_envelope(output: &str) -> serde_json::Value {
-        serde_json::from_str(output)
-            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"))
-    }
-
     // Pins the registered tool-surface count end-to-end. The portfolio ledger
     // surface (portfolio_delete, ledger_import, ledger_export,
     // portfolio_comparison, portfolio_returns, transaction_note_append) was
@@ -554,43 +553,20 @@ mod tool_behavior_tests {
         );
     }
 
-    /// A valid-shaped symbol passes validation and proceeds to fetch — which,
-    /// against an unreachable endpoint, must surface as a typed error
-    /// (not a panic). Uses an unroutable host so the test stays offline.
+    /// A valid symbol reaches the real provider HTTP path, but both providers
+    /// fail locally. This test must not contact a live API with empty keys.
     #[tokio::test]
     async fn moat_check_valid_symbol_surfaces_structured_error_on_fetch_failure() {
-        let mut server = make_server();
-        // Point the client at an unreachable local port: connection refused.
-        // (The fetch URL comes from provider config; the client itself cannot
-        // be re-pointed per-test without rebuilding the server. Instead we
-        // assert on the *shape* of the failure by using an empty key set —
-        // the providers degrade to errors before any request leaves.)
-        server.fmp_api_key = String::new();
-        server.eodhd_api_key = String::new();
-
-        match server
-            .moat_check(Parameters(SymbolRequest {
-                symbol: "AAPL".to_string(),
-            }))
-            .await
-        {
-            // Either a typed error (missing credentials) or a content payload
-            // with degraded data — both are valid contracts. A panic or
-            // non-JSON output is not.
-            Ok(output) => {
-                let parsed = parse_envelope(&output);
-                assert!(
-                    parsed.is_object(),
-                    "content payload must be a JSON object, got: {parsed}"
-                );
-            }
-            Err(error) => {
-                assert!(
-                    !error.message.is_empty(),
-                    "typed error must carry a message, got: {error:?}"
-                );
-            }
-        }
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let fixture = crate::acquisition_tests::FixtureHttp::start(|_| {
+            (503, serde_json::json!({"error":"fixture provider unavailable"}))
+        }).await;
+        providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
+            let server = crate::acquisition_tests::server(directory.path());
+            let error = server.moat_check(Parameters(SymbolRequest { symbol: "AAPL".into() }))
+                .await.expect_err("provider failure must be surfaced");
+            assert!(!error.message.is_empty());
+        }).await;
     }
 
     /// `resolve_symbol` needs at least one of company name / ticker — an

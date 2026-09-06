@@ -25,6 +25,7 @@ use serde_json::Value;
 // so a missing `mktCap` is distinguishable from a zero market cap.
 pub(crate) struct CompanyProfile {
     raw: Value,
+    provider: Option<Provider>,
 }
 
 impl CompanyProfile {
@@ -32,13 +33,27 @@ impl CompanyProfile {
     /// FMP-shaped array (`[{"companyName": ...}]`); an empty array means the
     /// provider returned no profile.
     pub fn from_raw(raw: Value) -> Self {
-        Self { raw }
+        Self {
+            raw,
+            provider: None,
+        }
+    }
+
+    pub(crate) fn from_response(response: ProviderResponse) -> Self {
+        Self {
+            raw: response.value,
+            provider: Some(response.provider),
+        }
+    }
+
+    pub(crate) fn provider(&self) -> Option<Provider> {
+        self.provider
     }
 
     /// The first profile object in the array, or `None` if the array is empty
     /// or missing (the "no profile" signal — distinct from a present-but-zero
     /// field).
-    fn first(&self) -> Option<&Value> {
+    pub(crate) fn first(&self) -> Option<&Value> {
         self.raw.as_array().and_then(|a| a.first())
     }
 
@@ -201,7 +216,8 @@ impl HistoricalPriceView {
 
 // ── Provider enum ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum Provider {
     Fmp,
     Eodhd,
@@ -220,6 +236,21 @@ impl std::fmt::Display for Provider {
 
 const FMP_BASE_URL: &str = "https://financialmodelingprep.com/stable";
 const EODHD_BASE_URL: &str = "https://eodhd.com/api";
+
+// Test-local HTTP origin substitution leaves routing, requests and normalization intact.
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static TEST_HTTP_ORIGIN: String;
+}
+
+fn provider_url(base: &str, path: &str) -> String {
+    #[cfg(test)]
+    if let Ok(origin) = TEST_HTTP_ORIGIN.try_with(Clone::clone) {
+        let provider = if base == FMP_BASE_URL { "fmp" } else { "eodhd" };
+        return format!("{origin}/{provider}{path}");
+    }
+    format!("{base}{path}")
+}
 
 // ── Endpoint descriptor: maps a logical endpoint to provider-specific paths ──
 
@@ -324,10 +355,11 @@ fn strip_us_suffix(symbol: &str) -> &str {
 /// The result of a provider fetch — the raw JSON value plus which provider
 /// served it. The cache stores the provider so consumers can distinguish
 /// FMP-sourced data from EODHD-sourced data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderResponse {
     pub value: Value,
     pub provider: Provider,
+    pub warnings: Vec<String>,
 }
 
 // ── Main routing function ──────────────────────────────────────────
@@ -392,11 +424,13 @@ pub async fn companies_get(
                 Ok(ProviderResponse {
                     value: normalize_eodhd(tool, &value, symbol),
                     provider: Provider::Eodhd,
+                    warnings: Vec::new(),
                 })
             } else {
                 Ok(ProviderResponse {
                     value,
                     provider: primary,
+                    warnings: Vec::new(),
                 })
             }
         }
@@ -421,7 +455,7 @@ pub async fn companies_get(
                 Provider::Eodhd => {
                     // For FMP→EODHD fallback on plain symbols, try with .US suffix
                     let eodhd_symbol = if !is_international_symbol(symbol) {
-                        format!("{}.US", symbol)
+                        format!("{}.US", strip_us_suffix(symbol))
                     } else {
                         symbol.to_string()
                     };
@@ -443,11 +477,13 @@ pub async fn companies_get(
                         Ok(ProviderResponse {
                             value: normalize_eodhd(tool, &value, symbol),
                             provider: Provider::Eodhd,
+                            warnings: Vec::new(),
                         })
                     } else {
                         Ok(ProviderResponse {
                             value,
                             provider: secondary,
+                            warnings: Vec::new(),
                         })
                     }
                 }
@@ -457,62 +493,72 @@ pub async fn companies_get(
     }
 }
 
-/// Fetch key metrics as a typed `KeyMetrics` view over the retained raw array.
-///
-/// FMP's stable API split the old key-metrics response across three endpoints:
-/// - `/stable/key-metrics` — ROIC, ROE, DSO, DPO, cash conversion cycle, etc.
-/// - `/stable/ratios` — P/E, P/B, P/S, dividend yield, gross profit margin, etc.
-/// - `/stable/financial-growth` — revenue growth, net income growth, etc.
-///
-/// This function fetches all three and merges relevant fields into each
-/// key-metrics entry (matched by date) so downstream code and typed accessors
-/// see the same field set as the old single-endpoint response. Field aliases
-/// (`roic` for `returnOnInvestedCapital`, `calendarYear` for `fiscalYear`)
-/// are added so existing `.get("fieldName")` calls continue to work.
+/// Acquire canonical metrics while retaining the actual provider. FMP stable
+/// splits metrics across three endpoints; EODHD derives them from fundamentals
+/// and is never mixed with FMP data.
 pub async fn fetch_key_metrics(
     client: &reqwest::Client,
     symbol: &str,
-    limit: usize,
+    extra: &[(&str, &str)],
     fmp_api_key: &str,
     eodhd_api_key: &str,
     learning: Option<&super::LearningState>,
-) -> Result<KeyMetrics, McpToolError> {
-    let limit_str = limit.to_string();
-    let raw = companies_get(
+) -> Result<ProviderResponse, McpToolError> {
+    let mut response = companies_get(
         client,
         "key_metrics",
         symbol,
         fmp_api_key,
         eodhd_api_key,
-        &[("limit", &limit_str)],
+        extra,
         learning,
     )
     .await?;
-
-    // Enrich with ratios and financial-growth data from FMP.
-    // These supplementary fetches are best-effort — if they fail, the key-metrics
-    // data is still returned (with None for the moved fields).
-    let ratios_raw = fmp_get(
-        client,
-        "/ratios",
-        fmp_api_key,
-        symbol,
-        &[("limit", &limit_str)],
-    )
-    .await
-    .ok();
-    let growth_raw = fmp_get(
-        client,
-        "/financial-growth",
-        fmp_api_key,
-        symbol,
-        &[("limit", &limit_str)],
-    )
-    .await
-    .ok();
-
-    let enriched = enrich_key_metrics(raw.value, ratios_raw, growth_raw);
-    Ok(KeyMetrics::from_raw(enriched))
+    if response.provider == Provider::Eodhd {
+        response.warnings.push("EODHD derived metrics: ROIC approximates net income / total assets; working-capital ratios use year-end balances".into());
+        return Ok(response);
+    }
+    let symbol = strip_us_suffix(symbol);
+    let (ratios, growth) = tokio::join!(
+        fmp_get(client, "/ratios", fmp_api_key, symbol, extra),
+        fmp_get(client, "/financial-growth", fmp_api_key, symbol, extra),
+    );
+    let mut supplement = |endpoint: &str, result: Result<Value, McpToolError>| match result {
+        Ok(value) if value.is_array() => {
+            if let Some(rows) = response.value.as_array() {
+                for row in rows {
+                    let date = row.get("date").and_then(Value::as_str);
+                    if !value.as_array().is_some_and(|entries| {
+                        entries.iter().any(|entry| {
+                            date.is_some() && entry.get("date").and_then(Value::as_str) == date
+                        })
+                    }) {
+                        response.warnings.push(format!(
+                            "FMP {endpoint}: no supplement for date {}",
+                            date.unwrap_or("missing")
+                        ));
+                    }
+                }
+            }
+            Some(value)
+        }
+        Ok(_) => {
+            response
+                .warnings
+                .push(format!("FMP {endpoint}: expected an array"));
+            None
+        }
+        Err(error) => {
+            response
+                .warnings
+                .push(format!("FMP {endpoint}: {}", error.to_json_string()));
+            None
+        }
+    };
+    let ratios = supplement("ratios", ratios);
+    let growth = supplement("financial-growth", growth);
+    response.value = enrich_key_metrics(response.value, ratios, growth);
+    Ok(response)
 }
 
 /// Merge ratios and financial-growth fields into key-metrics entries by date.
@@ -663,7 +709,7 @@ async fn fmp_get(
     symbol: &str,
     extra_params: &[(&str, &str)],
 ) -> Result<Value, McpToolError> {
-    let url = format!("{FMP_BASE_URL}{path}");
+    let url = provider_url(FMP_BASE_URL, path);
     let mut query: Vec<(&str, &str)> = vec![("symbol", symbol), ("apikey", api_key)];
     query.extend_from_slice(extra_params);
 
@@ -696,7 +742,7 @@ async fn eodhd_get(
     symbol: &str,
     extra_params: &[(&str, &str)],
 ) -> Result<Value, McpToolError> {
-    let url = format!("{EODHD_BASE_URL}{path}/{symbol}");
+    let url = provider_url(EODHD_BASE_URL, &format!("{path}/{symbol}"));
     let mut query: Vec<(&str, &str)> = vec![("api_token", api_key), ("fmt", "json")];
     query.extend_from_slice(extra_params);
 
@@ -974,8 +1020,9 @@ fn normalize_eodhd_cash_flow(fundamentals: &Value) -> Value {
 /// grossProfitMargin, roic, daysOfPayablesOutstanding, daysOfSalesOutstanding,
 /// calendarYear, period, etc.
 ///
-/// EODHD provides Highlights (latest snapshot), Earnings.History (yearly earnings),
-/// and Financials (yearly balance sheet + income statement). We combine them
+/// EODHD provides Highlights (latest snapshot), optional quarterly Earnings.History,
+/// and Financials (annual balance sheet + income statement). Annual statements set
+/// the metric dates; we retain matching earnings fields
 /// and compute derived metrics so MAIA analysis functions work.
 ///
 /// Note: EODHD-derived metrics are best-effort approximations. MAIA deep
@@ -992,11 +1039,12 @@ fn normalize_eodhd_key_metrics(fundamentals: &Value) -> Value {
         .and_then(|f| f.get("Balance_Sheet"))
         .and_then(|bs| bs.get("yearly"));
 
-    // Build per-year objects from Earnings.History, enriched with computed metrics
-    let mut items: Vec<Value> = match earnings_history {
+    // Annual statements define fiscal periods; Earnings.History is quarterly and
+    // may be absent. It must not determine the annual metrics timeline.
+    let mut items: Vec<Value> = match income_yearly {
         Some(Value::Object(map)) => map
             .iter()
-            .map(|(date, earnings)| {
+            .map(|(date, _)| {
                 let year = date.split('-').next().unwrap_or(date);
                 let mut obj = serde_json::json!({
                     "calendarYear": year,
@@ -1004,9 +1052,11 @@ fn normalize_eodhd_key_metrics(fundamentals: &Value) -> Value {
                     "period": "FY",
                 });
 
-                // Copy earnings fields
+                // Retain any earnings fields for the matching fiscal date only.
                 if let Some(obj_map) = obj.as_object_mut()
-                    && let Some(e_obj) = earnings.as_object()
+                    && let Some(e_obj) = earnings_history
+                        .and_then(|history| history.get(date))
+                        .and_then(Value::as_object)
                 {
                     for (key, value) in e_obj {
                         obj_map.insert(key.clone(), value.clone());
@@ -1287,13 +1337,20 @@ fn compute_valuation_ratios(
             .and_then(|v| v.as_f64());
         if let Some(ebitda_val) = ebitda {
             if ebitda_val > 0.0 {
-                let net_debt = balance_entry
-                    .and_then(|b| b.get("netDebt"))
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let ev = market_cap + net_debt;
-                f_map.insert("evToEBITDA".to_string(), Value::from(ev / ebitda_val));
-                f_map.insert("evToEbitda".to_string(), Value::from(ev / ebitda_val));
+                if let Some(net_debt) = balance_entry
+                    .and_then(|balance| balance.get("netDebt"))
+                    .and_then(Value::as_f64)
+                {
+                    let enterprise_value = market_cap + net_debt;
+                    f_map.insert(
+                        "evToEBITDA".to_string(),
+                        Value::from(enterprise_value / ebitda_val),
+                    );
+                    f_map.insert(
+                        "evToEbitda".to_string(),
+                        Value::from(enterprise_value / ebitda_val),
+                    );
+                }
             }
         }
     }

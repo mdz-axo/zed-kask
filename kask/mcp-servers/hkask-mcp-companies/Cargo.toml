@@ -20,6 +20,7 @@ hkask-types.workspace = true
 hkask-bridge-ontology.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true
+futures.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde.workspace = true
 serde_json.workspace = true

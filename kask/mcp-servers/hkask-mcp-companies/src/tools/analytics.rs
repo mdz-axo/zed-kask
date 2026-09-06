@@ -502,73 +502,17 @@ impl CompaniesServer {
                 .await?;
             }
 
-            // Fetch all required financial statements. The profile fetch
-            // returns a typed `CompanyProfile` view; the statement fetches
-            // stay `Value` because `HistoricalSnapshot::from_api_json`
-            // consumes them directly.
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
-                };
-
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
-
-            let (Some(income_data), Some(balance_data), Some(cf_data), Some(profile_data)) = (
-                income_arr.filter(|a| !a.is_empty()),
-                balance_arr.filter(|a| !a.is_empty()),
-                cf_arr.filter(|a| !a.is_empty()),
-                profile_obj,
-            )
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
+            let profile = self.fetch_profile(&req.symbol).await?;
+            let prepared = match crate::valuation_service::prepare_dcf(
+                self, &req.symbol, &profile, types::ProjectionAssumptionOverrides::from(&req),
+            ).await {
+                Ok(prepared) => prepared,
+                Err(error) => return error.into_tool_result(),
             };
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-
-            // Build historical snapshot from API data
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
-            }
-
-            // Financial-sector guard: banks and insurance companies have
-            // balance sheets where current liabilities include deposits,
-            // making the NWC concept meaningless. Return an honest error
-            // instead of a cryptic validation failure.
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "dcf_valuation") {
-                return Ok(err);
-            }
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-
-            let current_price = profile.price().unwrap_or(0.0);
+            let crate::valuation_service::PreparedDcf {
+                history: hist, assumptions, model, current_price, provenance, warnings,
+            } = prepared;
             let shares = hist.shares_outstanding;
-
-            // Run the projection engine
-            let model = financial_model::project_model(&hist, &assumptions, current_price);
 
             // Compute signal quality and emit Regulation span (G2: FinGPT low-SNR handling)
             let signal_quality = hist.signal_quality();
@@ -599,7 +543,7 @@ impl CompaniesServer {
             // The response assembly is pure — delegate to `valuation_service`
             // so it is testable without HTTP/API keys. The tool handler retains
             // only fetch, validate, persist, and the span.
-            let output = crate::valuation_service::build_dcf_response(
+            let mut output = crate::valuation_service::build_dcf_response(
                 &req.symbol,
                 &forecast_id,
                 &req.revision_of,
@@ -611,6 +555,8 @@ impl CompaniesServer {
                 shares,
             );
 
+            output["provenance"] = provenance;
+            output["warnings"] = serde_json::json!(warnings);
             Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
         }).await
     }

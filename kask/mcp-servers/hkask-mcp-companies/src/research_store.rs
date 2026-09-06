@@ -143,6 +143,16 @@ impl ResearchStore {
         Ok(manager)
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_dir(directory: PathBuf) -> Result<Self, PortfolioError> {
+        let manager = Self {
+            store: PortfolioStore::with_dir(directory.clone()),
+            db_path: directory.join("master.db"),
+        };
+        manager.ensure_companies_schema()?;
+        Ok(manager)
+    }
+
     /// Open a connection to the same DB the store uses, for companies-specific
     /// tables (notes, files, forecasts).
     fn open(&self) -> Result<Connection, PortfolioError> {

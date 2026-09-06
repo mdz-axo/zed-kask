@@ -5,6 +5,7 @@ use crate::{
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
     projected_terminal_multiple, providers, research_store::PersistedForecast, scenarios,
     superforecast, types, validate_symbol,
+    valuation_service::extract_historical_arrays,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::time::now_rfc3339;
@@ -44,37 +45,6 @@ fn validate_unit_interval(name: &str, value: f64) -> Result<(), McpToolError> {
     }
 }
 
-/// Extract non-empty financial statement arrays and the profile object from
-/// the raw provider responses. Returns `None` if any required array is empty
-/// or missing, so callers can surface an "insufficient data" error without
-/// panicky `unwrap()` calls on guarded `Option<&[Value]>`.
-fn extract_historical_arrays<'a>(
-    income: &'a serde_json::Value,
-    balance: &'a serde_json::Value,
-    cf: &'a serde_json::Value,
-    metrics: &'a serde_json::Value,
-    profile: &'a serde_json::Value,
-) -> Option<(
-    &'a [serde_json::Value],
-    &'a [serde_json::Value],
-    &'a [serde_json::Value],
-    &'a [serde_json::Value],
-    &'a serde_json::Value,
-)> {
-    let income_data = income.as_array().filter(|a| !a.is_empty())?;
-    let balance_data = balance.as_array().filter(|a| !a.is_empty())?;
-    let cf_data = cf.as_array().filter(|a| !a.is_empty())?;
-    let metrics_data: &[serde_json::Value] = metrics.as_array().map_or(&[], |v| v);
-    let profile_data = profile.as_array().and_then(|a| a.first())?;
-    Some((
-        income_data,
-        balance_data,
-        cf_data,
-        metrics_data,
-        profile_data,
-    ))
-}
-
 #[tool_router(router = valuation_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
@@ -90,10 +60,14 @@ impl CompaniesServer {
             // 1. Fetch target company profile and key_metrics as typed views.
             //    A missing field is `None`, not a silent zero — the field-name
             //    knowledge lives in the `CompanyProfile`/`KeyMetrics` accessors.
-            let profile = self.fetch_profile(&req.symbol).await?;
-            let metrics = self.fetch_key_metrics(&req.symbol, 1).await?;
+            let profile_response = self.fetch_response("company_profile", &req.symbol, &[]).await?;
+            let metrics_response = self.fetch_response("key_metrics", &req.symbol, &[("limit", "1")]).await?;
+            let provenance = serde_json::json!({"company_profile": profile_response.provider, "key_metrics": metrics_response.provider});
+            let warnings: Vec<_> = profile_response.warnings.iter().cloned().chain(metrics_response.warnings).collect();
+            let profile = CompanyProfile::from_response(profile_response);
+            let metrics = KeyMetrics::from_raw(metrics_response.value);
 
-            let Some(profile_data) = profile.raw().as_array().and_then(|a| a.first()) else {
+            if profile.first().is_none() {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "company profile not found"}));
             };
 
@@ -121,42 +95,19 @@ impl CompaniesServer {
                 (peers, "user-provided".to_string())
             };
 
-            // 3. Fetch peer profiles and metrics concurrently. A failed peer
-            //    fetch yields an empty `CompanyProfile` (raw `Null`), so its
-            //    accessors return `None` and the peer row carries no multiples.
-            //    Concurrent fetch keeps the total wall-clock time under the
-            //    MCP 60s cap (sequential = 8 peers × 2 calls × ~1s = 16s+;
-            //    concurrent = max single fetch ≈ 2s).
-            let mut peer_tasks = tokio::task::JoinSet::new();
-            for peer_sym in &peers {
-                let peer_sym = peer_sym.clone();
-                let client = self.client.clone();
-                let fmp_key = self.fmp_api_key.clone();
-                let eodhd_key = self.eodhd_api_key.clone();
-                peer_tasks.spawn(async move {
-                    let profile_resp = providers::companies_get(
-                        &client, "company_profile", &peer_sym, &fmp_key, &eodhd_key, &[], None,
-                    )
-                    .await
-                    .unwrap_or_else(|_| providers::ProviderResponse {
-                        value: serde_json::Value::Null,
-                        provider: providers::Provider::Fmp,
-                    });
-                    let pp = CompanyProfile::from_raw(profile_resp.value);
-                    let metrics_resp = providers::fetch_key_metrics(
-                        &client, &peer_sym, 1, &fmp_key, &eodhd_key, None,
-                    )
-                    .await
-                    .unwrap_or_else(|_| KeyMetrics::from_raw(serde_json::Value::Array(vec![])));
-                    (peer_sym, pp, metrics_resp)
-                });
-            }
-            let mut peer_data: Vec<(String, CompanyProfile, KeyMetrics)> = Vec::new();
-            while let Some(result) = peer_tasks.join_next().await {
-                if let Ok(entry) = result {
-                    peer_data.push(entry);
-                }
-            }
+            // Borrow the server so peers share target cache and learning policy.
+            // join_all keeps requests concurrent without detached tasks or lost JoinErrors.
+            let peer_data = futures::future::join_all(peers.iter().map(|symbol| async move {
+                let validation = validate_symbol(symbol);
+                let (profile, metrics) = match validation {
+                    Ok(()) => tokio::join!(
+                        self.fetch_response("company_profile", symbol, &[]),
+                        self.fetch_response("key_metrics", symbol, &[("limit", "1")]),
+                    ),
+                    Err(error) => return (symbol, Err(error.clone()), Err(error)),
+                };
+                (symbol, profile, metrics)
+            })).await;
 
             // 4. Build comparison table. Field-name knowledge lives in the
             //    `CompanyProfile`/`KeyMetrics` accessors, not inline here.
@@ -192,13 +143,42 @@ impl CompaniesServer {
                 row
             };
 
-            let mut comparison = vec![build_row(&req.symbol, &profile, &metrics)];
-            for (sym, pp, pm) in &peer_data {
-                comparison.push(build_row(sym, pp, pm));
+            let mut target = build_row(&req.symbol, &profile, &metrics);
+            target["provenance"] = provenance;
+            target["warnings"] = serde_json::json!(warnings);
+            target["errors"] = serde_json::json!([]);
+            let mut comparison = vec![target];
+            for (symbol, profile, metrics) in peer_data {
+                let mut errors = Vec::new();
+                let mut provenance = serde_json::Map::new();
+                let mut warnings = Vec::new();
+                let mut payload = |endpoint: &str, result: Result<providers::ProviderResponse, McpToolError>| {
+                    match result {
+                        Ok(response) => {
+                            if response.value.as_array().is_none_or(|rows| rows.is_empty()) {
+                                errors.push(serde_json::json!({"endpoint": endpoint, "error": "no data returned"}));
+                            }
+                            provenance.insert(endpoint.into(), serde_json::json!(response.provider));
+                            warnings.extend(response.warnings);
+                            response.value
+                        }
+                        Err(error) => {
+                            errors.push(serde_json::json!({"endpoint": endpoint, "error": error.message, "kind": error.kind}));
+                            serde_json::Value::Null
+                        }
+                    }
+                };
+                let profile = CompanyProfile::from_raw(payload("company_profile", profile));
+                let metrics = KeyMetrics::from_raw(payload("key_metrics", metrics));
+                let mut row = build_row(symbol, &profile, &metrics);
+                row["provenance"] = serde_json::json!(provenance);
+                row["warnings"] = serde_json::json!(warnings);
+                row["errors"] = serde_json::json!(errors);
+                comparison.push(row);
             }
 
             // 5. DCF overlay on target
-            let dcf_overlay = self.build_dcf_overlay(&req, profile_data).await?;
+            let dcf_overlay = self.build_dcf_overlay(&req, &profile).await?;
 
             let company_name = profile.company_name().unwrap_or("");
             let sector = profile.sector().unwrap_or("");
@@ -224,74 +204,21 @@ impl CompaniesServer {
     async fn build_dcf_overlay(
         &self,
         req: &types::ComparableAnalysisRequest,
-        profile_data: &serde_json::Value,
+        profile: &CompanyProfile,
     ) -> Result<serde_json::Value, McpToolError> {
-        let inc_res = self
-            .fetch("income_statement", &req.symbol, &[("limit", "5")])
-            .await;
-        let bal_res = self
-            .fetch("balance_sheet", &req.symbol, &[("limit", "5")])
-            .await;
-        let cf_res = self
-            .fetch("cash_flow_statement", &req.symbol, &[("limit", "5")])
-            .await;
-        let km_res = self
-            .fetch("key_metrics", &req.symbol, &[("limit", "5")])
-            .await;
-
-        match (inc_res, bal_res, cf_res, km_res) {
-            (Ok(inc), Ok(bal), Ok(cf), Ok(km)) => {
-                if let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                    extract_historical_arrays(&inc, &bal, &cf, &km, profile_data)
-                {
-                    let hist = financial_model::HistoricalSnapshot::from_api_json(
-                        income_data,
-                        balance_data,
-                        cf_data,
-                        metrics_data,
-                        profile_data,
-                    );
-
-                    if hist.revenue.len() < 2 {
-                        return Ok(serde_json::json!({"error": "insufficient historical data"}));
-                    }
-
-                    let overlay_profile = CompanyProfile::from_raw(profile_data.clone());
-                    if let Some(err) = financial_model::financial_sector_guard(
-                        &overlay_profile,
-                        &req.symbol,
-                        "dcf_valuation",
-                    ) {
-                        return Ok(err);
-                    }
-
-                    let assumptions =
-                        financial_model::ProjectionAssumptions::from_history_with_overrides(
-                            &hist,
-                            types::ProjectionAssumptionOverrides::from(req),
-                        )
-                        .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-                    let current_price = profile_data
-                        .get("price")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
-                    let model = financial_model::project_model(&hist, &assumptions, current_price);
-                    let margin_of_safety = if current_price > 0.0 {
-                        (model.intrinsic_per_share - current_price) / current_price
-                    } else {
-                        0.0
-                    };
-                    Ok(serde_json::json!({
-                        "intrinsic_per_share": model.intrinsic_per_share,
-                        "current_price": current_price,
-                        "margin_of_safety": margin_of_safety,
-                    }))
-                } else {
-                    Ok(serde_json::json!({"error": "insufficient data for DCF"}))
-                }
-            }
-            _ => Ok(serde_json::json!({"error": "DCF overlay unavailable"})),
-        }
+        let prepared = match crate::valuation_service::prepare_dcf(
+            self, &req.symbol, profile, types::ProjectionAssumptionOverrides::from(req),
+        ).await {
+            Ok(prepared) => prepared,
+            Err(error) => return error.into_tool_result(),
+        };
+        Ok(serde_json::json!({
+            "intrinsic_per_share": prepared.model.intrinsic_per_share,
+            "current_price": prepared.current_price,
+            "margin_of_safety": prepared.margin_of_safety(),
+            "provenance": prepared.provenance,
+            "warnings": prepared.warnings,
+        }))
     }
 
     /// Auto-discover peer companies using the EODHD Screener API.
@@ -392,7 +319,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data for sensitivity analysis"}));
             };
@@ -491,7 +418,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -597,7 +524,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -696,7 +623,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -968,7 +895,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -1373,7 +1300,7 @@ impl CompaniesServer {
                         (&actual_income, &actual_balance, &actual_cf, &actual_metrics, &actual_profile)
                     {
                         if let Some((inc_data, bal_data, cf_data, met_data, prof_data)) =
-                            extract_historical_arrays(inc, bal, cf, metrics, prof.raw())
+                            extract_historical_arrays(inc, bal, cf, metrics, prof)
                         {
                             let actual_hist = financial_model::HistoricalSnapshot::from_api_json(
                                 inc_data,
@@ -1622,7 +1549,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };

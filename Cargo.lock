@@ -8792,6 +8792,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "futures 0.3.32",
  "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-mcp-portfolio",

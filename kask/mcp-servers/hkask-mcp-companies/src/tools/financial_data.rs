@@ -88,9 +88,16 @@ impl CompaniesServer {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
             let result = self
-                .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
+                .fetch_response("key_metrics", &symbol, &[("limit", &limit_str)])
                 .await?;
-            Ok(fibo::enrich_with_ontology(result, "key_metrics"))
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({
+                    "data": result.value,
+                    "provider": result.provider,
+                    "warnings": result.warnings,
+                }),
+                "key_metrics",
+            ))
         })
         .await
     }
