@@ -251,7 +251,9 @@ They are omitted from answer context. If no usable text is retrieved,
 is fabricated or resynthesized; re-embed available sources to restore it.
 
 The index owner serializes synchronous DB publication, hydration and purge.
-No mutex is held during inference. Clear cancels all pending publications;
+Consolidation registers its input/output namespace protection before reading
+source embeddings, so invalidation between snapshot acquisition and inference
+cannot revive a purged snapshot. No mutex is held during inference. Clear cancels all pending publications;
 purge cancels pending operations whose input/output refs overlap the named
 DB/prefix, leaving other cached DBs and ephemeral passages intact. Cancellation
 is visible (`corpus_embed`: `cancelled` count and `note`, also counted in
@@ -263,8 +265,13 @@ Replacement and purge use existing MemoryStore APIs, **not a cross-operation
 transaction**. Cache invalidation precedes deletion. Errors report partial
 application; a failed replacement may have removed its previous embedding,
 and an h_mem deletion failure does not restore already-purged embeddings.
-Counts are never replaced with zero on DB errors. Failed embedding batches
-(including short or dimension-mismatched responses) are counted honestly.
+Storage-publication errors propagate through both embedding and consolidation
+with their partial-replacement warning; they are not reduced to failure counts.
+h_mem purge uses one literal, case-sensitive SQL deletion, not a capped recall
+query: `%`, `_`, and backslash are ordinary prefix characters, and no matching
+rows are hidden behind a query limit. Counts are never replaced with zero on DB
+errors. Failed inference batches (including short or dimension-mismatched
+responses) are counted honestly.
 These guarantees coordinate this server's tools, not independent external DB writers.
 
 Retrieval distinguishes a missing effective model (`permission_denied`, naming

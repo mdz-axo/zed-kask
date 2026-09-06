@@ -635,6 +635,147 @@ async fn retrieval_inflight_hydration_cannot_republish() {
     }
 }
 
+async fn consolidation_fixture(
+    server: &CorpusServer,
+    directory: &std::path::Path,
+) -> crate::tools::corpus::ConsolidateChunksRequest {
+    let mut request = embed_request(directory, "memory.db", ORIGINAL);
+    let tagged = directory.join("tagged.jsonl");
+    let rows = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| {
+        json!({"entity_ref":entity_ref,"source":"river.txt","text":ORIGINAL,"word_count":10,"concepts":[],"salience":0.5}).to_string()
+    });
+    std::fs::write(&tagged, rows.join("\n")).expect("tagged chunks");
+    request.chunks_jsonl = tagged.to_string_lossy().into();
+    content(server.corpus_embed(Parameters(request)).await);
+    crate::tools::corpus::ConsolidateChunksRequest {
+        tagged_jsonl: tagged.to_string_lossy().into(),
+        output: directory
+            .join("consolidated.jsonl")
+            .to_string_lossy()
+            .into(),
+        db_path: directory.join("memory.db").to_string_lossy().into(),
+        passphrase: PASSPHRASE.into(),
+        prefix: "corpus:test:".into(),
+        threshold: 0.75,
+        concurrency: 2,
+        max_chunks_per_cluster: 10,
+        dry_run: false,
+    }
+}
+
+/// expect: Purge/clear cancels consolidation even between its DB snapshot and inference.
+/// [P8] Motivating: a deleted source snapshot cannot be republished as synthesis.
+#[tokio::test]
+async fn retrieval_consolidation_snapshot_is_protected() {
+    for clear in [false, true] {
+        let directory = fixture();
+        let port = Arc::new(RecordingPort::default());
+        let server = server(Arc::clone(&port));
+        let request = consolidation_fixture(&server, directory.path()).await;
+        let database = directory.path().join("memory.db");
+        let pause = Arc::new((tokio::sync::Notify::new(), tokio::sync::Notify::new()));
+        let mut service = crate::services::consolidation::ConsolidationService::new(
+            Arc::clone(&server.inference_router),
+            Arc::clone(&server.index),
+        );
+        service.after_snapshot = Some(Arc::clone(&pause));
+        let (result, ()) = tokio::join!(
+            service.consolidate(crate::services::consolidation::ChunkConsolidationRequest {
+                tagged_jsonl: request.tagged_jsonl,
+                output: request.output,
+                db_path: request.db_path,
+                passphrase: request.passphrase,
+                prefix: request.prefix,
+                threshold: request.threshold,
+                concurrency: request.concurrency,
+                max_chunks_per_cluster: request.max_chunks_per_cluster,
+                dry_run: false,
+            }),
+            async {
+                pause.0.notified().await;
+                if clear {
+                    server.index.clear().expect("clear");
+                } else {
+                    purge(&server, &database).await;
+                }
+                pause.1.notify_one();
+            }
+        );
+        let error = result.expect_err("snapshot invalidated before inference");
+        assert!(error.message.contains("cancelled"), "{error:?}");
+        assert!(port.prompts.lock().expect("prompts").is_empty());
+        let fresh = self::server(Arc::new(RecordingPort::default()));
+        for current in [&server, &fresh] {
+            let output = content(
+                current
+                    .corpus_query(Parameters(query(Some(&database), false, true)))
+                    .await,
+            );
+            assert!(!output.to_string().contains(SYNTHESIZED), "{output}");
+            if !clear {
+                assert_eq!(output["results"], json!([]));
+            }
+        }
+    }
+}
+
+/// expect: Failed replacement names its storage error and potential loss of the prior embedding.
+/// [P8] Motivating: a failed-row count alone cannot disclose destructive partial application.
+#[tokio::test]
+async fn retrieval_replacement_error_survives_tool_boundary() {
+    for consolidate in [false, true] {
+        let directory = fixture();
+        let server = server(Arc::new(RecordingPort::default()));
+        let request = consolidation_fixture(&server, directory.path()).await;
+        let database = directory.path().join("memory.db");
+        if consolidate {
+            content(
+                server
+                    .corpus_consolidate_chunks(Parameters(
+                        crate::tools::corpus::ConsolidateChunksRequest {
+                            tagged_jsonl: request.tagged_jsonl.clone(),
+                            output: request.output.clone(),
+                            db_path: request.db_path.clone(),
+                            passphrase: request.passphrase.clone(),
+                            prefix: request.prefix.clone(),
+                            threshold: request.threshold,
+                            concurrency: request.concurrency,
+                            max_chunks_per_cluster: request.max_chunks_per_cluster,
+                            dry_run: false,
+                        },
+                    ))
+                    .await,
+            );
+        }
+        let handle = hkask_storage::Database::open(&database.to_string_lossy(), PASSPHRASE)
+            .expect("database");
+        let pool = handle.sqlite_pool().expect("pool");
+        pool.get().expect("connection").execute_batch("CREATE TRIGGER reject_embedding_insert BEFORE INSERT ON embeddings BEGIN SELECT RAISE(FAIL, 'injected embedding storage failure'); END;").expect("trigger");
+        let result = if consolidate {
+            server.corpus_consolidate_chunks(Parameters(request)).await
+        } else {
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "memory.db",
+                    "replacement",
+                )))
+                .await
+        };
+        let error = result.expect_err("storage publication failure must reach caller");
+        assert!(
+            error.message.contains("injected embedding storage failure"),
+            "{error:?}"
+        );
+        assert!(
+            error
+                .message
+                .contains("prior embedding may have been removed"),
+            "{error:?}"
+        );
+    }
+}
+
 /// expect: A late h_mem deletion failure does not keep already-purged embeddings in warm answers.
 /// [P8] Motivating: partial failures are visible and known-deleted passages stay invalidated.
 /// pre: SQLite trigger rejects h_mem deletion; post: tool error, empty warm cache, embeddings removed.

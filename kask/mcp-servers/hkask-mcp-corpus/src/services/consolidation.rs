@@ -16,6 +16,8 @@ use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter};
 use crate::tools::semantic::configured_qa_model;
 use crate::{normalize_concept, render_docproc_template};
 
+const CONSOLIDATED_PREFIX: &str = "corpus:researcher:consolidated:";
+
 /// Input for [`ConsolidationService::consolidate`].
 ///
 /// Renamed from `ConsolidationRequest` to `ChunkConsolidationRequest` to
@@ -44,6 +46,8 @@ pub(crate) struct ChunkConsolidationRequest {
 pub struct ConsolidationService {
     inference_router: Arc<dyn InferencePort>,
     index: Arc<crate::index::PassageIndex>,
+    #[cfg(test)]
+    pub(crate) after_snapshot: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
 }
 
 impl ConsolidationService {
@@ -54,6 +58,8 @@ impl ConsolidationService {
         Self {
             inference_router,
             index,
+            #[cfg(test)]
+            after_snapshot: None,
         }
     }
 
@@ -80,32 +86,28 @@ impl ConsolidationService {
             dry_run,
         } = request;
 
+        // Register both namespaces before reading the source embedding snapshot.
+        // A purge/clear during snapshot loading or clustering must cancel this run,
+        // not allow a fresh permit to publish content from the older snapshot.
+        let write = self.index.begin_durable(
+            &db_path,
+            &passphrase,
+            crate::index::PublicationScope::Prefixes(vec![
+                prefix.clone(),
+                CONSOLIDATED_PREFIX.to_string(),
+            ]),
+        )?;
         let input =
             crate::services::cluster::load_clusters(&tagged_jsonl, &db_path, &passphrase, &prefix)?;
+        #[cfg(test)]
+        if let Some(pause) = &self.after_snapshot {
+            pause.0.notify_one();
+            pause.1.notified().await;
+        }
         let threshold = threshold as f32;
         let all_clusters = input.cluster_by_source(threshold, max_chunks_per_cluster);
         let chunks = input.chunks;
-        // Include both input and output identities: purging either cancels a
-        // synthesis already in flight instead of resurrecting its content.
-        let references = chunks
-            .iter()
-            .map(|chunk| chunk.entity_ref.clone())
-            .chain(
-                all_clusters
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, cluster)| cluster.len() > 1)
-                    .map(|(position, cluster)| {
-                        format!(
-                            "corpus:researcher:consolidated:{}:{position}",
-                            chunks[cluster[0]].source
-                        )
-                    }),
-            )
-            .collect();
-        let write = self
-            .index
-            .begin_durable(&db_path, &passphrase, references)?;
+        write.ensure_active()?;
 
         let total_members: usize = all_clusters.iter().map(|c| c.len()).sum();
         let absorbed = total_members - all_clusters.len();
@@ -243,7 +245,7 @@ impl ConsolidationService {
             } else {
                 let llm_text = consolidated_texts[ci].as_deref().unwrap_or("__FALLBACK__");
                 let source = &chunks[cluster[0]].source;
-                let entity_ref = format!("corpus:researcher:consolidated:{source}:{ci}");
+                let entity_ref = format!("{CONSOLIDATED_PREFIX}{source}:{ci}");
 
                 let text = if llm_text == "__FALLBACK__" {
                     chunks[cluster[0]].text.clone()
@@ -406,21 +408,10 @@ impl ConsolidationService {
                                 for ((entity_ref, text, _), vector) in
                                     batch.iter().zip(vectors.iter())
                                 {
-                                    if let Err(e) = self.index.publish_durable(
+                                    self.index.publish_durable(
                                         &write, entity_ref, text, vector, &emb_model,
-                                    ) {
-                                        if write.is_cancelled() {
-                                            return Err(e);
-                                        }
-                                        tracing::warn!(
-                                            entity_ref = %entity_ref,
-                                            error = %e,
-                                            "Failed to store consolidated embedding"
-                                        );
-                                        embed_failures += 1;
-                                    } else {
-                                        embedded_count += 1;
-                                    }
+                                    )?;
+                                    embedded_count += 1;
                                 }
                             }
                             Err(e) => {

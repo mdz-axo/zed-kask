@@ -299,7 +299,9 @@ impl CorpusServer {
         let write = self.index.begin_durable(
             db_path,
             passphrase,
-            chunks.iter().map(|chunk| chunk.0.clone()).collect(),
+            crate::index::PublicationScope::Entities(
+                chunks.iter().map(|chunk| chunk.0.clone()).collect(),
+            ),
         )?;
 
         let batch = batch_size.max(1);
@@ -363,20 +365,24 @@ impl CorpusServer {
                             "Batch {batch_idx} failed after retries"
                         );
                         failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
-                        return;
+                        return Ok(());
                     }
                 };
 
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
                     failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
-                    return;
+                    return Ok(());
                 }
 
                 for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
                     if let Err(e) = index.publish_durable(&write, &c.0, &c.1, vector, &model_name) {
                         if write.is_cancelled() {
                             cancelled.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        } else {
+                            // Replacement may already have deleted the prior vector.
+                            // Preserve that storage error, not just a failed-row count.
+                            return Err(e);
                         }
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if failed.load(std::sync::atomic::Ordering::Relaxed) <= 5 {
@@ -391,18 +397,29 @@ impl CorpusServer {
                     }
                     embedded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
+                Ok(())
             });
         }
 
         // Wait for all batch tasks to complete.
-        while let Some(res) = join_set.join_next().await {
-            if let Err(e) = res {
-                tracing::warn!(
-                    target: "hkask.mcp.docproc.embed",
-                    error = %e,
-                    "Embedding batch task join failed"
-                );
+        let mut publication_error = None;
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    publication_error.get_or_insert(error);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.docproc.embed",
+                        %error,
+                        "Embedding batch task join failed"
+                    );
+                }
             }
+        }
+        if let Some(error) = publication_error {
+            return Err(error);
         }
 
         let embedded = embedded.load(std::sync::atomic::Ordering::Relaxed);

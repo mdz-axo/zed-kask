@@ -25,9 +25,27 @@ pub(crate) struct IndexedPassage {
     pub embedding: Vec<f32>,
 }
 
+pub(crate) enum PublicationScope {
+    Entities(Vec<String>),
+    Prefixes(Vec<String>),
+}
+
+impl PublicationScope {
+    fn overlaps(&self, prefix: &str) -> bool {
+        match self {
+            Self::Entities(references) => references
+                .iter()
+                .any(|reference| reference.starts_with(prefix)),
+            Self::Prefixes(prefixes) => prefixes
+                .iter()
+                .any(|watched| watched.starts_with(prefix) || prefix.starts_with(watched)),
+        }
+    }
+}
+
 pub(crate) struct Publication {
     origin: Origin,
-    references: Vec<String>,
+    scope: PublicationScope,
     cancelled: AtomicBool,
 }
 
@@ -76,10 +94,10 @@ impl PassageIndex {
             .map_err(|_| McpToolError::internal("Passage index mutex poisoned")) // rr0044-ok: poisoned internal state
     }
 
-    fn begin(state: &mut IndexState, origin: Origin, references: Vec<String>) -> Arc<Publication> {
+    fn begin(state: &mut IndexState, origin: Origin, scope: PublicationScope) -> Arc<Publication> {
         let publication = Arc::new(Publication {
             origin,
-            references,
+            scope,
             cancelled: AtomicBool::new(false),
         });
         state.active.retain(|entry| entry.strong_count() > 0);
@@ -91,11 +109,11 @@ impl PassageIndex {
         &self,
         path: &str,
         passphrase: &str,
-        references: Vec<String>,
+        scope: PublicationScope,
     ) -> Result<DurableWrite, McpToolError> {
         let mut state = self.lock()?;
         let store = open_memory_store(path, passphrase)?;
-        let publication = Self::begin(&mut state, database_origin(path)?, references);
+        let publication = Self::begin(&mut state, database_origin(path)?, scope);
         Ok(DurableWrite { store, publication })
     }
 
@@ -108,7 +126,7 @@ impl PassageIndex {
         Ok(Self::begin(
             &mut state,
             Origin::Ephemeral(source.into()),
-            references,
+            PublicationScope::Entities(references),
         ))
     }
 
@@ -271,12 +289,7 @@ impl PassageIndex {
             entry_origin != &origin || !entity_ref.starts_with(prefix)
         });
         for publication in state.active.iter().filter_map(Weak::upgrade) {
-            if publication.origin == origin
-                && publication
-                    .references
-                    .iter()
-                    .any(|reference| reference.starts_with(prefix))
-            {
+            if publication.origin == origin && publication.scope.overlaps(prefix) {
                 publication.cancelled.store(true, Ordering::Relaxed);
             }
         }
@@ -304,20 +317,16 @@ impl PassageIndex {
                     })?;
             }
         }
-        let h_mems = store.h_mems_by_entity_prefix(prefix).map_err(|error| {
-            map_memory_store_error(
-                error,
-                "h_mem query failed after embedding purge; cache invalidated",
-            )
-        })?;
-        let mut purged_h_mems = 0;
-        for h_mem in h_mems
-            .into_iter()
-            .filter(|h_mem| h_mem.entity.starts_with(prefix))
-        {
-            store.delete_h_mem(&h_mem.id).map_err(|error| map_memory_store_error(error, "h_mem purge partially applied; embeddings already purged and cache invalidated"))?;
-            purged_h_mems += 1;
-        }
+        // Bulk literal-prefix deletion has no recall-query cap or SQL wildcard
+        // expansion, so unrelated newer rows cannot hide matching older rows.
+        let purged_h_mems = store
+            .delete_h_mems_by_entity_prefix(prefix)
+            .map_err(|error| {
+                map_memory_store_error(
+                    error,
+                    "h_mem purge failed; embeddings already purged and cache invalidated",
+                )
+            })?;
         let after = store.embedding_count().map_err(|error| {
             map_memory_store_error(
                 error,

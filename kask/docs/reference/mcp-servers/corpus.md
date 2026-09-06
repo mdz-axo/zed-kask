@@ -200,13 +200,18 @@ relative/absolute/symlink aliases, and cancels overlapping in-flight operations.
 Other DBs and ephemeral entries survive. Clear cancels all pending publications
 but does not delete DB rows. Cancellation is explicit (`corpus_embed.cancelled`
 and `note`, included in `failed`; other indexing paths return an error).
-Later operations can publish new data. Hydration and store/cache publication
-are synchronous under the same owner lock; inference never holds that lock.
+Later operations can publish new data. Consolidation registers input/output
+namespace protection before acquiring its source embedding snapshot, not after
+clustering. Hydration and store/cache publication are synchronous under the
+same owner lock; inference never holds that lock.
 
 Purge/replacement are not cross-operation transactions: failures can leave a
-partially modified DB, but known-deleted results are invalidated and errors
-propagate rather than inventing zero counts. An h_mem failure after embedding
-purge cannot restore the removed cache results. These guarantees are local to
+partially modified DB, but known-deleted results are invalidated and storage
+publication errors reach the tool caller with their partial-replacement warning,
+not just a failed-row count. h_mems are deleted by one literal, case-sensitive
+prefix statement without a recall-query limit; wildcard characters in the
+prefix do not select other entities. An h_mem failure after embedding purge
+cannot restore the removed cache results. These guarantees are local to
 one corpus server, not independent external DB writers. See the corpus crate
 README's Passage retrieval contract and `retrieval_tests.rs` for the offline
 real-DB tool/service regression coverage.

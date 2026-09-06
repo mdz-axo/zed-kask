@@ -708,15 +708,16 @@ impl HMemStore {
         )
     }
 
-    /// Delete every h_mem under an entity prefix, in one statement.
+    /// Delete every h_mem under a literal, case-sensitive entity prefix, in one statement.
+    /// No query limit applies; `%`, `_`, and backslash are ordinary characters.
     /// Returns the number of rows deleted. The forgetting pass uses this
     /// to forget a distilled thread's shared-copy turns — forgotten rows
     /// are removed from the database (operator ruling 2026-09-04: there
     /// is no "expired" state).
     pub fn delete_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
         self.exec(
-            "DELETE FROM hmems WHERE entity LIKE ?1",
-            &[DbValue::Text(format!("{}%", prefix))],
+            "DELETE FROM hmems WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY",
+            &[DbValue::Text(prefix.to_string())],
         )
     }
     /// Hard-delete a h_mem row entirely.
@@ -851,6 +852,41 @@ mod tests {
         assert_eq!(retained.confidence, original.confidence);
         assert_eq!(retained.observed_at, original.observed_at);
         assert_eq!(retained.recalled_at, original.recalled_at);
+        Ok(())
+    }
+
+    /// expect: Prefix deletion treats wildcards and case as literal entity identity.
+    /// [P1] Motivating: deleting one corpus must not delete a similarly named corpus.
+    #[test]
+    fn delete_prefix_matches_literal_entities() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        for prefix in ["corpus:a_", "corpus:a%", "corpus:a\\", "Corpus:Case"] {
+            let target = HMem::new(
+                &format!("{prefix}:target"),
+                "fact",
+                serde_json::json!(1),
+                WebID::new(),
+            );
+            let retained = HMem::new(
+                "corpus:ab:retained",
+                "fact",
+                serde_json::json!(2),
+                WebID::new(),
+            );
+            let lower = HMem::new(
+                "corpus:case:retained",
+                "fact",
+                serde_json::json!(3),
+                WebID::new(),
+            );
+            for memory in [&target, &retained, &lower] {
+                store.insert(memory)?;
+            }
+            assert_eq!(store.delete_by_entity_prefix(prefix)?, 1, "{prefix}");
+            assert!(store.get_by_id(&target.id)?.is_none());
+            assert!(store.get_by_id(&retained.id)?.is_some());
+            assert!(store.get_by_id(&lower.id)?.is_some());
+        }
         Ok(())
     }
 
