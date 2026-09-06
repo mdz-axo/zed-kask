@@ -207,7 +207,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // degrade to exact-entity lookup, which never matches a
             // natural-language question.
             "HKASK_INFERENCE_SOCKET",
-            // IPC bridge establishment timeout (published alongside the
+            // IPC admission-to-completion timeout (published alongside the
             // socket path by `build_mcp_server_env`).
             "HKASK_INFERENCE_TIMEOUT_SECS",
             // ALWAYS-mode distillation pass cadence/idle — emitted by
@@ -737,7 +737,7 @@ pub async fn build_mcp_server_env(
         );
     }
 
-    // 4. Inference establishment timeout — publish the server's deadline so
+    // 4. Admission-to-completion timeout — publish the server's deadline so
     //    IPC clients can set their read timeout to `server_timeout + grace`
     //    instead of inventing an independent (shorter) one. Without this, a
     //    slow-but-alive provider produces a storm of `BrokenPipe` warnings: the
@@ -1590,6 +1590,13 @@ mod tests {
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    /// expect: "Settings unload revokes delegated authority before stopping the child" [P1]
+    #[test]
+    fn main_unload_revokes_before_stop() {
+        let main = include_str!("../../../../crates/zed/src/main.rs");
+        assert!(main.contains("for server_id in to_stop {\n                kask_bridge::revoke_delegation_grant(server_id);\n                runtime.stop_server(server_id).await;"));
     }
 
     /// expect: "Only loaded children receive stable parent-held grants, and unload cannot remint authority" [P1]

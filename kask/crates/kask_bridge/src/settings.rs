@@ -112,8 +112,8 @@ pub struct KaskGeneralSettings {
     /// OpenRouter scales to this ceiling.
     pub max_concurrency: u32,
 
-    /// Wall-clock timeout for a single inference call (stream establishment +
-    /// event drain). A hung provider stalls the request indefinitely without
+    /// Admission-to-completion timeout (queue wait, model resolution, stream
+    /// establishment and event drain). A hung provider stalls the request indefinitely without
     /// this — the cybernetics variety check flagged this as a critical gap
     /// (disturbance class D2: provider timeout, no response). 0 disables the
     /// timeout (legacy behavior). Default 300 (5 minutes).

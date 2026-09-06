@@ -8,8 +8,8 @@
 //!
 //! ```text
 //! MetacognitionLoop
-//! ├── sense()     — read RegulationLedger: health, variety, regulation effectiveness
-//! ├── compare()   — check thresholds: variety deficit, critical alerts, effectiveness
+//! ├── sense()     — read RegulationLedger: health, variety, observation acceptance
+//! ├── compare()   — check thresholds: variety deficit, critical alerts, acceptance
 //! ├── compute()   — decide: escalate? calibrate? replenish?
 //! └── act()       — emit directives, log alerts, update thresholds
 //! ```
@@ -18,7 +18,7 @@
 //!
 //! - Variety deficit > 100 → escalation (warning)
 //! - Critical alerts > 3 → escalation (critical)
-//! - Regulation effectiveness < 0.5 → self-calibration
+//! - Observation acceptance < 0.5 → self-calibration (not a causal-effect score)
 //!
 //! ## Integration
 //!
@@ -47,7 +47,7 @@ const DEFAULT_VARIETY_DEFICIT_THRESHOLD: u64 = 100;
 /// Default critical alert count threshold for escalation.
 const DEFAULT_CRITICAL_ALERT_THRESHOLD: usize = 3;
 
-/// Default regulation effectiveness floor (below → self-calibrate).
+/// Default observation acceptance floor (below → self-calibrate).
 const DEFAULT_ACCEPTANCE_FLOOR: f64 = 0.5;
 
 /// A user-facing alert event forwarded by the metacognition loop.
@@ -161,8 +161,8 @@ impl Default for MetacognitionConfig {
 /// The metacognition loop — the Curator's governance mechanism.
 ///
 /// Runs sense→compare→compute→act cycles on a background task. Each cycle:
-/// 1. **Sense**: reads `RegulationLedger` for health, variety, effectiveness
-/// 2. **Compare**: checks thresholds (variety deficit, critical alerts, effectiveness)
+/// 1. **Sense**: reads `RegulationLedger` for health, variety, observation acceptance
+/// 2. **Compare**: checks thresholds (variety deficit, critical alerts, acceptance)
 /// 3. **Compute**: decides whether to escalate, calibrate, or do nothing
 /// 4. **Act**: emits `reg.curator.metacognition.*` spans and logs alerts
 ///
@@ -274,8 +274,7 @@ impl MetacognitionLoop {
     ///   cycles ran but no actions were verified, `Producing` if actions exist.
     /// - `panel_absence`: `Idle` if `total_cycles == 0`, otherwise `Empty`
     ///   (the sensor ticked and returned a real deficit value, including 0).
-    /// - `outcome_trust`: `Unverified` if no verified actions, `Trusted` if
-    ///   effectiveness >= 0.5, `Untrusted` if effectiveness < 0.5.
+    /// - `outcome_trust`: `Unverified`; acceptance cannot establish causal efficacy.
     fn compute_loop_view(
         regulation_health: &hkask_types::regulation::RegulationHealth,
     ) -> crate::loops::LoopView {
@@ -483,8 +482,11 @@ impl MetacognitionLoop {
             });
         }
 
-        // Regulation effectiveness check
-        if let Some(rate) = snapshot.regulation_acceptance_rate.filter(|rate| *rate < self.config.acceptance_floor) {
+        // Only measured acceptance contributes; absent samples remain unknown.
+        if let Some(rate) = snapshot
+            .regulation_acceptance_rate
+            .filter(|rate| *rate < self.config.acceptance_floor)
+        {
             alerts.push(EscalationAlert {
                 trigger: EscalationTrigger::LowAcceptance,
                 severity: EscalationSeverity::Warning,

@@ -80,13 +80,13 @@ pub fn get_inference_socket_path() -> Option<String> {
     }
 }
 
-/// The inference establishment timeout in seconds, published to MCP server
+/// The admission-to-completion inference timeout in seconds, published to MCP server
 /// child processes so IPC clients can align their read deadline with the
 /// server's. See `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV` for the
 /// rationale.
 static INFERENCE_TIMEOUT_SECS: Mutex<u64> = Mutex::new(0);
 
-/// Set the inference establishment timeout (seconds). Replaces any previous
+/// Set the admission-to-completion timeout (seconds). Replaces any previous
 /// value.
 ///
 /// Called from the deferred task in `main.rs` after `LanguageModelInferencePort`
@@ -114,8 +114,9 @@ pub fn set_inference_timeout_secs(secs: u64) {
     *guard = secs;
 }
 
-/// Get the inference establishment timeout in seconds, or `None` if not yet
-/// set (or set to zero, which means "unset").
+/// Get the admission-to-completion timeout, or `None` if not set or disabled.
+/// A disabled server deadline leaves IPC clients using their 600-second
+/// transport fallback; it does not disable admission bounds or cancellation.
 ///
 /// Called from the same sites as `get_inference_socket_path` to inject
 /// `HKASK_INFERENCE_TIMEOUT_SECS` into MCP server child-process env maps.

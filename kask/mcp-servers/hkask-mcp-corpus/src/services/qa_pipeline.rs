@@ -1,18 +1,215 @@
-//! QA generation pipeline — the shared prompt-formatting and result-writing
-//! logic used by all three QA generation paths:
-//!
-//! 1. `corpus_generate_qa` (single chunk, synchronous)
-//! 2. `corpus_generate_qa_batch` (multiple chunks, concurrent synchronous)
-//! 3. `generate_qa_via_batch_api` (multiple chunks, provider Batch API)
-//!
-//! Extracted from `tools/semantic.rs` where the prompt formatting and result
-//! envelope construction were duplicated 3×. A template change now touches
-//! one file instead of three.
+//! Canonical prepared QA records and completion/output accounting for both
+//! batch transports. Single-chunk generation retains its own prompt formatter.
 
+use std::collections::HashSet;
+use std::io::Write;
+
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::tools::semantic::qa::{BatchQaPrompt, QaPair};
-use crate::{CONTENT_GUARD_INSTRUCTION, render_docproc_template};
+use crate::batch::BatchOutcome;
+use crate::helpers::{map_corpus_io_error, read_jsonl};
+use crate::tools::semantic::qa::{QaPair, parse_qa_response};
+use crate::{
+    CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response, render_docproc_template,
+};
+
+/// The only prepared-prompt JSONL contract. Identity belongs to the prompt,
+/// not its source chunk: several prompts may refer to the same chunk.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreparedQaPrompt {
+    pub prompt_id: String,
+    pub chunk_ref: String,
+    pub source: String,
+    pub concepts: Vec<String>,
+    pub salience: f64,
+    pub qa_type: String,
+    pub system: String,
+    pub user: String,
+}
+
+impl PreparedQaPrompt {
+    pub fn validate(&self) -> Result<(), McpToolError> {
+        for (field, value) in [
+            ("prompt_id", &self.prompt_id),
+            ("chunk_ref", &self.chunk_ref),
+            ("source", &self.source),
+            ("qa_type", &self.qa_type),
+            ("system", &self.system),
+            ("user", &self.user),
+        ] {
+            if value.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Prepared QA prompt '{}': {field} must not be empty",
+                    self.prompt_id
+                )));
+            }
+        }
+        // Keep identities portable across the provider batch APIs.
+        if self.prompt_id.len() > 64
+            || !self
+                .prompt_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(McpToolError::invalid_argument(
+                "prompt_id must be 1–64 ASCII letters, digits, hyphens or underscores",
+            ));
+        }
+        if !self.salience.is_finite()
+            || self
+                .concepts
+                .iter()
+                .any(|concept| concept.trim().is_empty())
+        {
+            return Err(McpToolError::invalid_argument(format!(
+                "Prepared QA prompt '{}': salience must be finite and concepts must not contain empty strings",
+                self.prompt_id
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// expect: Every prepared instruction is validated before any paid inference.
+/// [P8] Motivating: Reject ambiguous identities instead of losing prompt provenance.
+/// pre: path is a contained JSONL input.
+/// post: all records are canonical, nonempty and uniquely identified; repeated chunks are valid.
+/// [P1] Constraining: Preserve the user's prepared instructions and source metadata.
+/// [P4] Constraining: Read only through the corpus path boundary.
+pub(crate) fn read_prompts(path: &str) -> Result<Vec<PreparedQaPrompt>, McpToolError> {
+    let prompts: Vec<PreparedQaPrompt> = read_jsonl(path, "prompts_jsonl")?;
+    if prompts.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "prompts_jsonl contains no prompts",
+        ));
+    }
+    let mut identities = HashSet::with_capacity(prompts.len());
+    for prompt in &prompts {
+        prompt.validate()?;
+        if !identities.insert(&prompt.prompt_id) {
+            return Err(McpToolError::invalid_argument(format!(
+                "Duplicate prompt_id '{}'",
+                prompt.prompt_id
+            )));
+        }
+    }
+    Ok(prompts)
+}
+
+pub(crate) struct QaCompletion {
+    pub text: String,
+    pub tokens_used: u64,
+}
+
+/// One owner writes completions as they arrive; neither transport owns counts
+/// or swallows output failures. Generic Write permits real I/O failure tests.
+pub(crate) struct QaOutput<W: Write> {
+    writer: W,
+    prompts_total: usize,
+    prompts_succeeded: usize,
+    prompts_failed: usize,
+    qa_rows_written: usize,
+}
+
+impl<W: Write> QaOutput<W> {
+    pub fn new(writer: W, prompts_total: usize) -> Self {
+        Self {
+            writer,
+            prompts_total,
+            prompts_succeeded: 0,
+            prompts_failed: 0,
+            qa_rows_written: 0,
+        }
+    }
+
+    fn write_record(&mut self, record: &serde_json::Value) -> Result<(), McpToolError> {
+        let bytes = serde_json::to_vec(record).map_err(|error| {
+            McpToolError::internal(format!("Cannot serialize QA output: {error}"))
+        })?;
+        self.writer
+            .write_all(&bytes)
+            .map_err(|error| map_corpus_io_error(error, "Cannot write QA output"))?;
+        self.writer
+            .write_all(b"\n")
+            .map_err(|error| map_corpus_io_error(error, "Cannot write QA output newline"))?;
+        Ok(())
+    }
+
+    /// expect: A success count means accepted QA rows were written, not merely attempted.
+    /// [P9] Motivating: Every prompt gets one truthful terminal outcome.
+    /// pre: prompt was validated and is completed exactly once by its transport.
+    /// post: malformed or failed inference emits an identified error row; output failures propagate.
+    pub fn complete(
+        &mut self,
+        prompt: &PreparedQaPrompt,
+        completion: Result<QaCompletion, String>,
+        model: &str,
+    ) -> Result<(), McpToolError> {
+        let parsed = completion.and_then(|completion| {
+            parse_qa_response(
+                &extract_json_from_response(&completion.text),
+                std::slice::from_ref(&prompt.qa_type),
+                None,
+            )
+            .map(|response| (response, completion.tokens_used))
+            .map_err(|error| format!("QA response rejected: {error}"))
+        });
+        match parsed {
+            Ok((response, tokens_used)) => {
+                for pair in response.qa_pairs {
+                    self.write_record(&qa_result_envelope(prompt, pair, model, tokens_used))?;
+                    self.qa_rows_written += 1;
+                }
+                self.prompts_succeeded += 1;
+            }
+            Err(error) => {
+                self.write_record(&json!({
+                    "prompt_id": prompt.prompt_id,
+                    "chunk_ref": prompt.chunk_ref,
+                    "source": prompt.source,
+                    "error": error,
+                }))?;
+                self.prompts_failed += 1;
+            }
+        }
+        if (self.prompts_succeeded + self.prompts_failed).is_multiple_of(10) {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), McpToolError> {
+        self.writer
+            .flush()
+            .map_err(|error| map_corpus_io_error(error, "Cannot flush QA output"))
+    }
+
+    pub fn finish(
+        mut self,
+        output: &str,
+        batch_api: bool,
+    ) -> Result<serde_json::Value, McpToolError> {
+        self.flush()?;
+        if self.prompts_succeeded + self.prompts_failed != self.prompts_total {
+            return Err(McpToolError::internal(
+                "QA completion accounting does not match prompts_total",
+            ));
+        }
+        let outcome = BatchOutcome::from_counts(self.prompts_failed, self.prompts_total);
+        outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
+        Ok(json!({
+            "prompts_total": self.prompts_total,
+            "prompts_succeeded": self.prompts_succeeded,
+            "prompts_failed": self.prompts_failed,
+            "qa_rows_written": self.qa_rows_written,
+            "output": output,
+            "batch_api": batch_api,
+            "degraded": BatchOutcome::is_degraded(self.prompts_failed, self.prompts_total),
+        }))
+    }
+}
 
 /// The LLM parameters used by all QA generation paths.
 ///
@@ -36,12 +233,6 @@ pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
 pub(crate) fn default_bloom_levels() -> Vec<String> {
     vec!["factual".to_string(), "conceptual".to_string()]
 }
-
-/// The system prompt for batch API QA generation.
-///
-/// The synchronous paths embed this in the single prompt string; the batch
-/// API path sends it as a separate system message.
-pub(crate) const BATCH_SYSTEM_PROMPT: &str = "You are a training data generator. Generate ONE question-answer pair grounded in the passage's actual content.";
 
 /// A formatted QA generation prompt.
 pub(crate) struct FormattedQaPrompt {
@@ -108,40 +299,21 @@ pub(crate) fn format_cross_reference_prompt(
     }
 }
 
-/// Format a batch prompt's user text (for the Batch API path).
-///
-/// Same as [`format_single_chunk_prompt`] but without the content-guard
-/// prefix — the batch API path composes system + user messages separately,
-/// and the guard instruction lives in the system message.
-pub(crate) fn format_batch_user_text(levels_str: &str, chunk_id: &str, text: &str) -> String {
-    let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    vars.insert("levels", levels_str.to_string());
-    vars.insert("chunk_id", chunk_id.to_string());
-    vars.insert("text", text.to_string());
-    let tpl = render_docproc_template("generate-qa", &vars);
-    if tpl.is_empty() {
-        format!(
-            "Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
-        )
-    } else {
-        tpl
-    }
-}
-
 /// Build the QA result envelope for one QA pair.
 ///
 /// The envelope format matches what `corpus_ingest_qa`'s `parse_qa_record`
 /// expects: `chunk_ref`, `source`, `qa_type`, `response`, `provenance`,
 /// `tokens_used`.
 pub(crate) fn qa_result_envelope(
-    prompt: &BatchQaPrompt,
+    prompt: &PreparedQaPrompt,
     pair: QaPair,
     model: &str,
-    template_source: &str,
     tokens_used: impl Into<u64>,
 ) -> serde_json::Value {
     json!({
-        "chunk_ref": prompt.chunk_id,
+        "prompt_id": prompt.prompt_id,
+        "chunk_ref": prompt.chunk_ref,
+        "salience": prompt.salience,
         "source": prompt.source,
         "qa_type": pair.bloom_level,
         "response": {
@@ -152,18 +324,11 @@ pub(crate) fn qa_result_envelope(
         },
         "provenance": {
             "generator_model": model,
-            "prompt_template": template_source,
-            "source_chunk_ref": prompt.chunk_id,
+            "prompt_template": "prepared-qa",
+            "prompt_id": prompt.prompt_id,
+            "source_chunk_ref": prompt.chunk_ref,
         },
         "tokens_used": tokens_used.into(),
-    })
-}
-
-/// Build the error envelope for a failed prompt.
-pub(crate) fn qa_error_envelope(chunk_id: &str, error: &str) -> serde_json::Value {
-    json!({
-        "chunk_id": chunk_id,
-        "error": error,
     })
 }
 
@@ -196,13 +361,6 @@ mod tests {
         assert!(result.text.contains("some text"));
         assert!(result.text.contains("chunk-1"));
         assert!(result.text.contains("factual"));
-    }
-
-    #[test]
-    fn format_batch_user_text_falls_back_inline() {
-        let result = format_batch_user_text("factual", "chunk-1", "some text");
-        assert!(result.contains("some text"));
-        assert!(result.contains("chunk-1"));
     }
 
     #[test]

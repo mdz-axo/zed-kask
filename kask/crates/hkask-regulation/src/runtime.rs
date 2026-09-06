@@ -988,12 +988,19 @@ mod tests {
     /// expect: "Quiet domains stop contributing stale deficits or outcome samples" [P9]
     #[tokio::test]
     async fn observations_expire_without_another_write() {
-        let ledger = RegulationLedger::default();
+        use crate::sensor_provider::{Sensor, ToolReliabilitySensor};
+        let shared = Arc::new(tokio::sync::RwLock::new(RegulationLedger::default()));
+        let sensor = ToolReliabilitySensor::new(shared.clone(), 0.8);
+        let ledger = shared.read().await;
         ledger.increment_variety("quiet", "one-tool").await;
         ledger
             .record_outcome("quiet", false, Some("internal"))
             .await;
         assert_eq!(ledger.outcome_success_rate("quiet").await, Some(0.0));
+        assert_eq!(
+            sensor.observe().await.expect("active observation").value,
+            0.0
+        );
         assert!(ledger.health().await.overall_deficit > 0);
         {
             let mut state = ledger.state.write().await;
@@ -1006,6 +1013,10 @@ mod tests {
                 .window_start = old;
         }
         assert_eq!(ledger.outcome_success_rate("quiet").await, None);
+        assert!(
+            sensor.observe().await.is_none(),
+            "idle is no sample, not healthy"
+        );
         assert!(ledger.check_outcome("quiet").await.is_none());
         assert_eq!(ledger.health().await.overall_deficit, 0);
         ledger.record_outcome("active", true, None).await;
@@ -1016,6 +1027,10 @@ mod tests {
             }
         }
         assert_eq!(rates, vec![1.0]);
+        assert_eq!(
+            sensor.observe().await.expect("new active sample").value,
+            1.0
+        );
     }
 
     /// expect: "My configured outcome thresholds control alerts from startup" [P9]

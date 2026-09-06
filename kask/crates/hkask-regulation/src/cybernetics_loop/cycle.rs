@@ -1598,12 +1598,14 @@ mod tests {
             );
         }
         *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.3)));
-        let reports = regulation.verify_impact(&[action]).await;
+        let reports = regulation
+            .verify_impact(std::slice::from_ref(&action))
+            .await;
         assert!(reports.first().expect("report").improved);
         assert_eq!(
             regulation
                 .stagnation_detector
-                .ineffective_count("tool_reliability", "Notify"),
+                .ineffective_count("tool_reliability", action.action_type.as_str()),
             0
         );
     }
@@ -1865,6 +1867,81 @@ mod tests {
         assert_eq!(
             metrics.fidelity_score, 0.0,
             "action without metric_name must not match via string fallback"
+        );
+    }
+
+    struct MemoryObservations(std::sync::atomic::AtomicUsize);
+    #[async_trait::async_trait]
+    impl crate::MemoryHealthSource for MemoryObservations {
+        async fn h_mem_count(&self) -> Option<usize> {
+            match self.0.load(std::sync::atomic::Ordering::SeqCst) {
+                0 => Some(1_000_000),
+                1 => Some(0),
+                _ => None,
+            }
+        }
+        async fn low_confidence_count(&self, _: f64) -> Option<usize> {
+            self.h_mem_count().await
+        }
+        async fn storage_budget(&self) -> usize {
+            10_000
+        }
+        async fn memory_life_days(&self) -> f64 {
+            if self.0.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                0.0
+            } else {
+                36_500.0
+            }
+        }
+    }
+
+    /// expect: "Every memory metric can report recovery independently; unavailable stores do not report zero" [P9]
+    #[tokio::test]
+    async fn memory_observations_report_all_metrics_and_recovery() {
+        let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_memory_health_source(source.clone());
+        let metrics = [
+            SignalMetric::MemoryLife,
+            SignalMetric::TripleCount,
+            SignalMetric::StorageUsage,
+            SignalMetric::LowConfidenceCount,
+            SignalMetric::ConsolidationCandidates,
+        ];
+        let degraded = regulation.sense().await;
+        for metric in metrics {
+            let signal = degraded
+                .iter()
+                .find(|signal| signal.metric == metric)
+                .expect("every memory metric sensed");
+            assert!(Deviation::from_signal(signal).is_some(), "{metric:?}");
+        }
+        source.0.store(1, std::sync::atomic::Ordering::SeqCst);
+        let healthy = regulation.sense().await;
+        for metric in metrics {
+            let signal = healthy
+                .iter()
+                .find(|signal| signal.metric == metric)
+                .expect("healthy metric observable");
+            assert!(Deviation::from_signal(signal).is_none(), "{metric:?}");
+            assert!(
+                degraded
+                    .iter()
+                    .find(|signal| signal.metric == metric)
+                    .expect("trigger")
+                    .recovered_by(signal)
+            );
+        }
+        source.0.store(2, std::sync::atomic::Ordering::SeqCst);
+        let unavailable = regulation.sense().await;
+        assert_eq!(
+            unavailable
+                .iter()
+                .filter(|signal| metrics.contains(&signal.metric))
+                .count(),
+            1,
+            "only configuration remains observable without a store"
         );
     }
 

@@ -135,7 +135,7 @@ impl ImpactReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionDecision {
-    /// Action was effective or within noise tolerance. Continue.
+    /// Observation improved or stayed within noise tolerance; not causal proof.
     Accept,
     /// Action was moderately ineffective — worth reviewing. Escalate as Warning.
     Stage,
@@ -199,8 +199,8 @@ impl LoopMetrics {
     /// - `elapsed_ms`: wall-clock time from sense start to act end
     /// - `deviations`: deviations detected during compare
     /// - `actions`: actions produced during compute
-    /// - `impact_reports`: results from `verify_impact` (empty → effectiveness = 0.0,
-    ///   signaling "unverified" — not "all actions effective")
+    /// - `impact_reports`: results from `verify_impact` (empty → progress = 0.0,
+    ///   signaling no measured progress, not proof of causal effectiveness)
     /// - `trigger`: what triggered this tick
     pub fn from_cycle(
         elapsed_ms: u64,
@@ -236,18 +236,14 @@ impl LoopMetrics {
         };
         // All matches use metric_name directly.
 
-        // Effectiveness: percentage of verified actions that were Accepted
-        // (i.e., either improved or within noise tolerance). Staged/Blocked
-        // actions reduce the score. When no impact reports exist, no
-        // verification ran — report 0.0 ("unverified"), NOT 1.0 ("all
-        // effective"). Reporting 1.0 when unverified conflates "no data" with
-        // "success" — the operator cannot distinguish a working loop from one
-        // that never checks its own impact.
+        // Observed progress, not acceptance or causal effectiveness. Empty
+        // reports establish no progress; callers retain the verification count
+        // to distinguish an unmeasured cycle from a measured stagnant one.
         let observed_progress_score = if impact_reports.is_empty() {
             0.0
         } else {
-            let accepted = impact_reports.iter().filter(|r| r.improved).count() as f64;
-            accepted / impact_reports.len() as f64
+            let improved = impact_reports.iter().filter(|r| r.improved).count() as f64;
+            improved / impact_reports.len() as f64
         };
 
         Self {

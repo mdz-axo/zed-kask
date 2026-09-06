@@ -30,7 +30,9 @@ pub(crate) trait Sensor: Send + Sync {
 
     #[cfg(test)]
     async fn sense(&self) -> Option<Signal> {
-        self.observe().await.filter(|signal| super::loops::Deviation::from_signal(signal).is_some())
+        self.observe()
+            .await
+            .filter(|signal| super::loops::Deviation::from_signal(signal).is_some())
     }
 }
 
@@ -102,7 +104,9 @@ impl EnergyBudgetSensor {
 impl Sensor for EnergyBudgetSensor {
     async fn observe(&self) -> Option<Signal> {
         let statuses = self.cap_manager.read().await.all_agent_statuses().await;
-        if statuses.is_empty() { return None; }
+        if statuses.is_empty() {
+            return None;
+        }
         // Use the worst remaining ratio as the aggregate signal.
         let worst = statuses
             .iter()
@@ -236,7 +240,7 @@ pub(crate) fn latest_run_metrics(
 /// Senses test coverage from the latest trace run's `metrics.json`.
 ///
 /// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `{HKASK_DATA_DIR}/traces`).
-/// Produces a signal only when `coverage_pct` is below the coverage floor.
+/// Returns the latest measured coverage, including values above the floor.
 pub(crate) struct TestCoverageSensor {
     trace_dir: std::path::PathBuf,
     set_point: f64,
@@ -305,9 +309,9 @@ impl Sensor for TestCoverageSensor {
 
 /// Senses tool reliability from the Regulation runtime's outcome tracker.
 ///
-/// Data source: `RegulationLedger::outcome_success_rate`. Produces a signal
-/// only when the aggregate success rate across all tracked domains drops
-/// below the reliability threshold. This closes the feedback loop that was
+/// Data source: `RegulationLedger::outcome_success_rate`. Returns the aggregate
+/// success rate across domains with current samples, including healthy readings.
+/// This closes the feedback loop that was
 /// blind to systematic tool failures (e.g. MCP server timeouts looping for
 /// minutes without the regulation loop sensing the deviation).
 ///
@@ -361,7 +365,7 @@ impl Sensor for ToolReliabilitySensor {
 /// Senses mutation score from the latest trace run's `metrics.json`.
 ///
 /// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `{HKASK_DATA_DIR}/traces`).
-/// Produces a signal only when `mutation_score` is below the mutation score floor.
+/// Returns the latest measured mutation score, including values above the floor.
 pub(crate) struct MutationScoreSensor {
     trace_dir: std::path::PathBuf,
     set_point: f64,
@@ -517,7 +521,6 @@ impl Sensor for InferenceHealthSensor {
             1.0
         };
 
-
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::InferenceAvailable,
@@ -590,7 +593,6 @@ impl Sensor for ContextServerHealthSensor {
         // Health ratio: fraction of registered servers in a healthy state.
         // 1.0 = all Running, 0.0 = none Running.
         let health_ratio = healthy as f64 / total as f64;
-
 
         Some(Signal::new(
             LoopId::Cybernetics,
@@ -683,7 +685,7 @@ impl Sensor for OcrHealthSensor {
                 return None;
             }
         };
-        // Healthy states produce no signal, matching the other sensors.
+        // A real zero proves recovery; a missing reading does not.
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::OcrSilentFailures,
@@ -734,10 +736,11 @@ pub trait MemoryHealthSource: Send + Sync {
 /// - `StorageUsage` — h_mem count / storage budget ratio above the set-point
 /// - `MemoryLife` — configured memory life days below the set-point (too short)
 ///
-/// Each metric is only emitted when it deviates from its set-point. Healthy
-/// states produce no signal, matching the other sensors.
+/// One registered sensor per metric reports both healthy and degraded states.
+/// A busy metric must not hide another metric's recovery.
 pub(crate) struct MemoryHealthSensor {
     source: Arc<dyn MemoryHealthSource>,
+    metric: SignalMetric,
     /// Set-point: max h_mem count before `TripleCount` fires.
     triple_count_max: usize,
     /// Set-point: max low-confidence h_mem count before `LowConfidenceCount` fires.
@@ -760,23 +763,19 @@ pub(crate) struct MemoryHealthSensor {
 impl MemoryHealthSensor {
     pub fn new(
         source: Arc<dyn MemoryHealthSource>,
-        triple_count_max: usize,
-        low_confidence_max: usize,
-        low_confidence_threshold: f64,
-        consolidation_floor: f64,
-        consolidation_candidates_max: usize,
-        storage_usage_max_ratio: f64,
-        memory_life_min_days: f64,
+        metric: SignalMetric,
+        points: &crate::SetPoints,
     ) -> Self {
         Self {
             source,
-            triple_count_max,
-            low_confidence_max,
-            low_confidence_threshold,
-            consolidation_floor,
-            consolidation_candidates_max,
-            storage_usage_max_ratio,
-            memory_life_min_days,
+            metric,
+            triple_count_max: points.triple_count_max,
+            low_confidence_max: points.low_confidence_max,
+            low_confidence_threshold: points.low_confidence_threshold,
+            consolidation_floor: points.consolidation_floor,
+            consolidation_candidates_max: points.consolidation_candidates_max,
+            storage_usage_max_ratio: points.storage_usage_max_ratio,
+            memory_life_min_days: points.memory_life_min_days,
         }
     }
 }
@@ -784,81 +783,49 @@ impl MemoryHealthSensor {
 #[async_trait::async_trait]
 impl Sensor for MemoryHealthSensor {
     async fn observe(&self) -> Option<Signal> {
-        // MemoryLife is a configuration check — it doesn't need the store.
-        // Report it first so a misconfigured memory life is caught even when
-        // the store is unavailable.
-        let memory_life = self.source.memory_life_days().await;
-        if memory_life < self.memory_life_min_days {
-            return Some(Signal::new(
-                LoopId::Cybernetics,
-                SignalMetric::MemoryLife,
-                memory_life,
+        let (value, set_point) = match self.metric {
+            // Configuration is observable even when the store is unavailable.
+            SignalMetric::MemoryLife => (
+                self.source.memory_life_days().await,
                 self.memory_life_min_days,
-            ));
-        }
-
-        // The remaining 4 metrics need the store. If it's unavailable,
-        // return None — not a signal with value 0, which would mask a broken
-        // store as "empty but healthy" (the `.rules` `unwrap_or(0)` trap).
-        let count = self.source.h_mem_count().await?;
-
-        // TripleCount — total h_mem count above the set-point.
-        if count as f64 > self.triple_count_max as f64 {
-            return Some(Signal::new(
-                LoopId::Cybernetics,
-                SignalMetric::TripleCount,
-                count as f64,
+            ),
+            SignalMetric::TripleCount => (
+                self.source.h_mem_count().await? as f64,
                 self.triple_count_max as f64,
-            ));
-        }
-
-        // StorageUsage — h_mem count / storage budget ratio.
-        let budget = self.source.storage_budget().await;
-        if budget > 0 {
-            let usage_ratio = count as f64 / budget as f64;
-            if usage_ratio > self.storage_usage_max_ratio {
-                return Some(Signal::new(
-                    LoopId::Cybernetics,
-                    SignalMetric::StorageUsage,
-                    usage_ratio,
+            ),
+            SignalMetric::StorageUsage => {
+                let budget = self.source.storage_budget().await;
+                if budget == 0 {
+                    return None;
+                }
+                (
+                    self.source.h_mem_count().await? as f64 / budget as f64,
                     self.storage_usage_max_ratio,
-                ));
+                )
             }
-        }
-
-        // LowConfidenceCount — h_mems at or below the confidence threshold.
-        if let Some(low_count) = self
-            .source
-            .low_confidence_count(self.low_confidence_threshold)
-            .await
-        {
-            if low_count as f64 > self.low_confidence_max as f64 {
-                return Some(Signal::new(
-                    LoopId::Cybernetics,
-                    SignalMetric::LowConfidenceCount,
-                    low_count as f64,
-                    self.low_confidence_max as f64,
-                ));
+            SignalMetric::LowConfidenceCount => (
+                self.source
+                    .low_confidence_count(self.low_confidence_threshold)
+                    .await? as f64,
+                self.low_confidence_max as f64,
+            ),
+            SignalMetric::ConsolidationCandidates => (
+                self.source
+                    .low_confidence_count(self.consolidation_floor)
+                    .await? as f64,
+                self.consolidation_candidates_max as f64,
+            ),
+            _ => {
+                tracing::warn!(target: "reg.sensor", "Non-memory metric registered as memory sensor");
+                return None;
             }
-        }
-
-        // ConsolidationCandidates — h_mems at or below the consolidation floor.
-        if let Some(candidates) = self
-            .source
-            .low_confidence_count(self.consolidation_floor)
-            .await
-        {
-            if candidates as f64 > self.consolidation_candidates_max as f64 {
-                return Some(Signal::new(
-                    LoopId::Cybernetics,
-                    SignalMetric::ConsolidationCandidates,
-                    candidates as f64,
-                    self.consolidation_candidates_max as f64,
-                ));
-            }
-        }
-
-        None
+        };
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            self.metric,
+            value,
+            set_point,
+        ))
     }
 }
 

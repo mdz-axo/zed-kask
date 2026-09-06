@@ -1,34 +1,17 @@
-//! QA batch service — concurrent QA generation from a prompts JSONL file.
-//!
-//! Extracted from `CorpusServer::corpus_generate_qa_batch` in
-//! `tools/semantic.rs`. The `#[tool]` method becomes thin I/O framing:
-//! deserialize params, construct the service, delegate.
-//!
-//! Two execution paths, selected by model eligibility:
-//! - Batch API (OpenRouter `:batch` suffix / DeepInfra prefix) — 20–50% cost
-//!   discount, no rate limits. Delegates to `tools/semantic/batch_api.rs`.
-//! - Concurrent synchronous IPC with semaphore-gated `tokio::spawn` per
-//!   prompt, retry with backoff, incremental JSONL output.
+//! Prepared QA generation with AIMD-gated synchronous inference or provider batches.
 
-use std::io::Write;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::InferencePort;
-use serde_json::json;
+use hkask_types::{ChatMessage, InferencePort};
 
-use crate::batch::{
-    ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
-};
-use crate::helpers::{map_corpus_io_error, read_jsonl};
-use crate::services::qa_pipeline;
+use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, retry_with_backoff};
+use crate::helpers::map_corpus_io_error;
+use crate::services::qa_pipeline::{QaCompletion, QaOutput, qa_llm_parameters, read_prompts};
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
-use crate::tools::semantic::qa::{
-    BatchQaPrompt, configured_qa_model, parse_qa_response, write_qa_result,
-};
-use crate::{Mutex, extract_json_from_response};
+use crate::tools::semantic::qa::configured_qa_model;
 
-/// Input for [`QaBatchService::generate_qa_batch`].
 pub(crate) struct QaBatchRequest {
     pub prompts_jsonl: String,
     pub output: String,
@@ -36,7 +19,6 @@ pub(crate) struct QaBatchRequest {
     pub model: Option<String>,
 }
 
-/// Concurrent QA generation from a prompts JSONL file.
 pub struct QaBatchService {
     inference_router: Arc<dyn InferencePort>,
 }
@@ -46,11 +28,8 @@ impl QaBatchService {
         Self { inference_router }
     }
 
-    /// Generate QA pairs for every prompt in the JSONL file.
-    ///
-    /// Routes through the provider Batch API when the selected model is
-    /// batch-eligible; otherwise fans out concurrent synchronous calls with
-    /// retry and incremental output. Returns a summary envelope.
+    /// Validate the entire input and open output before inference. Prepared
+    /// messages are forwarded unchanged; completion accounting is transport-independent.
     #[must_use = "result must be used"]
     pub async fn generate_qa_batch(
         &self,
@@ -62,320 +41,573 @@ impl QaBatchService {
             concurrency,
             model,
         } = request;
-
-        let prompts_vec = read_prompts(&prompts_jsonl)?;
-        let total = prompts_vec.len();
+        let prompts = read_prompts(&prompts_jsonl)?;
         let selected_model = configured_qa_model(model);
+        let output_path = crate::path_safety::contain_for_write(&output)?;
+        let file = std::fs::File::create(&output_path).map_err(|error| {
+            map_corpus_io_error(error, &format!("Cannot create output file '{output}'"))
+        })?;
+        let mut completions = QaOutput::new(std::io::BufWriter::new(file), prompts.len());
 
-        // When the model is batch-eligible (OpenRouter `:batch` suffix or
-        // DeepInfra prefix), route through the shared batch API in
-        // `hkask-inference::batch` instead of N concurrent synchronous
-        // IPC calls. This gives a 20–50% cost discount and no rate limits.
-        //
-        // Pass the ORIGINAL model string (with `:batch` suffix or
-        // `DeepInfra/` prefix) to `generate_batch` — the bridge calls
-        // `detect_batch_provider` again to strip the prefix and select
-        // the provider. Stripping here would cause the bridge's
-        // `detect_batch_provider` to return `None` (no `:batch` suffix,
-        // no `DeepInfra/` prefix) and fail with "not batch-eligible".
-        if let Some(ref model_str) = selected_model {
-            if hkask_inference::batch::detect_batch_provider(model_str).is_some() {
-                return generate_qa_via_batch_api(
+        if let Some(model) = selected_model.as_deref() {
+            if hkask_inference::batch::detect_batch_provider(model).is_some() {
+                // Keep the original routing prefix/suffix for bridge-side detection.
+                generate_qa_via_batch_api(
                     &self.inference_router,
-                    prompts_vec,
-                    model_str,
-                    &output,
-                    total,
+                    &prompts,
+                    model,
+                    &mut completions,
                 )
-                .await;
+                .await?;
+                return completions.finish(&output, true);
             }
         }
 
-        // Concurrent processing with the adaptive limiter (AIMD ramp — see batch.rs)
         let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
-        let router = Arc::clone(&self.inference_router);
-
-        // Output file writer (with incremental flush every 10 completions)
-        let output_path = crate::path_safety::contain_for_write(&output)?;
-        let file = std::fs::File::create(&output_path).map_err(|e| {
-            map_corpus_io_error(e, &format!("Cannot create output file '{output}'"))
-        })?;
-        let output_writer = Arc::new(Mutex::new(std::io::BufWriter::new(file)));
-        let write_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        // B5 fix: track failed prompts so the outcome can be classified as
-        // degraded when the failure rate exceeds the threshold.
-        let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-        let mut handles = Vec::with_capacity(total);
-        for prompt in prompts_vec {
-            let router = Arc::clone(&router);
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut pending = HashMap::with_capacity(prompts.len());
+        for prompt in prompts {
+            let router = Arc::clone(&self.inference_router);
             let limiter = limiter.clone();
             let selected_model = selected_model.clone();
-            let output_writer = Arc::clone(&output_writer);
-            let write_count = Arc::clone(&write_count);
-            let failed_count = Arc::clone(&failed_count);
-
-            let handle = tokio::spawn(async move {
+            let messages = [
+                ChatMessage {
+                    role: "system".into(),
+                    content: prompt.system.clone(),
+                },
+                ChatMessage {
+                    role: "user".into(),
+                    content: prompt.user.clone(),
+                },
+            ];
+            let prompt_id = prompt.prompt_id.clone();
+            let task = tasks.spawn(async move {
                 let slot = limiter.acquire().await;
-
-                let params = qa_pipeline::qa_llm_parameters();
-                let levels = prompt
-                    .bloom_levels
-                    .clone()
-                    .unwrap_or_else(qa_pipeline::default_bloom_levels);
-                let levels_str = levels.join(", ");
-                let formatted = qa_pipeline::format_single_chunk_prompt(
-                    &levels_str,
-                    &prompt.chunk_id,
-                    &prompt.text,
-                );
-                let (prompt_text, template_source) = (formatted.text, formatted.template_source);
-                let response = match retry_with_backoff(
+                let parameters = qa_llm_parameters();
+                let response = retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.qa_batch",
-                    &prompt.chunk_id,
+                    &prompt_id,
                     || {
-                        router.generate_with_model(
-                            &prompt_text,
-                            &params,
+                        router.generate_with_messages(
+                            &messages,
+                            &parameters,
                             selected_model.as_deref(),
                             None,
                         )
                     },
                 )
-                .await
-                {
-                    Ok(resp) => {
+                .await;
+                match response {
+                    Ok(response) => {
                         slot.report_success();
-                        resp
+                        Ok(QaCompletion {
+                            text: response.text,
+                            tokens_used: u64::from(response.usage.total_tokens),
+                        })
                     }
-                    Err(e) => {
+                    Err(error) => {
                         slot.report_failure();
-                        let result = json!({"chunk_id": prompt.chunk_id, "error": format!("LLM failed after {} retries: {}", MAX_RETRIES, e)});
-                        failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        write_qa_result(&result, &output_writer, &write_count);
-                        return;
-                    }
-                };
-                let content = &response.text;
-                match parse_qa_response(&extract_json_from_response(content), &levels, None) {
-                    Ok(qa_response) => {
-                        // Write one JSONL line per QA pair in envelope format
-                        // (matches what corpus_ingest_qa's parse_qa_record expects)
-                        for pair in qa_response.qa_pairs {
-                            let result = qa_pipeline::qa_result_envelope(
-                                &prompt,
-                                pair,
-                                selected_model.as_deref().unwrap_or("router_default"),
-                                template_source,
-                                response.usage.total_tokens,
-                            );
-                            write_qa_result(&result, &output_writer, &write_count);
-                        }
-                    }
-                    Err(e) => {
-                        failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let result = qa_pipeline::qa_error_envelope(
-                            &prompt.chunk_id,
-                            &format!("QA response rejected: {e}"),
-                        );
-                        write_qa_result(&result, &output_writer, &write_count);
+                        Err(format!("LLM failed after {MAX_RETRIES} retries: {error}"))
                     }
                 }
             });
-            handles.push(handle);
+            pending.insert(task.id(), prompt);
         }
 
-        for handle in handles {
-            if let Err(join_err) = handle.await {
-                tracing::warn!(
-                    target: "hkask.mcp.docproc.qa_batch",
-                    error = %join_err,
-                    "QA batch task join failed"
-                );
-            }
+        // JoinSet yields completion order and aborts remaining tasks if output
+        // fails or the tool is cancelled. Keep metadata outside tasks so panics
+        // still produce an identified failed-prompt record.
+        while let Some(result) = tasks.join_next_with_id().await {
+            let (identity, completion) = match result {
+                Ok((identity, completion)) => (identity, completion),
+                Err(error) => (error.id(), Err(format!("QA task join failed: {error}"))),
+            };
+            let prompt = pending.remove(&identity).ok_or_else(|| {
+                McpToolError::internal("QA task completed without prompt metadata")
+            })?;
+            completions.complete(
+                &prompt,
+                completion,
+                selected_model.as_deref().unwrap_or("router_default"),
+            )?;
         }
-
-        {
-            let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
-            if let Err(e) = w.flush() {
-                tracing::warn!(
-                    target: "hkask.mcp.docproc.qa_batch",
-                    error = %e,
-                    "failed to flush QA batch output writer"
-                );
-            }
-        }
-        let written = write_count.load(std::sync::atomic::Ordering::Relaxed);
-        let failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
-        let result = json!({
-            "total": total,
-            "written": written,
-            "failed": failed,
-            "output": output,
-        });
-        // B5 fix: report degraded outcome when failure rate exceeds threshold.
-        let outcome = BatchOutcome::from_counts(failed, total);
-        outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
-        Ok(result)
+        completions.finish(&output, false)
     }
-}
-
-/// Read prompts from a JSONL file, mapping `build_prompts` output fields to
-/// `BatchQaPrompt` (chunk_ref → chunk_id, system+user → text, qa_type →
-/// bloom_levels). Fails when no valid prompts are found.
-fn read_prompts(path: &str) -> Result<Vec<BatchQaPrompt>, McpToolError> {
-    let prompts_values = read_jsonl::<serde_json::Value>(path, "prompts_jsonl")?;
-    let mut prompts_vec: Vec<BatchQaPrompt> = Vec::new();
-    for v in prompts_values {
-        let chunk_id = v
-            .get("chunk_ref")
-            .and_then(|v| v.as_str())
-            .or_else(|| v.get("chunk_id").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .to_string();
-        let system = v.get("system").and_then(|v| v.as_str()).unwrap_or("");
-        let user = v.get("user").and_then(|v| v.as_str()).unwrap_or("");
-        let text = if system.is_empty() && user.is_empty() {
-            v.get("text")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        } else {
-            format!("{system}\n\n{user}")
-        };
-        let bloom_levels = v
-            .get("qa_type")
-            .and_then(|v| v.as_str())
-            .map(|qt| vec![qt.to_string()])
-            .or_else(|| {
-                v.get("bloom_levels").and_then(|v| v.as_array()).map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-            });
-        let source = v
-            .get("source")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let concepts = v
-            .get("concepts")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        prompts_vec.push(BatchQaPrompt {
-            text,
-            chunk_id,
-            bloom_levels,
-            source,
-            concepts,
-        });
-    }
-
-    if prompts_vec.is_empty() {
-        return Err(McpToolError::invalid_argument(
-            "prompts_jsonl contains no valid prompts",
-        ));
-    }
-
-    Ok(prompts_vec)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::qa_pipeline::PreparedQaPrompt;
+    use hkask_types::inference_ipc::{BatchPromptEntry, BatchResultEntry};
+    use hkask_types::template::LLMParameters;
+    use hkask_types::{ChatToolDefinition, InferenceError, InferenceResult};
+    use serde_json::json;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Mutex;
 
-    fn write_temp_jsonl(name: &str, lines: &[serde_json::Value]) -> String {
-        // Path containment (path_safety) rejects /tmp — fixtures must live
-        // under the crate root. Use a scratch dir inside target/ so cargo
-        // gitignores it.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("qa-batch-test");
-        std::fs::create_dir_all(&dir).expect("create scratch dir");
-        let path = dir.join(format!("{name}.jsonl"));
-        let body: String = lines
+    type InferenceFuture<'a> =
+        Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + 'a>>;
+
+    #[derive(Default)]
+    struct RecordingPort {
+        messages: Mutex<Vec<(String, Vec<ChatMessage>)>>,
+        batches: Mutex<Vec<(String, Vec<BatchPromptEntry>)>>,
+        results: Option<Vec<BatchResultEntry>>,
+    }
+
+    fn response_text(question: &str) -> String {
+        json!({"qa_pairs": [
+            {"question": question, "answer": "Grounded answer one.", "bloom_level": "factual"},
+            {"question": "Second question?", "answer": "Grounded answer two.", "bloom_level": "factual"}
+        ]}).to_string()
+    }
+
+    impl InferencePort for RecordingPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> InferenceFuture<'_> {
+            Box::pin(async {
+                Err(InferenceError::Generation(
+                    "Prepared QA must use role-aware messages".into(),
+                ))
+            })
+        }
+
+        fn generate_with_messages(
+            &self,
+            messages: &[ChatMessage],
+            _parameters: &LLMParameters,
+            model: Option<&str>,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> InferenceFuture<'_> {
+            self.messages
+                .lock()
+                .expect("record messages")
+                .push((model.unwrap_or("none").to_string(), messages.to_vec()));
+            let user = messages
+                .iter()
+                .find(|message| message.role == "user")
+                .expect("user message")
+                .content
+                .clone();
+            Box::pin(async move {
+                assert_ne!(user, "panic", "injected task panic");
+                if user == "provider-error" {
+                    return Err(InferenceError::Generation(
+                        "injected provider outage".into(),
+                    ));
+                }
+                Ok(InferenceResult {
+                    text: if user == "malformed" {
+                        "not JSON".into()
+                    } else {
+                        response_text(&user)
+                    },
+                    model: "offline-model".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 4,
+                        completion_tokens: 6,
+                        total_tokens: 10,
+                    },
+                    finish_reason: "stop".into(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+
+        fn generate_batch<'a>(
+            &'a self,
+            model: &str,
+            prompts: &[BatchPromptEntry],
+            _max_tokens: u32,
+            _temperature: f32,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<BatchResultEntry>, InferenceError>> + Send + 'a>>
+        {
+            self.batches
+                .lock()
+                .expect("record batch")
+                .push((model.to_string(), prompts.to_vec()));
+            let results = self.results.clone().unwrap_or_else(|| {
+                prompts
+                    .iter()
+                    .rev()
+                    .map(|prompt| BatchResultEntry {
+                        custom_id: prompt.custom_id.clone(),
+                        text: Some(response_text(&prompt.user)),
+                        total_tokens: 10,
+                        error: None,
+                    })
+                    .collect()
+            });
+            Box::pin(async move { Ok(results) })
+        }
+    }
+
+    fn prepared(identity: &str, user: &str) -> PreparedQaPrompt {
+        PreparedQaPrompt {
+            prompt_id: identity.into(),
+            chunk_ref: "shared-chunk".into(),
+            source: "source.txt".into(),
+            concepts: vec!["concept".into()],
+            salience: 0.5,
+            qa_type: "factual".into(),
+            system: format!("Exact prepared instructions for {identity}\nDo not rewrap."),
+            user: user.into(),
+        }
+    }
+
+    fn fixture(
+        directory: &tempfile::TempDir,
+        prompts: &[PreparedQaPrompt],
+        model: &str,
+    ) -> Result<QaBatchRequest, Box<dyn std::error::Error>> {
+        let path = directory.path().join("prompts.jsonl");
+        let content = prompts
             .iter()
-            .map(|v| serde_json::to_string(v).expect("serialize"))
-            .collect::<Vec<_>>()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()?
             .join("\n");
-        std::fs::write(&path, body).expect("write temp file");
-        path.to_string_lossy().to_string()
+        std::fs::write(&path, content)?;
+        Ok(QaBatchRequest {
+            prompts_jsonl: path.to_string_lossy().into(),
+            output: directory
+                .path()
+                .join("output.jsonl")
+                .to_string_lossy()
+                .into(),
+            concurrency: 2,
+            model: Some(model.into()),
+        })
     }
 
-    #[test]
-    fn read_prompts_maps_build_prompts_fields() {
-        // The canonical build_prompts output shape: chunk_ref + system/user +
-        // qa_type. All three must be aliased into BatchQaPrompt.
-        let line = json!({
-            "chunk_ref": "corpus:doc:1",
-            "system": "You generate QA pairs.",
-            "user": "Chunk text here.",
-            "qa_type": "analyze",
-            "source": "doc.pdf.txt",
-            "concepts": ["ROIC", "moat"],
+    fn records(path: &str) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+        Ok(std::fs::read_to_string(path)?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?)
+    }
+
+    /// expect: [P8] Every prompt survives shared chunk references, with identical instructions on either transport.
+    #[tokio::test]
+    async fn transports_preserve_prepared_messages_and_match_out_of_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let prompts = vec![
+            prepared("qa-1", "first question"),
+            prepared("qa-2", "second question"),
+        ];
+        for model in ["offline-model", "offline-model:batch"] {
+            let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+            let request = fixture(&directory, &prompts, model)?;
+            let output = request.output.clone();
+            let router = Arc::new(RecordingPort::default());
+            let summary = QaBatchService::new(router.clone())
+                .generate_qa_batch(request)
+                .await?;
+            assert_eq!(summary["prompts_total"], 2);
+            assert_eq!(summary["prompts_succeeded"], 2);
+            assert_eq!(summary["prompts_failed"], 0);
+            assert_eq!(summary["qa_rows_written"], 4);
+            assert_eq!(summary["degraded"], false);
+            let rows = records(&output)?;
+            assert_eq!(rows.len(), 4);
+            for prompt in &prompts {
+                let matching: Vec<_> = rows
+                    .iter()
+                    .filter(|row| row["prompt_id"] == prompt.prompt_id)
+                    .collect();
+                assert_eq!(matching.len(), 2);
+                assert_eq!(matching[0]["response"]["instruction"], prompt.user);
+                for row in matching {
+                    assert_eq!(row["chunk_ref"], prompt.chunk_ref);
+                    assert_eq!(row["source"], prompt.source);
+                    assert_eq!(row["response"]["concepts"], json!(prompt.concepts));
+                    assert_eq!(row["qa_type"], prompt.qa_type);
+                    assert_eq!(row["salience"], prompt.salience);
+                    assert_eq!(row["provenance"]["prompt_id"], prompt.prompt_id);
+                    assert_eq!(row["provenance"]["generator_model"], model);
+                }
+            }
+            if model.ends_with(":batch") {
+                assert!(router.messages.lock().expect("messages").is_empty());
+                let batches = router.batches.lock().expect("batches");
+                let (called_model, entries) = batches.first().expect("one batch");
+                assert_eq!(called_model, model);
+                for (entry, prompt) in entries.iter().zip(&prompts) {
+                    assert_eq!(entry.custom_id, prompt.prompt_id);
+                    assert_eq!(entry.system, prompt.system);
+                    assert_eq!(entry.user, prompt.user);
+                }
+            } else {
+                assert!(router.batches.lock().expect("batches").is_empty());
+                let calls = router.messages.lock().expect("messages");
+                assert_eq!(calls.len(), 2);
+                for (called_model, messages) in calls.iter() {
+                    assert_eq!(called_model, model);
+                    let [system, user] = messages.as_slice() else {
+                        panic!("Expected two role-separated messages")
+                    };
+                    assert_eq!(system.role, "system");
+                    assert_eq!(user.role, "user");
+                    let prompt = prompts
+                        .iter()
+                        .find(|prompt| prompt.user == user.content)
+                        .expect("known prompt");
+                    assert_eq!(system.content, prompt.system);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// expect: [P4] Invalid records anywhere in the file reject the whole request before inference or output truncation.
+    #[tokio::test]
+    async fn all_records_validated_before_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let good = serde_json::to_value(prepared("qa-1", "user"))?;
+        let mut invalid_records = vec![
+            json!({}),
+            json!({"chunk_id":"legacy", "text":"legacy", "bloom_levels":["factual"]}),
+            good.clone(),
+        ];
+        for field in [
+            "prompt_id",
+            "chunk_ref",
+            "source",
+            "qa_type",
+            "system",
+            "user",
+        ] {
+            let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
+            record[field] = json!("  ");
+            invalid_records.push(record);
+        }
+        for field in [
+            "prompt_id",
+            "chunk_ref",
+            "source",
+            "qa_type",
+            "system",
+            "user",
+            "salience",
+            "concepts",
+        ] {
+            let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
+            record.as_object_mut().expect("object").remove(field);
+            invalid_records.push(record);
+        }
+        for (field, value) in [
+            ("concepts", json!([""])),
+            ("concepts", json!([1])),
+            ("salience", json!("bad")),
+            ("prompt_id", json!("unsafe/id")),
+            ("prompt_id", json!("x".repeat(65))),
+            ("text", json!("legacy alias")),
+        ] {
+            let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
+            record[field] = value;
+            invalid_records.push(record);
+        }
+        for model in ["offline-model", "offline-model:batch"] {
+            for bad in &invalid_records {
+                let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+                let request = fixture(&directory, &[], model)?;
+                std::fs::write(&request.prompts_jsonl, format!("{good}\n{bad}\n"))?;
+                std::fs::write(&request.output, "unchanged")?;
+                let output = request.output.clone();
+                let router = Arc::new(RecordingPort::default());
+                assert!(
+                    QaBatchService::new(router.clone())
+                        .generate_qa_batch(request)
+                        .await
+                        .is_err()
+                );
+                assert!(router.messages.lock().expect("messages").is_empty());
+                assert!(router.batches.lock().expect("batches").is_empty());
+                assert_eq!(std::fs::read_to_string(output)?, "unchanged");
+            }
+        }
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let request = fixture(&directory, &[], "offline-model")?;
+        assert!(read_prompts(&request.prompts_jsonl).is_err());
+        std::fs::write(&request.prompts_jsonl, format!("{good}\nnot JSON\n"))?;
+        assert!(read_prompts(&request.prompts_jsonl).is_err());
+        Ok(())
+    }
+
+    /// expect: [P9] Batch missing, duplicate, malformed, and provider-error results each count as one failed prompt.
+    #[tokio::test]
+    async fn batch_response_failures_have_truthful_totals() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let prompts: Vec<_> = (1..=7)
+            .map(|index| prepared(&format!("qa-{index}"), "user"))
+            .collect();
+        let result = |identity: &str, text: Option<&str>, error: Option<&str>| BatchResultEntry {
+            custom_id: identity.into(),
+            text: text.map(String::from),
+            error: error.map(String::from),
+            total_tokens: 10,
+        };
+        let valid = response_text("valid");
+        let router = Arc::new(RecordingPort {
+            results: Some(vec![
+                result("qa-7", Some(&valid), None),
+                result("qa-2", Some(&valid), None),
+                result("qa-2", Some(&valid), None),
+                result("qa-3", None, Some("provider refused")),
+                result("qa-4", None, None),
+                result("qa-5", Some(&valid), Some("conflicting error")),
+                result("qa-6", Some("bad JSON"), None),
+            ]),
+            ..Default::default()
         });
-        let path = write_temp_jsonl("canonical", &[line]);
-        let prompts = read_prompts(&path).expect("parse");
-        assert_eq!(prompts.len(), 1);
-        assert_eq!(prompts[0].chunk_id, "corpus:doc:1");
-        assert_eq!(
-            prompts[0].text,
-            "You generate QA pairs.\n\nChunk text here."
-        );
-        assert_eq!(
-            prompts[0].bloom_levels.as_deref(),
-            Some(&["analyze".to_string()][..])
-        );
-        assert_eq!(prompts[0].source, "doc.pdf.txt");
-        assert_eq!(prompts[0].concepts, vec!["ROIC", "moat"]);
-        let _ = std::fs::remove_file(&path);
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let request = fixture(&directory, &prompts, "offline-model:batch")?;
+        let output = request.output.clone();
+        let summary = QaBatchService::new(router)
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_total"], 7);
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 6);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["degraded"], true);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 8);
+        for (index, reason) in [
+            "no result",
+            "duplicate",
+            "provider refused",
+            "Malformed",
+            "Malformed",
+            "rejected",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let identity = format!("qa-{}", index + 1);
+            let row = rows
+                .iter()
+                .find(|row| row["prompt_id"] == identity)
+                .expect("failure row");
+            assert!(row["error"].as_str().expect("error").contains(reason));
+            assert_eq!(row["chunk_ref"], "shared-chunk");
+            assert!(row.get("response").is_none());
+        }
+        Ok(())
     }
 
-    #[test]
-    fn read_prompts_accepts_preformatted_text_and_bloom_levels() {
-        // The alternative shape: chunk_id + combined text + bloom_levels array.
-        let line = json!({
-            "chunk_id": "c2",
-            "text": "Pre-formatted prompt.",
-            "bloom_levels": ["remember", "apply"],
+    /// expect: [P9] Unsolicited provider identities are visible protocol errors, not silently discarded results.
+    #[tokio::test]
+    async fn unknown_batch_identity_is_a_tool_error() -> Result<(), Box<dyn std::error::Error>> {
+        let router = Arc::new(RecordingPort {
+            results: Some(vec![BatchResultEntry {
+                custom_id: "unknown".into(),
+                text: Some(response_text("question")),
+                error: None,
+                total_tokens: 10,
+            }]),
+            ..Default::default()
         });
-        let path = write_temp_jsonl("preformatted", &[line]);
-        let prompts = read_prompts(&path).expect("parse");
-        assert_eq!(prompts[0].chunk_id, "c2");
-        assert_eq!(prompts[0].text, "Pre-formatted prompt.");
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let request = fixture(
+            &directory,
+            &[prepared("qa-1", "user")],
+            "offline-model:batch",
+        )?;
+        let error = QaBatchService::new(router)
+            .generate_qa_batch(request)
+            .await
+            .expect_err("unknown ID must fail");
+        assert!(error.to_string().contains("unknown prompt_id 'unknown'"));
+        Ok(())
+    }
+
+    /// expect: [P9] Panics, exhausted retries and parse rejection cannot masquerade as successful prompts.
+    #[tokio::test]
+    async fn synchronous_failures_and_join_errors_are_counted()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let prompts = vec![
+            prepared("qa-1", "panic"),
+            prepared("qa-2", "malformed"),
+            prepared("qa-3", "provider-error"),
+            prepared("qa-4", "valid"),
+        ];
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let request = fixture(&directory, &prompts, "offline-model")?;
+        let output = request.output.clone();
+        let router = Arc::new(RecordingPort::default());
+        let summary = QaBatchService::new(router.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_total"], 4);
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 3);
+        assert_eq!(summary["qa_rows_written"], 2);
+        let rows = records(&output)?;
+        for (identity, reason) in [
+            ("qa-1", "join failed"),
+            ("qa-2", "rejected"),
+            ("qa-3", "injected provider outage"),
+        ] {
+            let row = rows
+                .iter()
+                .find(|row| row["prompt_id"] == identity)
+                .expect("failure row");
+            assert!(row["error"].as_str().expect("error").contains(reason));
+        }
+        let calls = router.messages.lock().expect("calls");
         assert_eq!(
-            prompts[0].bloom_levels,
-            Some(vec!["remember".to_string(), "apply".to_string()])
+            calls
+                .iter()
+                .filter(|(_, messages)| messages
+                    .iter()
+                    .any(|message| message.content == "provider-error"))
+                .count(),
+            MAX_RETRIES as usize
         );
-        let _ = std::fs::remove_file(&path);
+        Ok(())
     }
 
-    #[test]
-    fn read_prompts_empty_file_is_invalid_argument() {
-        let path = write_temp_jsonl("empty", &[]);
-        let err = read_prompts(&path).expect_err("must fail on empty");
-        assert!(format!("{err}").contains("no valid prompts"));
-        let _ = std::fs::remove_file(&path);
+    /// expect: [P1] An unusable output path fails before either transport spends inference.
+    #[tokio::test]
+    async fn output_is_preflighted_for_both_transports() -> Result<(), Box<dyn std::error::Error>> {
+        for model in ["offline-model", "offline-model:batch"] {
+            let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+            let mut request = fixture(&directory, &[prepared("qa-1", "user")], model)?;
+            request.output = directory.path().to_string_lossy().into();
+            let router = Arc::new(RecordingPort::default());
+            assert!(
+                QaBatchService::new(router.clone())
+                    .generate_qa_batch(request)
+                    .await
+                    .is_err()
+            );
+            assert!(router.messages.lock().expect("messages").is_empty());
+            assert!(router.batches.lock().expect("batches").is_empty());
+        }
+        Ok(())
     }
 
+    /// expect: [P8] Duplicate prompt identities must fail before generation, even for a shared chunk.
     #[test]
-    fn read_prompts_missing_fields_default() {
-        // A line with no recognizable fields still yields a prompt with
-        // empty defaults — lenient by design (malformed lines are the
-        // caller's data-quality problem, surfaced downstream).
-        let line = json!({"unrelated": true});
-        let path = write_temp_jsonl("minimal", &[line]);
-        let prompts = read_prompts(&path).expect("parse");
-        assert_eq!(prompts[0].chunk_id, "");
-        assert_eq!(prompts[0].text, "");
-        assert!(prompts[0].bloom_levels.is_none());
-        let _ = std::fs::remove_file(&path);
+    fn duplicate_prompt_ids_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let path = directory.path().join("prompts.jsonl");
+        let record = json!({
+            "prompt_id": "qa-1", "chunk_ref": "chunk-1", "source": "source.txt",
+            "system": "Prepared system", "user": "Prepared user", "qa_type": "factual",
+            "concepts": [], "salience": 0.5
+        });
+        std::fs::write(&path, format!("{record}\n{record}\n"))?;
+        let result = read_prompts(&path.to_string_lossy());
+        assert!(result.is_err(), "duplicate prompt IDs were accepted");
+        Ok(())
     }
 }

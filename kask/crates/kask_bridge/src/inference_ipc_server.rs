@@ -1410,6 +1410,28 @@ mod tests {
         crate::revoke_delegation_grant(&server);
     }
 
+    /// expect: "Malformed IPC requests never log grant tokens or prompt bodies" [P1]
+    #[test]
+    fn malformed_request_logging_withholds_payload() {
+        let source = include_str!("inference_ipc_server.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("implementation");
+        let parse = source
+            .split("let request: InferenceRequest =")
+            .nth(1)
+            .expect("request parser")
+            .split("let id = request.id")
+            .next()
+            .expect("parse block");
+        assert!(parse.contains("error_class = ?e.classify()"));
+        assert!(!parse.contains("line = %line"));
+        assert!(
+            !parse.contains("error = %e"),
+            "serde errors can echo invalid field values"
+        );
+    }
+
     struct PendingInferencePort {
         started: tokio::sync::Notify,
         capacity: Arc<tokio::sync::Semaphore>,

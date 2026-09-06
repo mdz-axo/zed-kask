@@ -8,6 +8,7 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::corpus::TaggedChunk;
 use serde_json::json;
 
+use crate::services::qa_pipeline::PreparedQaPrompt;
 use crate::tools::corpus::{
     QaType, parse_type_distribution, qa_type_instruction, qa_type_str, read_tagged_chunks,
 };
@@ -97,10 +98,18 @@ impl PromptBuilderService {
                         .collect()
                 })
                 .unwrap_or_default();
+        if prompts_per_chunk == 0 {
+            return Err(McpToolError::invalid_argument(
+                "prompts_per_chunk must be positive",
+            ));
+        }
+        let requested = total.checked_mul(prompts_per_chunk).ok_or_else(|| {
+            McpToolError::invalid_argument("Requested prompt count overflows usize")
+        })?;
         let limit = if max_prompts > 0 {
-            max_prompts.min(total)
+            max_prompts.min(requested)
         } else {
-            total
+            requested
         };
 
         // Sort by salience descending
@@ -166,7 +175,7 @@ impl PromptBuilderService {
         let mut out = String::new();
         let mut ti = 0usize;
 
-        for tc in sorted.iter().take(limit) {
+        'chunks: for tc in sorted.iter().take(limit) {
             // KNN scaffold: source-scoped search
             let context_passages: Vec<serde_json::Value> = {
                 let query_vec = match emb_map.get(&tc.entity_ref) {
@@ -365,8 +374,11 @@ impl PromptBuilderService {
                 selected.unwrap_or(&default_rotation)
             };
 
-            for offset in 0..prompts_per_chunk {
-                let qt = type_rotation[(ti + offset) % type_rotation.len()];
+            for _ in 0..prompts_per_chunk {
+                if ti == limit {
+                    break 'chunks;
+                }
+                let qt = type_rotation[ti % type_rotation.len()];
                 let qt_str = qa_type_str(qt);
 
                 let dimensions_str = if tc.dimensions.is_empty() {
@@ -443,19 +455,33 @@ impl PromptBuilderService {
                     system
                 };
 
-                let prompt = serde_json::json!({
-                    "chunk_ref": tc.entity_ref,
-                    "source": tc.source,
-                    "concepts": tc.concepts,
-                    "salience": tc.salience,
-                    "qa_type": qt_str,
-                    "system": system,
-                    "user": format!("Generate a {} QA pair from this passage:\n\n---\n{}\n---\n\nConcepts: {}\n\nInclude this chunk_ref in your output: {}", qt_str, tc.text, tc.concepts.join(", "), tc.entity_ref),
-                });
-                out.push_str(&serde_json::to_string(&prompt).unwrap_or_default());
+                // The prepared record owns the complete instructions, including
+                // the response contract; transports must never wrap it again.
+                let prompt = PreparedQaPrompt {
+                    prompt_id: format!("qa-{}", ti + 1),
+                    chunk_ref: tc.entity_ref.clone(),
+                    source: tc.source.clone(),
+                    concepts: tc.concepts.clone(),
+                    salience: f64::from(tc.salience),
+                    qa_type: qt_str.to_string(),
+                    system: format!(
+                        "{system}\n\nRespond only in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"{qt_str}\"}}]}}. Question and answer must be non-empty; bloom_level must be {qt_str}."
+                    ),
+                    user: format!(
+                        "Generate a {} QA pair from this passage:\n\n---\n{}\n---\n\nConcepts: {}\n\nSource chunk_ref: {}",
+                        qt_str,
+                        tc.text,
+                        tc.concepts.join(", "),
+                        tc.entity_ref
+                    ),
+                };
+                prompt.validate()?;
+                out.push_str(&serde_json::to_string(&prompt).map_err(|error| {
+                    McpToolError::internal(format!("Cannot serialize prepared QA prompt: {error}"))
+                })?);
                 out.push('\n');
+                ti += 1;
             }
-            ti += prompts_per_chunk;
         }
 
         crate::helpers::write_contained(&output, &out)?;

@@ -431,8 +431,14 @@ impl Deviation {
             | SignalMetric::TestCoverage
             | SignalMetric::MutationScore
             | SignalMetric::InferenceAvailable
-            | SignalMetric::InferenceModelAvailable => diff >= 0.0,
-            SignalMetric::VarietyDeficit | SignalMetric::OcrSilentFailures => diff <= 0.0,
+            | SignalMetric::InferenceModelAvailable
+            | SignalMetric::MemoryLife => diff >= 0.0,
+            SignalMetric::VarietyDeficit
+            | SignalMetric::OcrSilentFailures
+            | SignalMetric::TripleCount
+            | SignalMetric::LowConfidenceCount
+            | SignalMetric::ConsolidationCandidates
+            | SignalMetric::StorageUsage => diff <= 0.0,
             _ => false,
         };
         if healthy || diff.abs() < f64::EPSILON {

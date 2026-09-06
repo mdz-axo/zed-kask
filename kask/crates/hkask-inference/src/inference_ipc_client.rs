@@ -103,7 +103,7 @@ fn read_socket_path_from_file() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Grace margin added on top of the server's published establishment timeout
+/// Grace margin added on top of the server's admission-to-completion timeout
 /// when computing the IPC read deadline.
 ///
 /// The client must strictly outlast the server: when the server gives up at
@@ -128,10 +128,10 @@ const IPC_READ_TIMEOUT_FALLBACK: std::time::Duration = std::time::Duration::from
 
 /// Compute the IPC read deadline for a single response line.
 ///
-/// Reads `HKASK_INFERENCE_TIMEOUT_SECS` (the server's published establishment
-/// timeout) and returns `server_timeout + IPC_READ_TIMEOUT_GRACE` so the client
+/// Reads `HKASK_INFERENCE_TIMEOUT_SECS` (the server's total admitted lifetime
+/// bound) and returns `server_timeout + IPC_READ_TIMEOUT_GRACE` so the client
 /// strictly outlasts the server. Without this alignment, a slow-but-alive
-/// provider whose establishment takes `T_client < T_establishment < T_server`
+/// request whose queue/establishment/drain takes `T_client < T_request < T_server`
 /// produces a `BrokenPipe` warn storm: the client gives up at `T_client`,
 /// closes its socket, and the server's response write at `T_server` hits EPIPE.
 /// With alignment, the client waits past `T_server`, so a timed-out inference

@@ -1,10 +1,8 @@
-//! QA generation helpers — response parsing, error types, batch writer.
+//! QA generation helpers — response parsing, error types, model resolution.
 //!
 //! Used by `corpus_generate_qa` and `corpus_generate_qa_batch` in `semantic.rs`.
 
-use crate::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct QaGenerationResponse {
@@ -90,40 +88,6 @@ pub(crate) fn parse_qa_response(
     Ok(parsed)
 }
 
-/// Write a QA batch result as one JSONL line to the output file with
-/// incremental flush every 10 completions for crash safety.
-pub(crate) fn write_qa_result(
-    result: &serde_json::Value,
-    output_writer: &Arc<Mutex<std::io::BufWriter<std::fs::File>>>,
-    write_count: &std::sync::atomic::AtomicUsize,
-) {
-    let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
-    if let Err(e) = serde_json::to_writer(&mut *w, result) {
-        tracing::warn!(
-            target: "hkask.mcp.docproc.qa_batch",
-            error = %e,
-            "failed to write QA result JSON"
-        );
-    }
-    if let Err(e) = writeln!(&mut *w) {
-        tracing::warn!(
-            target: "hkask.mcp.docproc.qa_batch",
-            error = %e,
-            "failed to write QA result newline"
-        );
-    }
-    let count = write_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if count.is_multiple_of(10) {
-        if let Err(e) = w.flush() {
-            tracing::warn!(
-                target: "hkask.mcp.docproc.qa_batch",
-                error = %e,
-                "failed to flush QA result writer"
-            );
-        }
-    }
-}
-
 /// Resolve the QA model from request override, env, or settings default.
 pub(crate) fn configured_qa_model(requested_model: Option<String>) -> Option<String> {
     if let Some(m) = requested_model {
@@ -132,15 +96,4 @@ pub(crate) fn configured_qa_model(requested_model: Option<String>) -> Option<Str
     std::env::var("HKASK_QA_MODEL")
         .ok()
         .or_else(|| std::env::var("HKASK_DEFAULT_MODEL").ok())
-}
-
-/// A single prompt spec parsed from prompts_jsonl for batch QA generation.
-/// Internal to the batch tool — not part of the public request schema.
-#[derive(Debug, Deserialize)]
-pub(crate) struct BatchQaPrompt {
-    pub text: String,
-    pub chunk_id: String,
-    pub bloom_levels: Option<Vec<String>>,
-    pub source: String,
-    pub concepts: Vec<String>,
 }

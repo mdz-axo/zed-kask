@@ -193,10 +193,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
         })),
         failing_inference_port(),
     );
-    let trigger = serde_json::json!({"source":"Cybernetics", "metric":"tool_reliability", "value":0.2, "set_point":0.8, "timestamp":chrono::Utc::now()});
-    // Use the real Signal serializer so this fixture follows its wire format.
-    let mut trigger = trigger;
-    trigger["source"] = serde_json::json!("cybernetics");
+    let trigger = serde_json::json!({"source":"cybernetics", "metric":"tool_reliability", "value":0.2, "set_point":0.8, "timestamp":chrono::Utc::now()});
     let trigger: hkask_regulation::Signal =
         serde_json::from_value(trigger).expect("signal fixture");
     let id = queue

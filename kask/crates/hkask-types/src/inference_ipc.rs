@@ -38,8 +38,9 @@
 //! - `tool_invoke` — invoke a governed MCP tool on the zed side (`ToolDispatchPort`);
 //!   used by MCP servers that run agent loops (e.g. `hkask-mcp-swarm`'s local
 //!   delegate) so a delegated agent can call MCP tools that live in the parent
-//!   process. The zed side mints the OCAP panel token — the child never holds
-//!   token material.
+//!   process. The child carries an opaque parent-issued grant token and a
+//!   request allowlist; dispatch intersects them. Default is deny. Tokens are
+//!   per server, not PID-bound or OS isolation against arbitrary same-UID code.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -54,15 +55,14 @@ pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
 /// Opaque parent-owned delegated-tool grant, scoped to a launched MCP child.
 pub const TOOL_GRANT_ENV: &str = "HKASK_TOOL_GRANT";
 
-/// Environment variable name for the inference establishment timeout in
-/// seconds.
+/// Environment variable name for the admission-to-completion timeout in seconds.
 ///
 /// The zed process publishes its configured `inference_timeout_secs`
 /// (the deadline the server-side `LanguageModelInferencePort` enforces on
-/// `stream_completion` establishment) so child-process IPC clients can set
+/// queue wait, model resolution, stream establishment and drain) so IPC clients can set
 /// their read deadline to `server_timeout + grace` instead of inventing an
 /// independent (and shorter) one. Without this, a slow-but-alive provider
-/// whose establishment takes longer than the client's read timeout produces a
+/// whose total request lifetime exceeds the client's read timeout produces a
 /// storm of `BrokenPipe` warnings: the client gives up first, closes its
 /// socket, and the server's later response write hits EPIPE. With this, the
 /// client strictly outlasts the server, so a timed-out inference produces one

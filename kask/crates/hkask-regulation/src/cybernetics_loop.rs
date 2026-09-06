@@ -588,17 +588,22 @@ impl CyberneticsLoop {
         &mut self,
         source: Arc<dyn crate::sensor_provider::MemoryHealthSource>,
     ) {
-        self.sensor_registry
-            .register(Arc::new(crate::sensor_provider::MemoryHealthSensor::new(
-                source,
-                self.set_points.triple_count_max,
-                self.set_points.low_confidence_max,
-                self.set_points.low_confidence_threshold,
-                self.set_points.consolidation_floor,
-                self.set_points.consolidation_candidates_max,
-                self.set_points.storage_usage_max_ratio,
-                self.set_points.memory_life_min_days,
-            )));
+        use crate::loops::SignalMetric;
+        for metric in [
+            SignalMetric::MemoryLife,
+            SignalMetric::TripleCount,
+            SignalMetric::StorageUsage,
+            SignalMetric::LowConfidenceCount,
+            SignalMetric::ConsolidationCandidates,
+        ] {
+            self.sensor_registry.register(Arc::new(
+                crate::sensor_provider::MemoryHealthSensor::new(
+                    source.clone(),
+                    metric,
+                    &self.set_points,
+                ),
+            ));
+        }
     }
 
     /// Submit a rollout impact check for the next `verify_impact` pass.
@@ -752,8 +757,13 @@ impl CyberneticsLoop {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let signals = self.sense().await;
-        *self.observations.lock() = signals.iter().map(|signal| (signal.metric, signal.clone())).collect();
-        if let Some(sink) = &self.alert_escalation_sink { sink.reconcile_conditions(&signals); }
+        *self.observations.lock() = signals
+            .iter()
+            .map(|signal| (signal.metric, signal.clone()))
+            .collect();
+        if let Some(sink) = &self.alert_escalation_sink {
+            sink.reconcile_conditions(&signals);
+        }
         // Emit a runtime-posture signal span so the runtime-posture-monitor
         // skill (and any downstream observer) has a production telemetry
         // substrate even when the skill cascade is not explicitly invoked.
