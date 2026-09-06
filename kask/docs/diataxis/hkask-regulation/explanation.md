@@ -19,6 +19,40 @@ must model the system it regulates[^conant-ashby]. The `RegulationLedger`
 holds the `VarietyMonitor`, and exposes health snapshots that the
 `MetacognitionLoop` senses.
 
+## Ratified observation and advice contract — core-review D4
+
+**Decision provenance:** after the weekly-review recommendation was presented,
+the operator instructed the agent on 2026-09-04 to proceed with all seven
+remaining core-review tasks. That session explicitly treated the instruction as
+confirmation of D4; the continuation prompt preserves that ruling. Seven days
+is the confirmed post-action review horizon, **not a weekly sensing cadence**.
+
+Current variety/outcome samples expire after the existing one-minute window
+(`OBSERVATION_WINDOW_SECS`) even without another write. Historical EMA remains
+separate. Sensors return healthy observations as well as deviations; unavailable
+sensing returns no sample. Memory's five metrics are registered independently,
+so one deficit cannot hide another condition's recovery.
+
+`CyberneticsLoop::tick` reconciles durable conditions through
+`BridgeAlertEscalationSink`. Only a fresh finite matching observation meeting the
+**original** threshold can resolve the observed row. Partial improvement,
+missing/stale evidence, and invalid trigger metadata do not resolve it. Context
+updates and row resolution use compare-and-swap; repeated alerts preserve the
+original trigger and operator acknowledgement.
+
+`curator_advice_mark_applied` records a confirmed human action and note once;
+repeat acknowledgement does not reset its window. `curator_advice_reviews`
+includes resolved advice. At seven days the persisted review distinguishes
+`recovered`, `improved`, `no_improvement`, and `insufficient_evidence`; before
+application/window completion it reports `awaiting_action`/`observation_window`.
+Early condition recovery does not end observation of applied advice.
+
+Acceptance means no unacceptable worsening. `observed_progress_score` means
+improved/verified observations; only observed improvement resets stagnation.
+Neither establishes causation: review `causal_attribution` and metacognitive
+outcome trust remain unverified. `RegulationHealth::acceptance_rate` is absent
+with no samples, not fabricated success. No autonomous actuator is added.
+
 ## Source citations
 
 | Symbol | Location |
@@ -166,8 +200,8 @@ The `MetacognitionLoop` (`metacognition.rs:172`) is the Curator's governance
 mechanism. It runs sense→compare→compute→act cycles on a background task
 (`run()` at `metacognition.rs:258`, default 30s tick via
 `DEFAULT_TICK_INTERVAL` at `metacognition.rs:42`). Each cycle senses the
-`RegulationLedger`'s health, variety, and effectiveness; compares against
-thresholds (variety deficit > 100, critical alerts > 3, effectiveness <
+`RegulationLedger`'s health, variety, and observation acceptance; compares against
+thresholds (variety deficit > 100, critical alerts > 3, acceptance <
 0.5 — `metacognition.rs:45-51`); and decides whether to escalate,
 calibrate, or do nothing.
 
@@ -190,7 +224,7 @@ checks (`dampener.rs:181`).
 
 `StagnationDetector` (`dampener.rs:231`) catches a different failure mode:
 the regulator converging to a wrong attractor. When the same (metric,
-action) pair is rejected for `substitution_after` cycles (default 2),
+action) pair shows no observed improvement for `substitution_after` cycles (default 2),
 `try_substitute` (`cycle.rs:31`) walks the substitution ladder
 (`regulation_policy.rs:589`) to find an untried alternative. When it hits
 the per-metric stagnation threshold (default 5), a regulatory-plateau

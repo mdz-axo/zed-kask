@@ -28,7 +28,9 @@ services/
   convert.rs          — ConvertService (document conversion + directory chunking)
   triples.rs          — TriplesService (RDF h_mem extraction from chunks)
   consolidation.rs    — ConsolidationService (cluster + LLM-synthesize + re-embed)
-  prompt_builder.rs   — PromptBuilderService (KNN + concept graph + QA prompts)
+  prompt_builder.rs   — PromptBuilderService (KNN + concept graph + prepared QA records)
+  qa_batch.rs         — Prepared QA transport selection and AIMD synchronous scheduling
+  qa_pipeline.rs      — Canonical prepared record, validation, completion and fallible output
 tools/
   gather/             — corpus_discover, corpus_cache_work
   document.rs         — corpus_convert, corpus_ocr, corpus_chunk (thin wrappers → ConvertService)
@@ -122,10 +124,90 @@ and the whole book silently degraded to Tesseract.
 |------|-------------|
 | `corpus_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `corpus_generate_qa_batch`. |
 | `corpus_generate_qa` | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
-| `corpus_generate_qa_batch` | Generate validated QA pairs for a batch under one optional provider-prefixed model. Concurrent processing with 3-attempt retry and `degraded` outcome classification on >10% failure rate. |
+| `corpus_generate_qa_batch` | Execute canonical prepared QA records unchanged under one optional provider-prefixed model. AIMD synchronous processing with 3-attempt retry or provider Batch API; shared completion accounting and fallible incremental output. |
 | `corpus_ingest_qa` | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance. |
 | `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
 | `corpus_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
+
+### Prepared QA JSONL contract
+
+> **Decision record (operator, 2026-09-05):** Adopt one canonical prepared QA
+> record and shared completion/accounting before the separate media-contract
+> work. No backward compatibility is required. This supersedes the dual-read
+> formats pinned by `45db8da1ef`. Regenerate old prompt files with
+> `corpus_build_prompts`; `chunk_id`/`text`/`bloom_levels` aliases and prepared
+> files without prompt identity are rejected. The AIMD ratification above is
+> unchanged.
+
+Each nonblank input line is exactly one `PreparedQaPrompt` (`services/qa_pipeline.rs`):
+
+```json
+{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","concepts":["mechanism"],"salience":0.5,"qa_type":"factual","system":"Generate grounded QA. Return JSON with a qa_pairs array of question, answer and bloom_level (factual).","user":"The primary passage and its context."}
+```
+
+All eight fields are required; unknown fields are rejected. `prompt_id`,
+`chunk_ref`, `source`, `qa_type`, `system`, and `user` are nonblank strings.
+`prompt_id` is unique **within the input file**, 1–64 ASCII letters, digits,
+hyphens or underscores. Repeated `chunk_ref` values are valid. `concepts` is
+an array of nonblank strings (the array may be empty); `salience` is a finite
+JSON number. `qa_type` names the requested Bloom level and must match every
+accepted pair's `bloom_level` exactly. The builder currently rotates factual,
+conceptual, analyze, evaluate and create. Blank lines are ignored; an empty
+file or any invalid/duplicate record rejects the entire request **before
+inference or output creation**.
+
+The builder supplies the response instructions as part of `system`. It emits
+`qa-1`, `qa-2`, … identities in file order; when combining files, identities
+must remain unique. `max_prompts` caps **prompt records**, not chunks;
+`0` emits all `chunks × prompts_per_chunk` records. `prompts_per_chunk` must
+be positive. Builder summary: `total_chunks`, `prompts_written`, `output`.
+
+Both transports forward the prepared `system` and `user` unchanged (separate
+roles for synchronous inference; separate messages and `custom_id=prompt_id`
+for provider batches). Neither formats the instructions as source text or
+adds another generation template. Inference must return:
+
+```json
+{"qa_pairs":[{"question":"A grounded question?","answer":"A grounded answer.","bloom_level":"factual"}]}
+```
+
+The entire response must parse and every pair must have nonblank question and
+answer and the requested Bloom level. One accepted pair becomes one
+`corpus_ingest_qa`-compatible JSONL row:
+
+```json
+{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","salience":0.5,"qa_type":"factual","response":{"instruction":"A grounded question?","output":"A grounded answer.","type":"factual","concepts":["mechanism"]},"provenance":{"generator_model":"<selected model or router_default>","prompt_template":"prepared-qa","prompt_id":"qa-1","source_chunk_ref":"corpus:doc:1"},"tokens_used":10}
+```
+
+`tokens_used` is the prompt completion's usage, repeated on each pair row;
+it is not per-pair usage. A failed prompt instead writes
+`{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","error":"reason"}`
+(no `response`, so it is not admitted as training data). Out-of-order provider
+results are matched by prompt ID. Missing results, duplicate results for a
+known ID, provider errors, malformed result envelopes, rejected QA, and task
+join failures each count as one failed prompt. Unknown provider IDs and
+batch-level IPC failures return a tool error rather than dropping results.
+
+Successful tool returns have exactly these summary fields:
+
+| Field | Meaning |
+|---|---|
+| `prompts_total` | Validated input record count |
+| `prompts_succeeded` | Prompts whose entire QA response passed validation and whose rows were written |
+| `prompts_failed` | Prompts with an identified failure row |
+| `qa_rows_written` | Accepted QA pair rows only; excludes failure rows |
+| `output` | Requested output path |
+| `batch_api` | Whether provider batch transport was used |
+| `degraded` | Existing `BatchOutcome` failure-rate classification (at least 10%) |
+
+`prompts_total = prompts_succeeded + prompts_failed`; row count is independent
+(a prompt can produce multiple pairs). Output is opened before inference,
+written incrementally in completion order for synchronous calls, flushed
+every 10 prompt completions and once at the end. Serialization, body write,
+newline write, or flush errors propagate as tool errors, **never an OK
+summary**. Output may be partial on error; this is not atomic replacement or
+an `fsync` durability guarantee. The single-chunk/cross-reference
+`corpus_generate_qa` capability is unchanged.
 
 ### Compose Output (2)
 

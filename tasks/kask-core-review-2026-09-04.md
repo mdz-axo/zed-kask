@@ -10,7 +10,121 @@
 
 All source paths below are relative to the repository root. Line citations describe the reviewed snapshot. HEAD advanced externally during inspection; `git diff 535e9b2b8b HEAD --stat -- kask/crates` was empty at the coordinator's verification. Existing uncommitted work was not changed by this review. No source changes or fixes were made. This new report does not replace `tasks/plan.md`, `tasks/todo.md`, or any canonical design specification.
 
-## Latest handoff — finishing the remaining seven tasks
+## Continuation checkpoint — 2026-09-05 (final gates pending)
+
+**Provenance:** operator continuation plus renewed “please proceed” after the
+concurrent-edit pause. External commit `87652e946f` completed the memory refactor
+and included the stale population-test correction. External tooling subsequently
+committed part of this session as `d44858f761`; the agent did not stage or commit.
+Separately staged corpus QA changes belong to another workstream and are untouched.
+Validation must cover the complete working tree, not merely the index or commit.
+
+**Design boundary:** finish at the existing grant registry, request lifetime,
+sensor, escalation queue, and curator-tool owners. Preserve default-deny parent
+authority, no unknown-effect replay, prompt sensing, and human-only actuation.
+Refuse suppressing healthy signals to satisfy old tests, granting broad defaults,
+or treating accepted recommendations as proof of effect.
+
+**D4 ratification, superseding the historical “proposal” entry below:** after the
+weekly-review recommendation was presented, the operator instructed the previous
+session to proceed with all seven remaining tasks. That session explicitly took
+this as confirmation of prompt sensing/recovery and a seven-day assessment window
+starting at confirmed human action. The continuation prompt repeats this ruling.
+Seven days is not an engineering-invented sensor cadence. The decision is also
+recorded in `kask/docs/diataxis/hkask-regulation/explanation.md`.
+
+Further implementation found during acceptance work:
+
+- T04: environment diffing could remint a grant for an unloaded child. Grant
+  issuance now checks load settings and occurs before credential awaits. Raw IPC
+  parse-error payloads are withheld (serde error messages can echo input too).
+- T13/T14: exact GPUI-clock expiry is checked when polling a deadline, including
+  before the receiver first polls. The unpolled-receiver test must advance the
+  test clock directly: the scheduler's `advance_clock` drains runnable tasks first,
+  contrary to the GPUI wrapper comment. Real Unix-socket tests cover EOF and
+  pipelining cancellation; client tests cover typed Timeout/Overloaded round trips.
+- T15/T16: fresh-window tests now exercise the real reliability sensor. Memory's
+  five metrics are separately registered so degraded priority ordering cannot
+  hide another metric's recovery. Healthy floor/ceiling readings are not deviations.
+- T16/T17: re-sensed alerts preserve their original trigger and application fields.
+  CAS protects acknowledgement; recovery resolves only the observed row/context,
+  not a newer recurrence with the same condition name. Actual curator tools and
+  persisted seven-day review contexts are tested, including early recovery,
+  stale/missing evidence, idempotence, and visibility after resolution.
+
+### T11 design checkpoint — proposal awaiting experience confirmation
+
+**Not implemented; do not use live settings rotation as a verification probe.**
+The confirmed D5 outcome remains visible maintenance, settled writers, closed
+consumers, preservation of every shared-key DB before key publication, and visible
+reopen/resume or recoverable failure. The precise restart interaction is the
+remaining operator decision. Recommendation: **maintenance restart**, not a new
+in-process revocable-store framework.
+
+Known ownership inventory (paths are resolved overrides, not necessarily defaults):
+
+| Database | Openers/consumers that maintenance must settle and close |
+|---|---|
+| `HKASK_CURATOR_DB`, default `agents/curator/curator.db` | Bridge `CuratorStore` and `RealMemoryPort` ingestion/consolidation/recall; independent regulation archive and escalation queue adapters; curator MCP `CuratorDb` memory/embedding/archive/queue stores. `CuratorStore::get` hands out Arcs and retains its old passphrase. |
+| `HKASK_SWARM_MEMORY_DB`, default `mcp/swarm/memory.db` | Swarm `LocalSwarmRuntime`/`local_knowledge` memory and embedding consumers, delegated work. |
+| `HKASK_KANBAN_DB`, default `mcp/kata-kanban/kanban.db` | Kanban persistent service and durable idempotency store; in-flight task/delegation operations. |
+| `HKASK_RSS_DB`, default `mcp/research/rss.db` | Research-server RSS pool and feed/entry/search writers/readers. |
+| `HKASK_TRAINING_DB`, default `mcp/training/training.db` | Training memory/embeddings, adapter store, job store and running job completion updates. |
+| Caller-supplied corpus/training DB paths | Corpus `helpers::open_memory_store` and workflow-specific opens; training dataset assembly can open an explicitly supplied corpus DB. Some use explicit independent passphrases; others use the shared key. They cannot be inferred from the five fixed paths. |
+
+Inventory evidence: `kask_bridge/src/identity.rs::kask_db_paths`,
+`memory/curator_stores.rs`, `memory/alert_escalation.rs`, curator
+`CuratorDb::from_context`, swarm `config.rs`/`local_knowledge.rs`, the kanban,
+research and training server constructors, corpus `helpers::open_memory_store`,
+and training `tools/dataset.rs`. Media gallery and portfolio databases inspected
+here use unencrypted SQLite, not this key; a database suffix alone does not make
+it part of shared-key rotation. This table is a source inventory, not an enforced
+consumer registry or an exhaustive discovery of historical external paths.
+
+Proposed operator experience and failure contract:
+
+1. Show the exact database inventory and pending work before maintenance. Include
+   registered external paths and require explicit reconciliation of historical
+   caller-supplied paths; do not silently omit/recreate corpus DBs or scan arbitrary
+   user files. Canonicalize/deduplicate paths and distinguish independent keys.
+2. Stop admission, settle local work, preserve unresolved remote-job identifiers
+   without replay, save workspace state, and close the editor and its managed
+   children. A helper waits for confirmed exit; async MCP stop alone is not a drain.
+   Other known owners must be stopped or maintenance refuses to proceed.
+3. Offline, retain verified originals/backups and rotate separate candidates.
+   Verify each candidate with the new key, integrity/FK checks, RSS FTS behavior,
+   and old/new KNN+h_mem recall before activation. Failures before activation leave
+   originals and the authoritative old key untouched.
+4. Journal per-file activation and preserve originals across replacement. Publish
+   the shared key only after every candidate is activated and verified. One rename
+   is not multi-file crash atomicity. Startup must honor the journal and refuse
+   normal DB opening/default provisioning while maintenance is unresolved.
+5. On keychain-write failure, read back key authority rather than treating an
+   error as proof the write did not happen. Restore verified originals if the old
+   key remains authoritative; retain the new set if publication is confirmed.
+   Ambiguous keychain state or failed rollback stays visibly in maintenance with
+   per-path evidence, both file sets retained, and no guessed/default key. The
+   journal contains no passphrases; recovery requiring an unavailable credential
+   must ask the operator rather than discard data.
+6. Reopen all consumers and resume only after verified access. A reopen failure
+   after publication retains the new authoritative key and a recoverable maintenance
+   state; retry/restart does not replay uncertain tool effects. Clear maintenance
+   only after all consumers report ready.
+
+Required isolated acceptance matrix (all still outstanding for T11): admission
+and in-flight write preservation; editor/child drain; every inventory path and
+external-path omission refusal; per-DB copy/verify failure; activation crash at
+each boundary; rollback failure; keychain failure before/after actual write;
+consumer-reopen failure; restart recovery. Use temporary SQLCipher fixtures,
+disposable credentials, and the T09/T10 RSS/KNN round trips. No live keyring test.
+
+**Risk/owner:** operator confirms the restart experience and external-path
+inventory interaction; coding agent then implements and verifies this lifecycle.
+Until then settings rotation can race live handles, omit corpus DBs, or mark the
+UI configured after keychain-write failure (`security.rs:173–180`). Treat it as
+unsafe for valuable live data. No lifecycle closure is claimed from this design.
+
+## Latest handoff — finishing the remaining seven tasks (historical)
 
 Read [`kask-core-review-continuation-prompt.md`](kask-core-review-continuation-prompt.md)
 for the implementation inventory, operator decisions, unfinished acceptance

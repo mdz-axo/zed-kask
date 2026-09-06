@@ -1,7 +1,7 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-08-05
+last_updated: 2026-09-05
 version: "0.39.0"
 status: "Active"
 domain: "MCP Servers"
@@ -65,9 +65,87 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 |------|-------------|
 | `corpus_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph; outputs prompts JSONL for `corpus_generate_qa_batch`. |
 | `corpus_generate_qa` | Generate QA pairs from a single chunk or multi-chunk cross-reference set; Bloom's taxonomy levels; multi-chunk mode requires synthesis across passages with source citation. |
-| `corpus_generate_qa_batch` | Batch-generate QA pairs from a prompts JSONL with configurable concurrency; same pipeline as `corpus_generate_qa`. |
+| `corpus_generate_qa_batch` | Execute canonical prepared QA JSONL unchanged via AIMD synchronous calls or provider batches; shared validation, completion accounting and fallible incremental output. |
 | `corpus_ingest_qa` | Ingest generated QA pairs: parse, quality-filter, exact-match dedup, write training JSONL, store QA h_mems with 5W1H + Dublin Core / PKO metadata. |
 | `corpus_prepare_training_dataset` | Convert Alpaca-format QA JSONL to ChatML training format, apply the lora-training G-D1 dataset-size gate, and return PEFT config recommendations. Bridges the corpus pipeline to the training server. |
+
+### Prepared QA contract (ratified 2026-09-05)
+
+**Operator decision:** One typed prepared QA record; retire compatibility
+with the dual-read formats pinned by `45db8da1ef`. Regenerate old prompt files
+using `corpus_build_prompts`. This implements the approved corpus identity /
+accounting work first, without changing the AIMD ratification (2026-09-03) or
+the single/cross-reference `corpus_generate_qa` capability.
+
+`services/qa_pipeline.rs::PreparedQaPrompt` is shared by the builder, reader
+and both generation transports. Each nonblank JSONL line contains exactly:
+
+| Required field | Contract |
+|---|---|
+| `prompt_id` | File-unique string: 1–64 ASCII letters, digits, `-`, `_` |
+| `chunk_ref` | Nonblank source chunk reference; may repeat across prompts |
+| `source` | Nonblank source string |
+| `concepts` | Array of nonblank strings; empty array allowed |
+| `salience` | Finite JSON number |
+| `qa_type` | Nonblank requested Bloom level; generated `bloom_level` must match exactly |
+| `system` | Nonblank, fully prepared system instructions including response format |
+| `user` | Nonblank, fully prepared user instructions/passage |
+
+No unknown fields or legacy aliases (`chunk_id`, `text`, `bloom_levels`) are
+accepted. The entire file is validated, including duplicate IDs, before
+inference or output creation; empty files are invalid. Blank lines are
+ignored. Builder IDs are `qa-1`, `qa-2`, … within each file; combined files
+must preserve uniqueness. `max_prompts` limits records, not chunks (`0` =
+all chunks × positive `prompts_per_chunk`). The builder returns
+`total_chunks`, `prompts_written`, `output`.
+
+```json
+{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","concepts":[],"salience":0.5,"qa_type":"factual","system":"Return grounded JSON with qa_pairs containing question, answer and bloom_level (factual).","user":"Primary passage."}
+```
+
+Both transports preserve `system`/`user` exactly. Synchronous calls use the
+role-aware `InferencePort`; provider batches use `custom_id=prompt_id`.
+Configured model routing is retained, including the original provider prefix
+or batch suffix. The builder prepares the output instructions once; neither
+transport rewraps them as passage text. Expected model output:
+
+```json
+{"qa_pairs":[{"question":"Question?","answer":"Answer.","bloom_level":"factual"}]}
+```
+
+The shared completion path validates the full response before writing any
+accepted rows. Empty arrays, blank questions/answers, incorrect Bloom levels,
+and malformed JSON fail the prompt. Each accepted pair is written in the
+existing ingest envelope with prompt identity provenance:
+
+```json
+{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","salience":0.5,"qa_type":"factual","response":{"instruction":"Question?","output":"Answer.","type":"factual","concepts":[]},"provenance":{"generator_model":"<selected model or router_default>","prompt_template":"prepared-qa","prompt_id":"qa-1","source_chunk_ref":"corpus:doc:1"},"tokens_used":10}
+```
+
+Tokens are completion-level usage repeated across its pair rows, not per-pair
+usage. Failed prompts write only `prompt_id`, `chunk_ref`, `source`, `error`;
+these rows cannot be ingested as QA. Out-of-order results are matched by ID.
+Missing/duplicate known-ID responses, provider errors, malformed result
+entries, parse rejection and task join failures each count once as a failed
+prompt. Unknown provider IDs or batch-level IPC failures are tool errors.
+
+**Generation summary fields (both transports):**
+
+- `prompts_total`: validated input records.
+- `prompts_succeeded`: fully accepted and written prompt responses.
+- `prompts_failed`: identified failed prompts.
+- `qa_rows_written`: accepted QA pair rows only, not error rows or prompts.
+- `output`: requested path.
+- `batch_api`: transport boolean.
+- `degraded`: existing `BatchOutcome` classification (failure rate ≥10%).
+
+Every successful return satisfies `prompts_total = prompts_succeeded +
+prompts_failed`. Output is preflighted before inference, written incrementally,
+flushed every 10 prompt completions and at the end. Write, newline and flush
+failures propagate as tool errors, never a successful summary. Partial output
+may remain on error; no atomic replacement or `fsync` guarantee is implied.
+See the [corpus README](../../../mcp-servers/hkask-mcp-corpus/README.md#prepared-qa-jsonl-contract)
+for the decision record and full operational contract.
 
 ### Compose Output (2)
 

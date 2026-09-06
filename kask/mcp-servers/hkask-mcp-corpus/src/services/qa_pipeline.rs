@@ -336,6 +336,147 @@ pub(crate) fn qa_result_envelope(
 mod tests {
     use super::*;
 
+    fn prepared() -> PreparedQaPrompt {
+        PreparedQaPrompt {
+            prompt_id: "qa-1".into(),
+            chunk_ref: "chunk-1".into(),
+            source: "source.txt".into(),
+            concepts: Vec::new(),
+            salience: 0.5,
+            qa_type: "factual".into(),
+            system: "system".into(),
+            user: "user".into(),
+        }
+    }
+
+    fn accepted() -> Result<QaCompletion, String> {
+        Ok(QaCompletion { text: json!({"qa_pairs": [{"question":"Question?", "answer":"Answer.", "bloom_level":"factual"}]}).to_string(), tokens_used: 10 })
+    }
+
+    enum Failure {
+        Body,
+        Newline,
+        Flush,
+    }
+
+    struct RejectingWriter {
+        failure: Failure,
+    }
+
+    impl Write for RejectingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if matches!(self.failure, Failure::Body)
+                || (matches!(self.failure, Failure::Newline) && bytes == b"\n")
+            {
+                return Err(std::io::Error::other("injected write failure"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            if matches!(self.failure, Failure::Flush) {
+                return Err(std::io::Error::other("injected flush failure"));
+            }
+            Ok(())
+        }
+    }
+
+    /// expect: [P9] Body, newline and final flush failures propagate, never returning a success summary.
+    #[test]
+    fn output_failures_propagate() -> Result<(), McpToolError> {
+        for failure in [Failure::Body, Failure::Newline] {
+            let mut output = QaOutput::new(RejectingWriter { failure }, 1);
+            let error = output
+                .complete(&prepared(), accepted(), "offline-model")
+                .expect_err("write must fail");
+            assert!(error.to_string().contains("injected write failure"));
+            assert!(output.finish("unused", false).is_err());
+        }
+        let mut output = QaOutput::new(
+            RejectingWriter {
+                failure: Failure::Flush,
+            },
+            1,
+        );
+        output.complete(&prepared(), accepted(), "offline-model")?;
+        let error = output.finish("unused", false).expect_err("flush must fail");
+        assert!(error.to_string().contains("injected flush failure"));
+        Ok(())
+    }
+
+    /// expect: [P9] Incremental output flush failures and failure-record write failures are equally fatal.
+    #[test]
+    fn incremental_and_error_output_failures_propagate() -> Result<(), McpToolError> {
+        let mut output = QaOutput::new(
+            RejectingWriter {
+                failure: Failure::Flush,
+            },
+            10,
+        );
+        for identity in 1..10 {
+            let mut prompt = prepared();
+            prompt.prompt_id = format!("qa-{identity}");
+            output.complete(&prompt, accepted(), "offline-model")?;
+        }
+        let error = output
+            .complete(&prepared(), accepted(), "offline-model")
+            .expect_err("incremental flush must fail");
+        assert!(error.to_string().contains("injected flush failure"));
+        let mut output = QaOutput::new(
+            RejectingWriter {
+                failure: Failure::Newline,
+            },
+            1,
+        );
+        assert!(
+            output
+                .complete(&prepared(), Err("provider failure".into()), "offline-model")
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// expect: [P9] Empty or malformed QA is a failed prompt and writes no accepted QA rows.
+    #[test]
+    fn rejected_qa_outputs_are_accounted_without_partial_acceptance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for response in [
+            "not JSON",
+            "{\"qa_pairs\":[]}",
+            r#"{"qa_pairs":[{"question":"", "answer":"answer", "bloom_level":"factual"}]}"#,
+            r#"{"qa_pairs":[{"question":"question", "answer":" ", "bloom_level":"factual"}]}"#,
+            r#"{"qa_pairs":[{"question":"question", "answer":"answer", "bloom_level":"create"}]}"#,
+            r#"{"qa_pairs":[{"question":"question", "answer":"answer", "bloom_level":"factual"}, {"question":"bad"}]}"#,
+        ] {
+            let mut bytes = Vec::new();
+            let mut output = QaOutput::new(&mut bytes, 1);
+            output.complete(
+                &prepared(),
+                Ok(QaCompletion {
+                    text: response.into(),
+                    tokens_used: 0,
+                }),
+                "offline-model",
+            )?;
+            let summary = output.finish("unused", true)?;
+            assert_eq!(summary["prompts_total"], 1);
+            assert_eq!(summary["prompts_succeeded"], 0);
+            assert_eq!(summary["prompts_failed"], 1);
+            assert_eq!(summary["qa_rows_written"], 0);
+            let row: serde_json::Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(row["prompt_id"], "qa-1");
+            assert!(row["error"].as_str().expect("error").contains("rejected"));
+            assert!(row.get("response").is_none());
+        }
+        Ok(())
+    }
+
+    /// expect: [P9] A transport that loses a completion cannot report a successful run.
+    #[test]
+    fn unfinished_accounting_is_not_success() {
+        let output = QaOutput::new(Vec::new(), 1);
+        assert!(output.finish("unused", false).is_err());
+    }
+
     #[test]
     fn qa_llm_parameters_match_historical_values() {
         let params = qa_llm_parameters();

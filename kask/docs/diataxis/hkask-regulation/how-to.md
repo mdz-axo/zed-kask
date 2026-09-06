@@ -88,13 +88,13 @@ Create the sensor in `sensor_provider.rs`, following `EnergyBudgetSensor`
 (`sensor_provider.rs:79`) or `VarietySensor` (`sensor_provider.rs:126`).
 The trait requires:
 
-- `async fn sense(&self) -> Option<Signal>` — return `None` when the metric
-  is healthy; return `Some(Signal::new(source, metric, value, set_point))`
-  when it deviates.
-- `fn metric(&self) -> Option<SignalMetric>` — return `Some(...)` for
-  catalog indexing.
-- `fn name(&self) -> &str` — override only if the type name is unclear.
-- `fn loop_id(&self) -> Option<LoopId>` — return `Some(LoopId::Cybernetics)`.
+- `async fn observe(&self) -> Option<Signal>` — return measured healthy and
+  degraded readings; return `None` only when no current observation is available.
+- Register metrics independently when a source exposes several readings.
+- Encode floor/ceiling health in `Deviation::from_signal`; do not suppress
+  healthy readings at the sensor or durable alerts cannot recover.
+- A test-only `sense()` helper filters observations to deviations. Production
+  `SensorBus` uses `observe()`, not this helper.
 
 The `Signal::new` constructor (`loops/signals.rs:236`) stamps the signal
 with `chrono::Utc::now()`.

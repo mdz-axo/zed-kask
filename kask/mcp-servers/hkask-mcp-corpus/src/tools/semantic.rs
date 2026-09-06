@@ -2,7 +2,7 @@
 //!
 //! This module is the router host for the `semantic_router` tool group.
 //! Helpers live in submodules:
-//! - `qa` — QA response parsing, batch writer, model resolution
+//! - `qa` — QA response parsing and model resolution
 //! - `assertions` — RDF predicate → 5W1H dimension mapping
 //! - `ontology_io` — tagged-chunks JSONL readers
 //!
@@ -122,7 +122,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Batch-generate QA pairs from multiple text chunks. Same pipeline as corpus_generate_qa (Bloom taxonomy, templates). Uses configurable concurrency for parallel LLM calls. Reads prompts from prompts_jsonl (one JSON per line: chunk_ref, qa_type, system, user) and writes generated QAs to the output JSONL file. Returns a summary (total + written counts)."
+        description = "Generate QA from canonical prepared prompts JSONL: prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user (all required). prompt_id is unique per file; repeated chunk_ref is valid. Validates all records before inference and forwards prepared instructions unchanged via AIMD concurrency or the provider Batch API. Legacy prompt formats must be regenerated with corpus_build_prompts. Output contains ingest-compatible QA rows and identified error rows. Summary: prompts_total, prompts_succeeded, prompts_failed, qa_rows_written, output, batch_api, degraded. Output write/flush failures return a tool error."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -461,11 +461,11 @@ pub(crate) struct GenerateQaRequest {
     pub model: Option<String>,
 }
 
-/// A single prompt spec parsed from prompts_jsonl for batch QA generation.
-/// Internal to the batch tool — not part of the public request schema.
+/// Request for generating QA from a canonical prepared-prompt JSONL file.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GenerateQaBatchRequest {
-    /// Path to prompts JSONL file (one JSON per line with chunk_ref, qa_type, system, user).
+    /// Canonical JSONL: prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user.
+    /// IDs must be unique, 1–64 ASCII letters/digits/hyphens/underscores. No legacy aliases.
     pub prompts_jsonl: String,
     /// Output path for generated QAs JSONL.
     pub output: String,

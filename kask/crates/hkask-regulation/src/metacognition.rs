@@ -50,6 +50,30 @@ const DEFAULT_CRITICAL_ALERT_THRESHOLD: usize = 3;
 /// Default observation acceptance floor (below → self-calibrate).
 const DEFAULT_ACCEPTANCE_FLOOR: f64 = 0.5;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: "No samples stay unknown and accepted advice never becomes causally trusted" [P9]
+    #[test]
+    fn acceptance_is_not_causal_trust() {
+        let empty = RegulationHealth::default();
+        assert_eq!(empty.acceptance_rate(), None);
+        let accepted = RegulationHealth {
+            total_cycles: 10,
+            accepted: 10,
+            ..Default::default()
+        };
+        assert_eq!(accepted.acceptance_rate(), Some(1.0));
+        for health in [empty, accepted] {
+            assert_eq!(
+                MetacognitionLoop::compute_loop_view(&health).outcome_trust,
+                crate::loops::OutcomeTrust::Unverified
+            );
+        }
+    }
+}
+
 /// A user-facing alert event forwarded by the metacognition loop.
 ///
 /// The metacognition loop produces `EscalationAlert`s in its `compare`

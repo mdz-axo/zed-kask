@@ -116,3 +116,51 @@ pub(crate) fn parse_qa_record(line: &str) -> Option<ParsedQa> {
         evidence_quotes,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::qa_pipeline::{PreparedQaPrompt, QaCompletion, QaOutput};
+
+    /// expect: [P8] Generated QA rows remain ingestible with their source metadata; failure rows are never training data.
+    #[test]
+    fn shared_qa_output_is_ingest_compatible() -> Result<(), Box<dyn std::error::Error>> {
+        let prompt = PreparedQaPrompt {
+            prompt_id: "qa-1".into(),
+            chunk_ref: "chunk-1".into(),
+            source: "source.txt".into(),
+            concepts: vec!["concept".into()],
+            salience: 0.5,
+            qa_type: "factual".into(),
+            system: "prepared system".into(),
+            user: "prepared user".into(),
+        };
+        let mut bytes = Vec::new();
+        let mut output = QaOutput::new(&mut bytes, 2);
+        output.complete(&prompt, Ok(QaCompletion {
+            text: r#"{"qa_pairs":[{"question":"Question?", "answer":"Answer.", "bloom_level":"factual"}]}"#.into(), tokens_used: 10,
+        }), "offline-model")?;
+        let failed = PreparedQaPrompt {
+            prompt_id: "qa-2".into(),
+            ..prompt.clone()
+        };
+        output.complete(&failed, Err("failed inference".into()), "offline-model")?;
+        let summary = output.finish("unused", false)?;
+        assert_eq!(summary["qa_rows_written"], 1);
+        let text = String::from_utf8(bytes)?;
+        let mut lines = text.lines();
+        let first = lines.next().expect("QA row");
+        let parsed = parse_qa_record(first).expect("ingest accepted QA");
+        assert_eq!(parsed.instruction, "Question?");
+        assert_eq!(parsed.output, "Answer.");
+        assert_eq!(parsed.qa_type, prompt.qa_type);
+        assert_eq!(parsed.source, prompt.source);
+        assert_eq!(parsed.chunk_ref.as_deref(), Some(prompt.chunk_ref.as_str()));
+        assert_eq!(parsed.concepts, prompt.concepts);
+        let value: serde_json::Value = serde_json::from_str(first)?;
+        assert_eq!(value["provenance"]["prompt_id"], prompt.prompt_id);
+        assert!(parse_qa_record(lines.next().expect("failure row")).is_none());
+        assert!(lines.next().is_none());
+        Ok(())
+    }
+}

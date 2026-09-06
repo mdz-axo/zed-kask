@@ -377,7 +377,7 @@ Curation→Cybernetics→Curation cycle. Two layers:
    `set_points.rs:83`).
 
 `StagnationDetector` (`dampener.rs:231`) tracks (metric, action) pairs.
-When the same pair is rejected for `substitution_after` cycles (default 2,
+When the same pair shows no observed improvement for `substitution_after` cycles (default 2,
 `set_points.rs:120`), `try_substitute` (`cycle.rs:31`) walks the
 substitution ladder. When it hits the per-metric stagnation threshold
 (default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:101`), a

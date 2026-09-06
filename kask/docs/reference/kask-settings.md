@@ -39,6 +39,23 @@ storage-root fields:
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 
+## Inference lifetime (`KaskGeneralSettings`)
+
+The operator-ratified core-review D3 contract (2026-09-04) is a total
+**admission-to-completion** deadline: queue wait, model resolution, stream
+establishment, and drain all share `general.inference_timeout_secs` (default
+300 seconds). This supersedes establishment-only descriptions; AIMD is unchanged.
+Zero disables this server timer, not cancellation or admission limits. IPC
+clients retain their 600-second transport fallback when the timer is disabled;
+otherwise they allow the published server timeout plus 30 seconds of grace.
+
+Accepted bridge requests are bounded at twice `general.max_concurrency`;
+active calls remain bounded at that configured concurrency. Saturation returns
+`Overloaded` before provider dispatch. Expiry returns `Timeout`. Caller/channel
+closure cancels local queued or running work and releases capacity. Provider
+work or tool effects already accepted elsewhere cannot be undone by cancellation;
+unknown-effect requests are not automatically replayed.
+
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
@@ -52,6 +69,7 @@ IDs via `builtin_mcp_server_ids()`):
 |-------|------|--------|
 | `load_default` | `bool` | `true` — load all built-in servers |
 | `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. "curator": false) |
+| `delegated_tools` | `HashMap<String, Vec<String>>` | empty — deny delegated IPC tools unless explicitly granted |
 
 The master `load_default` toggle controls all servers; individual `overrides`
 take precedence. Set `load_default: false` to disable all kask MCP servers.
@@ -59,6 +77,25 @@ Load/unload toggles take effect at runtime: the `SettingsStore` observer
 (`sync_kask_mcp_runtime_servers`, D45) stops/starts the governed server
 through the `McpRuntime`'s own primitives. The servers also appear in
 Settings → AI → MCP Servers as managed rows (D45).
+
+### Delegated tools: parent authority (D1, 2026-09-04)
+
+`kask.mcp.delegated_tools` maps a **child server ID** to exact runtime
+`server/tool` names. For example (illustrative; not installed automatically):
+
+```json
+{"kask":{"mcp":{"delegated_tools":{"swarm":["research/rss_search"]}}}}
+```
+
+The parent injects only that child's opaque `HKASK_TOOL_GRANT` token. The IPC
+server requires both membership in the parent-held grant and the request's
+allowlist. Existing agent-card allowlists alone no longer authorize IPC calls.
+Missing, empty, malformed, revoked, or insufficient grants deny; wildcards are
+not supported. Unchanged grants retain stable tokens; permission changes and
+unload invalidate old tokens, and reload issues a new token. Disabled children
+cannot regain grants during environment-diff passes. These are per-server
+capabilities, not PID-bound credentials or OS isolation against arbitrary same-UID
+processes. Grant values and raw request parse failures are not logged.
 
 ## Data Services
 

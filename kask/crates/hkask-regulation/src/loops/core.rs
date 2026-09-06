@@ -162,7 +162,7 @@ pub struct LoopMetrics {
     /// detected — trivially matched). 0.0 = deviations detected but none matched.
     /// Computed as: matched_deviations / total_deviations.
     pub fidelity_score: f64,
-    /// Ratio of actions that actually improved their target metric (0.0–1.0).
+    /// Fraction of verified observations that improved (0.0–1.0), not causation.
     ///
     /// Fermi impact-gate pattern: 1.0 = every verified action moved its
     /// metric toward the set-point. 0.0 = either no verification ran (no
@@ -189,7 +189,7 @@ impl Default for LoopMetrics {
 impl LoopMetrics {
     /// Compute loop quality from the cycle's inputs and outputs.
     ///
-    /// expect: "The system measures its own regulatory effectiveness"
+    /// expect: "The system distinguishes observed progress from acceptance and causal effectiveness"
     /// \[P9\] Homeostatic Self-Regulation — loop quality enables Regulation self-observation
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle

@@ -58,24 +58,26 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 ### Core-review decision — 2026-09-04
 
 The operator reaffirmed **parent-held delegation grants**: a child request may
-narrow, never enlarge, its grant. This is approved work (core-review T04), not
-completed enforcement. The present IPC membership check reads a caller-supplied
-list and is therefore request consistency checking, not independent child
-confinement. Same-UID Unix processes are not OS-isolated by this protocol.
+narrow, never enlarge, its grant. Implemented in core-review T04 and checked
+through dispatch plus settings/launch tests: `delegation_grants::parent_allows`
+is checked before `ToolPort::invoke`, independently of the request allowlist.
+Configuration is explicit and empty by default (`kask.mcp.delegated_tools`).
+Same-UID Unix processes are not OS-isolated by this protocol; tokens are not
+PID-bound. See the settings reference for provisioning and revocation behavior.
 
 ### Live enforcement (IS)
 
 | Surface | Location | Role |
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
-| Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | Request consistency check: refuses `server/tool` outside the child-declared list. Parent-held authority is not yet implemented (T04) |
+| Parent-held delegated-tool grant intersected with the request allowlist | `kask_bridge/src/delegation_grants.rs` + `inference_ipc_server.rs` `tool_invoke` dispatch | Refuses `server/tool` outside either set before tool dispatch; missing/invalid grants deny. Settings unload revokes before child stop. |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:224-229` (declared set), `:441-447` (refusal) | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1378`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist
-> boundaries whose list the checked caller cannot choose. The IPC row still
-> needs the parent-held grant implementation described above.
+> boundaries whose list the checked caller cannot choose. IPC requests can
+> narrow the parent-held grant, never enlarge it.
 
 ### Intended design (OUGHT) — NOT in code as of 2026-08-28
 
@@ -93,7 +95,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 
 One nuance: the `reg.sovereignty.*` span namespaces (`reg.sovereignty`, `reg.sovereignty.consent_anomaly`, `reg.sovereignty.consent_audited`, `reg.sovereignty.governance_report`, `reg.sovereignty.portability_failure`, `reg.sovereignty.portability_verified`) **are registered** in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:277-282`) — but no code emits them (zero emission sites as of 2026-09-04). Registered namespace, no enforcement: still OUGHT.
 
-The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:802-820`). The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
+The live default-deny enforcement is the **parent-held grant plus request allowlist** on inference IPC `tool_invoke`: absence from either set refuses dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`, `dispatch`). A child cannot grant itself permissions by rewriting its request. The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
 
 ---
 

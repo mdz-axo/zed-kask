@@ -145,9 +145,12 @@ against pre-action values. For each action it computes an `ImpactReport`
 (`loops/core.rs:80`) with a three-tier `ActionDecision`
 (`loops/core.rs:173`):
 
-- **Accept** — action improved the metric or worsened within noise tolerance.
-- **Stage** — action was moderately ineffective; escalate as Warning.
-- **Block** — action was severely counterproductive; prevent re-use.
+- **Accept** — the observation improved or worsened within noise tolerance.
+- **Stage** — the observation worsened moderately; escalate as Warning.
+- **Block** — the observation worsened severely; prevent re-use of that recommendation.
+
+These are observation decisions, not proof that advice caused a change. See
+[the ratified D4 contract](explanation.md#ratified-observation-and-advice-contract--core-review-d4).
 
 Classification uses `classify_decision` (`regulation_policy.rs:566`) with
 the `stage_worsening_ratio` (default 0.05) and `block_worsening_ratio`
@@ -162,7 +165,7 @@ Externally-submitted rollout checks (via `submit_rollout_impact_check`,
 pass (`cybernetics_loop.rs:739-750`).
 
 The `StagnationDetector` (`dampener.rs:231`) records each (metric, action)
-pair's outcome. When the same pair is rejected for `substitution_after`
+pair's observed progress. When the same pair does not improve for `substitution_after`
 cycles (default 2), `try_substitute` walks the substitution ladder
 (`regulation_policy.rs:589`). When it hits the per-metric stagnation
 threshold (default 5), a regulatory-plateau alert fires.
@@ -181,7 +184,7 @@ After verify, `tick()` aggregates the cycle's counts and calls
 | `actions` | compute — `actions.len()` |
 | `verified` | verify — `impact_reports.len()` |
 | `accepted` / `staged` / `blocked` | verify — `ActionDecision` counts |
-| `cumulative_effectiveness` | ledger — `regulation_health()` |
+| `cumulative_acceptance_rate` | ledger — `regulation_health().acceptance_rate()`; absent without samples |
 
 Finally, `LoopMetrics::from_cycle` (`loops/core.rs:241`) computes quality
 telemetry, and `tick()` stores it in `loop_quality` for the next

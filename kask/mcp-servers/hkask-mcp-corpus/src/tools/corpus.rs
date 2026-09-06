@@ -124,7 +124,7 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. For each chunk, retrieves embedding-similar passages (KNN) under the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under), formats ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the memory DB to build a knowledge graph section. Outputs prompts JSONL consumed by corpus_generate_qa_batch."
+        description = "Build canonical prepared QA prompts from tagged chunks with KNN context, ontology context, and h_mem knowledge graph. Uses the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under). Each JSONL record contains prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user, with complete response instructions. prompt_id is unique within the file; multiple prompts may share chunk_ref. max_prompts caps prompt records (0 means unlimited), not chunks. Output is consumed directly by corpus_generate_qa_batch; regenerate old prompt files."
     )]
     pub async fn corpus_build_prompts(
         &self,
@@ -539,13 +539,13 @@ pub(crate) struct BuildPromptsRequest {
     /// Number of KNN context passages to retrieve per chunk (default 3).
     #[serde(default = "default_context_k")]
     pub context_k: usize,
-    /// Number of Bloom-level QA prompts per chunk (default 5 — one per level).
+    /// Positive number of Bloom-level QA prompts per chunk (default 5 — one per level).
     #[serde(default = "default_prompts_per_chunk")]
     pub prompts_per_chunk: usize,
     /// Bloom's taxonomy weight distribution (e.g. "1,1,1,1,1" = equal).
     #[serde(default = "default_type_distribution")]
     pub type_distribution: String,
-    /// Max prompts to output (0 = all qualifying chunks).
+    /// Maximum prompt records to output (0 = all chunks × prompts_per_chunk).
     #[serde(default)]
     pub max_prompts: usize,
     /// Per-ontology Bloom distribution overrides. Format:

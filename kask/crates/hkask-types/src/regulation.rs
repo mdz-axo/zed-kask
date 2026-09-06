@@ -61,19 +61,19 @@ pub struct LedgerHealth {
     pub alert_log_approaching_cap: bool,
 }
 
-/// Regulation loop health — the Curator's window into regulatory effectiveness.
+/// Regulation loop health — observation acceptance, not causal effectiveness.
 ///
-/// Aggregated from `ImpactReport` decisions across regulation cycles.
-/// Enables the metacognition loop to answer: "are our regulatory actions working?"
+/// Aggregated from `ImpactReport` decisions across regulation cycles. Counts
+/// show how often observations were acceptable, not whether human advice worked.
 #[derive(Debug, Clone, Default)]
 pub struct RegulationHealth {
     /// Total regulation cycles recorded.
     pub total_cycles: u64,
-    /// Actions accepted (improved or within noise tolerance).
+    /// Observations accepted (improved or within noise tolerance).
     pub accepted: u64,
-    /// Actions staged for review (moderately ineffective).
+    /// Observations staged for review (moderate worsening).
     pub staged: u64,
-    /// Actions blocked (severely counterproductive).
+    /// Observations triggering a block (severe worsening).
     pub blocked: u64,
 }
 

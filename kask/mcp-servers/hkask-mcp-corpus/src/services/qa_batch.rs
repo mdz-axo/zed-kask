@@ -575,6 +575,91 @@ mod tests {
         Ok(())
     }
 
+    /// expect: [P8] The real builder emits one canonical identity per prompt, with a response contract the transports preserve.
+    #[tokio::test]
+    async fn builder_records_round_trip_through_both_transports()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::services::prompt_builder::{BuildPromptsRequest, PromptBuilderService};
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let tagged = directory.path().join("tagged.jsonl");
+        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "source":"source.txt", "text":"The passage supplies a verifiable fact.", "concepts":["fact"], "salience":0.5}).to_string())?;
+        for max_prompts in [0, 2, 4] {
+            let path = directory.path().join("built.jsonl");
+            let result = PromptBuilderService::new()
+                .build_prompts(BuildPromptsRequest {
+                    tagged_jsonl: tagged.to_string_lossy().into(),
+                    output: path.to_string_lossy().into(),
+                    db_path: directory.path().join("memory.db").to_string_lossy().into(),
+                    passphrase: "offline-test-passphrase".into(),
+                    prefix: Some("shared-".into()),
+                    context_k: 0,
+                    prompts_per_chunk: 3,
+                    type_distribution: "1,0,0,0,0".into(),
+                    max_prompts,
+                    ontology_bloom_overrides: None,
+                })
+                .await?;
+            let expected = if max_prompts == 2 { 2 } else { 3 };
+            assert_eq!(result["prompts_written"], expected);
+            let prompts = read_prompts(&path.to_string_lossy())?;
+            assert_eq!(prompts.len(), expected);
+            assert_eq!(
+                prompts
+                    .iter()
+                    .map(|prompt| &prompt.prompt_id)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                expected
+            );
+            for prompt in &prompts {
+                assert_eq!(prompt.chunk_ref, "shared-chunk");
+                assert!(prompt.system.contains("qa_pairs"));
+                assert!(prompt.system.contains("bloom_level"));
+                assert!(
+                    prompt
+                        .user
+                        .contains("The passage supplies a verifiable fact.")
+                );
+            }
+            for model in ["offline-model", "offline-model:batch"] {
+                let router = Arc::new(RecordingPort::default());
+                let summary = QaBatchService::new(router.clone())
+                    .generate_qa_batch(QaBatchRequest {
+                        prompts_jsonl: path.to_string_lossy().into(),
+                        output: directory
+                            .path()
+                            .join("generated.jsonl")
+                            .to_string_lossy()
+                            .into(),
+                        concurrency: 2,
+                        model: Some(model.into()),
+                    })
+                    .await?;
+                assert_eq!(summary["prompts_succeeded"], expected);
+                if model.ends_with(":batch") {
+                    let calls = router.batches.lock().expect("batch calls");
+                    let (_, entries) = calls.first().expect("batch call");
+                    for (entry, prompt) in entries.iter().zip(&prompts) {
+                        assert_eq!(entry.system, prompt.system);
+                        assert_eq!(entry.user, prompt.user);
+                    }
+                } else {
+                    let calls = router.messages.lock().expect("calls");
+                    for (_, messages) in calls.iter() {
+                        let [system, user] = messages.as_slice() else {
+                            panic!("Expected system and user")
+                        };
+                        assert!(
+                            prompts.iter().any(|prompt| prompt.system == system.content
+                                && prompt.user == user.content)
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// expect: [P1] An unusable output path fails before either transport spends inference.
     #[tokio::test]
     async fn output_is_preflighted_for_both_transports() -> Result<(), Box<dyn std::error::Error>> {
