@@ -165,6 +165,16 @@ for the decision record and full operational contract.
 
 ## Vector index
 
+**Retrieval error contract:** `corpus_query` resolves `HKASK_EMBEDDING_MODEL`
+first, then the shared settings file over `HkaskSettings::default()`. The
+2026-09-04 operator decision in `55a366a30c` restored code defaults, superseding
+the former no-hidden-models policy; see [model settings](../kask-settings.md#models-kaskmodelssettings).
+No env override therefore still permits a default model. Explicitly blank model
+settings with no env override yield `permission_denied`, naming the setting;
+a configured model whose embedding service is unavailable yields `unavailable`.
+The isolated `corpus_query_without_inference_surfaces_structured_error` smoke test
+covers both conditions and an explicit environment override without live inference.
+
 `corpus_query` (above) queries the in-memory vector index. `corpus_chunk`
 incrementally inserts passages into this index (auto-index is on by default);
 the index is rebuilt from the source JSONL on restart.

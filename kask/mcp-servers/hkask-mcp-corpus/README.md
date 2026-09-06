@@ -224,6 +224,13 @@ an `fsync` durability guarantee. The single-chunk/cross-reference
 | `corpus_query` | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
 | `corpus_clear_index` | Clear the in-memory vector index between document sets. |
 
+Retrieval distinguishes a missing effective model (`permission_denied`, naming
+`HKASK_EMBEDDING_MODEL`) from an unavailable embedding service (`unavailable`).
+An absent environment override alone does not mean the model is missing: the
+2026-09-04 operator ruling restored settings defaults (`55a366a30c`). The smoke
+test `corpus_query_without_inference_surfaces_structured_error` exercises default,
+explicitly blank, and environment-overridden settings in isolated subprocesses.
+
 ## OCR Pipeline
 
 The OCR subsystem implements a **typed, multi-backend, self-verifying** pipeline:
@@ -245,7 +252,7 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | Variable | Description |
 |----------|-------------|
 | `HKASK_OCR_MODEL` | Vision model for OCR (e.g., `DI/allenai/olmOCR-2-7B-1025`). Required for OCR tools. Fallback: `~/.config/hkask/settings.json` → `ocr_model`. |
-| `HKASK_EMBEDDING_MODEL` | Embedding model for vectorization and semantic search. Fallback: `~/.config/hkask/settings.json` → `embedding_model`. |
+| `HKASK_EMBEDDING_MODEL` | Embedding model for vectorization and semantic search. Overrides `~/.config/zed-kask/settings.json` → `kask.models.embedding_model`, which overlays the shared settings default. |
 | `HKASK_EMBEDDING_DIM` | Embedding vector dimension. Default: 1024 (Qwen3-Embedding-0.6B). Malformed values warn and fall back to 1024. |
 | `HKASK_TEMPLATE_ROOT` | Root containing `templates/docproc/`. Default: `registry` (relative to CWD). |
 | `HKASK_QA_MODEL` | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`. |

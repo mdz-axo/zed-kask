@@ -205,10 +205,10 @@ pub(crate) fn max_concurrency() -> usize {
     })
 }
 
-/// The configured embedding model — env var first, then HkaskSettings from
-/// disk. `None` = not configured: callers fail visibly naming the setting
-/// (the operator's no-hidden-models spec — no constant fallback). Result is
-/// cached in a OnceLock to avoid repeated disk reads.
+/// The effective embedding model — env var first, then HkaskSettings, which
+/// overlays the settings file on its defaults (PM decision 2026-09-04).
+/// An explicitly blank settings value with no env override yields `None`;
+/// callers fail visibly naming the setting. Cached to avoid repeated disk reads.
 pub(crate) fn default_embedding_model() -> Option<String> {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Option<String>> = OnceLock::new();
@@ -392,8 +392,8 @@ mod smoke {
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
 
-    /// No-op inference port for smoke tests — every call returns an error.
-    /// Smoke tests only exercise tools that don't call inference.
+    /// Unavailable inference for smoke tests: local operations must still work,
+    /// while inference-dependent operations must surface a structured error.
     struct NoopInferencePort;
 
     impl InferencePort for NoopInferencePort {
@@ -503,36 +503,90 @@ mod smoke {
         );
     }
 
+    /// expect: Retrieval distinguishes missing configuration from unavailable embeddings.
+    /// [P8] Motivating: Error classification reflects the effective model, including defaults.
+    /// pre: Each case has isolated settings and an unavailable inference port.
+    /// post: No model yields PermissionDenied; a model with no embedding service yields Unavailable.
     #[tokio::test]
-    async fn corpus_query_without_inference_surfaces_structured_error() {
-        let server = make_server();
-        let error = server
-            .corpus_query(Parameters(crate::tools::storage::QueryRequest {
-                query: "test".into(),
-                top_k: Some(5),
-                generate_answer: None,
-                include_text: None,
-                min_score: None,
-                db_path: None,
-                passphrase: None,
-            }))
-            .await
-            .expect_err("corpus_query without inference must fail, not panic");
-        // Without inference, corpus_query must surface a typed error
-        // (not panic). A missing model CONFIGURATION is an authorization
-        // failure, not a transient outage — PermissionDenied per the
-        // canonical NotConfigured mapping (the `.rules` credential rule:
-        // "not configured" must be distinguishable from "configured but
-        // broken", which is what Unavailable means).
-        assert!(
-            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
-            "error kind must be PermissionDenied when no model is configured, got: {:?}",
-            error.kind
-        );
-        assert!(
-            !error.message.is_empty(),
-            "typed error must carry a message, got: {error:?}"
-        );
+    async fn corpus_query_without_inference_surfaces_structured_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const CASE: &str = "HKASK_CORPUS_QUERY_ERROR_TEST_CASE";
+        if let Some(case) = std::env::var_os(CASE) {
+            let missing_model = case == "missing-model";
+            let expected_model = if missing_model {
+                None
+            } else if case == "environment-model" {
+                Some("test/embedding".to_string())
+            } else {
+                assert_eq!(case, "default-model");
+                Some(HkaskSettings::default().embedding_model)
+            };
+            assert_eq!(default_embedding_model(), expected_model);
+            let error = make_server()
+                .corpus_query(Parameters(crate::tools::storage::QueryRequest {
+                    query: "test".into(),
+                    top_k: Some(5),
+                    generate_answer: None,
+                    include_text: None,
+                    min_score: None,
+                    db_path: None,
+                    passphrase: None,
+                }))
+                .await
+                .expect_err("corpus_query without inference must fail, not panic");
+            let expected_kind = if missing_model {
+                hkask_types::McpErrorKind::PermissionDenied
+            } else {
+                hkask_types::McpErrorKind::Unavailable
+            };
+            assert_eq!(error.kind, expected_kind, "{error:?}");
+            if missing_model {
+                assert!(error.message.contains("HKASK_EMBEDDING_MODEL"), "{error:?}");
+            } else {
+                assert!(
+                    error.message.contains("Query embedding failed"),
+                    "{error:?}"
+                );
+                assert!(error.message.contains("embed not supported"), "{error:?}");
+            }
+            return Ok(());
+        }
+
+        // A subprocess isolates both the OnceLock and settings/env resolution.
+        // Merely unsetting the env var still leaves the ratified code default.
+        for case in ["default-model", "missing-model", "environment-model"] {
+            let directory = tempfile::tempdir()?;
+            if case != "default-model" {
+                let config = directory.path().join("zed-kask");
+                std::fs::create_dir_all(&config)?;
+                std::fs::write(
+                    config.join("settings.json"),
+                    r#"{"kask":{"models":{"embedding_model":""}}}"#,
+                )?;
+            }
+            let mut command = tokio::process::Command::new(std::env::current_exe()?);
+            command
+                .args([
+                    "--exact",
+                    "smoke::corpus_query_without_inference_surfaces_structured_error",
+                ])
+                .env_clear()
+                .env(CASE, case)
+                .env("HOME", directory.path())
+                .env("XDG_CONFIG_HOME", directory.path())
+                .current_dir(directory.path());
+            if case == "environment-model" {
+                command.env("HKASK_EMBEDDING_MODEL", "test/embedding");
+            }
+            let output = command.output().await?;
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
     }
 
     /// Directory-mode `corpus_chunk` must REJECT `multi_tier=true` loudly
