@@ -3,8 +3,11 @@
 set -euo pipefail
 
 SCCACHE_VERSION="v0.16.0"
-# Use absolute path to avoid issues with working directory changes between steps
-SCCACHE_DIR="$(pwd)/target/sccache"
+# Install OUTSIDE the workspace target/ tree: `cargo clean` deletes all of
+# target/ recursively, and on 2026-09-07 a clean deleted the wrapper so the
+# next install ran uncached with a healthy 4 GiB disk cache (the
+# silent-uncache defect). Override with HKASK_SCCACHE_DIR.
+SCCACHE_DIR="${HKASK_SCCACHE_DIR:-$HOME/.local/lib/kask-sccache}"
 # This workspace compiles ~800 dependencies across 5 build profiles (dev,
 # dbg, release, release-mcp, release-fast); the sccache default of 10 GiB
 # evicts before covering one full profile set. The server reads this only

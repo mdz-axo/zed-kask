@@ -31,5 +31,15 @@ rustflags = [
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
+# zed-kask: link native x86_64-linux builds with mold — installed at
+# /usr/bin/mold and accepted by the system gcc (15.2). Several times faster
+# than the default bfd linker on this workspace's link steps (the zed
+# binary's LTO link and every MCP server binary); no runtime cost.
+# Target-level rustflags REPLACE the [build] rustflags, so the two build-level
+# flags are re-listed here: dropping symbol-mangling-version would break
+# symbol consistency across crates, and tokio_unstable is load-bearing.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable", "-C", "link-arg=-fuse-ld=mold"]
+
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"

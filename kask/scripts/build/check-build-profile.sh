@@ -72,4 +72,17 @@ grep -q 'RUSTC_WRAPPER' "$INSTALL_SH" \
 grep -q 'RUSTC_WRAPPER' "$ROOT/script/clippy" \
     || fail "script/clippy lost its sccache RUSTC_WRAPPER wiring (D46)"
 
+# 7. The sccache wrapper must live OUTSIDE target/ — cargo clean deletes
+# the entire target tree recursively, and on 2026-09-07 a clean deleted the
+# wrapper so the next install ran uncached with a healthy 4 GiB disk cache
+# (the silent-uncache defect). setup-sccache installs to
+# ~/.local/lib/kask-sccache/ (HKASK_SCCACHE_DIR overrides); consumers must
+# resolve it there, never inside target/. setup-sccache.ps1 is upstream
+# Windows surface, unused by the Linux-only fork (D7), and is exempt.
+for sccache_consumer in "$ROOT/script/setup-sccache" "$ROOT/script/clippy" "$INSTALL_SH"; do
+    if grep -q 'target/sccache' "$sccache_consumer"; then
+        fail "$sccache_consumer references target/sccache — cargo clean would delete the wrapper (D46 silent-uncache defect)"
+    fi
+done
+
 echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"

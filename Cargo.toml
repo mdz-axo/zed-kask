@@ -286,6 +286,7 @@ members = [
     "kask/crates/hkask-condenser",
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
+    "kask/crates/hkask-steer-core",
     "crates/hkask-tool-invoker",
     "crates/hkask-conversation-injector",
     "crates/hkask-viz-core",
@@ -891,6 +892,7 @@ hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
+hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 
 hkask-memory = { path = "kask/crates/hkask-memory" }

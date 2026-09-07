@@ -199,13 +199,16 @@ build_hkask() {
 
     # sccache — reuse compiled deps across installs and profile switches.
     # Wired only when the binary is present (script/setup-sccache installs
-    # it to target/sccache/); a missing wrapper must not break the install,
-    # but it must be visible to the operator.
-    if [ -x "$workspace_root/target/sccache/sccache" ]; then
-        export RUSTC_WRAPPER="$workspace_root/target/sccache/sccache"
+    # it to ~/.local/lib/kask-sccache/, OUTSIDE target/ so a cargo clean
+    # cannot delete the wrapper — the 2026-09-07 silent-uncache defect);
+    # a missing wrapper must not break the install, but it must be visible
+    # to the operator.
+    local sccache_bin="${HKASK_SCCACHE_DIR:-$HOME/.local/lib/kask-sccache}/sccache"
+    if [ -x "$sccache_bin" ]; then
+        export RUSTC_WRAPPER="$sccache_bin"
         log "sccache enabled: $RUSTC_WRAPPER"
     else
-        log_warning "sccache not found at $workspace_root/target/sccache/sccache — building uncached (run script/setup-sccache to enable)"
+        log_warning "sccache not found at $sccache_bin — building uncached (run script/setup-sccache to enable)"
     fi
 
     # CPU/RSS trace — the build observes itself (D46). Every install leaves

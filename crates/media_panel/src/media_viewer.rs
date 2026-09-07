@@ -1610,6 +1610,54 @@ mod tests {
         );
     }
 
+    /// expect: [P1] Empty and shortened terminal pages remove obsolete gallery
+    /// rows without erasing conversation artifacts.
+    #[gpui::test]
+    fn gallery_terminal_pages_remove_exhausted_tail(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.assets = vec![
+                indexed_asset("/gallery/keep.png", 0),
+                indexed_asset("/gallery/tail.png", 1),
+                surfaced_asset("/tmp/history.png"),
+            ];
+            viewer.merge_gallery_listing(Some(serde_json::json!({
+                "gallery_id": "gallery-a", "total": 1, "offset": 0, "limit": 100,
+                "assets": [{"id": "/gallery/keep.png", "index": 0, "path": "/gallery/keep.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+            })), cx);
+            assert_eq!(viewer.assets.len(), 2, "exhausted tail must disappear");
+            viewer.merge_gallery_listing(Some(serde_json::json!({
+                "gallery_id": "gallery-a", "total": 0, "offset": 0, "limit": 100, "assets": []
+            })), cx);
+            assert_eq!(viewer.assets.len(), 1);
+            assert_eq!(viewer.assets[0].src, "/tmp/history.png");
+        });
+    }
+
+    /// expect: [P1] A different gallery invalidates old selection and pending
+    /// deletion, even when the next root uses the same positional index.
+    #[gpui::test]
+    fn gallery_root_change_clears_selection_and_confirmation(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            for gallery in ["a", "b"] {
+                viewer.merge_gallery_listing(Some(serde_json::json!({
+                    "gallery_id": gallery, "total": 1, "offset": 0, "limit": 100,
+                    "assets": [{"id": gallery, "index": 0, "path": format!("/{gallery}.png"), "media_type": "image", "missing": false, "metadata_stale": false}]
+                })), cx);
+                if gallery == "a" {
+                    viewer.selected = Some(0);
+                    viewer.confirm_delete = Some(0);
+                    viewer.detail = Some(serde_json::json!({"old": true}));
+                }
+            }
+            assert_eq!(viewer.assets.len(), 1, "old gallery rows are invalid");
+            assert!(viewer.selected.is_none());
+            assert!(viewer.confirm_delete.is_none());
+            assert!(viewer.detail.is_none());
+        });
+    }
+
     /// The chat-driven reload trigger: gallery mutations and direct
     /// importers reload the Library listing; generation tools don't touch
     /// the index (their output surfaces via display hints) and neither do
