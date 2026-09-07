@@ -119,7 +119,15 @@ fn record_catalog_path(catalog: &Path, path: &Path) -> Result<(), InventoryError
     let mut file = options
         .open(catalog)
         .map_err(|error| catalog_io(catalog, error))?;
-    file.lock().map_err(|error| catalog_io(catalog, error))?;
+    file.sync_all()
+        .map_err(|error| catalog_io(catalog, error))?;
+    // Persist the catalogue's directory entry and any newly created parent
+    // directories before a successful registration permits DB creation.
+    for directory in parent.ancestors() {
+        std::fs::File::open(directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| catalog_io(directory, error))?;
+    }
     let paths = parse_catalog(&mut file, catalog)?;
     if !paths.contains(&path) {
         let record = serde_json::to_string(&path)
@@ -357,6 +365,213 @@ impl DatabaseInventory {
             rotate_paths,
             exclusions: normalized,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exclusions_cannot_hide_configured_or_unknown_paths() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let required = fixture(directory.path(), "required.db");
+        let other = fixture(directory.path(), "other.db");
+        let preview = DatabaseInventory::preview(&[required.clone()], &[], &[other.clone()])
+            .expect("preview");
+        for exclusions in [
+            BTreeMap::from([(required, "Must not exclude".into())]),
+            BTreeMap::from([(other, "  ".into())]),
+            BTreeMap::from([(directory.path().join("unknown.db"), "Unlisted".into())]),
+        ] {
+            assert!(preview.confirm(&preview, &exclusions, true).is_err());
+        }
+    }
+
+    #[test]
+    fn late_paths_invalidate_confirmation_and_receipts() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let required = fixture(directory.path(), "required.db");
+        let roots = [directory.path().to_path_buf()];
+        let before = DatabaseInventory::preview(&[required.clone()], &roots, &[]).expect("preview");
+        let receipt = before
+            .confirm(&before, &BTreeMap::new(), true)
+            .expect("confirm");
+        let other = fixture(directory.path(), "late.db");
+        std::fs::write(other.with_file_name("late.db.maintenance-lock"), b"").expect("marker");
+        let after = DatabaseInventory::preview(&[required], &roots, &[]).expect("new preview");
+        assert_eq!(after.entries.len(), 2);
+        assert!(matches!(
+            before.confirm(&after, &BTreeMap::new(), true),
+            Err(InventoryError::Stale)
+        ));
+        assert!(matches!(
+            receipt.validate_current(&after),
+            Err(InventoryError::Stale)
+        ));
+    }
+
+    #[test]
+    fn failed_scans_and_recovery_artifacts_are_not_approval() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let database = fixture(directory.path(), "required.db");
+        assert!(DatabaseInventory::preview(&[], &[database.clone()], &[]).is_err());
+        assert!(
+            DatabaseInventory::preview_with_limit(&[], &[directory.path().into()], &[], 0).is_err()
+        );
+        let backup = directory.path().join("required.db.old");
+        std::fs::write(&backup, b"preserve").expect("backup");
+        let preview = DatabaseInventory::preview(&[database], &[], &[]).expect("preview");
+        assert!(preview.entries[0].recovery_artifact.is_some());
+        assert!(preview.confirm(&preview, &BTreeMap::new(), true).is_err());
+        assert_eq!(std::fs::read(backup).expect("retained"), b"preserve");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliases_deduplicate_and_directory_links_are_not_followed() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("external");
+        let path = fixture(directory.path(), "data.db");
+        let alias = directory.path().join("alias.db");
+        std::os::unix::fs::symlink(&path, &alias).expect("alias");
+        std::os::unix::fs::symlink(outside.path(), directory.path().join("outside"))
+            .expect("directory link");
+        fixture(outside.path(), "external.db");
+        fixture(outside.path(), "external.db.maintenance-lock");
+        let preview = DatabaseInventory::preview(&[path], &[directory.path().into()], &[alias])
+            .expect("preview");
+        assert_eq!(preview.entries.len(), 1);
+        assert!(preview.entries[0].configured);
+    }
+
+    #[test]
+    fn catalogue_serializes_writers_without_losing_external_paths() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let catalog = directory.path().join("catalog.jsonl");
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let catalog = &catalog;
+                let path = directory.path().join(format!("external-{index}.db"));
+                scope.spawn(move || {
+                    record_catalog_path(catalog, &path).expect("record");
+                    record_catalog_path(catalog, &path).expect("idempotent record");
+                });
+            }
+        });
+        assert_eq!(read_database_catalog(&catalog).expect("catalogue").len(), 8);
+        let content = std::fs::read_to_string(&catalog).expect("content");
+        assert_eq!(content.lines().count(), 8);
+        std::fs::write(&catalog, "\"incomplete").expect("partial record");
+        assert!(read_database_catalog(&catalog).is_err());
+        assert!(record_catalog_path(&catalog, &directory.path().join("new.db")).is_err());
+        assert_eq!(
+            std::fs::read_to_string(catalog).expect("preserved"),
+            "\"incomplete"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "Subprocess isolates the one-time catalogue route; bounded and reaped"
+    )]
+    fn managed_opener_registers_before_database_creation() {
+        if std::env::var_os("HKASK_INVENTORY_TEST_CHILD").is_some() {
+            exercise_catalogue_opener();
+            return;
+        }
+        let mut child = std::process::Command::new(
+            std::env::current_exe().expect("test executable"),
+        )
+        .args([
+            "--exact",
+            "maintenance_inventory::tests::managed_opener_registers_before_database_creation",
+            "--nocapture",
+        ])
+        .env("HKASK_INVENTORY_TEST_CHILD", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("child");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while child.try_wait().expect("status").is_none() {
+            if std::time::Instant::now() >= deadline {
+                child.kill().expect("kill");
+                child.wait().expect("reap");
+                panic!("inventory child timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let output = child.wait_with_output().expect("output");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+
+    fn exercise_catalogue_opener() {
+        let directory = tempfile::tempdir().expect("isolated process data");
+        let catalog = directory.path().join("catalog.jsonl");
+
+        configure_database_catalog(catalog.clone()).expect("configure");
+        let path = directory.path().join("managed.db");
+
+        let database = crate::open_or_repair(path.to_str().expect("path"), "test-passphrase")
+            .expect("managed open");
+
+        drop(database);
+
+        assert_eq!(
+            read_database_catalog(&catalog).expect("registered"),
+            vec![path]
+        );
+        assert!(
+            !std::fs::read_to_string(&catalog)
+                .expect("catalogue")
+                .contains("test-passphrase")
+        );
+
+        std::fs::write(&catalog, "broken").expect("corrupt catalogue");
+        let denied = directory.path().join("must-not-create.db");
+        assert!(matches!(
+            crate::open_or_repair(denied.to_str().expect("path"), "test-passphrase"),
+            Err(crate::DatabaseError::Inventory(_))
+        ));
+        assert!(!denied.exists());
+    }
+
+    fn fixture(directory: &Path, name: &str) -> PathBuf {
+        let path = directory.join(name);
+        std::fs::write(&path, b"inventory reads metadata only").expect("fixture");
+        path
+    }
+
+    #[test]
+    fn inventory_requires_explicit_scope_and_preserves_files() {
+        let directory = tempfile::tempdir().expect("temporary root");
+        let configured = fixture(directory.path(), "managed.db");
+        let external = fixture(directory.path(), "independent.db");
+        let missing = directory.path().join("new/sub/missing.db");
+        let preview = DatabaseInventory::preview(
+            &[configured.clone(), missing.clone()],
+            &[],
+            &[external.clone()],
+        )
+        .expect("preview");
+        assert!(!missing.exists());
+        assert!(preview.confirm(&preview, &BTreeMap::new(), false).is_err());
+        let exclusions = BTreeMap::from([(external, "Independent key".into())]);
+        let receipt = preview
+            .confirm(&preview, &exclusions, true)
+            .expect("confirmed");
+        assert_eq!(receipt.rotate_paths(), &[configured.clone()]);
+        assert_eq!(
+            std::fs::read(configured).expect("unchanged"),
+            b"inventory reads metadata only"
+        );
     }
 }
 

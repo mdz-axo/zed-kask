@@ -3072,7 +3072,7 @@ mod gallery_lifecycle_tests {
     /// expect: Downloads finishing after a gallery switch stay in their captured gallery, including variants. [P1]
     #[tokio::test]
     async fn generated_completion_keeps_gallery_snapshot() -> TestResult {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let fixture = tempfile::tempdir()?;
         let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
@@ -3094,7 +3094,14 @@ mod gallery_lifecycle_tests {
                 tokio::spawn(async move {
                     for index in 0..2 {
                         let (mut stream, _) = listener.accept().await?;
-                        let mut request = [0; 1024]; stream.read(&mut request).await?;
+                        let mut reader = tokio::io::BufReader::new(&mut stream);
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).await? == 0 {
+                                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+                            }
+                            if line == "\r\n" { break; }
+                        }
                         if index == 0 { entered.notify_one(); resume.notified().await; }
                         stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).as_bytes()).await?;
                         stream.write_all(&bytes).await?;

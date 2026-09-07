@@ -14,6 +14,7 @@ struct InventoryState {
     error: Option<String>,
     busy: bool,
     generation: u64,
+    configuration: Option<std::collections::HashMap<String, String>>,
 }
 impl gpui::Global for InventoryState {}
 
@@ -26,7 +27,14 @@ pub(crate) fn render_security_page(
     if !cx.has_global::<InventoryState>() {
         cx.set_global(InventoryState::default());
     }
-    let state = cx.global::<InventoryState>();
+    let configuration = kask_bridge::KaskSettings::get_global(cx).mcp_env();
+    let state = cx.global_mut::<InventoryState>();
+    if state.configuration.as_ref() != Some(&configuration) {
+        state.configuration = Some(configuration);
+        state.generation = state.generation.saturating_add(1);
+        state.preview = None;
+        state.confirmed = None;
+    }
     let busy = state.busy;
     let preview = state.preview.clone();
     let error = state.error.clone();
@@ -38,10 +46,10 @@ pub(crate) fn render_security_page(
         .child(SettingsSectionHeader::new("Database Passphrase Maintenance"))
         .child(Label::new("Review the complete shared-key database inventory before maintenance. Preview and confirmation do not open databases, read keys, or change the passphrase.").size(LabelSize::Small))
         .child(Label::new("Add historical/external database paths as a JSON array of absolute paths. Directory symlinks are not searched. The catalogue and lease markers cannot discover every database created by older or independent programs.").size(LabelSize::Small))
-        .child(SettingsInputField::new("kask-maintenance-additional-paths").with_placeholder("[]").aria_label("Additional absolute database paths as JSON")
+        .child(SettingsInputField::new("kask-maintenance-additional-paths").with_initial_text(state.additional.clone()).with_placeholder("[]").aria_label("Additional absolute database paths as JSON")
             .on_change(|value, cx| update_input(true, value, cx)))
         .child(Label::new("Exclude independent-key or unencrypted databases using a JSON object mapping each absolute path to its reason. Configured shared-key databases cannot be excluded.").size(LabelSize::Small))
-        .child(SettingsInputField::new("kask-maintenance-exclusions").with_placeholder("{}").aria_label("Database exclusions with reasons as JSON")
+        .child(SettingsInputField::new("kask-maintenance-exclusions").with_initial_text(state.exclusions.clone()).with_placeholder("{}").aria_label("Database exclusions with reasons as JSON")
             .on_change(|value, cx| update_input(false, value, cx)))
         .child(Button::new("kask-maintenance-preview", if busy { "Reading inventory…" } else { "Preview inventory" }).disabled(busy)
             .on_click(|_, _, cx| start_review(false, cx)));
@@ -159,6 +167,7 @@ fn confirm_prompt(window: &mut Window, cx: &mut App) {
 
 fn start_review(confirm: bool, cx: &mut App) {
     let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+    let configuration = settings.mcp_env();
     let state = cx.global_mut::<InventoryState>();
     if state.busy {
         return;
@@ -205,8 +214,16 @@ fn start_review(confirm: bool, cx: &mut App) {
             })
             .await;
         cx.update(|cx| {
+            let current_configuration = kask_bridge::KaskSettings::get_global(cx).mcp_env();
             let state = cx.global_mut::<InventoryState>();
             state.busy = false;
+            if configuration != current_configuration {
+                state.preview = None;
+                state.confirmed = None;
+                state.generation = state.generation.saturating_add(1);
+                state.configuration = Some(current_configuration);
+                state.error = Some("Settings changed; preview the inventory again.".into());
+            }
             if state.generation == generation {
                 match result {
                     Ok((preview, receipt)) => {
