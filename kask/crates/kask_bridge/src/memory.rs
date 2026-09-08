@@ -18,11 +18,8 @@ use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::RwLock;
 use std::time::Duration;
-
-use chrono::Utc;
 
 use crate::inference_embedding::LanguageModelEmbeddingPort;
 
@@ -104,18 +101,14 @@ pub struct RealMemoryPort {
     /// consolidation is disabled (`consolidation_cadence_secs == 0`).
     /// Rebuilt when the curator stores heal after an open failure.
     //
-    /// Behind an `Arc` so the production consolidation timer can hold a clone
-    /// and re-read the current value on each tick — picks up the rebuild that
-    /// `write_turn` performs after a curator-store heal.
+    // Behind an `Arc` so the production consolidation timer can hold a clone
+    // and re-read the current value on each tick — picks up the rebuild that
+    // `write_turn` performs after a curator-store heal.
     curator_consolidation: Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
     /// Consolidation cadence in seconds. `0` disables the trigger.
     consolidation_cadence_secs: u64,
     /// Confidence floor for cleanup during consolidation.
     confidence_floor: f64,
-    /// Timestamp of the last consolidation pass. Shared by the test-only
-    /// `maybe_consolidate` method and the production timer (via
-    /// `cadence_should_fire`).
-    last_consolidation: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
     /// Tokio runtime handle — entered around embedding HTTP calls so that
     /// `reqwest` (which is tokio-backed) has a reactor.
     tokio_handle: tokio::runtime::Handle,
@@ -182,114 +175,54 @@ impl RealMemoryPort {
             curator_consolidation,
             consolidation_cadence_secs,
             confidence_floor,
-            last_consolidation: Mutex::new(None),
             tokio_handle,
             ingest_semaphore: tokio::sync::Semaphore::new(resolve_ingest_concurrency()),
         })
     }
 
-    /// Check whether the consolidation cadence has elapsed and, if so, fire
-    /// a consolidation pass (confidence cleanup + budget pruning).
+    /// Start a background timer that fires a consolidation pass on the
+    /// configured cadence.
     ///
-    /// This is the test entry point. The cadence-elapsed check lives here (it
-    /// reads `self.last_consolidation` under the mutex and fires when
-    /// never-consolidated — `unwrap_or(true)`); the actual consolidate-and-log
-    /// logic is shared with `start_consolidation_timer` via
-    /// [`fire_curator_consolidation_pass`]. The timer skips its first tick instead, so
-    /// the only difference between the two paths is the first-fire decision,
-    /// now made explicit at each call site rather than hidden in two copies.
+    /// `tokio::time::interval` provides the pass-scheduling invariants by
+    /// construction: each tick is exactly one `poll_interval` after the
+    /// last, so passes fire at most once per cadence — no hand-rolled
+    /// last-fired bookkeeping. The timer consumes the interval's immediate
+    /// first tick as the "wait one full cadence before the first pass"
+    /// grace; the poll interval is clamped to at least 60 seconds so short
+    /// cadences do not turn into tight polling.
     ///
-    /// Kept as a method so tests can fire consolidation directly without
-    /// starting a timer.
-    #[cfg(test)]
-    fn maybe_consolidate(&self) {
-        if self.consolidation_cadence_secs == 0 {
-            return;
-        }
-
-        let now = Utc::now();
-        let cadence = chrono::Duration::seconds(self.consolidation_cadence_secs as i64);
-        let should_fire = match cadence_should_fire(&self.last_consolidation, now, cadence, true) {
-            Some(fire) => fire,
-            None => return,
-        };
-        if !should_fire {
-            return;
-        }
-
-        let curator_consolidation = self
-            .curator_consolidation
-            .read()
-            .ok()
-            .and_then(|g| g.clone());
-        if let Some(curator_consolidation) = curator_consolidation {
-            fire_curator_consolidation_pass(
-                &curator_consolidation,
-                self.curator_webid,
-                self.confidence_floor,
-                "maybe_consolidate",
-            );
-        }
-    }
-
-    /// Start a background timer that fires consolidation on the configured
-    /// cadence. This decouples consolidation from the ingestion path —
-    /// ingestion writes complete quickly without waiting for consolidation,
-    /// and consolidation runs on its own schedule without holding the
-    /// ingestion semaphore.
-    ///
-    /// The timer checks the cadence every `consolidation_cadence_secs` seconds
-    /// (or every 60 seconds if the cadence is < 60, to avoid tight polling).
-    /// On each tick it calls `maybe_consolidate`, which does the atomic
-    /// check-and-fire under the mutex.
-    ///
-    /// Returns a `JoinHandle` that the caller can detach or store. Dropping
-    /// the handle cancels the timer.
+    /// Each tick re-reads the consolidator handle so a pass picks up the
+    /// rebuild that `write_turn` performs after a curator-store heal.
     ///
     /// A cadence of 0 disables consolidation entirely (no timer started).
     pub fn start_consolidation_timer(&self) -> Option<tokio::task::JoinHandle<()>> {
         if self.consolidation_cadence_secs == 0 {
             return None;
         }
-        let curator_consolidation_lock = Arc::clone(&self.curator_consolidation);
+        let curator_consolidation = Arc::clone(&self.curator_consolidation);
         let curator_webid = self.curator_webid;
         let confidence_floor = self.confidence_floor;
-        let last_consolidation = self.last_consolidation.lock().ok().and_then(|guard| *guard);
-        let cadence = self.consolidation_cadence_secs;
-        let poll_interval = Duration::from_secs(cadence.clamp(60, 3600));
-
-        let shared_last: Arc<Mutex<Option<chrono::DateTime<chrono::Utc>>>> =
-            Arc::new(Mutex::new(last_consolidation));
-        let shared_last_for_timer = Arc::clone(&shared_last);
+        let cadence_secs = self.consolidation_cadence_secs;
+        let poll_interval = Duration::from_secs(cadence_secs.clamp(60, 3600));
 
         let handle = self.tokio_handle.spawn(async move {
             let mut interval = tokio::time::interval(poll_interval);
-            interval.tick().await; // skip first tick
+            interval.tick().await; // the immediate first tick: wait one cadence
             loop {
-                interval.tick().await;
-                let now = Utc::now();
-                let cadence_dur = chrono::Duration::seconds(cadence as i64);
-                let should_fire =
-                    match cadence_should_fire(&shared_last_for_timer, now, cadence_dur, false) {
-                        Some(fire) => fire,
-                        None => continue,
-                    };
-                if !should_fire {
-                    continue;
-                }
+                interval.tick().await; // one full poll_interval later
                 tracing::info!(
                     target: "reg.memory",
-                    cadence_secs = cadence,
+                    cadence_secs,
                     confidence_floor,
                     "Consolidation timer fired"
                 );
-                let curator_consolidation_now = curator_consolidation_lock
+                let consolidator = curator_consolidation
                     .read()
                     .ok()
-                    .and_then(|g| g.clone());
-                if let Some(curator_consolidation) = curator_consolidation_now {
+                    .and_then(|guard| guard.clone());
+                if let Some(consolidator) = consolidator {
                     fire_curator_consolidation_pass(
-                        &curator_consolidation,
+                        &consolidator,
                         curator_webid,
                         confidence_floor,
                         "consolidation_timer",
@@ -390,50 +323,10 @@ fn open_regulation_archive(
     }
 }
 
-/// Check whether enough time has elapsed since the last consolidation to fire
-/// another pass. Updates the timestamp to `now` when firing.
-///
-/// `fire_when_no_last` reconciles the two calling contexts:
-/// - `maybe_consolidate` (test): `true` — fire on first call (no timer to wait for)
-/// - `start_consolidation_timer` (production): `false` — wait one full cadence
-///   before first fire
-///
-/// Returns `Some(true)` to fire, `Some(false)` to skip, or `None` if the mutex
-/// is poisoned (each caller decides whether to skip or stop the timer).
-fn cadence_should_fire(
-    last: &Mutex<Option<chrono::DateTime<chrono::Utc>>>,
-    now: chrono::DateTime<chrono::Utc>,
-    cadence: chrono::Duration,
-    fire_when_no_last: bool,
-) -> Option<bool> {
-    let mut guard = match last.lock() {
-        Ok(guard) => guard,
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.memory",
-                error = %e,
-                "last_consolidation mutex poisoned — cannot check cadence"
-            );
-            return None;
-        }
-    };
-    let elapsed = guard
-        .map(|l| now.signed_duration_since(l) >= cadence)
-        .unwrap_or(fire_when_no_last);
-    if elapsed {
-        *guard = Some(now);
-        Some(true)
-    } else {
-        Some(false)
-    }
-}
-
 /// Fire one curator consolidation pass.
 ///
-/// Shared by `maybe_consolidate` (test entry) and `start_consolidation_timer`
-/// (production). The cadence-elapsed check is shared via `cadence_should_fire`.
-///
-/// `log_label` distinguishes the two paths in tracing.
+/// Called by the consolidation timer on each cadence tick (and directly by
+/// tests simulating a tick). `log_label` names the calling context in tracing.
 fn fire_curator_consolidation_pass(
     curator_consolidation: &hkask_memory::MemoryConsolidator,
     curator_webid: WebID,
@@ -1093,7 +986,6 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
         curator_consolidation: Arc::new(RwLock::new(None)),
         consolidation_cadence_secs: 0,
         confidence_floor: 0.3,
-        last_consolidation: Mutex::new(None),
         tokio_handle: tokio::runtime::Handle::current(),
         ingest_semaphore: tokio::sync::Semaphore::new(1),
     }
@@ -1146,7 +1038,6 @@ pub(crate) mod tests {
             curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
             consolidation_cadence_secs,
             confidence_floor,
-            last_consolidation: Mutex::new(None),
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
@@ -1186,7 +1077,6 @@ pub(crate) mod tests {
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
             confidence_floor: 0.3,
-            last_consolidation: Mutex::new(None),
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
@@ -1912,10 +1802,20 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn ingest_turn_does_not_fire_consolidation() {
-        // Consolidation is now decoupled from ingestion — it runs on a
-        // background timer (see start_consolidation_timer). Ingestion should
-        // NOT fire consolidation, even when the cadence has elapsed.
+        // Consolidation is decoupled from ingestion — it runs only on the
+        // background timer. A below-floor h_mem must survive ingestion
+        // untouched: only a consolidation pass may delete it, and none fires
+        // from this path.
         let port = in_memory_port_with_cadence(1, 0.3);
+        let store = port.curator_store.get().expect("curator store");
+        let h_mem = hkask_storage::HMem::new(
+            "probe:low",
+            "fact",
+            serde_json::Value::String("low-confidence probe".to_string()),
+            port.curator_webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        store.store(h_mem).expect("seed below-floor h_mem");
 
         let record = TurnRecord {
             thread_id: "no-consolidation-from-ingest".to_string(),
@@ -1926,141 +1826,73 @@ pub(crate) mod tests {
             agent_id: Some("Curator".to_string()),
             goal_events: Vec::new(),
         };
-        let result = port.ingest_turn(record).await;
-        assert!(result.is_ok(), "ingest_turn should succeed");
+        port.ingest_turn(record)
+            .await
+            .expect("ingest_turn should succeed");
+        port.ingest_turn(record)
+            .await
+            .expect("ingest_turn should succeed");
 
-        // last_consolidation should remain None — ingestion no longer fires it.
-        let last = port.last_consolidation.lock().expect("mutex not poisoned");
-        assert!(
-            last.is_none(),
-            "ingest_turn should not fire consolidation (timer-decoupled)"
-        );
-    }
-
-    // ── cadence_should_fire unit tests ─────────────────────────────────
-    // These test the shared cadence check directly, without constructing a
-    // full RealMemoryPort — so the production timer's None-wait semantics are
-    // testable for the first time.
-
-    #[test]
-    fn cadence_waits_when_no_last_and_not_first_run() {
-        let last = Mutex::new(None);
-        let now = Utc::now();
-        let cadence = chrono::Duration::seconds(60);
         assert_eq!(
-            cadence_should_fire(&last, now, cadence, false),
-            Some(false),
-            "production timer waits one cadence before first fire"
+            store
+                .h_mems_by_entity_prefix("probe:low")
+                .expect("query")
+                .len(),
+            1,
+            "ingest_turn must not fire a consolidation pass — the below-floor \
+             h_mem survives until the timer fires"
         );
+    }
+
+    /// expect: "The production consolidation timer fires real passes — the
+    /// wiring zed's `main.rs` starts is live behavior, not a started task
+    /// that can never fire." [P1]
+    /// pre: an in-memory port (cadence 60s, floor 0.3) whose store holds one
+    /// below-floor h_mem; the production `start_consolidation_timer` runs on
+    /// a paused tokio runtime, so the clamped 60s poll elapses instantly.
+    /// post: the first non-skipped tick fires a consolidation pass and
+    /// deletes the below-floor h_mem — the timer's observable production
+    /// effect. A timer whose first fire is unreachable (the pre-fix no-op:
+    /// `last = None` with a wait-for-last flag that never resolves) fails
+    /// here against the wall-clock bound instead of hanging forever.
+    #[tokio::test(start_paused = true)]
+    async fn consolidation_timer_fires_and_prunes_low_confidence() {
+        let port = in_memory_port_with_cadence(60, 0.3);
+        let store = port.curator_store.get().expect("curator store");
+        let h_mem = hkask_storage::HMem::new(
+            "probe:low",
+            "fact",
+            serde_json::Value::String("low-confidence probe".to_string()),
+            port.curator_webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        store.store(h_mem).expect("seed below-floor h_mem");
+        assert_eq!(store.h_mem_count().expect("count"), 1);
+
+        let timer = port
+            .start_consolidation_timer()
+            .expect("timer starts for cadence > 0");
+
+        // Paused time auto-advances the interval; the wait is bounded in WALL
+        // time so a timer that never fires fails loudly, not hangs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while store.h_mem_count().expect("count") > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "consolidation timer never fired — the below-floor h_mem survived"
+            );
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+        timer.abort();
     }
 
     #[test]
-    fn cadence_fires_when_no_last_and_first_run() {
-        let last = Mutex::new(None);
-        let now = Utc::now();
-        let cadence = chrono::Duration::seconds(60);
-        assert_eq!(
-            cadence_should_fire(&last, now, cadence, true),
-            Some(true),
-            "test path fires immediately on first call"
-        );
-    }
-
-    #[test]
-    fn cadence_fires_when_elapsed() {
-        let now = Utc::now();
-        let old = now - chrono::Duration::seconds(120);
-        let last = Mutex::new(Some(old));
-        let cadence = chrono::Duration::seconds(60);
-        assert_eq!(cadence_should_fire(&last, now, cadence, false), Some(true));
-    }
-
-    #[test]
-    fn cadence_skips_when_not_elapsed() {
-        let now = Utc::now();
-        let recent = now - chrono::Duration::seconds(30);
-        let last = Mutex::new(Some(recent));
-        let cadence = chrono::Duration::seconds(60);
-        assert_eq!(cadence_should_fire(&last, now, cadence, false), Some(false));
-    }
-
-    #[tokio::test]
-    async fn maybe_consolidate_fires_when_cadence_elapsed() {
-        // Directly test the consolidation callback (what the timer calls).
-        let port = in_memory_port_with_cadence(1, 0.3);
-        let curator_webid = port.curator_webid;
-
-        // Ingest a curator turn so there's something to consolidate.
-        port.ingest_turn(TurnRecord {
-            thread_id: "consolidation-test".to_string(),
-            user_input: "Tell me about memory consolidation".to_string(),
-            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        })
-        .await
-        .expect("ingest succeeds");
-
-        // Fire consolidation directly (simulating the timer callback).
-        port.maybe_consolidate();
-
-        // The last_consolidation timestamp should now be set.
-        let last = port
-            .last_consolidation
-            .lock()
-            .expect("mutex not poisoned")
-            .expect("consolidation should have fired");
-        assert!(
-            Utc::now().signed_duration_since(last).num_seconds() < 5,
-            "last_consolidation should be recent"
-        );
-
-        // A second call immediately after should NOT re-fire consolidation
-        // (cadence hasn't elapsed).
-        port.maybe_consolidate();
-        let last_after = port
-            .last_consolidation
-            .lock()
-            .expect("mutex not poisoned")
-            .expect("consolidation timestamp should still be set");
-        assert_eq!(
-            last, last_after,
-            "second call within cadence should not re-fire consolidation"
-        );
-
-        // After consolidation, low-confidence h_mems may have been
-        // pruned. The h_mem may or may not survive depending on
-        // confidence decay — we just verify the query succeeds.
-        let curator_store = port.curator_store.get().expect("curator store");
-        let h_mems = curator_store
-            .query_for_deduped_untouched("chat:thread:consolidation-test", curator_webid)
-            .expect("query should succeed");
-        let _ = h_mems;
-    }
-
-    #[tokio::test]
-    async fn ingest_turn_skips_consolidation_when_cadence_zero() {
-        // Cadence of 0 — consolidation is disabled.
+    fn start_consolidation_timer_is_disabled_at_zero_cadence() {
+        // Cadence 0 — consolidation is disabled: no timer is started at all.
         let port = in_memory_port_with_cadence(0, 0.3);
-        let record = TurnRecord {
-            thread_id: "no-consolidation".to_string(),
-            user_input: "Hello".to_string(),
-            agent_response: "Hi".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
-        let result = port.ingest_turn(record).await;
-        assert!(result.is_ok());
-
-        // last_consolidation should remain None (never fired).
-        let last = port.last_consolidation.lock().expect("mutex not poisoned");
         assert!(
-            last.is_none(),
-            "consolidation should not fire when cadence is 0"
+            port.start_consolidation_timer().is_none(),
+            "a cadence of 0 must disable consolidation entirely"
         );
     }
 
@@ -2419,7 +2251,6 @@ pub(crate) mod tests {
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
             confidence_floor: 0.3,
-            last_consolidation: Mutex::new(None),
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         };
@@ -2794,61 +2625,58 @@ pub(crate) mod tests {
         );
     }
 
-    /// Curator consolidation should promote the curator's episodic h_mems to
-    /// the curator's semantic store, mirroring the user's consolidation loop.
-    /// This pins the Fix 1 wiring — without the `curator_consolidation` field,
-    /// the curator's episodic store would grow unbounded and the curator would
-    /// never learn consolidated facts from its own experience.
+    /// A consolidation pass prunes below-floor h_mems from the curator's
+    /// store and leaves above-floor content alone — the deterministic effect
+    /// the timer exists to produce. Fired directly through the pass seam the
+    /// timer calls; the timer's own scheduling is pinned by
+    /// `consolidation_timer_fires_and_prunes_low_confidence`.
     #[tokio::test]
-    async fn maybe_consolidate_fires_curator_pass() {
-        let port = in_memory_port_with_cadence(1, 0.3);
+    async fn consolidation_pass_prunes_low_confidence_and_keeps_the_rest() {
+        let port = in_memory_port_with_cadence(60, 0.3);
+        let store = port.curator_store.get().expect("curator store");
+        let webid = port.curator_webid;
 
-        // Ingest a curator turn so there's something to consolidate.
-        port.ingest_turn(TurnRecord {
-            thread_id: "curator-consolidation-test".to_string(),
-            user_input: "regulation status check".to_string(),
-            agent_response: "All regulation systems are operational.".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        })
-        .await
-        .expect("ingest succeeds");
+        let below_floor = hkask_storage::HMem::new(
+            "probe:low",
+            "fact",
+            serde_json::Value::String("low-confidence probe".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        store.store(below_floor).expect("seed below-floor h_mem");
 
-        // Verify the curator store has the chunks before consolidation.
-        let curator_store = port
-            .curator_store
-            .get()
-            .expect("curator store should be available in tests");
-        let h_mems_before = curator_store
-            .query_deduped_untouched("curator:thread:curator-consolidation-test")
-            .expect("chunk query should succeed");
-        assert_eq!(
-            h_mems_before.len(),
-            1,
-            "curator store should have the ingested chunks"
+        let above_floor = hkask_storage::HMem::new(
+            "probe:high",
+            "fact",
+            serde_json::Value::String("high-confidence probe".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.9));
+        store.store(above_floor).expect("seed above-floor h_mem");
+
+        let consolidator = port
+            .curator_consolidation
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .expect("consolidator is built for cadence > 0");
+        fire_curator_consolidation_pass(&consolidator, webid, 0.3, "consolidation_pass_test");
+
+        assert!(
+            store
+                .h_mems_by_entity_prefix("probe:low")
+                .expect("query")
+                .is_empty(),
+            "the below-floor h_mem is pruned by the pass"
         );
-
-        // Fire consolidation directly (simulating the timer callback).
-        port.maybe_consolidate();
-
-        // The last_consolidation timestamp should now be set.
-        port.last_consolidation
-            .lock()
-            .expect("mutex not poisoned")
-            .expect("consolidation should have fired");
-
-        // After consolidation, low-confidence h_mems may have been pruned.
-        // We verify the query succeeds — whether the h_mem survived depends
-        // on confidence decay, but the consolidation pass itself must not error.
-        let h_mems_after = curator_store
-            .query_deduped_untouched("curator:thread:curator-consolidation-test")
-            .expect("curator memory query should succeed after consolidation");
-        // The h_mem may or may not have been pruned depending on
-        // confidence decay — we just verify the query succeeds and the
-        // curator consolidation pass didn't panic.
-        let _ = h_mems_after;
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("probe:high")
+                .expect("query")
+                .len(),
+            1,
+            "the above-floor h_mem survives the pass"
+        );
     }
 
     /// Curator turn pin (2026-09-04 single-copy ruling): one conversation,
