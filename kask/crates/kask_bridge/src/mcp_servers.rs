@@ -218,6 +218,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
             "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
             "HKASK_MEMORY_FORGETTING_DAYS",
+            // Decay constant S (spec §7) — emitted by `mcp_env()` from
+            // `kask.memory.memory_life_days` when it differs from the default.
+            // Read by `memory_life_days_from_env` at `open_curator_stores`,
+            // so the curator server's store decays with the configured S —
+            // without the allowlist entry the per-server filter would
+            // silently drop the operator's override and decay would revert
+            // to the default 180.
+            "HKASK_MEMORY_LIFE_DAYS",
             // Embedding model — read by `embed_for_semantic_recall` and the
             // semantic-recall tools (`hkask_mcp_curator.rs`) via
             // `hkask_inference::model_constants::embedding_model()`. Without
@@ -1240,6 +1248,18 @@ mod tests {
             !s.config_env.unwrap().is_empty(),
             "curator config_env should not be empty — the server reads SMTP host/port \
              and curator settings from it"
+        );
+        // HKASK_MEMORY_LIFE_DAYS: read by `memory_life_days_from_env` at
+        // `open_curator_stores` (hkask_mcp_curator.rs) — the decay constant
+        // from `kask.memory.memory_life_days`, emitted by
+        // `emit_curator_distillation_env`. Without this allowlist entry the
+        // per-server filter silently drops the operator's override and decay
+        // reverts to the default 180 while the regulation sensor keeps
+        // reporting the configured value — the exact lie T16 exists to end.
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_MEMORY_LIFE_DAYS"),
+            "curator must receive HKASK_MEMORY_LIFE_DAYS so the configured \
+             decay constant reaches the store"
         );
         // The embedding model must be allowlisted: `embed_for_semantic_recall`
         // and the semantic-recall tools read HKASK_EMBEDDING_MODEL via the env

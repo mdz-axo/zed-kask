@@ -82,6 +82,12 @@ pub(crate) fn emit_curator_distillation_env(
             memory.forgetting_days.to_string(),
         );
     }
+    if memory.memory_life_days != default.memory_life_days {
+        env.insert(
+            "HKASK_MEMORY_LIFE_DAYS".to_string(),
+            memory.memory_life_days.to_string(),
+        );
+    }
 }
 
 pub(crate) fn emit_mcp_server_ids_env(env: &mut std::collections::HashMap<String, String>) {
@@ -524,6 +530,30 @@ mod tests {
     // emitted: their consuming servers have no fallback for unset env, so
     // suppressing a default-equal value starves the pipeline. See the
     // `mcp_env_always_emits_*` tests for those.
+    /// The decay constant reaches the curator server only through this
+    /// emission (allowlisted there, read by `memory_life_days_from_env`).
+    /// Emitted exactly when it differs from the default — the same pattern
+    /// as the distillation/forgetting knobs.
+    #[test]
+    fn mcp_env_emits_memory_life_days_only_when_configured() {
+        let settings = KaskSettings::default();
+        let env = settings.mcp_env();
+        assert!(
+            !env.contains_key("HKASK_MEMORY_LIFE_DAYS"),
+            "the default decay constant must not be emitted — the curator \
+             server's own default is the same value"
+        );
+
+        let mut settings = KaskSettings::default();
+        settings.memory.memory_life_days = 30.0;
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_MEMORY_LIFE_DAYS").map(String::as_str),
+            Some("30"),
+            "a configured decay constant must reach the curator server"
+        );
+    }
+
     #[test]
     fn mcp_env_emits_nothing_for_default_settings() {
         let settings = KaskSettings::default();

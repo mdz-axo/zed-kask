@@ -659,21 +659,44 @@ naming ruling the same day: one *forgets* memories — "retirement" was
 rejected as a workplace metaphor. Distinct from §7 decay, which is the
 confidence curve R(t) = exp(-t/S): two mechanisms, two names). A
 thread's shared-copy turns are deleted — along with their embeddings
-— once the thread's newest distillation watermark is older than
-`forgetting_days`. The watermark proves the lessons were extracted; the
-age grace keeps recent conversations recallable. Time-based and
-distillation-gated, never count-based (budgets are deprecated, operator
-ruling 2026-09-04).
+— once the thread's newest distillation watermark has aged past
+`forgetting_days`, **and only the turns that watermark covers**: a turn
+is covered exactly when its `observed_at` is at or before the
+watermark's `through` position (the same boundary the distillation pass
+uses to select pending turns). The watermark proves the lessons were
+extracted; turns added after the last distillation pass carry no proof,
+so they — and their embeddings — survive until a later pass distills
+them and the advanced watermark ages past the threshold. Because
+deletion is scoped to rows the pass read as covered (never a blind
+prefix delete), a turn racing in during the pass is uncovered by
+construction. Time-based and distillation-gated, never count-based
+(budgets are deprecated, operator ruling 2026-09-04).
 
 - **Scope:** shared copies only (`curator:thread:{id}`). Since the
   2026-09-04 single-copy ruling there is no separate perspective original
   to preserve — a turn's content lives only in its shared chunks, so
-  forgetting the shared copies forgets the turn (the lessons stay). The
-  legacy `chat:thread:` rows that predate the ruling were deleted by the
-  therapy hygiene pass, not by this pass. Watermarks are never deleted
-  (idempotence markers). A never-distilled thread is never forgotten (no
-  watermark, no proof of extraction). Pinned by
-  `forgetting_deletes_only_aged_distilled_shared_turns`.
+  forgetting the shared copies forgets the covered turns (the lessons
+  stay). The legacy `chat:thread:` rows that predate the ruling were
+  deleted by the therapy hygiene pass, not by this pass. Watermarks are
+  never deleted (idempotence markers). A never-distilled thread is never
+  forgotten (no watermark, no proof of extraction). A watermark whose
+  `through` position cannot be parsed skips deletion — no proof, no
+  deletion. Pinned by `forgetting_deletes_only_aged_distilled_shared_turns`
+  and `forgetting_skips_threads_without_a_parseable_watermark`.
+- **Coverage boundary (2026-09-07):** turns newer than the watermark
+  survive with their embeddings and remain semantically recallable;
+  covered turns and their embeddings are hard-deleted. Pinned by
+  `forgetting_preserves_turns_newer_than_the_watermark` (post-pass
+  semantic recall returns the surviving chunk, never the forgotten one).
+  Embeddings carry no timestamp; their link to a chunk is the shared
+  passage text (ingest writes both from one string). A passage that also
+  appears in an uncovered chunk cannot be attributed to one side — those
+  embedding rows are kept (conservative: a bounded duplicate leak beats
+  erasing an uncovered chunk's recall). Pinned by
+  `forgetting_keeps_ambiguous_passage_embeddings`. Legacy NULL-passage
+  embedding rows cannot be attributed individually; a fully-covered
+  thread still takes the whole-entity path (everything it holds is
+  proven distilled), and mixed threads leave them until full forgetting.
 - **Idempotent:** deleted turns stay deleted; a thread counts as
   forgotten only when work was done. Pinned by `forgetting_is_idempotent`.
 - **Orphan sweep:** each pass deletes vector rows whose metadata row is

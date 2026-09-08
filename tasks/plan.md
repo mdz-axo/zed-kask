@@ -30,7 +30,10 @@ Read [kask-reliability-continuation-prompt.md](kask-reliability-continuation-pro
 | D01 retention guard | **Verified 2026-09-07** — RED observed pre-fix (research rows destroyed), 5/5 recovery tests GREEN, 68/68 companies suite GREEN, transactional refusal/rollback confirmed | Receiving agent: operator review at Checkpoint A |
 | T02 extraction destination policy | **Core slice verified 2026-09-07** — redirect-per-hop gate, connect-time validating resolver, no_proxy explicitness, address-family hardening; RED reproduced the full SSRF pre-fix | Receiving agent: operator review at Checkpoint A |
 | T02b discover-path transport | **Verified 2026-09-07 (test-first RED)** — `rss_discover_feeds` now fetches through the same validated client; sentinel-redirect regression, direct-fetch control, and tool-seam pin green; clippy/check clean | Receiving agent: operator review at Checkpoint A |
-| T03–T08 | Not started | Resume after Checkpoint A operator review; retain checkpoint and task-specific policy gates |
+| T03 forgetting coverage | **Verified 2026-09-07 (test-first RED)** — deletion now scoped to turns the watermark provably covers; newer turns + embeddings survive and stay recallable; spec §6 updated | Receiving agent: operator review at Checkpoint A |
+| Storage-suite parallel flake | **Root-caused and fixed 2026-09-07 (operator directive)** — lazy on-demand pools + 120s patience + missing catalogue writer lock; suite 60/60 twice consecutively, tests ~2.6× faster | Closed |
+| Dead/redundant code | **Sweep done 2026-09-07 (operator directive)** — dead budget builders and 6 pre-existing clippy failures removed; 3 designed-but-unwired capabilities flagged for operator decision | 3 flags await operator decision |
+| T04–T08 | Not started | Resume after Checkpoint A operator review; retain checkpoint and task-specific policy gates |
 | T09–T15 | Not started, require elaboration | Follow-up queue remains open; no accepted deferral |
 
 **T01 test weakness (resolved):** the flagged weakness — counts checked after reopen, then re-scoring before asserting the stored outcome — is fixed as described in the T01 section. The publication/truncation crash-window boundary the review asked for is covered by `snapshot_with_uncleared_journal_recovers_exactly_once`.
@@ -111,14 +114,15 @@ Coverage against acceptance (see research.md "Extraction destination policy" for
 **Scope:** M; lifecycle; `hkask-mcp-curator`, storage seam if necessary. **Depends on:** none.
 **Likely files:** `kask/mcp-servers/hkask-mcp-curator/src/forgetting.rs`, `src/distillation.rs`; existing memory/storage deletion implementation only if atomic eligibility/deletion needs it.
 **Anchor:** distillation timer → forgetting → stored chunks/embeddings → semantic recall.
+**Status: verified 2026-09-07.** The defect: the pass deleted **every** shared turn of an eligible thread by entity prefix — including turns added after the last distillation pass, whose lessons were never extracted, and any turn racing the pass. Fix (coverage-scoped deletion): a turn is deletable only when its `observed_at` ≤ the newest watermark's `through` position — the same boundary distillation uses to select pending turns (`parse_watermark_through`, shared with `distillation.rs`). Fully-covered threads keep the whole-entity fast path (identical prior behavior); mixed threads delete covered h_mems by id and their embeddings by passage match, excluding passages an uncovered chunk shares (ambiguity resolved conservatively: keep the embedding — a bounded duplicate leak beats erasing an uncovered chunk's recall). A watermark whose `through` cannot be parsed skips the thread (no proof, no deletion). New storage seams: `EmbeddingStore::delete_by_entity_ref_and_passages` + `MemoryStore::delete_embeddings_by_entity_passages`, transactional per the existing delete pattern.
 
 Acceptance:
-- With an aged watermark and newer turns, newer turns and their embeddings remain recallable after forgetting.
-- Eligible covered content is still hard-deleted; never-distilled threads and watermark records remain protected; repeating forgetting is idempotent.
-- A controlled insertion between eligibility evaluation and deletion cannot erase the newly inserted content. Do not claim safety from a test of sequential checks only.
+- With an aged watermark and newer turns, newer turns and their embeddings remain recallable after forgetting. — Pinned E2E: `forgetting_preserves_turns_newer_than_the_watermark` asserts the surviving chunk is semantically recallable via the real KNN seam and the forgotten one is not.
+- Eligible covered content is still hard-deleted; never-distilled threads and watermark records remain protected; repetition is idempotent. — Existing pins held with coverage-faithful fixtures (turn timestamps now precede the watermark's `through`; the prior fixtures modeled turns as covered while their timestamps postdated the watermark — the defect baked into fixtures).
+- A controlled insertion between eligibility evaluation and deletion cannot erase the newly inserted content. — Structural: the pass deletes only rows it READ as covered (per-id and passage-scoped deletes, never a blind prefix delete), so a racing insertion (`observed_at` > `through` by construction) is uncovered and survives.
 
-**Verification:** capability-complete memory store, mixed-age fixtures, bounded concurrent insertion, and post-forgetting semantic recall. Prefer the smallest safe existing lifecycle operation; conservative whole-thread deferral versus selective deletion must be checked against the retention contract before choosing.
-**Refused shortcut:** replacing hard deletion with expiry or independently checking then unconditionally deleting the entity.
+**Verification:** executed 2026-09-07, test-first: the three new regressions were written and observed failing against the pre-fix pass (2-turns-deleted instead of 1; 3 instead of 2; no-proof thread forgotten) before the fix; post-fix GREEN: curator lib 16/16 (forgetting 7/7), hkask-memory 30/30, hkask-storage 60/60 (see the addenda below for that suite's own fixes); `./script/clippy -p hkask-storage -p hkask-memory -p hkask-mcp-curator` clean; spec §6 updated in the same change with the coverage semantics and the passage-attribution boundary.
+**Refused shortcut:** replacing hard deletion with expiry or independently checking then unconditionally deleting the entity. Deletion remains hard, and the entity-level delete survives only for the fully-covered case where everything it holds is proven distilled.
 **Skill match query:** watermark coverage and concurrent memory-lifecycle regression testing.
 
 **Checkpoint A:** T01–T03 regression evidence, affected crate tests/checks/lints, residue review, and operator review. These three tasks are technically independent; listed order is scheduling, not an artificial dependency.
@@ -205,6 +209,69 @@ Acceptance:
 **Skill match query:** human escalation delivery with truthful persistence and channel outcomes.
 
 **Checkpoint C:** cumulative directive and memory/budget regressions, build/lint evidence, and operator review before scheduling the follow-up queue.
+
+## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
+
+**Operator ruling (recorded verbatim intent):** the three items surfaced by the 2026-09-07 dead-code sweep are **not open questions**. They are requirements the code pretends to meet: "memory life should map to the days in the setting — the code that fails to do this is a lie and deception"; "memory consolidation is required"; the salience failure is "another deception". "The problem is not the requirements and specifications — the problem is the shit code, and that is what we are trying to fix." These tasks build the code to meet the specifications. No item in this phase is a policy gate.
+
+**One retraction, entered into the record:** the sweep's consolidation flag was WRONG — a grep artifact (output truncated before the bridge hits). Consolidation IS built and wired: `zed/src/main.rs:1764` starts the production timer, which fires `fire_curator_consolidation_pass` (`kask_bridge/src/memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with `confidence_floor` from `KaskMemorySettings` (`main.rs:1751`); ingestion rebuilds the consolidator after a store heal (`ingest.rs:120-128`); the fire callback is tested (`memory.rs:1978`). The spec's component-table claim ("consolidation timer, memory.rs:74") is TRUE. T17 closes the one genuinely missing piece: a production-shaped timer test.
+
+### T16 — Wire `kask.memory.memory_life_days` into actual decay
+
+**Scope:** M; trust; `kask-bridge`, `hkask-mcp-curator`, settings emission. **Depends on:** none. **Policy: resolved by operator ruling above.**
+
+**The deception, anatomized (all verified 2026-09-07):**
+- The setting exists and defaults correctly: `KaskMemorySettings.memory_life_days` (`kask_bridge/src/settings.rs:238`), default from `MemoryStore::default_memory_life_days()` (`settings.rs:268`).
+- The regulation sensor REPORTS it: `RealMemoryPort::memory_life_days()` (`memory.rs:547`) reads the setting and feeds the regulation `MemorySource` sensor (`memory.rs:1018`).
+- The store that actually decays IGNORES it: `MemoryStore::with_memory_life_days` (`hkask-memory/src/memory_store.rs:198`) has **zero callers**; the bridge's curator store (`kask_bridge/src/memory/curator_stores.rs:174-225`) and the curator MCP server's store (`hkask-mcp-curator/src/hkask_mcp_curator.rs`, `open_curator_stores` ≈ :1931) both construct with the hard-coded `DEFAULT_MEMORY_LIFE_DAYS` = 180.
+- The documented env knob is fictional: `HKASK_MEMORY_LIFE_DAYS` appears only in doc comments (`memory_store.rs:132-139`, `hkask-regulation/src/loops/signals.rs:29` — "Configurable via HKASK_MEMORY_LIFE_DAYS") — emitted nowhere, read nowhere.
+
+Net effect: the operator's setting changes what regulation MONITORS while the monitored behavior stays constant at 180. The sensor reports fiction.
+
+**Build steps:**
+1. Bridge (in-process): pass `kask_settings.memory.memory_life_days` into `RealMemoryPort::new` (call site `zed/src/main.rs:1744`), thread to `open_curator_store`, apply via `with_memory_life_days` at the `MemoryStore` construction (`curator_stores.rs:225`).
+2. Curator MCP server (separate process): extend `emit_curator_distillation_env` (`kask_bridge/src/mcp_env.rs:62`) to also emit `HKASK_MEMORY_LIFE_DAYS` from `KaskMemorySettings`; add the env name to the per-server allowlist (`kask_servers` registry — same line as `HKASK_MEMORY_DISTILLATION_CADENCE_SECS`, `mcp_servers.rs:218`); in the curator server's `open_curator_stores`, read it with the house rule (malformed value → `warn!` naming the value → default 180) and apply via `with_memory_life_days` on BOTH construction paths (with and without embeddings).
+3. Sensor truth: after wiring, the regulation sensor value and the store's applied value must be the same value — derive the sensor reading from the applied store state (or pin equality in a test), so monitoring can never again diverge from behavior.
+
+**Acceptance:**
+- Setting 30 days → `store.memory_life_days() == 30.0` on the bridge's curator store AND the curator MCP server's store; both construction paths covered.
+- Decay behavior actually changes: recall-time confidence decay uses S=30 (a seeded h_mem with `recalled_at` 15 days ago decays measurably more under S=30 than S=180 — deterministic via the Wozniak-Gorzelanczyk formula).
+- Malformed env value (`"abc"`) warns naming the value and falls back to 180 — never a silent default.
+- Emission and allowlist stay aligned (the `research_allowlist_matches_actual_reads` house pattern).
+- The regulation sensor and the store agree.
+
+**Verification (RED first):** a test constructing the bridge store with `memory_life_days: 30.0` asserting `store.memory_life_days() == 30.0` fails today (180); same for the curator server's `open_curator_stores` under `HKASK_MEMORY_LIFE_DAYS=30`. Then GREEN, plus the behavioral decay test and the malformed-value test. Affected suites: kask-bridge memory tests, curator server lib tests, settings/allowlist tests.
+**Refused shortcut:** making the SENSOR read the setting while the store keeps the default (the current lie); adding a new setting name; wiring one construction path and not the other.
+
+### T17 — Consolidation: retraction + production-timer pin
+
+**Scope:** S; the retraction is complete (evidence above); the remaining build item is a production-shaped timer test. **Depends on:** none.
+
+**Build:** a test that starts `start_consolidation_timer` with a short cadence (tokio test runtime) and asserts a consolidation pass fires after the first skipped tick — the existing test at `memory.rs:1978` covers the callback, not the timer loop. This pins the wiring that `zed/src/main.rs:1764` depends on; nothing else to build.
+**Observation (not a defect, recorded for the spec's next revision):** consolidation's budget-prune phase (`consolidation_service.rs:39-68`) is count-based, documented as deliberate design ("confidence-floor cleanup plus budget pruning only", spec §5; the budget as Ashby attenuator, `curator_stores.rs:226-230`). The 2026-09-04 "never count-based" ruling governs FORGETTING (turn deletion), not consolidation's confidence-ranked pruning; if the operator wants consolidation pruned of its budget leg too, that is a separate decision — the current documentation is internally consistent.
+
+### T18 — Wire method signals and keyword overlap into the pipelines they were designed for
+
+**Scope:** M; domain; `hkask-mcp-corpus`, `kask-bridge`. **Depends on:** none.
+
+**The deception, anatomized:** `hkask-memory/src/salience.rs`'s method-signals half — `compute_method_signals` (`:95`), `MethodSignals` (`:26`), `DeclaredMethod::matches` (`:570`), `keyword_overlap` — was built for the condenser (commit `2b651fc956`, "Add method signals and centroid support"); the condenser crate was later removed (`4466a5fbb3`), orphaning the feature while the module doc still claims consumers ("Used by EmbedService at embed time (budget gating), by the style synthesizer at query time, and by chat recall (episode ranking via keyword overlap)") that were never (re)built. Only `tag_entities` + `compute_salience_batch` are wired (corpus `tools/tagging/ops.rs:114-133`). The 5W1H design — the "how" dimension — is live spec surface: `corpus_tag_chunks` advertises 5W1H annotation (`kask/docs/reference/mcp-servers/corpus.md:56`); the ontology-bridge invariant is "nothing is ever untagged" (`kask/docs/reference/ontology-bridge.md:43`).
+
+**Build steps:**
+1. **Tag time (the 5W1H "how" dimension):** in the `corpus_tag_chunks` pipeline (`corpus/tools/tagging/ops.rs`), compute `compute_method_signals(chunk_text)` per chunk — zero LLM cost, by design — and store the signals in the chunk's ontology metadata so the "how" dimension is real on every tagged chunk, not just the who/what that EntityTags carries today.
+2. **Compose time (declared-method matching):** the style composition request surface (`corpus/compose.rs` — the existing `salience_min`/`salience_top_k` parameters) gains declared-method threshold parameters; candidate passages filter through `DeclaredMethod::matches(&stored_signals)` so a composition can select passages whose methods match declared thresholds. Follow the existing request-parameter pattern — no new tool, no new settings surface.
+3. **Chat recall (episode ranking):** wire `keyword_overlap` into the bridge's episode-ranking seam in the recall path (`kask_bridge/src/memory.rs` recall ranking), replacing/augmenting the current relevance×confidence ranking for keyword-scored episodes per the module's stated design.
+4. **Truth in docs:** rewrite the salience module doc to name the actual wired consumers (corpus tagging, corpus compose, bridge episode ranking) — the stale "EmbedService" claim dies with the wiring.
+
+**Acceptance:**
+- A tagged chunk's ontology carries computed method signals (fixture text with known parataxis/adjective density → signals within expected ranges).
+- A composition with a declared threshold selects only matching passages; without thresholds, behavior is unchanged.
+- Episode ranking uses keyword overlap (fixture episodes + query → order changes accordingly).
+- No stale consumer claims remain in the salience module doc.
+
+**Verification (RED first):** tests for each acceptance line fail today (signals absent from ontology; no threshold filtering; ranking ignores keyword overlap). Affected suites: corpus lib + tool-behavior, kask-bridge memory tests.
+**Refused shortcut:** deleting the unwired half (forbidden by the operator ruling); wiring without behavioral tests; leaving the stale doc in place.
+
+**Checkpoint D:** T16–T18 regressions, affected crate suites/checks/lints, residue review, operator review of the retraction record.
 
 ## Follow-up queue: tracked, not execution-ready
 
@@ -294,6 +361,27 @@ Planning baseline: earlier audit's MCP test-presence ratchet passed. Its test bu
 | `cargo test --offline --locked -p hkask-mcp-media -j 2` (consumer compatibility: the media tools validate remote media URLs through the same shared strict validator that T02 tightened) | 210 + 61 + 1 passed, 0 failed |
 | `./script/clippy -p hkask-mcp-server -p hkask-mcp-research` | clean: release/all-targets/all-features `--deny warnings`, machete/typos/buf clean (3 test-code lints fixed: slice-from-ref, redundant clone) |
 | `rustfmt --check` on the three touched Rust files | clean |
+
+### Verification evidence — 2026-09-07 (T03 forgetting coverage + operator-directed reliability addenda)
+
+| Command | Observed result |
+|---|---|
+| Test-first RED: the three new forgetting regressions against the pre-fix pass | `forgetting_preserves_turns_newer_than_the_watermark` FAILED (2 turns deleted, expected 1 — the uncovered turn was swept by the prefix delete), `forgetting_keeps_ambiguous_passage_embeddings` FAILED (3 deleted, expected 2), `forgetting_skips_threads_without_a_parseable_watermark` FAILED (thread forgotten without coverage proof) |
+| `cargo test --offline --locked -p hkask-mcp-curator --lib -j 2` | 16 passed (forgetting 7/7: 3 new + 4 existing pins on corrected fixtures), 0 failed |
+| `cargo test --offline --locked -p hkask-memory -j 2` / `-p hkask-storage --lib -j 2` | 30 passed; 60 passed — twice consecutively (182.6s, 179.8s) |
+| `./script/clippy -p hkask-storage -p hkask-memory -p hkask-mcp-curator` | clean (release/all-targets/all-features `--deny warnings`, machete/typos/buf) |
+
+**Storage-suite parallel flake — root-caused and fixed (operator directive "fix the pre-existing parallel load flake").** Three distinct mechanisms, each A/B-verified against HEAD:
+
+1. **KDF saturation → r2d2 30s timeout** (all `SqlCipher("timed out waiting for connection")` failures): r2d2's `min_idle` defaults to `max_size`, so every SQLCipher pool build eagerly established 8 connections × ~2s PBKDF2 each (measured: one KDF test = 40s = ~18 KDF rounds at HEAD). The suite's aggregate KDF demand saturated the CPU and any `pool.get()` landing in the window tripped r2d2's 30s default. Fixed: `min_idle(Some(0))` — strictly on-demand establishment (the pool's lifetime is exactly its handles'), plus `connection_timeout(120s)` (a local KDF-bound connection is worth waiting for; failing a recoverable get() was the spurious broken loop). Result: the same tests run ~2.6× faster (40s→15s, 39.9s→15s) and server startup drops the eager 8-KDF tax. An intermediate `min_idle(Some(1))` attempt was rejected with evidence: r2d2 replenishes to `min_idle` **on every checkout** (`try_get_inner`), and an in-flight replenish task keeps the manager — and its maintenance lease — alive past the last handle drop, which deterministically blocked exclusive lease acquisition (`rotation_exclusive_lease_blocks_new_pool_admission` failed alone at 5.2s, passed at HEAD; strace showed the shared flock never released).
+2. **Catalogue read-modify-write race** (`catalogue_serializes_writers_without_losing_external_paths`, 7≠8): `record_catalog_path` parses → dedupes → seeks to end → appends with **no lock** (the reader takes `lock_shared`; the writer never took the exclusive side). Two writers seek to the same end offset and one overwrite loses a record. Measured **6/10 failures** pre-fix → **10/10 green** post-fix (`file.lock()` covering parse→append). This writer runs on production server-startup paths — a real data-loss race, not just a test flake.
+3. Full suite: **60/60 twice consecutively** at default harness parallelism (previously failing every run).
+
+**Dead/redundant-code sweep (operator directive), scoped to session-touched crates.** Removed: `MemoryStore::with_storage_budget` + `default_storage_budget` (zero callers, self-documented never-wired, and count-based budgets are deprecated by operator ruling 2026-09-04; the live `storage_budget()` accessor stays — it feeds the regulation storage-ratio set-point via `kask_bridge`); 6 pre-existing `cloned_ref_to_slice_refs` clippy failures in `maintenance_inventory.rs` (`std::slice::from_ref`, which had been failing `./script/clippy -p hkask-storage` before this session). **Flags raised, then resolved by operator ruling 2026-09-07 (Phase D):**
+
+- `kask.memory.memory_life_days` — the setting feeds the regulation sensor while the store ignores it (decay always 180) → **T16, build the wiring.**
+- `consolidation_service.rs` — this flag was **RETRACTED as false**: the initial "zero external references" claim was a grep artifact (output truncated before the kask_bridge hits). Consolidation is fully wired: `zed/src/main.rs:1764` starts the production timer → `fire_curator_consolidation_pass` (`memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with the settings' `confidence_floor`; rebuilt after heals (`ingest.rs:120-128`); callback tested (`memory.rs:1978`). Remaining gap → **T17, production-timer test only.**
+- `salience.rs` method-signals half — orphaned by the condenser removal while the module doc claims consumers that don't exist → **T18, build the wiring.**
 
 ### Verification evidence — 2026-09-07 (T02b discover-path slice)
 

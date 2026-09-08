@@ -31,16 +31,26 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Failed snapshot/publication preserves journal and acknowledged recoverable records across reopen.
   - [x] Successful publication precedes cleanup; failure-then-retry remains recoverable. Publication/truncation crash window covered.
   - [x] Public response surfaces persistence failure; file-backed regression and control validated. (Prior-snapshot-survival across failed replacement is design-reviewed, not fixture-pinnable — see scenarios.md.)
-- [x] **T02 — Enforce extraction destination policy across redirects** (core slice verified 2026-09-07; T02b follow-up open; awaiting operator review at Checkpoint A)
+- [x] **T02 — Enforce extraction destination policy across redirects** (core slice + T02b discover path both verified 2026-09-07; awaiting operator review at Checkpoint A)
   - [x] Forbidden redirect sentinel receives no request (E2E over real sockets: loopback literal, 169.254.169.254, and localhost-name hops each reject with zero sentinel requests; multi-hop bound/cycle/permitted semantics pinned by the decision tests).
   - [x] Permitted redirects/direct extraction work (redirects remain followed under the same reqwest machinery, gated per hop; permitted public-literal hops pass the decision tests; direct extraction is behavior-identical for the no-redirect path); loops fail within a bound (10 hops, cycles refused, surfaced errors).
   - [x] Connection address matches validated destination (connect-time validating resolver closes the DNS-rebinding TOCTOU at this transport; address-family variants hard: 0.0.0.0/8, ::, NAT64 64:ff9b::/96, IPv4-compatible; proxy behavior made explicit: raw fetch ignores proxy env with a build-time warn — permissive RSS policy byte-identical).
   - [x] **T02b:** `rss_discover_feeds` fetched through the shared unvalidated `rss_client` after strict initial-URL validation — **fixed and verified 2026-09-07**: dedicated `discover_client` (shared `validated_fetch_client`) wired through `ResearchServer::new`; RED observed test-first (redirect followed into the loopback sentinel pre-fix); `discover_feeds_rejects_redirect_to_loopback`, `discover_feeds_direct_fetch_still_works`, `rss_discover_feeds_rejects_unspecified_destination` green; research suite 36 lib + 31 tool-behavior, clippy/check clean.
-- [ ] **T03 — Restrict forgetting to distilled content** (no dependency)
-  - [ ] Newer-than-watermark turns/embeddings remain semantically recallable.
-  - [ ] Covered eligible content is deleted; watermark/never-distilled content is preserved; repetition is idempotent.
-  - [ ] Insertion during eligibility/deletion cannot erase fresh content; mixed-age deletion policy is resolved.
-- [ ] **Checkpoint A:** cumulative regressions, affected crate tests/checks/lints, scope/residue review, operator review. (T01 evidence complete; operator review remains.)
+- [x] **T03 — Restrict forgetting to distilled content** (verified 2026-09-07; awaiting operator review at Checkpoint A)
+  - [x] Newer-than-watermark turns/embeddings remain semantically recallable after forgetting (E2E via the real KNN seam: the surviving chunk is recallable, the forgotten one is not).
+  - [x] Covered content is hard-deleted; never-distilled threads and watermarks are protected (existing pins held on coverage-faithful fixtures); malformed-watermark threads are skipped (no proof, no deletion); repetition is idempotent.
+  - [x] Insertion between eligibility and deletion cannot erase fresh content — structural: only rows READ as covered are deleted (per-id/passage-scoped, never a blind prefix delete); ambiguous duplicate passages resolve conservatively (keep).
+  - [x] RED observed test-first (3 new regressions failed against the pre-fix pass); GREEN: curator 16/16, memory 30/30, storage 60/60 ×2; clippy clean; spec §6 updated with the coverage semantics.
+- [ ] **Checkpoint A:** cumulative regressions, affected crate tests/checks/lints, scope/residue review, operator review. (T01/T02/T02b/T03 evidence complete; operator review remains.)
+
+## Operator-directed reliability addenda — 2026-09-07
+
+- [x] **Storage-suite parallel flake root-caused and fixed.** (1) KDF saturation tripped r2d2's 30s default: pools now establish strictly on demand (`min_idle(Some(0))`) and wait patiently (`connection_timeout(120s)`); tests ~2.6× faster; a rejected `min_idle(Some(1))` intermediate was A/B-verified to deterministically block exclusive lease acquisition via in-flight replenish tasks. (2) `record_catalog_path` had no writer lock — a read-modify-write race losing catalogue records (6/10 failures measured); `file.lock()` added, 10/10 green. Suite 60/60 twice consecutively.
+- [x] **Dead/redundant-code sweep (session-touched crates).** Removed: dead budget builders (`with_storage_budget`, `default_storage_budget` — count-based budgets deprecated by operator ruling 2026-09-04; the regulation set-point accessor stays); 6 pre-existing clippy failures in `maintenance_inventory.rs`. machete clean.
+- [x] **Operator ruling 2026-09-07 — the three flags are requirements, not questions.** "The problem is not the requirements and specifications — the problem is the shit code." Phase D (plan.md) created to build the code to meet the specs. One flag RETRACTED with evidence: consolidation IS wired (zed `main.rs:1764` timer → `fire_curator_consolidation_pass` → `MemoryConsolidator::consolidate`, tested at `memory.rs:1978`) — the sweep's "zero callers" claim was a truncated-grep artifact.
+- [ ] **T16 — Wire `kask.memory.memory_life_days` into actual decay** (Phase D, plan.md; bridge + curator server + env emission + allowlist; sensor must stop reporting fiction). RED: store built with days=30 reports 180 today.
+- [ ] **T17 — Production-timer consolidation pin** (small: a `start_consolidation_timer` test covering the tick loop, not just the callback).
+- [ ] **T18 — Wire method signals + keyword overlap** (5W1H "how" at tag time; declared-method matching at compose time; episode ranking in the bridge; salience doc rewritten to real consumers).
 
 ## Phase B — Make completion and retry states reliable
 

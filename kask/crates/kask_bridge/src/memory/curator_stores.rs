@@ -46,31 +46,41 @@ pub fn open_curator_regulation_archive(
 /// is needed.
 ///
 /// Wraps the `Option<Arc<MemoryStore>>` in an `RwLock` plus the parameters
-/// needed to re-open it (passphrase, embedding dim). When the initial open
-/// fails, the store is `None` and every access via `get()` re-attempts the
-/// open. A successful re-open restores curator memory mid-session.
+/// needed to re-open it (db path, passphrase, embedding dim, decay constant).
+/// When the initial open fails, the store is `None` and every access via
+/// `get()` re-attempts the open. A successful re-open restores curator
+/// memory mid-session.
 pub(crate) struct CuratorStore {
     store: RwLock<Option<Arc<MemoryStore>>>,
+    db_path: String,
     passphrase: String,
     embedding_dim: usize,
+    memory_life_days: f64,
     heal_attempt_logged: std::sync::atomic::AtomicBool,
     heal_enabled: bool,
 }
 
 impl CuratorStore {
-    pub(crate) fn new(passphrase: &str, embedding_dim: usize) -> Self {
-        let store = open_curator_store(passphrase, embedding_dim);
+    pub(crate) fn new(
+        db_path: String,
+        passphrase: &str,
+        embedding_dim: usize,
+        memory_life_days: f64,
+    ) -> Self {
+        let store = open_curator_store(&db_path, passphrase, embedding_dim, memory_life_days);
         if store.is_none() {
             tracing::error!(
                 target: "reg.memory",
-                db_path = %curator_db_path(),
+                db_path = %db_path,
                 "Curator memory store unavailable — the curator runs WITHOUT                  memory. Every curator-turn write will be                  attempted again on ingestion (self-healing); check the DB                  path above, that no other process holds the SQLCipher lock,                  and that the passphrase matches the user's hKask keychain entry."
             );
         }
         Self {
             store: RwLock::new(store),
+            db_path,
             passphrase: passphrase.to_string(),
             embedding_dim,
+            memory_life_days,
             heal_attempt_logged: std::sync::atomic::AtomicBool::new(false),
             heal_enabled: true,
         }
@@ -80,8 +90,10 @@ impl CuratorStore {
     pub(crate) fn for_tests(store: Option<Arc<MemoryStore>>) -> Self {
         Self {
             store: RwLock::new(store),
+            db_path: String::new(),
             passphrase: String::new(),
             embedding_dim: 1024,
+            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             heal_attempt_logged: std::sync::atomic::AtomicBool::new(false),
             heal_enabled: false,
         }
@@ -116,7 +128,12 @@ impl CuratorStore {
     }
 
     pub(crate) fn try_heal(&self) {
-        let fresh = open_curator_store(&self.passphrase, self.embedding_dim);
+        let fresh = open_curator_store(
+            &self.db_path,
+            &self.passphrase,
+            self.embedding_dim,
+            self.memory_life_days,
+        );
         let fresh_ok = fresh.is_some();
         let replaced = match self.store.write() {
             Ok(mut guard) => {
@@ -171,8 +188,13 @@ pub(crate) fn build_curator_consolidation(
     };
     Some(Arc::new(MemoryConsolidator::new(Arc::clone(store))))
 }
-fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<MemoryStore>> {
-    let curator_db_path = curator_db_path();
+fn open_curator_store(
+    db_path: &str,
+    passphrase: &str,
+    embedding_dim: usize,
+    memory_life_days: f64,
+) -> Option<Arc<MemoryStore>> {
+    let curator_db_path = db_path.to_string();
 
     let db = match open_or_repair(&curator_db_path, passphrase) {
         Ok(db) => db,
@@ -231,7 +253,12 @@ fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<Memo
         // HKASK_MEMORY_STORAGE_BUDGET is not yet wired anywhere, so an
         // operator cannot raise any store's cap without changing the
         // default constant.
-        let base = MemoryStore::new(h_mem_store, embedding_store);
+        //
+        // The decay constant comes from the caller (the operator's
+        // `kask.memory.memory_life_days` setting) — recall-time decay must
+        // follow the configured S, not the store default.
+        let base =
+            MemoryStore::new(h_mem_store, embedding_store).with_memory_life_days(memory_life_days);
         // Wire the `reg.memory.encode` span sink on the curator's own DB —
         // mirrors the user-store wiring in `RealMemoryPort::new`. The
         // curator's regulation archive is the same DB the curator MCP
@@ -247,4 +274,33 @@ fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<Memo
         "Curator memory store opened —          curator turns will be ingested into curator memory (perspective = curator)"
     );
     Some(store)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: "The `kask.memory.memory_life_days` setting governs the bridge
+    /// store's actual decay — not just the regulation sensor that reports
+    /// it." [P1]
+    /// pre: an encrypted curator DB exists at the caller-supplied path; the
+    /// decay constant arrives exactly as `RealMemoryPort::new` threads it
+    /// from `KaskMemorySettings.memory_life_days`.
+    /// post: the opened store carries the configured constant — the store
+    /// the sensor reads (`RealMemoryPort::memory_life_days`) IS the store
+    /// that decays.
+    #[test]
+    fn open_curator_store_applies_configured_memory_life_days() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("curator.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        hkask_storage::open_or_repair(&db_path, "test-passphrase").expect("create db");
+
+        let store = open_curator_store(&db_path, "test-passphrase", 1024, 30.0).expect("store");
+        assert_eq!(
+            store.memory_life_days(),
+            30.0,
+            "the configured decay constant must reach the store that actually decays"
+        );
+    }
 }

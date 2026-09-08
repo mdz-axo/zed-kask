@@ -139,6 +139,7 @@ impl RealMemoryPort {
         classifier_model: Option<String>,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
+        memory_life_days: f64,
         tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self, String> {
         if embedding_dim == 0 {
@@ -157,8 +158,15 @@ impl RealMemoryPort {
 
         let curator_webid = WebID::from_persona(b"curator");
 
-        // Curator store behind the self-healing handle.
-        let curator_store = Arc::new(CuratorStore::new(passphrase, embedding_dim));
+        // Curator store behind the self-healing handle. The decay constant
+        // (`kask.memory.memory_life_days`) threads through so the store the
+        // regulation sensor reports IS the store that actually decays.
+        let curator_store = Arc::new(CuratorStore::new(
+            curator_db_path(),
+            passphrase,
+            embedding_dim,
+            memory_life_days,
+        ));
 
         let curator_consolidation = Arc::new(RwLock::new(build_curator_consolidation(
             consolidation_cadence_secs,
@@ -543,12 +551,15 @@ impl RealMemoryPort {
         })
     }
 
-    /// The configured memory life in days.
+    /// The configured memory life in days — read from the store that actually
+    /// decays, so the regulation sensor can never report fiction: when the
+    /// store is unavailable the default constant is reported (the store will
+    /// be constructed with the same default when it heals).
     pub fn memory_life_days(&self) -> f64 {
         self.curator_store
             .get()
             .map(|s| s.memory_life_days())
-            .unwrap_or(180.0)
+            .unwrap_or_else(hkask_memory::MemoryStore::default_memory_life_days)
     }
 
     /// Recall memory snippets from the **curator's** sovereign stores.

@@ -151,6 +151,10 @@ pub struct CuratorDb {
     stores: RwLock<CuratorStores>,
     db_path: Option<String>,
     passphrase: Option<String>,
+    /// The decay constant applied to every (re)opened memory store. Resolved
+    /// once from env at construction so construction and heals apply the
+    /// same operator setting.
+    memory_life_days: f64,
     heal_attempt_logged: AtomicBool,
     /// Tests construct handles with no valid path — healing disabled.
     heal_enabled: bool,
@@ -192,11 +196,17 @@ impl CuratorDb {
             }
         };
         let heal_enabled = passphrase.is_some();
-        let stores = open_curator_stores(Some(db_path.as_str()), passphrase.as_deref());
+        let memory_life_days = memory_life_days_from_env();
+        let stores = open_curator_stores(
+            Some(db_path.as_str()),
+            passphrase.as_deref(),
+            memory_life_days,
+        );
         let this = Self {
             stores: RwLock::new(stores),
             db_path: Some(db_path),
             passphrase,
+            memory_life_days,
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled,
             last_heal_attempt: std::sync::Mutex::new(None),
@@ -245,6 +255,7 @@ impl CuratorDb {
             stores: RwLock::new(stores),
             db_path: None,
             passphrase: None,
+            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled: false,
             last_heal_attempt: std::sync::Mutex::new(None),
@@ -291,7 +302,11 @@ impl CuratorDb {
     }
 
     fn try_heal(&self) {
-        let fresh = open_curator_stores(self.db_path.as_deref(), self.passphrase.as_deref());
+        let fresh = open_curator_stores(
+            self.db_path.as_deref(),
+            self.passphrase.as_deref(),
+            self.memory_life_days,
+        );
         let fresh_ok = !Self::db_level_down(&fresh);
         match self.stores.write() {
             Ok(mut guard) => {
@@ -1872,12 +1887,52 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
+/// Resolve the memory decay constant from `HKASK_MEMORY_LIFE_DAYS`. Absent →
+/// the store default (180). Malformed values warn naming the value and fall
+/// back to the default — never a silent fallback. The env var is emitted by
+/// the bridge only when the setting differs from the default, so an absent
+/// var and a default setting produce the same store.
+fn memory_life_days_from_env() -> f64 {
+    match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
+        Ok(raw) => parse_memory_life_days_value(&raw),
+        Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
+    }
+}
+
+/// Pure parse for the decay constant — separated so the malformed path is
+/// testable without env mutation (env writes are unsafe in edition 2024).
+fn parse_memory_life_days_value(raw: &str) -> f64 {
+    match raw.trim().parse::<f64>() {
+        Ok(value) if value.is_finite() && value > 0.0 => value,
+        _ => {
+            tracing::warn!(
+                target: "hkask.mcp.curator",
+                env = "HKASK_MEMORY_LIFE_DAYS",
+                value = %raw,
+                "Malformed memory life setting — must be a positive number of days; using default"
+            );
+            hkask_memory::MemoryStore::default_memory_life_days()
+        }
+    }
+}
+
 /// Open the curator's sovereign `curator.db` and construct all four stores from
 /// a single shared driver. Called at construction and on every heal attempt.
 /// All-or-nothing on the DB-open steps (a failure before store construction
 /// returns all `None`s); per-store `from_driver` failures degrade only that
 /// store.
-fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> CuratorStores {
+///
+/// `memory_life_days` is the decay constant S (R(t) = exp(-t/S), spec §7) the
+/// store actually uses at recall — resolved once from
+/// `HKASK_MEMORY_LIFE_DAYS` (emitted by the bridge's
+/// `emit_curator_distillation_env`) so the operator's
+/// `kask.memory.memory_life_days` setting governs real decay, not just the
+/// regulation sensor that reports it.
+fn open_curator_stores(
+    db_path: Option<&str>,
+    passphrase: Option<&str>,
+    memory_life_days: f64,
+) -> CuratorStores {
     let Some(db_path) = db_path else {
         tracing::warn!(target: "hkask.mcp.curator", "Curator DB path not resolved");
         return CuratorStores::empty();
@@ -1929,10 +1984,10 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
     // all recall to the embedding index.
     let memory = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
         Ok(h_mem_store) => match embedding_store {
-            Some(embeddings) => Some(Arc::new(hkask_memory::MemoryStore::new(
-                h_mem_store,
-                embeddings,
-            ))),
+            Some(embeddings) => Some(Arc::new(
+                hkask_memory::MemoryStore::new(h_mem_store, embeddings)
+                    .with_memory_life_days(memory_life_days),
+            )),
             None => match hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store) {
                 Ok(store) => {
                     tracing::warn!(
@@ -1940,7 +1995,7 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
                         "EmbeddingStore unavailable — curator memory opened without \
                          embeddings; entity/EAV recall works, vector similarity does not"
                     );
-                    Some(Arc::new(store))
+                    Some(Arc::new(store.with_memory_life_days(memory_life_days)))
                 }
                 Err(e) => {
                     tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator memory without embeddings — curator recall degraded");
@@ -1990,4 +2045,56 @@ mod tests {
     // — same helper used by the other DB-backed MCP servers. This is a
     // comment-only test module: if the comment drifts from the code, it
     // compiles stale.
+
+    use super::*;
+
+    /// expect: "A malformed memory-life setting warns and falls back to the
+    /// default — never a silent fallback." [P1]
+    #[test]
+    fn parse_memory_life_days_value_warns_and_defaults_on_malformed() {
+        assert_eq!(parse_memory_life_days_value("30"), 30.0);
+        assert_eq!(parse_memory_life_days_value(" 45.5 "), 45.5);
+        let default = hkask_memory::MemoryStore::default_memory_life_days();
+        assert_eq!(parse_memory_life_days_value("soon"), default);
+        assert_eq!(parse_memory_life_days_value(""), default);
+        assert_eq!(parse_memory_life_days_value("-5"), default);
+        assert_eq!(parse_memory_life_days_value("inf"), default);
+    }
+
+    /// expect: "The `kask.memory.memory_life_days` setting governs the store's
+    /// actual decay — not just the regulation sensor that reports it." [P1]
+    /// pre: an encrypted curator DB exists; the decay constant is passed at
+    /// open time exactly as `from_context` resolves it from
+    /// `HKASK_MEMORY_LIFE_DAYS`.
+    /// post: the opened memory store carries the configured constant, and
+    /// the default constant arrives when no override is configured.
+    #[test]
+    fn open_curator_stores_applies_configured_memory_life_days() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("curator.db");
+        let db_path = db_path.to_str().expect("UTF-8 path");
+        hkask_storage::open_or_repair(db_path, "test-passphrase").expect("create db");
+
+        let stores = open_curator_stores(Some(db_path), Some("test-passphrase"), 30.0);
+        let memory = stores.memory.expect("memory store");
+        assert_eq!(
+            memory.memory_life_days(),
+            30.0,
+            "the configured decay constant must reach the store that actually decays"
+        );
+
+        let stores_default = open_curator_stores(
+            Some(db_path),
+            Some("test-passphrase"),
+            hkask_memory::MemoryStore::default_memory_life_days(),
+        );
+        assert_eq!(
+            stores_default
+                .memory
+                .expect("memory store")
+                .memory_life_days(),
+            hkask_memory::MemoryStore::default_memory_life_days(),
+            "without an override the store uses the default decay constant"
+        );
+    }
 }

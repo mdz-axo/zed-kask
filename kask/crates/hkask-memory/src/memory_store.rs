@@ -97,7 +97,11 @@ fn normalize_value(value: &str) -> String {
 /// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
 pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
 
-/// Default per-agent storage budget (max h_mems).
+/// Default per-agent storage reference point (h_mems) for the regulation
+/// loop's storage-usage-ratio sensor, exposed via `storage_budget()`. This is
+/// a monitoring set-point only — the count-based enforcement/consolidation it
+/// once fed was deprecated by the operator ruling 2026-09-04 (forgetting is
+/// time-based and distillation-gated, never count-based).
 pub(crate) const DEFAULT_STORAGE_BUDGET: usize = 10_000;
 
 /// Unified memory store — one store for all h_mems.
@@ -123,16 +127,6 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
-    /// The default per-agent storage budget (max shared h_mems before
-    /// consolidation prunes). Not yet wired — `HKASK_MEMORY_STORAGE_BUDGET`
-    /// is not read anywhere; the store always uses this hard-coded default
-    /// (the `.rules` "Kask settings defaults must live in `Default` impls"
-    /// trap — though this is a `const`, not a settings struct, the
-    /// single-source principle still applies).
-    pub fn default_storage_budget() -> usize {
-        DEFAULT_STORAGE_BUDGET
-    }
-
     /// The default memory life in days (the decay constant S in
     /// R(t) = exp(-t/S), Wozniak-Gorzelanczyk 1995). Exposed so
     /// `RealMemoryPort::new` can fall back to it when
@@ -200,21 +194,14 @@ impl MemoryStore {
         self
     }
 
-    /// Set the storage budget (max shared h_mems before consolidation prunes).
-    /// The budget is enforced inside `MemoryConsolidator::consolidate` as the
-    /// default `max_h_mems` cap when the caller omits one — the
-    /// Ashby attenuator for unbounded memory growth. Not yet wired —
-    /// `HKASK_MEMORY_STORAGE_BUDGET` is not read anywhere; the store always
-    /// uses the hard-coded default.
-    pub fn with_storage_budget(mut self, budget: usize) -> Self {
-        self.storage_budget = budget;
-        self
-    }
-
     pub fn memory_life_days(&self) -> f64 {
         self.memory_life_days
     }
 
+    /// The storage reference point reported to the regulation loop's
+    /// storage-usage-ratio sensor. Monitoring only — count-based
+    /// enforcement was deprecated by the operator ruling 2026-09-04;
+    /// there is deliberately no writer path gated on this value.
     pub fn storage_budget(&self) -> usize {
         self.storage_budget
     }
@@ -927,6 +914,68 @@ mod tests {
             webid,
         );
         store.store(h_mem).expect("store h_mem");
+    }
+
+    /// expect: "The configured memory life changes how memories decay — the
+    /// setting is behavior, not monitoring decoration." [P1]
+    /// pre: two stores over in-memory drivers hold an identical h_mem whose
+    /// recall clock was last touched 15 days ago; one store uses the default
+    /// S=180, the other the operator-configured S=30.
+    /// post: querying through the decay-applying path returns measurably
+    /// deeper decay under S=30 than S=180 — R(15/30) = exp(-0.5) ≈ 0.607
+    /// vs R(15/180) ≈ 0.920 — so `with_memory_life_days` demonstrably
+    /// reaches the curve, not just a sensor field.
+    #[test]
+    fn memory_life_days_controls_decay_depth() {
+        let webid = WebID::from_persona(b"curator");
+        let driver_short = SqliteDriver::in_memory_driver();
+        let h_mem_store_short =
+            hkask_storage::HMemStore::from_driver(std::sync::Arc::clone(&driver_short))
+                .expect("hmem store");
+        let embedding_store_short = hkask_storage::EmbeddingStore::from_driver(
+            driver_short,
+            hkask_storage::embedding_dim(),
+        )
+        .expect("embedding store");
+        let short_store =
+            MemoryStore::new(h_mem_store_short, embedding_store_short).with_memory_life_days(30.0);
+        let default_store = test_store();
+
+        for store in [&default_store, &short_store] {
+            let mut h_mem = hkask_storage::HMem::new(
+                "decay:probe",
+                "fact",
+                serde_json::Value::String("probe".to_string()),
+                webid,
+            );
+            h_mem.recalled_at = chrono::Utc::now() - chrono::Duration::days(15);
+            store.h_mem_store.insert(&h_mem).expect("seed probe");
+        }
+
+        let decayed_default = default_store
+            .query_by_attribute("fact")
+            .expect("query default")
+            .remove(0)
+            .confidence
+            .value();
+        let decayed_short = short_store
+            .query_by_attribute("fact")
+            .expect("query short")
+            .remove(0)
+            .confidence
+            .value();
+
+        assert!(
+            decayed_short < decayed_default,
+            "S=30 must decay deeper than S=180 for the same recall age: \
+             {decayed_short} !< {decayed_default}"
+        );
+        let expected_default = (-15.0_f64 / 180.0).exp();
+        assert!(
+            (decayed_default - expected_default).abs() < 1e-9,
+            "default store must follow R(t)=exp(-t/180) from full confidence: \
+             {decayed_default} vs {expected_default}"
+        );
     }
 
     #[test]
