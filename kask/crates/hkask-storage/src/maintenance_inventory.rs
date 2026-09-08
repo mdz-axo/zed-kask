@@ -119,6 +119,14 @@ fn record_catalog_path(catalog: &Path, path: &Path) -> Result<(), InventoryError
     let mut file = options
         .open(catalog)
         .map_err(|error| catalog_io(catalog, error))?;
+    // Serialize writers: parse → dedupe → seek → append is one read-modify-
+    // write. Without the exclusive lock two writers both seek to the same
+    // end offset and the second write overwrites the first — the catalogue
+    // loses a record per collision (pinned by
+    // catalogue_serializes_writers_without_losing_external_paths, which
+    // failed 6/10 runs unlocked). Readers take the shared side, so they
+    // never observe a half-written catalogue.
+    file.lock().map_err(|error| catalog_io(catalog, error))?;
     file.sync_all()
         .map_err(|error| catalog_io(catalog, error))?;
     // Persist the catalogue's directory entry and any newly created parent
@@ -377,8 +385,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let required = fixture(directory.path(), "required.db");
         let other = fixture(directory.path(), "other.db");
-        let preview = DatabaseInventory::preview(&[required.clone()], &[], &[other.clone()])
-            .expect("preview");
+        let preview = DatabaseInventory::preview(
+            std::slice::from_ref(&required),
+            &[],
+            std::slice::from_ref(&other),
+        )
+        .expect("preview");
         for exclusions in [
             BTreeMap::from([(required, "Must not exclude".into())]),
             BTreeMap::from([(other, "  ".into())]),
@@ -393,7 +405,8 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let required = fixture(directory.path(), "required.db");
         let roots = [directory.path().to_path_buf()];
-        let before = DatabaseInventory::preview(&[required.clone()], &roots, &[]).expect("preview");
+        let before = DatabaseInventory::preview(std::slice::from_ref(&required), &roots, &[])
+            .expect("preview");
         let receipt = before
             .confirm(&before, &BTreeMap::new(), true)
             .expect("confirm");
@@ -415,7 +428,7 @@ mod tests {
     fn failed_scans_and_recovery_artifacts_are_not_approval() {
         let directory = tempfile::tempdir().expect("tempdir");
         let database = fixture(directory.path(), "required.db");
-        assert!(DatabaseInventory::preview(&[], &[database.clone()], &[]).is_err());
+        assert!(DatabaseInventory::preview(&[], std::slice::from_ref(&database), &[]).is_err());
         assert!(
             DatabaseInventory::preview_with_limit(&[], &[directory.path().into()], &[], 0).is_err()
         );
@@ -558,7 +571,7 @@ mod tests {
         let preview = DatabaseInventory::preview(
             &[configured.clone(), missing.clone()],
             &[],
-            &[external.clone()],
+            std::slice::from_ref(&external),
         )
         .expect("preview");
         assert!(!missing.exists());
@@ -567,7 +580,7 @@ mod tests {
         let receipt = preview
             .confirm(&preview, &exclusions, true)
             .expect("confirmed");
-        assert_eq!(receipt.rotate_paths(), &[configured.clone()]);
+        assert_eq!(receipt.rotate_paths(), std::slice::from_ref(&configured));
         assert_eq!(
             std::fs::read(configured).expect("unchanged"),
             b"inventory reads metadata only"

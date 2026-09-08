@@ -482,6 +482,24 @@ impl Database {
         };
         let pool = r2d2::Pool::builder()
             .max_size(pool_size)
+            // Establish connections strictly on demand: every established
+            // connection pays the SQLCipher KDF (seconds-scale), so eagerly
+            // opening `min_idle` connections taxes every pool build —
+            // including server startup — with KDF rounds for concurrency that
+            // may never arrive. min_idle(0) also means r2d2 never spawns
+            // background replenish tasks: a replenish task in flight at pool
+            // teardown keeps the manager (and its maintenance lease) alive
+            // past the last handle drop, which blocked exclusive lease
+            // acquisition (rotation) deterministically. With min_idle(0),
+            // establishment happens only while a get() is itself waiting on
+            // the pool, so the pool's lifetime is exactly its handles'.
+            .min_idle(Some(0))
+            // A local SQLite connection is worth waiting for: establishment
+            // is KDF-bound and takes seconds, and under CPU saturation the
+            // r2d2 default 30s timeout turned pool builds into spurious
+            // "timed out waiting for connection" failures. A failed get() is
+            // a broken feedback loop for a recoverable condition.
+            .connection_timeout(std::time::Duration::from_secs(120))
             .build(manager)
             .map_err(|e| DatabaseError::SqlCipher(e.to_string()))?;
 
