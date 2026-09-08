@@ -912,6 +912,7 @@ fn main() {
         // Wiring the GPUI-global tokio handle lets the reconnect hop onto it
         // from any executor.
         hkask_mcp::set_spawn_runtime(gpui_tokio::Tokio::handle(&*cx));
+        wire_kask_mcp_shutdown(mcp_runtime.clone(), cx);
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
         // zed-kask: T-V1 — agent-path MCP tool outcome recording. The
@@ -3381,6 +3382,22 @@ fn changed_env_keys(
     keys
 }
 
+// zed-kask: D51 — process exit skips destructors, so explicitly stop the
+// session's MCP runtime while its tokio reactor is still available.
+fn wire_kask_mcp_shutdown(runtime: std::sync::Arc<hkask_mcp::McpRuntime>, cx: &mut gpui::App) {
+    let handle = gpui_tokio::Tokio::handle(cx);
+    cx.on_app_quit(move |_| {
+        let runtime = runtime.clone();
+        let handle = handle.clone();
+        async move {
+            // Quit-only: this future uses tokio locks, never GPUI re-entry.
+            handle.block_on(runtime.shutdown_all());
+            log::info!("hKask MCP runtime shut down for session exit");
+        }
+    })
+    .detach();
+}
+
 // zed-kask: D3/D8 — F25: sync_kask_mcp_runtime_servers (governed McpRuntime restart).
 /// Re-sync the governed `McpRuntime` server processes when kask settings
 /// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
@@ -4968,6 +4985,7 @@ mod tests {
     /// covered by the F2–F25 compile-time reachability of the `fs` value.
     #[test]
     fn kask_wiring_symbols_exist() {
+        let _ = wire_kask_mcp_shutdown as fn(std::sync::Arc<hkask_mcp::McpRuntime>, &mut gpui::App);
         // F22: binary resolution now lives in the runtime's own
         // `resolve_mcp_binary` (spawn time) — the per-project descriptor path
         // that used main.rs's copy was deleted with the single-authority

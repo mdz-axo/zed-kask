@@ -1282,34 +1282,6 @@ impl McpRuntime {
 
     /// Stop a single managed server process and drop its tool registry.
     ///
-    /// Stop every running managed server — the session-end path.
-    ///
-    /// App exit never runs Rust destructors, so the transport-drop kill chain
-    /// (`kill_on_drop(true)` children) is not reached on its own: without this
-    /// call from the embedder's quit hook, every managed MCP server child
-    /// outlives the zed-kask process and keeps running as an orphan (D51).
-    ///
-    /// Session teardown must stop the full managed set, not only live
-    /// connections: a server mid-retry (spec recorded, transport down) or
-    /// awaiting reap still owns a cancellation token and a launch spec that
-    /// the reconnect path would resurrect. The union of the three
-    /// registries is the managed set; `stop_server` is idempotent, so union
-    /// overlap is harmless. Each stop drops the connection — the child gets
-    /// SIGKILL via `kill_on_drop`. Returns the server IDs that were stopped
-    /// so the quit hook can log the session teardown.
-    #[must_use = "result must be used"]
-    pub async fn shutdown_all(&self) -> Vec<String> {
-        let mut targets: std::collections::HashSet<String> = std::collections::HashSet::new();
-        targets.extend(self.connections.read().await.keys().cloned());
-        targets.extend(self.launch_specs.read().await.keys().cloned());
-        targets.extend(self.cancellation_tokens.read().await.keys().cloned());
-        let targets: Vec<String> = targets.into_iter().collect();
-        for server_id in &targets {
-            self.stop_server(server_id).await;
-        }
-        targets
-    }
-
     /// Used by the settings-change restart path: governed `McpRuntime`
     /// instances are started once at login, so a settings change that alters
     /// a server's env (e.g. `kask.swarm.mode` → `HKASK_SWARM_MODE`) requires

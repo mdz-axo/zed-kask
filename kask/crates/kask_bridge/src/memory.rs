@@ -1826,7 +1826,7 @@ pub(crate) mod tests {
             agent_id: Some("Curator".to_string()),
             goal_events: Vec::new(),
         };
-        port.ingest_turn(record)
+        port.ingest_turn(record.clone())
             .await
             .expect("ingest_turn should succeed");
         port.ingest_turn(record)

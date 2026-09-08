@@ -57,6 +57,7 @@ tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 http_client = { workspace = true, features = ["test-support"] }
 proptest.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

@@ -1203,6 +1203,8 @@ codegen-units = 1
 
 [profile.release.package]
 zed = { codegen-units = 16 }
+# zed-kask: D50 — bound per-dependency codegen memory; keep thin LTO.
+"*" = { codegen-units = 16 }
 
 # zed-kask: D46 — MCP server binaries build here, not on `release`. The
 # servers are I/O daemons: thin LTO and codegen-units=1 buy them nothing and
