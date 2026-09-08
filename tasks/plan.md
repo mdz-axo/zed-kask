@@ -212,6 +212,8 @@ Acceptance:
 
 ## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
 
+**Continuation:** the phase is mid-flight — read [kask-phase-d-continuation-prompt.md](kask-phase-d-continuation-prompt.md) FIRST for the exact unvalidated-changes inventory, build discipline (one build at a time on this box — the 12-hour swap-thrash lesson), and the resume order (validate-or-revert before anything new). Editor sessions degrade with transcript size; keep tool outputs trimmed.
+
 **Operator ruling (recorded verbatim intent):** the three items surfaced by the 2026-09-07 dead-code sweep are **not open questions**. They are requirements the code pretends to meet: "memory life should map to the days in the setting — the code that fails to do this is a lie and deception"; "memory consolidation is required"; the salience failure is "another deception". "The problem is not the requirements and specifications — the problem is the shit code, and that is what we are trying to fix." These tasks build the code to meet the specifications. No item in this phase is a policy gate.
 
 **One retraction, entered into the record:** the sweep's consolidation flag was WRONG — a grep artifact (output truncated before the bridge hits). Consolidation IS built and wired: `zed/src/main.rs:1764` starts the production timer, which fires `fire_curator_consolidation_pass` (`kask_bridge/src/memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with `confidence_floor` from `KaskMemorySettings` (`main.rs:1751`); ingestion rebuilds the consolidator after a store heal (`ingest.rs:120-128`); the fire callback is tested (`memory.rs:1978`). The spec's component-table claim ("consolidation timer, memory.rs:74") is TRUE. T17 closes the one genuinely missing piece: a production-shaped timer test.
@@ -271,7 +273,18 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 **Verification (RED first):** tests for each acceptance line fail today (signals absent from ontology; no threshold filtering; ranking ignores keyword overlap). Affected suites: corpus lib + tool-behavior, kask-bridge memory tests.
 **Refused shortcut:** deleting the unwired half (forbidden by the operator ruling); wiring without behavioral tests; leaving the stale doc in place.
 
-**Checkpoint D:** T16–T18 regressions, affected crate suites/checks/lints, residue review, operator review of the retraction record.
+### T19 — MCP servers die with the zed-kask session (operator directive 2026-09-07)
+
+**Scope:** S–M; trust/lifecycle; `hkask-mcp` (done), `crates/zed/src/main.rs` quit hook (pending), DIVERGENCE entry. **Depends on:** none.
+
+**The defect:** the kill chain existed all along — children spawn with `kill_on_drop(true)` (`hkask-mcp/src/runtime.rs`, `start_connection`), and `StdioTransport::Drop` kills a still-running child (`crates/context_server/src/transport/stdio_transport.rs:229-251`) — but **app exit never runs Rust destructors**, so nothing ever dropped the transports at quit and every managed MCP server child orphaned and kept running after zed-kask shutdown. The settings-unload path (`sync_kask_mcp_runtime_servers` → `stop_server`) works; only the session-end call was missing — the deception the operator named: "the mcp servers are supposed to be killed by the shutdown of zed-kask."
+
+**Build steps:** `McpRuntime::shutdown_all()` (implemented 2026-09-07 — union of `connections` + `launch_specs` + `cancellation_tokens`, `stop_server` each; idempotent; the operator wrote the regression test test-first: `shutdown_all_clears_every_reconnect_path`). Remaining: register `cx.on_app_quit` in the kask wiring of `crates/zed/src/main.rs` (D-seam entry; run `shutdown_all()` on the tokio handle inside the quit future; **keep the returned Subscription alive** — a dropped Subscription unregisters), pin via the `kask_wiring_symbols_exist` pattern, DIVERGENCE entry.
+
+**Acceptance:** on quit, every managed server process is gone (no `hkask` processes survive the editor); a mid-retry server's spec/token is torn down too (no resurrection post-quit); the runtime's stop path is exercised by the quit hook, not only by settings changes.
+**Refused shortcut:** relying on pipe-EOF graceful exits (a blocked server ignores EOF); PDEATHSIG (needs `unsafe`, forbidden by crate policy); only killing live connections (a mid-retry server would resurrect).
+
+**Checkpoint D:** T16–T19 regressions, affected crate suites/checks/lints, residue review, operator review of the retraction record.
 
 ## Follow-up queue: tracked, not execution-ready
 
