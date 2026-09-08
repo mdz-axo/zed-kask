@@ -139,6 +139,13 @@ fn database_error(error: impl std::fmt::Display) -> InfrastructureError {
 }
 
 /// Canonicalize existing paths; retain normalized absolute identities when files are offline.
+///
+/// An absent path still resolves its existing symlink ancestors: the deepest
+/// existing prefix is canonicalized and the absent remainder appended
+/// lexically, so `/alias/clip.mp4` (alias → `/real`, clip absent) and
+/// `/real/clip.mp4` denote one identity. A missing file must not split an
+/// asset's record across two spellings — the record's tags, albums, faces and
+/// lineage hang on that identity. [P1: user metadata survives absence]
 fn asset_path(path: &str) -> Result<PathBuf, GalleryStoreError> {
     let path = Path::new(path);
     if !path.is_absolute() {
@@ -146,10 +153,37 @@ fn asset_path(path: &str) -> Result<PathBuf, GalleryStoreError> {
     }
     match path.canonicalize() {
         Ok(path) if path.to_str().is_some() => Ok(path),
-        Ok(path) => Err(GalleryStoreError::InvalidPath(format!("Non-UTF-8 canonical path: {}", path.display()))),
+        Ok(path) => Err(GalleryStoreError::InvalidPath(format!(
+            "Non-UTF-8 canonical path: {}",
+            path.display()
+        ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut normalized = PathBuf::new();
-            for component in path.components() {
+            // Walk up to the deepest existing prefix and canonicalize it; the
+            // absent remainder is appended lexically. The root component of
+            // an absolute path always exists, so the walk terminates.
+            let components: Vec<std::path::Component> = path.components().collect();
+            let mut prefix_len = components.len();
+            let resolved = loop {
+                if prefix_len == 0 {
+                    // No existing prefix at all — the whole path is lexical.
+                    break PathBuf::new();
+                }
+                let prefix = components[..prefix_len].iter().collect::<PathBuf>();
+                match prefix.canonicalize() {
+                    Ok(resolved) => break resolved,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        prefix_len -= 1;
+                    }
+                    Err(error) => {
+                        return Err(GalleryStoreError::InvalidPath(format!(
+                            "{}: {error}",
+                            path.display()
+                        )));
+                    }
+                }
+            };
+            let mut normalized = resolved;
+            for component in &components[prefix_len..] {
                 match component {
                     std::path::Component::ParentDir => {
                         normalized.pop();
@@ -435,7 +469,12 @@ impl GalleryStore {
         std::fs::read_dir(&root).map_err(|error| {
             GalleryStoreError::InvalidPath(format!("{}: {error}", root.display()))
         })?;
-        let root = root.to_str().ok_or_else(|| GalleryStoreError::InvalidPath("Non-UTF-8 canonical gallery root".into()))?.to_string();
+        let root = root
+            .to_str()
+            .ok_or_else(|| {
+                GalleryStoreError::InvalidPath("Non-UTF-8 canonical gallery root".into())
+            })?
+            .to_string();
         let now = now_rfc3339();
         self.driver.execute(
             "INSERT INTO galleries (id, root_path, mode, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
@@ -676,21 +715,39 @@ impl GalleryStore {
     /// expect: Analysis of an old revision never tags or certifies a different revision. [P1]
     /// pre: record was captured before inference
     /// post: tags and freshness commit together only while identity/hash still match
-    pub fn persist_analysis(&self, record: &ImageRecord, tags: &[(String, String, f64)], model: &str, complete: bool) -> Result<bool, GalleryStoreError> {
-        let pool = self.driver.sqlite_pool().ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+    pub fn persist_analysis(
+        &self,
+        record: &ImageRecord,
+        tags: &[(String, String, f64)],
+        model: &str,
+        complete: bool,
+    ) -> Result<bool, GalleryStoreError> {
+        let pool = self
+            .driver
+            .sqlite_pool()
+            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
         let mut connection = pool.get().map_err(database_error)?;
-        let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
         let matches: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM gallery_images WHERE id = ?1 AND gallery_id = ?2 AND hash = ?3 AND missing = 0)",
             params![record.id, record.gallery_id, record.hash], |row| row.get(0)).map_err(database_error)?;
-        if !matches { return Ok(false); }
+        if !matches {
+            return Ok(false);
+        }
         for (tag_type, value, confidence) in tags {
             transaction.execute("INSERT INTO gallery_tags (id, image_id, tag_type, value, confidence, model_used, created_at)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(image_id, tag_type, value) DO NOTHING",
                 params![uuid::Uuid::new_v4().to_string(), record.id, tag_type, value, confidence, model, now_rfc3339()]).map_err(database_error)?;
         }
         if complete {
-            transaction.execute("UPDATE gallery_images SET metadata_stale = 0 WHERE id = ?1", [&record.id]).map_err(database_error)?;
+            transaction
+                .execute(
+                    "UPDATE gallery_images SET metadata_stale = 0 WHERE id = ?1",
+                    [&record.id],
+                )
+                .map_err(database_error)?;
         }
         transaction.commit().map_err(database_error)?;
         Ok(true)
@@ -1599,15 +1656,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc123",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc123", 100, 200, "png", 1024)
             .unwrap();
         assert_eq!(img.hash, "abc123");
         assert_eq!(img.width, 100);
@@ -1627,26 +1676,10 @@ mod tests {
             )
             .unwrap();
         store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "aaa",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "aaa", 100, 200, "png", 1024)
             .unwrap();
         store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/b.png",
-                "bbb",
-                300,
-                400,
-                "png",
-                2048,
-            )
+            .add_image(&gallery.id, "/tmp/g/b.png", "bbb", 300, 400, "png", 2048)
             .unwrap();
         let img = store.get_image(&gallery.id, Some(0), None).unwrap();
         assert_eq!(img.hash, "aaa");
@@ -1668,15 +1701,7 @@ mod tests {
             )
             .unwrap();
         store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let img = store.get_image(&gallery.id, None, Some("abc")).unwrap();
         assert_eq!(img.hash, "abc");
@@ -1696,15 +1721,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let tag = store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
@@ -1726,15 +1743,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
@@ -1760,15 +1769,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
@@ -1794,15 +1795,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -1825,15 +1818,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -1859,15 +1844,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -1893,15 +1870,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -1930,15 +1899,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -1961,15 +1922,7 @@ mod tests {
             )
             .unwrap();
         let img = store
-            .add_image(
-                &gallery.id,
-                "/tmp/g/a.png",
-                "abc",
-                100,
-                200,
-                "png",
-                1024,
-            )
+            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
             .register_face("John", "Doe", &img.id, None, "active", "")
@@ -2143,54 +2096,96 @@ mod tests {
     }
     /// expect: Same path keeps identity while same-content copies remain separate; tied times have stable indices. [P1]
     #[test]
-    fn path_upsert_retains_annotations_and_deterministic_positions() -> Result<(), Box<dyn std::error::Error>> {
+    fn path_upsert_retains_annotations_and_deterministic_positions()
+    -> Result<(), Box<dyn std::error::Error>> {
         let store = setup();
         let directory = tempfile::tempdir()?;
-        let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
-        let path = directory.path().join("a.png").to_string_lossy().into_owned();
+        let gallery = store.open(
+            directory.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let path = directory
+            .path()
+            .join("a.png")
+            .to_string_lossy()
+            .into_owned();
         let first = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
         store.tag_image(&first.id, "caption", "Keep", 1.0, "user")?;
         let album = store.create_album(&gallery.id, "Keep", None)?;
         store.add_to_album(&album.id, &first.id)?;
         let repeated = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
-        assert_eq!(first.id, repeated.id); assert_eq!(first.added_at, repeated.added_at);
+        assert_eq!(first.id, repeated.id);
+        assert_eq!(first.added_at, repeated.added_at);
         assert_eq!(store.get(&gallery.id)?.total_size_bytes, 10);
         let changed = store.add_image(&gallery.id, &path, "changed", 2, 2, "png", 20)?;
-        assert!(changed.metadata_stale); assert_eq!(changed.id, first.id);
-        assert_eq!(store.get_tags(&first.id)?.len(), 1); assert_eq!(store.list_album_members(&album.id)?, vec![first.id.clone()]);
-        let other = directory.path().join("b.png").to_string_lossy().into_owned();
+        assert!(changed.metadata_stale);
+        assert_eq!(changed.id, first.id);
+        assert_eq!(store.get_tags(&first.id)?.len(), 1);
+        assert_eq!(store.list_album_members(&album.id)?, vec![first.id.clone()]);
+        let other = directory
+            .path()
+            .join("b.png")
+            .to_string_lossy()
+            .into_owned();
         let copy = store.add_image(&gallery.id, &other, "changed", 2, 2, "png", 20)?;
         assert_ne!(copy.id, first.id);
-        store.driver.execute("UPDATE gallery_images SET added_at = 'same-time' WHERE gallery_id = ?1", &[gallery.id.clone().into()])?;
+        store.driver.execute(
+            "UPDATE gallery_images SET added_at = 'same-time' WHERE gallery_id = ?1",
+            &[gallery.id.clone().into()],
+        )?;
         let listed = store.list_assets(&gallery.id, 0, 10)?;
         assert!(listed[0].id < listed[1].id);
-        for (index, image) in listed.iter().enumerate() { assert_eq!(store.get_image(&gallery.id, Some(index), None)?.id, image.id); }
+        for (index, image) in listed.iter().enumerate() {
+            assert_eq!(
+                store.get_image(&gallery.id, Some(index), None)?.id,
+                image.id
+            );
+        }
         assert_eq!(store.get(&gallery.id)?.total_size_bytes, 40);
         Ok(())
     }
 
     /// expect: Forward schema updates preserve metadata, and ambiguous duplicate identities stop explicitly. [P1]
     #[test]
-    fn forward_schema_preserves_data_and_refuses_duplicate_identity() -> Result<(), Box<dyn std::error::Error>> {
+    fn forward_schema_preserves_data_and_refuses_duplicate_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
         let store = setup();
         let directory = tempfile::tempdir()?;
-        let gallery = store.open(directory.path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)?;
-        let path = directory.path().join("a.png").to_string_lossy().into_owned();
+        let gallery = store.open(
+            directory.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let path = directory
+            .path()
+            .join("a.png")
+            .to_string_lossy()
+            .into_owned();
         let image = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
         store.tag_image(&image.id, "caption", "Original annotation", 1.0, "user")?;
-        store.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
+        store.driver.execute_batch(
+            "DROP INDEX idx_gallery_images_identity;
             ALTER TABLE gallery_images DROP COLUMN missing;
             ALTER TABLE gallery_images DROP COLUMN metadata_stale;
             ALTER TABLE galleries ADD COLUMN image_count INTEGER NOT NULL DEFAULT 99;
-            ALTER TABLE galleries ADD COLUMN total_size_bytes INTEGER NOT NULL DEFAULT 99;")?;
+            ALTER TABLE galleries ADD COLUMN total_size_bytes INTEGER NOT NULL DEFAULT 99;",
+        )?;
         let migrated = GalleryStore::from_driver(store.driver.clone())?;
         assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
         assert_eq!(migrated.get(&gallery.id)?.image_count, 1);
         assert_eq!(migrated.get(&gallery.id)?.total_size_bytes, 10);
         migrated.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
             INSERT INTO gallery_images SELECT 'duplicate', gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale FROM gallery_images;")?;
-        migrated.tag_image("duplicate", "caption", "Conflicting annotation", 1.0, "user")?;
-        let error = match GalleryStore::from_driver(migrated.driver.clone()) { Ok(_) => panic!("duplicate identity accepted"), Err(error) => error };
+        migrated.tag_image(
+            "duplicate",
+            "caption",
+            "Conflicting annotation",
+            1.0,
+            "user",
+        )?;
+        let error = match GalleryStore::from_driver(migrated.driver.clone()) {
+            Ok(_) => panic!("duplicate identity accepted"),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("identity conflict"), "{error}");
         assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
         assert_eq!(migrated.get_tags("duplicate")?.len(), 1);
@@ -2198,4 +2193,128 @@ mod tests {
         Ok(())
     }
 
+    /// expect: An absent file's alias spelling resolves through existing
+    /// symlink ancestors, so a returning file recovers its original identity. [P1]
+    #[cfg(unix)]
+    #[test]
+    fn absent_alias_path_resolves_existing_ancestors_and_keeps_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let real = fixture.path().join("real");
+        std::fs::create_dir(&real)?;
+        let alias = fixture.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias)?;
+        // The file is absent — only the ancestor symlink exists.
+        let via_alias = asset_path(&alias.join("clip.mp4").to_string_lossy())?;
+        let via_real = asset_path(&real.join("clip.mp4").to_string_lossy())?;
+        assert_eq!(
+            via_alias, via_real,
+            "absent alias spelling must denote one identity"
+        );
+
+        // The legacy record carries the unresolved alias spelling; the forward
+        // schema update must rewrite it to the resolved spelling so a returning
+        // file re-attaches to the same record (tags, albums, lineage intact).
+        let store = setup();
+        let gallery = store.open(
+            fixture.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &real.join("clip.mp4").to_string_lossy(),
+            "hash",
+            1,
+            1,
+            "png",
+            10,
+        )?;
+        store.tag_image(&image.id, "caption", "My clip", 1.0, "user")?;
+        store.driver.execute(
+            "UPDATE gallery_images SET absolute_path = ?1 WHERE id = ?2",
+            &[
+                alias.join("clip.mp4").to_string_lossy().into_owned().into(),
+                image.id.clone().into(),
+            ],
+        )?;
+        store.driver.execute_batch(
+            "DROP INDEX idx_gallery_images_identity;
+            ALTER TABLE gallery_images DROP COLUMN missing;
+            ALTER TABLE gallery_images DROP COLUMN metadata_stale;",
+        )?;
+        let migrated = GalleryStore::from_driver(store.driver.clone())?;
+        let record = migrated.get_by_id(&gallery.id, &image.id)?;
+        assert_eq!(Path::new(&record.absolute_path), real.join("clip.mp4"));
+        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
+        // The file returns under the real directory — same identity, same ID.
+        std::fs::write(real.join("clip.mp4"), b"returned bytes")?;
+        let restored = migrated.add_image(
+            &gallery.id,
+            &real.join("clip.mp4").to_string_lossy(),
+            "hash",
+            1,
+            1,
+            "png",
+            14,
+        )?;
+        assert_eq!(
+            restored.id, image.id,
+            "returning file must recover the same identity"
+        );
+        assert_eq!(restored.added_at, image.added_at);
+        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
+        Ok(())
+    }
+
+    /// expect: Two absent records whose alias spellings resolve to one
+    /// canonical path stop the open explicitly — no silent merge, no deletion. [P1]
+    #[cfg(unix)]
+    #[test]
+    fn conflicting_absent_alias_spellings_fail_explicitly() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = tempfile::tempdir()?;
+        let real = fixture.path().join("real");
+        std::fs::create_dir(&real)?;
+        let alias = fixture.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias)?;
+        let store = setup();
+        let gallery = store.open(
+            fixture.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &real.join("clip.mp4").to_string_lossy(),
+            "hash",
+            1,
+            1,
+            "png",
+            10,
+        )?;
+        // Legacy state: two records for the same absent file — one under the
+        // alias spelling, one under the real spelling — predating the status
+        // columns. The canonicalizing schema update must refuse to merge them.
+        store.driver.execute_batch(&format!(
+            "DROP INDEX idx_gallery_images_identity;
+            ALTER TABLE gallery_images DROP COLUMN missing;
+            ALTER TABLE gallery_images DROP COLUMN metadata_stale;
+            UPDATE gallery_images SET absolute_path = '{alias}' WHERE id = '{id}';
+            INSERT INTO gallery_images SELECT 'real-spelling', gallery_id, relative_path, '{real}', hash, width, height, format, size_bytes, added_at, media_type FROM gallery_images WHERE id = '{id}';",
+            alias = alias.join("clip.mp4").to_string_lossy(),
+            real = real.join("clip.mp4").to_string_lossy(),
+            id = image.id,
+        ))?;
+        let error = match GalleryStore::from_driver(store.driver.clone()) {
+            Ok(_) => panic!("conflicting alias spellings accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity conflict"), "{error}");
+        // Both records survive untouched — the operator resolves the ambiguity.
+        let rows = store.driver.query(
+            "SELECT id FROM gallery_images WHERE gallery_id = ?1",
+            &[gallery.id.clone().into()],
+        )?;
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    }
 }

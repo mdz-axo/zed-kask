@@ -144,6 +144,7 @@ impl MediaServer {
             if text.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("text must not be empty"));
             }
+            let gallery = self.capture_gallery();
             let voice = if let Some(ref vd_json) = voice_design {
                 match serde_json::from_str::<VoiceDesign>(vd_json) {
                     Ok(vd) => vd.to_elevenlabs_voice().to_string(),
@@ -167,7 +168,7 @@ impl MediaServer {
             // Persist the audio payload and compose the slim result (the
             // base64 data URI never enters the model's context).
             persist_slim_and_enrich(
-                &self.gallery_state,
+                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "generate_speech",

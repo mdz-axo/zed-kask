@@ -268,6 +268,23 @@ mod levenshtein_tests {
 }
 
 impl MediaServer {
+    /// The admission-time gallery snapshot for generation tools: the gallery
+    /// (if any) active when the operation is admitted, captured once before
+    /// the first inference await. In-flight generation must never retarget to
+    /// a gallery activated mid-operation — the snapshot travels immutably
+    /// through inference, downloads, and every variant. [P1: user work is not
+    /// redirected by a concurrent root switch]
+    pub(crate) fn capture_gallery(&self) -> Option<GalleryState> {
+        self.gallery_state
+            .lock()
+            .map_err(|error| {
+                tracing::warn!(target: "hkask.mcp.media", %error, "Gallery state lock poisoned — generation proceeds gallery-less");
+                error
+            })
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
     /// Lock the gallery and extract essential state. Drops the lock before
     /// returning, so the result is safe to hold across .await points.
     fn access_gallery(&self) -> Result<GalleryAccess, MediaError> {
@@ -276,11 +293,16 @@ impl MediaServer {
             .lock()
             .map_err(|e| MediaError::Io(format!("Gallery state lock error: {}", e)))?;
         let state = guard.as_ref().ok_or(MediaError::GalleryNotInitialized)?;
-        let gallery_id = state.gallery_id.clone().ok_or(MediaError::GalleryNotInitialized)?;
+        let gallery_id = state
+            .gallery_id
+            .clone()
+            .ok_or(MediaError::GalleryNotInitialized)?;
         let record = self.gallery_store.get(&gallery_id)?;
         let access = GalleryAccess {
-            gallery_id, image_count: record.image_count as u64,
-            root_path: PathBuf::from(record.root_path), mode: record.mode,
+            gallery_id,
+            image_count: record.image_count as u64,
+            root_path: PathBuf::from(record.root_path),
+            mode: record.mode,
             total_size_bytes: record.total_size_bytes,
         };
         Ok(access)
@@ -900,7 +922,14 @@ mod integration_tests {
 
         // Create a gallery and image for the face reference
         let gallery = store
-            .open(tempfile::tempdir().expect("root").path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)
+            .open(
+                tempfile::tempdir()
+                    .expect("root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
             .expect("create gallery");
         let img = store
             .add_image(
@@ -939,29 +968,20 @@ mod integration_tests {
     fn face_registry_status_filter() {
         let (store, _temp) = setup_store();
         let gallery = store
-            .open(tempfile::tempdir().expect("root").path().to_str().expect("UTF-8 root"), GalleryMode::ReadOnly)
+            .open(
+                tempfile::tempdir()
+                    .expect("root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
             .expect("create gallery");
         let img1 = store
-            .add_image(
-                &gallery.id,
-                "/tmp/a.jpg",
-                "h1",
-                100,
-                100,
-                "jpg",
-                1000,
-            )
+            .add_image(&gallery.id, "/tmp/a.jpg", "h1", 100, 100, "jpg", 1000)
             .expect("add img1");
         let img2 = store
-            .add_image(
-                &gallery.id,
-                "/tmp/b.jpg",
-                "h2",
-                100,
-                100,
-                "jpg",
-                1000,
-            )
+            .add_image(&gallery.id, "/tmp/b.jpg", "h2", 100, 100, "jpg", 1000)
             .expect("add img2");
 
         store
@@ -1179,14 +1199,9 @@ mod tool_behavior_tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
         let result = serde_json::json!({"data": [{"b64_json": b64}]});
 
-        let path = persist_generated_asset(
-            None,
-            &server.gallery_store,
-            &result,
-            "image",
-        )
-        .await
-        .expect("persist jpeg payload");
+        let path = persist_generated_asset(None, &server.gallery_store, &result, "image")
+            .await
+            .expect("persist jpeg payload");
 
         // The alignment invariant, checked three ways: the extension on
         // disk, the byte round-trip, and a re-sniff of the written file.
@@ -2785,26 +2800,47 @@ mod gallery_lifecycle_tests {
     use super::*;
     use hkask_storage::database::sqlite::SqliteDriver;
     use rmcp::handler::server::wrapper::Parameters;
-    use std::path::Path;
     use std::future::Future;
+    use std::path::Path;
     use std::pin::Pin;
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn server(database: &Path, inference: Arc<dyn InferencePort>) -> MediaServer {
-        let pool = SqliteDriver::file_pool(database.to_str().expect("UTF-8 fixture path")).expect("unencrypted SQLite");
-        let store = GalleryStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("gallery schema");
-        MediaServer::new(hkask_types::WebID::new(), inference, Arc::new(Mutex::new(None)), Arc::new(store),
-            templates::create_env().expect("templates"), FfmpegRunner::detect(), YtDlpRunner::detect(), jobs::new_job_store())
+        let pool = SqliteDriver::file_pool(database.to_str().expect("UTF-8 fixture path"))
+            .expect("unencrypted SQLite");
+        let store =
+            GalleryStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("gallery schema");
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            inference,
+            Arc::new(Mutex::new(None)),
+            Arc::new(store),
+            templates::create_env().expect("templates"),
+            FfmpegRunner::detect(),
+            YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        )
     }
 
     fn png(path: &Path, color: u8) {
-        image::RgbImage::from_pixel(3, 2, image::Rgb([color, 0, 0])).save(path).expect("valid PNG fixture");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([color, 0, 0]))
+            .save(path)
+            .expect("valid PNG fixture");
     }
 
-    async fn organize(server: &MediaServer, root: &Path, recursive: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let result = server.gallery_organize(Parameters(GalleryOrganizeRequest {
-            path: root.to_string_lossy().into_owned(), mode: "read-only".into(), recursive, auto_analyze: false,
-        })).await?;
+    async fn organize(
+        server: &MediaServer,
+        root: &Path,
+        recursive: bool,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let result = server
+            .gallery_organize(Parameters(GalleryOrganizeRequest {
+                path: root.to_string_lossy().into_owned(),
+                mode: "read-only".into(),
+                recursive,
+                auto_analyze: false,
+            }))
+            .await?;
         let value: serde_json::Value = serde_json::from_str(&result)?;
         assert!(!result.contains("\"error\":"), "{result}");
         Ok(value)
@@ -2816,8 +2852,10 @@ mod gallery_lifecycle_tests {
         let fixture = tempfile::tempdir()?;
         let first = fixture.path().join("first");
         let second = fixture.path().join("second");
-        std::fs::create_dir(&first)?; std::fs::create_dir(&second)?;
-        png(&first.join("first.png"), 1); png(&second.join("second.png"), 2);
+        std::fs::create_dir(&first)?;
+        std::fs::create_dir(&second)?;
+        png(&first.join("first.png"), 1);
+        png(&second.join("second.png"), 2);
         let database = fixture.path().join("gallery.sqlite");
         let original;
         {
@@ -2828,22 +2866,42 @@ mod gallery_lifecycle_tests {
             assert_ne!(server.access_gallery()?.gallery_id, original);
         }
         let server = server(&database, Arc::new(BarrierVision::new()));
-        assert!(server.access_gallery().is_err(), "no automatic startup activation");
+        assert!(
+            server.access_gallery().is_err(),
+            "no automatic startup activation"
+        );
         organize(&server, &first.join("../first/."), true).await?;
         assert_eq!(server.access_gallery()?.gallery_id, original);
-        let result = server.gallery_organize(Parameters(GalleryOrganizeRequest {
-            path: first.to_string_lossy().into_owned(), mode: "destructive".into(), recursive: true, auto_analyze: false,
-        })).await?;
+        let result = server
+            .gallery_organize(Parameters(GalleryOrganizeRequest {
+                path: first.to_string_lossy().into_owned(),
+                mode: "destructive".into(),
+                recursive: true,
+                auto_analyze: false,
+            }))
+            .await?;
         assert!(result.contains("\"mode_preserved\":true"), "{result}");
         assert_eq!(server.access_gallery()?.mode, "read-only");
         let invalid = fixture.path().join("absent");
-        assert!(server.gallery_organize(Parameters(GalleryOrganizeRequest {
-            path: invalid.to_string_lossy().into_owned(), mode: "read-only".into(), recursive: true, auto_analyze: false,
-        })).await.is_err());
+        assert!(
+            server
+                .gallery_organize(Parameters(GalleryOrganizeRequest {
+                    path: invalid.to_string_lossy().into_owned(),
+                    mode: "read-only".into(),
+                    recursive: true,
+                    auto_analyze: false,
+                }))
+                .await
+                .is_err()
+        );
         assert_eq!(server.access_gallery()?.gallery_id, original);
-        let rows = server.gallery_store.driver().query("SELECT root_path FROM galleries", &[])?;
+        let rows = server
+            .gallery_store
+            .driver()
+            .query("SELECT root_path FROM galleries", &[])?;
         assert_eq!(rows.len(), 2);
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             let alias = fixture.path().join("alias");
             std::os::unix::fs::symlink(&first, &alias)?;
             organize(&server, &alias, true).await?;
@@ -2856,18 +2914,35 @@ mod gallery_lifecycle_tests {
     #[tokio::test]
     async fn missing_return_changed_and_partial_coverage() -> TestResult {
         let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root"); std::fs::create_dir(&root)?;
-        let path = root.join("one.png"); png(&path, 1);
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        let path = root.join("one.png");
+        png(&path, 1);
         let original_bytes = std::fs::read(&path)?;
-        let server = server(&fixture.path().join("gallery.sqlite"), Arc::new(BarrierVision::new()));
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
-        let original = server.gallery_store.get_image(&gallery.gallery_id, Some(0), None)?;
+        let original = server
+            .gallery_store
+            .get_image(&gallery.gallery_id, Some(0), None)?;
         let store = &server.gallery_store;
         store.tag_image(&original.id, "caption", "My photo", 1.0, "user")?;
         let album = store.create_album(&gallery.gallery_id, "Keep", None)?;
         store.add_to_album(&album.id, &original.id)?;
-        store.record_generation(&original.id, "generate_image", Some("original"), None, None, None, None, None, None)?;
+        store.record_generation(
+            &original.id,
+            "generate_image",
+            Some("original"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
         organize(&server, &root, true).await?;
         assert_eq!(std::fs::read(&path)?, original_bytes);
         assert_eq!(store.count_assets(&gallery.gallery_id)?, 1);
@@ -2878,25 +2953,54 @@ mod gallery_lifecycle_tests {
         assert!(store.get_all_tags(&gallery.gallery_id)?.is_empty());
         assert!(store.list_album_members(&album.id)?.is_empty());
         assert!(store.get_by_id(&gallery.gallery_id, &original.id)?.missing);
-        let detail = server.gallery_asset_detail(Parameters(GalleryAssetDetailRequest { image_index: None, image_id: Some(original.id.clone()) })).await?;
+        let detail = server
+            .gallery_asset_detail(Parameters(GalleryAssetDetailRequest {
+                image_index: None,
+                image_id: Some(original.id.clone()),
+            }))
+            .await?;
         assert!(detail.contains("\"missing\":true"), "{detail}");
         assert_eq!(store.get_tags(&original.id)?.len(), 1);
         assert!(store.get_generation(&original.id)?.is_some());
         std::fs::write(&path, &original_bytes)?;
         organize(&server, &root, true).await?;
         let returned = store.get_image(&gallery.gallery_id, Some(0), None)?;
-        assert_eq!(returned.id, original.id); assert_eq!(returned.added_at, original.added_at);
-        assert!(!returned.missing); assert!(!returned.metadata_stale);
-        assert_eq!(store.list_album_members(&album.id)?, vec![original.id.clone()]);
+        assert_eq!(returned.id, original.id);
+        assert_eq!(returned.added_at, original.added_at);
+        assert!(!returned.missing);
+        assert!(!returned.metadata_stale);
+        assert_eq!(
+            store.list_album_members(&album.id)?,
+            vec![original.id.clone()]
+        );
         png(&path, 2);
         organize(&server, &root, true).await?;
         let changed = store.get_by_id(&gallery.gallery_id, &original.id)?;
-        assert!(changed.metadata_stale); assert_ne!(changed.hash, original.hash);
+        assert!(changed.metadata_stale);
+        assert_ne!(changed.hash, original.hash);
         assert_eq!(store.get_tags(&original.id)?.len(), 1);
-        assert!(!store.persist_analysis(&original, &[("caption".into(), "wrong revision".into(), 1.0)], "fake", true)?);
-        assert!(store.get_by_id(&gallery.gallery_id, &original.id)?.metadata_stale);
-        assert!(store.persist_analysis(&changed, &[("caption".into(), "new revision".into(), 1.0)], "fake", true)?);
-        assert!(!store.get_by_id(&gallery.gallery_id, &original.id)?.metadata_stale);
+        assert!(!store.persist_analysis(
+            &original,
+            &[("caption".into(), "wrong revision".into(), 1.0)],
+            "fake",
+            true
+        )?);
+        assert!(
+            store
+                .get_by_id(&gallery.gallery_id, &original.id)?
+                .metadata_stale
+        );
+        assert!(store.persist_analysis(
+            &changed,
+            &[("caption".into(), "new revision".into(), 1.0)],
+            "fake",
+            true
+        )?);
+        assert!(
+            !store
+                .get_by_id(&gallery.gallery_id, &original.id)?
+                .metadata_stale
+        );
         // Bad decode makes the entire scan conservative, even for another absent file.
         std::fs::remove_file(&path)?;
         std::fs::write(root.join("broken.png"), b"broken")?;
@@ -2906,7 +3010,8 @@ mod gallery_lifecycle_tests {
         // An unreadable/nonexistent root on refresh reports coverage, never absence.
         std::fs::rename(&root, fixture.path().join("offline"))?;
         let (scan, result) = server.rescan_gallery(&gallery, true)?;
-        assert!(!scan.errors.is_empty()); assert_eq!(result.missing, 0);
+        assert!(!scan.errors.is_empty());
+        assert_eq!(result.missing, 0);
         Ok(())
     }
 
@@ -2914,19 +3019,36 @@ mod gallery_lifecycle_tests {
     #[tokio::test]
     async fn scope_and_identical_copies_keep_distinct_path_identities() -> TestResult {
         let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root"); std::fs::create_dir_all(root.join("nested"))?;
-        png(&root.join("a.png"), 1); png(&root.join("b.png"), 1); png(&root.join("nested/c.png"), 1);
-        let server = server(&fixture.path().join("gallery.sqlite"), Arc::new(BarrierVision::new()));
+        let root = fixture.path().join("root");
+        std::fs::create_dir_all(root.join("nested"))?;
+        png(&root.join("a.png"), 1);
+        png(&root.join("b.png"), 1);
+        png(&root.join("nested/c.png"), 1);
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
         let store = &server.gallery_store;
         let copies = store.list_assets(&gallery.gallery_id, 0, 10)?;
-        assert_eq!(copies.len(), 3); assert_ne!(copies[0].id, copies[1].id); assert_eq!(copies[0].hash, copies[1].hash);
-        let external = fixture.path().join("external.png"); png(&external, 2);
+        assert_eq!(copies.len(), 3);
+        assert_ne!(copies[0].id, copies[1].id);
+        assert_eq!(copies[0].hash, copies[1].hash);
+        let external = fixture.path().join("external.png");
+        png(&external, 2);
         let (external_id, _) = server.import_reference_image(&gallery, &external)?;
         for (name, kind) in [("film.mp4", "video"), ("sound.wav", "audio")] {
-            let path = root.join(name); std::fs::write(&path, b"fixture bytes")?;
-            server.gallery_add_media(Parameters(GalleryAddMediaRequest { path: path.to_string_lossy().into_owned(), media_type: kind.into(), width: None, height: None })).await?;
+            let path = root.join(name);
+            std::fs::write(&path, b"fixture bytes")?;
+            server
+                .gallery_add_media(Parameters(GalleryAddMediaRequest {
+                    path: path.to_string_lossy().into_owned(),
+                    media_type: kind.into(),
+                    width: None,
+                    height: None,
+                }))
+                .await?;
         }
         std::fs::remove_file(root.join("nested/c.png"))?;
         organize(&server, &root, false).await?;
@@ -2936,10 +3058,17 @@ mod gallery_lifecycle_tests {
         assert!(!store.get_by_id(&gallery.gallery_id, &external_id)?.missing);
         let active = store.list_assets(&gallery.gallery_id, 0, 10)?;
         for (index, asset) in active.iter().enumerate() {
-            assert_eq!(store.get_image(&gallery.gallery_id, Some(index), None)?.id, asset.id);
-            assert_eq!(store.list_assets(&gallery.gallery_id, index, 1)?[0].id, asset.id);
+            assert_eq!(
+                store.get_image(&gallery.gallery_id, Some(index), None)?.id,
+                asset.id
+            );
+            assert_eq!(
+                store.list_assets(&gallery.gallery_id, index, 1)?[0].id,
+                asset.id
+            );
         }
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             std::os::unix::fs::symlink(&external, root.join("escape.png"))?;
             std::fs::remove_file(root.join("a.png"))?;
             let (scan, result) = server.rescan_gallery(&gallery, true)?;
@@ -2953,16 +3082,27 @@ mod gallery_lifecycle_tests {
     #[tokio::test]
     async fn reconciliation_rolls_back_on_injected_insert_failure() -> TestResult {
         let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root"); std::fs::create_dir(&root)?;
-        png(&root.join("a.png"), 1); png(&root.join("b.png"), 2);
-        let server = server(&fixture.path().join("gallery.sqlite"), Arc::new(BarrierVision::new()));
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        png(&root.join("a.png"), 1);
+        png(&root.join("b.png"), 2);
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
-        let before = server.gallery_store.list_assets(&gallery.gallery_id, 0, 10)?;
-        png(&root.join("a.png"), 3); std::fs::remove_file(root.join("b.png"))?; png(&root.join("z.png"), 4);
+        let before = server
+            .gallery_store
+            .list_assets(&gallery.gallery_id, 0, 10)?;
+        png(&root.join("a.png"), 3);
+        std::fs::remove_file(root.join("b.png"))?;
+        png(&root.join("z.png"), 4);
         server.gallery_store.driver().execute_batch("CREATE TRIGGER fail_gallery_insert BEFORE INSERT ON gallery_images WHEN NEW.relative_path = 'z.png' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
         assert!(server.rescan_gallery(&gallery, true).is_err());
-        let after = server.gallery_store.list_assets(&gallery.gallery_id, 0, 10)?;
+        let after = server
+            .gallery_store
+            .list_assets(&gallery.gallery_id, 0, 10)?;
         assert_eq!(serde_json::to_value(before)?, serde_json::to_value(after)?);
         Ok(())
     }
@@ -2974,19 +3114,68 @@ mod gallery_lifecycle_tests {
     }
     impl BarrierVision {
         fn new() -> Self {
-            Self { entered: tokio::sync::Notify::new(), resume: tokio::sync::Notify::new(), calls: std::sync::atomic::AtomicUsize::new(0) }
+            Self {
+                entered: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
         }
     }
     impl InferencePort for BarrierVision {
-        fn generate(&self, _prompt: &str, _parameters: &hkask_types::template::LLMParameters, _tools: Option<&[hkask_types::ChatToolDefinition]>)
-            -> Pin<Box<dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
-            Box::pin(async { Err(hkask_types::InferenceError::NotConfigured("test only supports vision".into())) })
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "test only supports vision".into(),
+                ))
+            })
         }
-        fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<hkask_types::ports::ModelEntry>, hkask_types::InferenceError>> + Send + '_>> {
-            Box::pin(async { Ok(vec![hkask_types::ports::ModelEntry { prefixed_name: "OpenRouter/test-vision".into(), model: "test-vision".into(), supports_vision: true }]) })
+        fn list_models(
+            &self,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            Vec<hkask_types::ports::ModelEntry>,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Ok(vec![hkask_types::ports::ModelEntry {
+                    prefixed_name: "OpenRouter/test-vision".into(),
+                    model: "test-vision".into(),
+                    supports_vision: true,
+                }])
+            })
         }
-        fn generate_vision(&self, prompt: &str, images: &[String], _parameters: &hkask_types::template::LLMParameters, _model: Option<&str>)
-            -> Pin<Box<dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
+        fn generate_vision(
+            &self,
+            prompt: &str,
+            images: &[String],
+            _parameters: &hkask_types::template::LLMParameters,
+            _model: Option<&str>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
             assert!(!images.is_empty());
             let text = if prompt.contains("Return ONLY a JSON array") { "[]" }
                 else if prompt.contains("color palette") && prompt.contains("JSON object") {
@@ -2999,8 +3188,15 @@ mod gallery_lifecycle_tests {
                     self.entered.notify_one();
                     self.resume.notified().await;
                 }
-                Ok(hkask_types::InferenceResult { text, model: "test-vision".into(), usage: Default::default(),
-                    finish_reason: "stop".into(), tool_calls: vec![], reasoning: None, cost_usd: None })
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "test-vision".into(),
+                    usage: Default::default(),
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
             })
         }
     }
@@ -3009,49 +3205,85 @@ mod gallery_lifecycle_tests {
     #[tokio::test]
     async fn analysis_is_bound_before_await_and_rejects_changed_revision() -> TestResult {
         let fixture = tempfile::tempdir()?;
-        let first = fixture.path().join("first"); let second = fixture.path().join("second");
-        std::fs::create_dir(&first)?; std::fs::create_dir(&second)?;
-        for name in ["a.png", "b.png"] { png(&first.join(name), 1); png(&second.join(name), 2); }
+        let first = fixture.path().join("first");
+        let second = fixture.path().join("second");
+        std::fs::create_dir(&first)?;
+        std::fs::create_dir(&second)?;
+        for name in ["a.png", "b.png"] {
+            png(&first.join(name), 1);
+            png(&second.join(name), 2);
+        }
         let vision = Arc::new(BarrierVision::new());
-        let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), vision.clone()));
+        let server = Arc::new(server(
+            &fixture.path().join("gallery.sqlite"),
+            vision.clone(),
+        ));
         organize(&server, &first, true).await?;
         let first_gallery = server.access_gallery()?;
-        let records = server.gallery_store.list_assets(&first_gallery.gallery_id, 0, 10)?;
+        let records = server
+            .gallery_store
+            .list_assets(&first_gallery.gallery_id, 0, 10)?;
         let task = {
             let server = server.clone();
-            tokio::spawn(async move { server.run_analysis_on_indices(&first_gallery, &[0, 1], &["scene".into()]).await })
+            tokio::spawn(async move {
+                server
+                    .run_analysis_on_indices(&first_gallery, &[0, 1], &["scene".into()])
+                    .await
+            })
         };
         tokio::time::timeout(std::time::Duration::from_secs(5), vision.entered.notified()).await?;
         organize(&server, &second, true).await?;
         let second_gallery = server.access_gallery()?;
         vision.resume.notify_one();
         let (count, errors) = task.await?;
-        assert_eq!(count, 2, "{errors:?}"); assert!(errors.is_empty());
-        for record in &records { assert_eq!(server.gallery_store.get_tags(&record.id)?.len(), 1); }
-        assert!(server.gallery_store.get_all_tags(&second_gallery.gallery_id)?.is_empty());
+        assert_eq!(count, 2, "{errors:?}");
+        assert!(errors.is_empty());
+        for record in &records {
+            assert_eq!(server.gallery_store.get_tags(&record.id)?.len(), 1);
+        }
+        assert!(
+            server
+                .gallery_store
+                .get_all_tags(&second_gallery.gallery_id)?
+                .is_empty()
+        );
 
         let vision = Arc::new(BarrierVision::new());
-        let changed_server = Arc::new(self::server(&fixture.path().join("gallery.sqlite"), vision.clone()));
+        let changed_server = Arc::new(self::server(
+            &fixture.path().join("gallery.sqlite"),
+            vision.clone(),
+        ));
         organize(&changed_server, &first, true).await?;
         let first_gallery = changed_server.access_gallery()?;
         let task = {
             let server = changed_server.clone();
-            tokio::spawn(async move { server.run_analysis_on_indices(&first_gallery, &[0], &["scene".into()]).await })
+            tokio::spawn(async move {
+                server
+                    .run_analysis_on_indices(&first_gallery, &[0], &["scene".into()])
+                    .await
+            })
         };
         tokio::time::timeout(std::time::Duration::from_secs(5), vision.entered.notified()).await?;
         png(Path::new(&records[0].absolute_path), 9);
         organize(&changed_server, &first, true).await?;
         vision.resume.notify_one();
         let (count, errors) = task.await?;
-        assert_eq!(count, 0); assert!(!errors.is_empty());
-        assert!(server.gallery_store.get_by_id(&records[0].gallery_id, &records[0].id)?.metadata_stale);
+        assert_eq!(count, 0);
+        assert!(!errors.is_empty());
+        assert!(
+            server
+                .gallery_store
+                .get_by_id(&records[0].gallery_id, &records[0].id)?
+                .metadata_stale
+        );
         Ok(())
     }
     /// expect: Successful complete reanalysis clears staleness only for the analyzed revision. [P1]
     #[tokio::test]
     async fn complete_reanalysis_refreshes_matching_revision() -> TestResult {
         let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root"); std::fs::create_dir(&root)?;
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
         png(&root.join("a.png"), 1);
         let vision = Arc::new(BarrierVision::new());
         vision.resume.notify_one();
@@ -3060,12 +3292,186 @@ mod gallery_lifecycle_tests {
         png(&root.join("a.png"), 2);
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
-        let image = server.gallery_store.get_image(&gallery.gallery_id, Some(0), None)?;
+        let image = server
+            .gallery_store
+            .get_image(&gallery.gallery_id, Some(0), None)?;
         assert!(image.metadata_stale);
-        let (count, errors) = server.run_analysis_on_indices(&gallery, &[0], &["objects".into(), "colors".into(), "composition".into(), "scene".into()]).await;
-        assert_eq!(count, 1, "{errors:?}"); assert!(errors.is_empty());
-        assert!(!server.gallery_store.get_by_id(&gallery.gallery_id, &image.id)?.metadata_stale);
-        assert!(server.gallery_store.get_tags(&image.id)?.iter().any(|tag| tag.value == "Test caption"));
+        let (count, errors) = server
+            .run_analysis_on_indices(
+                &gallery,
+                &[0],
+                &[
+                    "objects".into(),
+                    "colors".into(),
+                    "composition".into(),
+                    "scene".into(),
+                ],
+            )
+            .await;
+        assert_eq!(count, 1, "{errors:?}");
+        assert!(errors.is_empty());
+        assert!(
+            !server
+                .gallery_store
+                .get_by_id(&gallery.gallery_id, &image.id)?
+                .metadata_stale
+        );
+        assert!(
+            server
+                .gallery_store
+                .get_tags(&image.id)?
+                .iter()
+                .any(|tag| tag.value == "Test caption")
+        );
+        Ok(())
+    }
+
+    /// A vision port whose responses parse but carry no usable structure:
+    /// a missing colors field, an empty composition object, and a blank
+    /// caption — while the empty object list is a legitimate detection
+    /// result. Structurally invalid output must surface as actionable
+    /// errors, never as a freshness certification.
+    struct InvalidAnalysisVision;
+    impl InferencePort for InvalidAnalysisVision {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "test only supports vision".into(),
+                ))
+            })
+        }
+        fn list_models(
+            &self,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            Vec<hkask_types::ports::ModelEntry>,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Ok(vec![hkask_types::ports::ModelEntry {
+                    prefixed_name: "OpenRouter/test-vision".into(),
+                    model: "test-vision".into(),
+                    supports_vision: true,
+                }])
+            })
+        }
+        fn generate_vision(
+            &self,
+            prompt: &str,
+            images: &[String],
+            _parameters: &hkask_types::template::LLMParameters,
+            _model: Option<&str>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            assert!(!images.is_empty());
+            let text = if prompt.contains("Return ONLY a JSON array") {
+                "[]"
+            } else if prompt.contains("color palette") && prompt.contains("JSON object") {
+                "{}"
+            } else if prompt.contains("JSON object") {
+                "{}"
+            } else {
+                "   "
+            }
+            .to_string();
+            Box::pin(async move {
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "test-vision".into(),
+                    usage: Default::default(),
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// expect: Structurally invalid analysis output never certifies freshness. [P1]
+    #[tokio::test]
+    async fn invalid_analysis_outputs_retain_staleness() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        png(&root.join("a.png"), 1);
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(InvalidAnalysisVision),
+        );
+        organize(&server, &root, true).await?;
+        png(&root.join("a.png"), 2);
+        organize(&server, &root, true).await?;
+        let gallery = server.access_gallery()?;
+        let image = server
+            .gallery_store
+            .get_image(&gallery.gallery_id, Some(0), None)?;
+        assert!(image.metadata_stale);
+        let (count, errors) = server
+            .run_analysis_on_indices(
+                &gallery,
+                &[0],
+                &[
+                    "objects".into(),
+                    "colors".into(),
+                    "composition".into(),
+                    "scene".into(),
+                ],
+            )
+            .await;
+        assert_eq!(count, 0, "nothing was certified");
+        assert!(!errors.is_empty(), "invalid shapes must surface as errors");
+        assert!(
+            errors.iter().any(|error| error.contains("no colors array")),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("none of the recognized fields")),
+            "{errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("blank")),
+            "{errors:?}"
+        );
+        // Empty face/object detections are legitimate — they must not error.
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.contains("object detection")),
+            "{errors:?}"
+        );
+        assert!(
+            server
+                .gallery_store
+                .get_by_id(&gallery.gallery_id, &image.id)?
+                .metadata_stale
+        );
         Ok(())
     }
 
@@ -3076,7 +3482,9 @@ mod gallery_lifecycle_tests {
         let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let fixture = tempfile::tempdir()?;
         let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", fixture.path()); }
+        unsafe {
+            std::env::set_var("HKASK_ARTIFACTS_DIR", fixture.path());
+        }
         let result: TestResult = async {
             let first = fixture.path().join("first"); let second = fixture.path().join("second");
             std::fs::create_dir(&first)?; std::fs::create_dir(&second)?;
@@ -3126,8 +3534,12 @@ mod gallery_lifecycle_tests {
             assert_eq!(server.access_gallery()?.image_count, 2, "outside-root generated outputs survive image scans");
             Ok(())
         }.await;
-        unsafe { match prior { Some(value) => std::env::set_var("HKASK_ARTIFACTS_DIR", value), None => std::env::remove_var("HKASK_ARTIFACTS_DIR") } }
+        unsafe {
+            match prior {
+                Some(value) => std::env::set_var("HKASK_ARTIFACTS_DIR", value),
+                None => std::env::remove_var("HKASK_ARTIFACTS_DIR"),
+            }
+        }
         result
     }
-
 }

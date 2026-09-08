@@ -16,6 +16,7 @@ impl MediaServer {
         }): Parameters<RemoveBackgroundRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_remove_background", async {
+            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -33,7 +34,7 @@ impl MediaServer {
             // Persist the payload and compose the slim result (the provider's
             // base64 payload never enters the model's context).
             persist_slim_and_enrich(
-                &self.gallery_state,
+                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_remove_background",
@@ -62,6 +63,7 @@ impl MediaServer {
                     "style_prompt must not be empty",
                 ));
             }
+            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -82,7 +84,7 @@ impl MediaServer {
             // base64 payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                &self.gallery_state,
+                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_apply_style",
@@ -436,6 +438,7 @@ impl MediaServer {
             {
                 return Err(McpToolError::invalid_argument("duration must be positive"));
             }
+            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -457,7 +460,7 @@ impl MediaServer {
             // payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                &self.gallery_state,
+                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_to_video",
@@ -849,7 +852,8 @@ impl MediaServer {
 
             // The indexed copies are durable; only the extraction scratch files are removed.
             for frame in &frames {
-                std::fs::remove_file(frame).map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
+                std::fs::remove_file(frame)
+                    .map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
             }
 
             if imported.is_empty() {
@@ -886,6 +890,9 @@ impl MediaServer {
         }): Parameters<VideoMemeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_meme", async {
+            // Admission-time gallery capture — before the local composition
+            // and the motion-generation await.
+            let gallery = self.capture_gallery();
             let image_path = self
                 .resolve_image_path(image_index)
                 .map_err(map_media_error)?;
@@ -955,7 +962,7 @@ impl MediaServer {
             // payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                &self.gallery_state,
+                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "video_meme",

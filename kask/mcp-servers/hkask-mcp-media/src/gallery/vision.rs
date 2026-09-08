@@ -378,6 +378,15 @@ pub async fn analyze_colors(
             &result.text[..200.min(result.text.len())]
         ))
     })?;
+    // A parsed-but-empty object is not a usable palette: without this check a
+    // `{}` response certifies freshness while replacing retained annotations
+    // with nothing. The colors array is the one required field.
+    if !parsed.get("colors").is_some_and(|colors| colors.is_array()) {
+        return Err(crate::MediaError::VisionParse(format!(
+            "Color analysis result has no colors array — raw: {}",
+            &result.text[..200.min(result.text.len())]
+        )));
+    }
     Ok(parsed)
 }
 
@@ -410,6 +419,30 @@ pub async fn analyze_composition(
             &result.text[..200.min(result.text.len())]
         ))
     })?;
+    // An object with none of the recognized fields carries no composition
+    // information — certifying freshness on it would replace retained
+    // annotations with nothing. At least one field must be present.
+    const COMPOSITION_FIELDS: &[&str] = &[
+        "focal_point",
+        "rule_of_thirds",
+        "leading_lines",
+        "depth_of_field",
+        "perspective",
+        "framing",
+        "symmetry",
+        "negative_space",
+    ];
+    if !COMPOSITION_FIELDS.iter().any(|field| {
+        parsed
+            .get(*field)
+            .is_some_and(|value| value.as_str().is_some())
+    }) {
+        return Err(crate::MediaError::VisionParse(format!(
+            "Composition analysis result has none of the recognized fields ({}) — raw: {}",
+            COMPOSITION_FIELDS.join(", "),
+            &result.text[..200.min(result.text.len())]
+        )));
+    }
     Ok(parsed)
 }
 
@@ -436,7 +469,15 @@ pub async fn caption_scene(
         .await
         .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
 
-    Ok(result.text.trim().to_string())
+    let caption = result.text.trim().to_string();
+    if caption.is_empty() {
+        // A blank caption is a failed caption — reporting success here would
+        // clear metadata staleness without meaningful replacement metadata.
+        return Err(crate::MediaError::VisionParse(
+            "Scene caption was blank — no replacement metadata".into(),
+        ));
+    }
+    Ok(caption)
 }
 
 #[cfg(test)]

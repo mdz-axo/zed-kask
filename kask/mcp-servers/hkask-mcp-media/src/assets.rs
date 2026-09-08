@@ -7,7 +7,7 @@
 use crate::error::{MediaError, map_media_error};
 use crate::{GalleryState, GalleryStore};
 use hkask_mcp_server::server::McpToolError;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     let dir = hkask_types::agent_paths::resolve_under_artifacts_dir(
@@ -168,10 +168,23 @@ pub(crate) async fn persist_generated_asset(
     } else {
         (0, 0)
     };
-    gallery_store.add_media(
-        gallery_id, &path.to_string_lossy(), &hash, width, height,
-        ext, bytes.len() as u64, media_type,
-    ).map_err(|error| MediaError::AssetPersistence(format!("File saved at {}, but indexing failed: {error}", path.display())))?;
+    gallery_store
+        .add_media(
+            gallery_id,
+            &path.to_string_lossy(),
+            &hash,
+            width,
+            height,
+            ext,
+            bytes.len() as u64,
+            media_type,
+        )
+        .map_err(|error| {
+            MediaError::AssetPersistence(format!(
+                "File saved at {}, but indexing failed: {error}",
+                path.display()
+            ))
+        })?;
 
     Ok(path)
 }
@@ -203,15 +216,17 @@ pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
 /// several entries) persist every image — `outputs` lists each path,
 /// `output` the first.
 ///
-/// Persist failure returns `Err` — the raw payload is never the fallback.
+/// `gallery` is the caller's admission-time snapshot (see
+/// `MediaServer::capture_gallery`) — never the live state handle, so neither
+/// downloads nor multiple variants can retarget to a gallery activated while
+/// the operation is in flight. Persist failure returns `Err` — the raw
+/// payload is never the fallback.
 pub(crate) async fn persist_and_slim_result(
-    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery: Option<&GalleryState>,
     gallery_store: &Arc<GalleryStore>,
     result: &serde_json::Value,
     kind: &str,
 ) -> Result<serde_json::Value, MediaError> {
-    // Bind the entire completion (including every downloaded variant) before its first await.
-    let gallery = gallery_state.lock().map_err(|error| MediaError::AssetPersistence(error.to_string()))?.clone();
     // Multi-image responses persist every entry — the singular persist
     // extracts only data[0], which silently dropped all but the first
     // image of a `num_images > 1` request.
@@ -228,13 +243,11 @@ pub(crate) async fn persist_and_slim_result(
             let mut paths = Vec::with_capacity(entries.len());
             for entry in entries {
                 let single = serde_json::json!({ "data": [entry] });
-                paths.push(
-                    persist_generated_asset(gallery.as_ref(), gallery_store, &single, kind).await?,
-                );
+                paths.push(persist_generated_asset(gallery, gallery_store, &single, kind).await?);
             }
             paths
         }
-        None => vec![persist_generated_asset(gallery.as_ref(), gallery_store, result, kind).await?],
+        None => vec![persist_generated_asset(gallery, gallery_store, result, kind).await?],
     };
 
     let Some(output_path) = paths.first() else {
@@ -282,16 +295,17 @@ pub(crate) async fn persist_and_slim_result(
 /// The single composition path — call this instead of re-assembling
 /// `persist_and_slim_result` + `enrich_with_omc_and_provenance` by hand at
 /// each call site; a hand-rolled variant is how the base64 payload once
-/// leaked into the model's context.
+/// leaked into the model's context. `gallery` is the caller's admission-time
+/// snapshot (`MediaServer::capture_gallery`).
 pub(crate) async fn persist_slim_and_enrich(
-    gallery_state: &Arc<Mutex<Option<GalleryState>>>,
+    gallery: Option<&GalleryState>,
     gallery_store: &Arc<GalleryStore>,
     result: &serde_json::Value,
     tool: &str,
     kind: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, McpToolError> {
-    let slim = persist_and_slim_result(gallery_state, gallery_store, result, kind)
+    let slim = persist_and_slim_result(gallery, gallery_store, result, kind)
         .await
         .map_err(map_media_error)?;
     Ok(crate::media_block::enrich_with_omc_and_provenance(

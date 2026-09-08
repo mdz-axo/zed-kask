@@ -114,6 +114,11 @@ impl MediaServer {
             let job_id = uuid::Uuid::new_v4().to_string();
             let now = hkask_types::time::now_rfc3339();
 
+            // Admission-time gallery capture: a submitted job is in-flight
+            // work — it is indexed into the gallery active at submission,
+            // never one activated while the job runs.
+            let gallery = self.capture_gallery();
+
             // Insert the job record with "queued" status.
             {
                 let mut store = self
@@ -137,7 +142,6 @@ impl MediaServer {
             // Spawn the background generation task.
             let vision_port = self.vision_port.clone();
             let job_store = self.job_store.clone();
-            let gallery_state = self.gallery_state.clone();
             let gallery_store = self.gallery_store.clone();
             let job_id_for_task = job_id.clone();
             let op_for_task = op.clone();
@@ -179,7 +183,7 @@ impl MediaServer {
                 // the job record the model reads back.
                 let persisted = match result {
                     Ok(value) => persist_and_slim_result(
-                        &gallery_state,
+                        gallery.as_ref(),
                         &gallery_store,
                         &value,
                         kind_for_task,
