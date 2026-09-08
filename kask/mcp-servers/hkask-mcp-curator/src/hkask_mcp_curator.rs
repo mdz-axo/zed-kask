@@ -1876,6 +1876,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 Arc::clone(&db),
                 inference_port.clone(),
                 ctx.webid,
+                distillation::DistillationConfig::from_env(),
             );
             Ok(CuratorServer::new(ctx.webid, db, inference_port.clone()))
         },

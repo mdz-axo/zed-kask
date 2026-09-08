@@ -2312,7 +2312,7 @@ mod tests {
         // Both records survive untouched — the operator resolves the ambiguity.
         let rows = store.driver.query(
             "SELECT id FROM gallery_images WHERE gallery_id = ?1",
-            &[gallery.id.clone().into()],
+            &[gallery.id.into()],
         )?;
         assert_eq!(rows.len(), 2);
         Ok(())

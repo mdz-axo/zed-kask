@@ -141,14 +141,29 @@ supersedes the create-only activation / insert-only rescan behavior.
   Decode/read/walk errors and skipped symlinks produce a degraded report and
   suppress all absence inference for that scan.
 - Active counts and size derive from SQLite rows. List and index lookup share
-  `(added_at, id)` ordering. Listing exposes `id`, `missing`, `metadata_stale`;
-  tag/semantic search exposes `image_id` and `metadata_stale`. The existing Detail
-  inspector renders these flags without a layout redesign.
+  `(added_at, id)` ordering. Listing exposes `gallery_id`, `id`, `missing`,
+  `metadata_stale`; tag/semantic search exposes `image_id` and `metadata_stale`.
+  The existing Detail inspector renders these flags without a layout redesign.
 - Scans and vision target captured galleries/asset records. Auto-analysis consumes
   actual added/changed/restored records, not guessed index ranges. Complete
   successful analysis clears staleness only when the captured hash still matches;
-  partial analysis cannot certify all retained metadata. Completion-time downloads
-  capture one gallery for all variants.
+  partial analysis cannot certify all retained metadata. Structurally invalid
+  vision output (missing colors array, empty composition object, blank caption)
+  errors and retains staleness; legitimate empty face/object detections are valid.
+  Generation captures the gallery at operation admission — before the first
+  inference await — and that snapshot travels immutably through inference,
+  downloads, and all variants; background jobs capture at submission.
+- The consumer boundary carries identity: the panel reconciles listings by
+  `gallery_id` (a root switch clears the old gallery's rows and pending
+  selection/deletion actions), drops superseded listing responses (request
+  epochs), reconciles exhausted page tails against the payload `total`, and
+  addresses detail/delete by stable `image_id` (`gallery_delete_image` accepts
+  exactly one of `image_id` or `image_index`).
+- Canonicalization of an absent path resolves its existing symlink ancestors
+  (deepest existing prefix canonicalized, absent remainder appended lexically),
+  so alias and real spellings of a missing file denote one identity. Conflicting
+  spellings that resolve to one canonical path stop the schema update with an
+  explicit identity conflict.
 
 Enforcement: `GalleryStore::{open,reconcile,persist_analysis,get_by_id,list_assets}`
 in `kask/crates/hkask-storage/src/gallery.rs`; `GalleryState::scan` in
@@ -219,7 +234,7 @@ No routing or layout change is part of this repair.
 | `gallery_lineage` | 1079 | Show the recorded generation lineage for a gallery image; `lineage: null` if none recorded. |
 | `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing records and status flags; the inspector-panel data source. |
 | `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
-| `gallery_delete_image` | 1205 | Delete an image from the gallery index; by default index-only, `delete_file=true` also removes the file. |
+| `gallery_delete_image` | 1176 | Delete an image from the gallery index by stable `image_id` or active `image_index` (exactly one); by default index-only, `delete_file=true` also removes the file. |
 | `gallery_add_media` | 1256 | Import a video or audio file into the gallery index (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
 | `gallery_create_album` | 1375 | Create an album; metadata-only grouping, assets stay in place, an asset can be in multiple albums. |
 | `gallery_list_albums` | 1401 | List all albums in the current gallery. |

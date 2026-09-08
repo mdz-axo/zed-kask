@@ -1249,7 +1249,7 @@ mod tool_behavior_tests {
             "model": "flux-1-schnell",
         });
         let slim = persist_and_slim_result(
-            &server.gallery_state,
+            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "image",
@@ -1283,7 +1283,7 @@ mod tool_behavior_tests {
             ],
         });
         let slim = persist_and_slim_result(
-            &server.gallery_state,
+            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "image",
@@ -1311,7 +1311,7 @@ mod tool_behavior_tests {
         // response is never the fallback.
         let result = serde_json::json!({"something": "else"});
         let error = persist_and_slim_result(
-            &server.gallery_state,
+            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "image",
@@ -1353,7 +1353,7 @@ mod tool_behavior_tests {
             }],
         });
         let enriched = persist_slim_and_enrich(
-            &server.gallery_state,
+            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "generate_image",
@@ -3475,9 +3475,113 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    /// expect: Downloads finishing after a gallery switch stay in their captured gallery, including variants. [P1]
+    /// A generation port with a first-call barrier: `media_generate`
+    /// returns one URL-based image variant per call, parking the first call
+    /// until released so a test can switch gallery roots mid-inference.
+    struct GenerateBarrierVision {
+        urls: Vec<String>,
+        entered: tokio::sync::Notify,
+        resume: tokio::sync::Notify,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl GenerateBarrierVision {
+        fn new(urls: Vec<String>) -> Self {
+            Self {
+                urls,
+                entered: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+    impl InferencePort for GenerateBarrierVision {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "test only supports media_generate".into(),
+                ))
+            })
+        }
+        fn list_models(
+            &self,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            Vec<hkask_types::ports::ModelEntry>,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Ok(vec![hkask_types::ports::ModelEntry {
+                    prefixed_name: "OpenRouter/test-vision".into(),
+                    model: "test-vision".into(),
+                    supports_vision: true,
+                }])
+            })
+        }
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &hkask_types::template::LLMParameters,
+            _model: Option<&str>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "test only supports media_generate".into(),
+                ))
+            })
+        }
+        fn media_generate<'a>(
+            &'a self,
+            _op: &str,
+            _params: &hkask_types::MediaGenerateParams,
+        ) -> hkask_types::ports::MediaFuture<'a> {
+            let index = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let url = self
+                .urls
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| self.urls.last().expect("at least one URL").clone());
+            Box::pin(async move {
+                if index == 0 {
+                    self.entered.notify_one();
+                    self.resume.notified().await;
+                }
+                Ok(serde_json::json!({ "data": [{ "url": url }] }))
+            })
+        }
+    }
+
+    /// expect: A generation admitted under gallery A indexes every variant
+    /// into A, even when the active root switches during inference and again
+    /// during a variant download — real tool entry, not the persistence
+    /// helper. [P1]
     #[tokio::test]
-    async fn generated_completion_keeps_gallery_snapshot() -> TestResult {
+    async fn generate_image_tool_entry_binds_admission_gallery() -> TestResult {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let fixture = tempfile::tempdir()?;
@@ -3486,19 +3590,17 @@ mod gallery_lifecycle_tests {
             std::env::set_var("HKASK_ARTIFACTS_DIR", fixture.path());
         }
         let result: TestResult = async {
-            let first = fixture.path().join("first"); let second = fixture.path().join("second");
-            std::fs::create_dir(&first)?; std::fs::create_dir(&second)?;
+            let first = fixture.path().join("first"); let second = fixture.path().join("second"); let third = fixture.path().join("third");
+            std::fs::create_dir(&first)?; std::fs::create_dir(&second)?; std::fs::create_dir(&third)?;
             let source = fixture.path().join("source.png"); png(&source, 1);
             let bytes = std::fs::read(source)?;
-            let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), Arc::new(BarrierVision::new())));
-            organize(&server, &first, true).await?;
-            let original = server.access_gallery()?.gallery_id;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let address = listener.local_addr()?;
-            let entered = Arc::new(tokio::sync::Notify::new());
-            let resume = Arc::new(tokio::sync::Notify::new());
+            let download_entered = Arc::new(tokio::sync::Notify::new());
+            let download_resume = Arc::new(tokio::sync::Notify::new());
             let download = {
-                let entered = entered.clone(); let resume = resume.clone();
+                let entered = download_entered.clone(); let resume = download_resume.clone();
+                let bytes = bytes.clone();
                 tokio::spawn(async move {
                     for index in 0..2 {
                         let (mut stream, _) = listener.accept().await?;
@@ -3517,21 +3619,43 @@ mod gallery_lifecycle_tests {
                     Ok::<(), std::io::Error>(())
                 })
             };
-            let persistence = {
+            let vision = Arc::new(GenerateBarrierVision::new(vec![
+                format!("http://{address}/one"), format!("http://{address}/two"),
+            ]));
+            let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), vision.clone()));
+            organize(&server, &first, true).await?;
+            let admission = server.access_gallery()?.gallery_id;
+            let generation = {
                 let server = server.clone();
                 tokio::spawn(async move {
-                    crate::assets::persist_and_slim_result(&server.gallery_state, &server.gallery_store,
-                        &serde_json::json!({"data":[{"url":format!("http://{address}/one")},{"url":format!("http://{address}/two")}]}), "image").await
+                    server.generate_image(Parameters(GenerateImageRequest {
+                        prompt: "admission binding".into(), image_size: None, num_images: Some(2), style: None,
+                    })).await
                 })
             };
-            tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+            // Switch roots while the first inference call is parked.
+            tokio::time::timeout(std::time::Duration::from_secs(5), vision.entered.notified()).await?;
             organize(&server, &second, true).await?;
-            resume.notify_one();
-            persistence.await??; download.await??;
-            assert_eq!(server.gallery_store.count_assets(&original)?, 2);
-            assert_eq!(server.access_gallery()?.image_count, 0);
+            vision.resume.notify_one();
+            // Switch roots again while the first variant download is parked.
+            tokio::time::timeout(std::time::Duration::from_secs(5), download_entered.notified()).await?;
+            organize(&server, &third, true).await?;
+            download_resume.notify_one();
+            let output = generation.await??;
+            download.await??;
+            let value: serde_json::Value = serde_json::from_str(&output)?;
+            let content = value.get("content").unwrap_or(&value);
+            assert_eq!(content["count_returned"], 2, "{output}");
+            assert_eq!(server.gallery_store.count_assets(&admission)?, 2,
+                "every variant belongs to the gallery captured at admission");
+            for gallery in [&second, &third] {
+                organize(&server, gallery, true).await?;
+                assert_eq!(server.access_gallery()?.image_count, 0,
+                    "mid-flight roots indexed nothing");
+            }
             organize(&server, &first, true).await?;
-            assert_eq!(server.access_gallery()?.image_count, 2, "outside-root generated outputs survive image scans");
+            assert_eq!(server.access_gallery()?.image_count, 2,
+                "outside-root generated outputs survive image scans");
             Ok(())
         }.await;
         unsafe {

@@ -645,8 +645,16 @@ pub struct GalleryReproduceRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GalleryDeleteImageRequest {
-    /// Index of the gallery image to delete from the index.
-    pub image_index: usize,
+    /// Index of the gallery image to delete from the index (positional —
+    /// resolves against the active gallery). Supply exactly one of
+    /// image_index or image_id.
+    #[serde(default)]
+    pub image_index: Option<usize>,
+    /// Stable asset id — the identity that survives reordering, rescan, and
+    /// gallery switches. Preferred over the positional index for callers
+    /// holding a listing record (the panel's delete action).
+    #[serde(default)]
+    pub image_id: Option<String>,
     /// Whether to also delete the file on disk (default: false — only removes
     /// the gallery index entry, leaving the file untouched).
     #[serde(default)]

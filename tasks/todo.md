@@ -43,7 +43,7 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Covered content is hard-deleted; never-distilled threads and watermarks are protected (existing pins held on coverage-faithful fixtures); malformed-watermark threads are skipped (no proof, no deletion); repetition is idempotent.
   - [x] Insertion between eligibility and deletion cannot erase fresh content — structural: only rows READ as covered are deleted (per-id/passage-scoped, never a blind prefix delete); ambiguous duplicate passages resolve conservatively (keep).
   - [x] RED observed test-first (3 new regressions failed against the pre-fix pass); GREEN: curator 16/16, memory 30/30, storage 60/60 ×2; clippy clean; spec §6 updated with the coverage semantics.
-- [ ] **Checkpoint A:** cumulative regressions, affected crate tests/checks/lints, scope/residue review, operator review. (T01/T02/T02b/T03 evidence complete; operator review remains.)
+- [x] **Checkpoint A:** cumulative regressions, affected crate tests/checks/lints, scope/residue review, operator review. (T01/T02/T02b/T03 evidence complete; **operator review RATIFIED 2026-09-08** — all recommendations accepted: T01 boundary accepted, T02 boundaries accepted as scope, T02b permissive RSS re-confirmed, T03 conservative defaults ratified, D01 startup-error trade-off confirmed, Phase B entry approved T04→T05→T06 with T05's settlement policy deferred to its start. Record in plan.md.)
 
 ## Operator-directed reliability addenda — 2026-09-07
 
@@ -65,7 +65,7 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
 ## Phase B — Make completion and retry states reliable
 
-- [ ] **T04 — Revisit pending distillation work** (T03 for integrated safety checkpoint)
+- [ ] **T04 — Revisit pending distillation work** (T03 for integrated safety checkpoint) — **in progress 2026-09-08** (Checkpoint A ratified; spec recovery underway)
   - [ ] Active-at-scan work distills when later idle without a new turn or restart.
   - [ ] Transient pre-watermark inference failure retries; successful work is not unnecessarily replayed.
   - [ ] Watermark-before-insert/startup bounds preserved; pending-work policy resolved; real cursor progression tested.

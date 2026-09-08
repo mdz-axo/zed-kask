@@ -92,20 +92,39 @@ absence inference. Decode/read/walk errors or skipped symlinks produce a degrade
 scan and prohibit absence inference for the entire scan. `.hkask-gallery`
 directories are excluded.
 
-`gallery_list_assets` includes stable `id` and `metadata_stale` fields. Inspect a
-retained missing record with `gallery_asset_detail(image_id=...)`; provide exactly
-one of `image_id` or active `image_index`. The existing Detail inspector displays
-`missing` and `metadata_stale` in its Record section. Positional indices use the
-same `(added_at, id)` order across listing, lookup, and album positions; positions
-are not durable identities.
+`gallery_list_assets` includes stable `id` and `metadata_stale` fields and
+carries the listing's `gallery_id` — the consumer-side identity boundary. The
+media panel reconciles against it: a response for a different gallery clears
+the previous gallery's indexed rows and pending selection/deletion actions,
+superseded listing responses (an older request epoch) are dropped, and
+terminal pages reconcile their exhausted tails against the payload's `total`.
+Inspect a retained missing record with `gallery_asset_detail(image_id=...)`;
+provide exactly one of `image_id` or active `image_index`. The existing Detail
+inspector displays `missing` and `metadata_stale` in its Record section.
+Positional indices use the same `(added_at, id)` order across listing, lookup,
+and album positions; positions are not durable identities. Panel detail and
+delete actions address assets by stable `image_id` (`gallery_delete_image`
+accepts exactly one of `image_id` or `image_index`) — a positional index
+captured before a root switch can never act on the new gallery.
 
 Reconciliation and analysis writes use real SQLite transactions. Analysis captures
 records before awaiting vision, commits only against the same stored hash, and
 only a successful complete pipeline clears staleness (including faces when face
-annotations exist). Partial analysis does not certify all retained metadata.
-Generated completion captures activation before downloads, including all variants;
-keyframes are copied into durable artifacts before indexing, not indexed as
-soon-to-be-deleted extraction scratch files.
+annotations exist). Partial analysis does not certify all retained metadata, and
+structurally invalid vision output — a missing colors array, an empty composition
+object, or a blank caption — surfaces as an analysis error that retains staleness;
+legitimate empty face/object detections are valid results. Generated assets capture
+the gallery at operation admission, before the first inference await: the snapshot
+travels immutably through inference, downloads, and every variant, so a root switch
+mid-flight never retargets an in-flight generation (background jobs capture at
+submission). Keyframes are copied into durable artifacts before indexing, not
+indexed as soon-to-be-deleted extraction scratch files.
+
+An absent file's canonicalization resolves its existing symlink ancestors (the
+deepest existing prefix is canonicalized, the absent remainder appended
+lexically), so `/alias/clip.mp4` and `/real/clip.mp4` denote one identity even
+while the file is offline — a missing file cannot split an asset record across
+two spellings.
 
 **Forward schema update:** add `missing`/`metadata_stale`, canonicalize existing
 identities, enforce unique `(gallery_id, absolute_path)`, and remove cached gallery
@@ -116,7 +135,11 @@ legacy read paths or API aliases. `GalleryStore::open` replaces `create`, and
 insertion derives the relative path rather than accepting a second path identity.
 
 Pins: `gallery_reopen_restores_requested_root`, `gallery_rescan_preserves_identity`,
-`gallery_lifecycle_tests`, and storage's `path_upsert_retains_annotations_and_deterministic_positions`
+`gallery_lifecycle_tests` (including `generate_image_tool_entry_binds_admission_gallery`
+and `invalid_analysis_outputs_retain_staleness`), and storage's
+`path_upsert_retains_annotations_and_deterministic_positions`,
+`absent_alias_path_resolves_existing_ancestors_and_keeps_identity`,
+`conflicting_absent_alias_spellings_fail_explicitly`,
 and `forward_schema_preserves_data_and_refuses_duplicate_identity`.
 
 ## Configuration

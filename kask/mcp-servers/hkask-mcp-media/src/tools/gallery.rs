@@ -1040,6 +1040,7 @@ impl MediaServer {
                 })
                 .collect();
             Ok(serde_json::json!({
+                "gallery_id": ga.gallery_id,
                 "total": total,
                 "offset": offset,
                 "limit": limit,
@@ -1170,29 +1171,42 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Delete an image from the gallery index. By default only removes the index entry (tags, face associations, generation lineage) — the file on disk is left untouched. Set delete_file=true to also remove the file."
+        description = "Delete an image from the gallery index. By default only removes the index entry (tags, face associations, generation lineage) — the file on disk is left untouched. Set delete_file=true to also remove the file. Supply exactly one of image_index (positional, active gallery) or image_id (stable identity)."
     )]
     pub async fn gallery_delete_image(
         &self,
         Parameters(GalleryDeleteImageRequest {
             image_index,
+            image_id,
             delete_file,
         }): Parameters<GalleryDeleteImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_delete_image", async {
-            let image_id = self
-                .resolve_image_id(image_index)
-                .map_err(map_media_error)?;
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            // Resolution mirrors gallery_asset_detail: exactly one of the
+            // positional index (active gallery) or the stable id.
+            let image = match (image_index, image_id) {
+                (Some(index), None) => self
+                    .gallery_store
+                    .get_image(&ga.gallery_id, Some(index), None)
+                    .map_err(|e| map_gallery_store_error(e))?,
+                (None, Some(id)) => self
+                    .gallery_store
+                    .get_by_id(&ga.gallery_id, &id)
+                    .map_err(|e| map_gallery_store_error(e))?,
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "Supply exactly one of image_index or image_id",
+                    ));
+                }
+            };
             let image_path = if delete_file {
-                Some(
-                    self.resolve_image_path(image_index)
-                        .map_err(map_media_error)?,
-                )
+                Some(std::path::PathBuf::from(&image.absolute_path))
             } else {
                 None
             };
             self.gallery_store
-                .delete_image(&image_id)
+                .delete_image(&image.id)
                 .map_err(|e| map_media_error(e.into()))?;
             if let Some(path) = image_path {
                 if let Err(e) = std::fs::remove_file(&path) {
@@ -1206,7 +1220,7 @@ impl MediaServer {
             }
             Ok(serde_json::json!({
                 "deleted": true,
-                "image_id": image_id,
+                "image_id": image.id,
                 "file_deleted": delete_file,
             }))
         })

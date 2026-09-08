@@ -3,7 +3,7 @@ title: "Kask regression-first reliability plan"
 creator: "Zed coding agent"
 date: "2026-09-07"
 type: "bibo:Document"
-status: "Phase D automated checks, release builds, and live memory-life behavior verified; live quit and operator checkpoints pending"
+status: "Checkpoint A ratified 2026-09-08; Phase B (T04) in progress; live quit observation pending"
 baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 ---
 
@@ -44,6 +44,19 @@ Both commands used `RUSTC_WRAPPER=/home/mdz-axolotl/.local/lib/kask-sccache/scca
 **Next operator-controlled steps:** confirm Checkpoint A review; the independent bounded read-only watcher is armed and identities were refreshed at arm time (editor 90198 + 11 children, PID + start ticks). Let any in-flight editor work finish (a parallel agent session was still running tests at arming), then let the operator normally quit the build-ID-matched editor. The watcher records child termination/reaping and any survivors without blanket-killing services. Confirm normal quit with the operator (process disappearance alone does not establish how it exited). The isolated pending-start/nonresponsive fixture evidence remains in the T19 table; it does not replace a live application result. Source inspection confirms `--user-data-dir` exists, but no isolated app was launched or complete Kask-data/keychain isolation claimed.
 
 **Closure ledger:** release-build verification — fixed/verified, coding agent; executable identity — verified by ELF build IDs, coding agent; live T16 emission/decay — observed on the running build, coding agent; quit watcher — armed and detached, coding agent; Checkpoint D live quit/review — awaiting operator coordination, coding agent observes and operator confirms; Checkpoint A review — operator decision, blocks Phase B; T04–T08 — coding agent queue after review and task-specific policy gates; T09–T15 — coding agent elaboration plus operator scheduling, not execution-authorized. Deferral risks remain in the risk register; no acceptance of those risks is inferred.
+
+### Checkpoint A — operator review — RATIFIED 2026-09-08
+
+The operator reviewed the Phase A evidence in a Q&A session and **ratified all recommendations** (verbatim instruction: "ratifying all recommendations - please proceed"):
+
+- **Q1/T01 accepted** with its one documented boundary (prior-snapshot-survives-failed-replacement is design-reviewed, not fixture-pinnable).
+- **Q2/T02 boundaries accepted as scope, not gaps:** provider-side fetches out of gate; multi-hop permitted chains pinned by decision tests; proxy env ignored with a build-time warn.
+- **Q3/T02b permissive RSS policy re-confirmed:** `rss_subscribe`/`rss_fetch`/`rss_synthesize` keep the permissive redirect policy (user-curated feeds); only `discover` is strict.
+- **Q4/T03 conservative defaults ratified:** ambiguous duplicate passages keep their embedding (bounded duplicate leak over erasing uncovered recall); unparseable-watermark threads are skipped (no proof, no deletion).
+- **Q5/D01 trade-off confirmed:** incompatible mixed databases error at startup rather than reset.
+- **Q6/Checkpoint A closed; Phase B entry approved:** proceed T04→T05→T06 as scheduled; T05's ambiguous-outcome settlement policy is deferred to T05's start, with T04 first.
+
+Checkpoint A is closed. Phase B (T04–T08) is unblocked; T04 begins immediately.
 
 ### Live runtime behavior and quit watcher — 2026-09-08
 

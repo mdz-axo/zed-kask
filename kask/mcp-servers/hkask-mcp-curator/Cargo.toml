@@ -31,7 +31,7 @@ name = "hkask-mcp-curator"
 path = "src/main.rs"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 tempfile.workspace = true
 
 [lints]

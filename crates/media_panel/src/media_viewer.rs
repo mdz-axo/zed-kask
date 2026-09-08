@@ -42,6 +42,11 @@ pub struct MediaAsset {
     /// The gallery index other gallery tools accept (`image_index`).
     /// `None` for conversation-surfaced assets not yet in the gallery index.
     pub gallery_index: Option<usize>,
+    /// The stable asset id from the listing record — the identity that
+    /// survives reordering, rescan, and gallery switches. Detail and delete
+    /// actions address the asset by this id; the positional index is display
+    /// data only. `None` for conversation-surfaced assets.
+    pub gallery_asset_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +78,14 @@ pub struct MediaViewer {
     gallery_total: Option<u64>,
     /// Gallery listing pagination cursor.
     gallery_offset: usize,
+    /// The gallery the current listing belongs to (from `gallery_list_assets`
+    /// responses). A response carrying a different id is a root change: the
+    /// previous gallery's indexed rows and pending actions are invalid.
+    gallery_id: Option<String>,
+    /// Monotonic listing-request counter. A response whose epoch is not the
+    /// latest was superseded by a newer request — a delayed response for a
+    /// previous gallery can never overwrite the current view.
+    gallery_epoch: u64,
     jobs: Vec<JobRecord>,
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
     detail: Option<Value>,
@@ -100,6 +113,8 @@ impl MediaViewer {
             concat_queue: Vec::new(),
             gallery_total: None,
             gallery_offset: 0,
+            gallery_id: None,
+            gallery_epoch: 0,
             jobs: Vec::new(),
             detail: None,
             confirm_delete: None,
@@ -325,6 +340,12 @@ impl MediaViewer {
         };
         self.status = None;
         let offset = self.gallery_offset;
+        // Each request carries an epoch; a response from a superseded request
+        // (a newer listing was requested before it arrived) is dropped — a
+        // delayed response for a previous gallery must never overwrite the
+        // current view.
+        self.gallery_epoch += 1;
+        let epoch = self.gallery_epoch;
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_list_assets",
@@ -333,8 +354,10 @@ impl MediaViewer {
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
                 let payload = hkask_types::tool_response::parse_tool_response(&text);
-                this.update(cx, |this, cx| this.merge_gallery_listing(payload, cx))
-                    .log_err();
+                this.update(cx, |this, cx| {
+                    this.apply_gallery_listing(epoch, payload, cx)
+                })
+                .log_err();
             }
             Err(error) => {
                 this.update(cx, |this, cx| {
@@ -347,6 +370,22 @@ impl MediaViewer {
         .detach();
     }
 
+    /// Apply a `gallery_list_assets` response, unless a newer request has
+    /// superseded it. Responses arrive asynchronously; the epoch check is the
+    /// delayed-response boundary — without it, a slow response for gallery A
+    /// could overwrite the listing the panel holds for gallery B.
+    fn apply_gallery_listing(
+        &mut self,
+        epoch: u64,
+        payload: Option<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        if epoch != self.gallery_epoch {
+            return;
+        }
+        self.merge_gallery_listing(payload, cx);
+    }
+
     /// Merge a `gallery_list_assets` payload into the asset list.
     fn merge_gallery_listing(&mut self, payload: Option<Value>, cx: &mut Context<Self>) {
         let Some(payload) = payload else {
@@ -355,11 +394,32 @@ impl MediaViewer {
             return;
         };
         self.gallery_total = payload.get("total").and_then(|t| t.as_u64());
+        let listing_gallery = payload
+            .get("gallery_id")
+            .and_then(|g| g.as_str())
+            .map(str::to_string);
         let Some(records) = payload.get("assets").and_then(|a| a.as_array()) else {
             self.status = Some("gallery_list_assets returned no assets array.".into());
             cx.notify();
             return;
         };
+        // The gallery-identity boundary: a listing for a different gallery
+        // invalidates the previous gallery's indexed rows (their positional
+        // indexes are meaningless against the new root) and every pending
+        // action — selection, delete confirmation, and inspector detail all
+        // pointed into the old gallery. Nothing is auto-selected after a
+        // switch: the operator picks explicitly in the new gallery.
+        let mut gallery_changed = false;
+        if self.gallery_id.is_some() && listing_gallery != self.gallery_id {
+            self.assets.retain(|asset| asset.gallery_index.is_none());
+            self.selected = None;
+            self.confirm_delete = None;
+            self.detail = None;
+            self.gallery_id = listing_gallery;
+            gallery_changed = true;
+        } else if self.gallery_id.is_none() {
+            self.gallery_id = listing_gallery;
+        }
         // Capture what selection and the delete-confirmation point at
         // BEFORE the merge: gallery indexes are positional, so a deletion
         // renumbers every later asset. Re-locating by src afterwards keeps
@@ -374,7 +434,16 @@ impl MediaViewer {
             .confirm_delete
             .and_then(|ix| self.assets.get(ix))
             .map(|asset| asset.src.clone());
-        merge_gallery_records(&mut self.assets, records, self.gallery_offset);
+        let payload_offset = payload
+            .get("offset")
+            .and_then(|o| o.as_u64())
+            .map_or(self.gallery_offset, |offset| offset as usize);
+        merge_gallery_records(
+            &mut self.assets,
+            records,
+            payload_offset,
+            self.gallery_total,
+        );
         if let Some(src) = selected_src {
             self.selected = self.assets.iter().position(|asset| asset.src == src);
             if self.selected.is_none() {
@@ -384,7 +453,7 @@ impl MediaViewer {
         if let Some(src) = confirmed_src {
             self.confirm_delete = self.assets.iter().position(|asset| asset.src == src);
         }
-        if self.selected.is_none() && !self.assets.is_empty() {
+        if !gallery_changed && self.selected.is_none() && !self.assets.is_empty() {
             self.selected = Some(0);
         }
         cx.notify();
@@ -427,14 +496,16 @@ impl MediaViewer {
     }
 
     /// Load the inspector data for the selected asset (spec: metadata, tags,
-    /// lineage, versions).
+    /// lineage, versions). Addresses the asset by its stable gallery id —
+    /// the positional index is display data and cannot survive a root
+    /// switch or reordering.
     fn load_detail(&mut self, cx: &mut Context<Self>) {
         let Some(ix) = self.selected.filter(|ix| *ix < self.assets.len()) else {
             self.detail = None;
             cx.notify();
             return;
         };
-        let Some(gallery_index) = self.assets[ix].gallery_index else {
+        let Some(asset_id) = self.assets[ix].gallery_asset_id.clone() else {
             self.detail = None;
             self.status = Some(
                 "Asset is not in the gallery index yet — run gallery_refresh \
@@ -444,6 +515,7 @@ impl MediaViewer {
             cx.notify();
             return;
         };
+        let requested_src = self.assets[ix].src.clone();
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.status = Some("Tool invoker not wired — panel cannot load detail.".into());
             cx.notify();
@@ -453,13 +525,22 @@ impl MediaViewer {
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_asset_detail",
-            serde_json::json!({ "image_index": gallery_index }),
+            serde_json::json!({ "image_id": asset_id }),
         );
         cx.spawn(async move |this, cx| match task.await {
             Ok(text) => {
                 let payload = hkask_types::tool_response::parse_tool_response(&text);
                 this.update(cx, |this, cx| {
-                    this.detail = payload;
+                    // Apply only if the selection still points at the asset
+                    // the request was made for — a response landing after a
+                    // selection change or gallery switch is stale.
+                    let still_selected = this
+                        .selected
+                        .and_then(|ix| this.assets.get(ix))
+                        .is_some_and(|asset| asset.src == requested_src);
+                    if still_selected {
+                        this.detail = payload;
+                    }
                     cx.notify();
                 })
                 .log_err();
@@ -477,12 +558,14 @@ impl MediaViewer {
     }
 
     /// Delete the gallery-index entry for an asset (two-step confirm; the
-    /// file on disk is left untouched — `delete_file: false`).
+    /// file on disk is left untouched — `delete_file: false`). Addresses the
+    /// asset by its stable gallery id — a positional index captured before a
+    /// root switch could delete a DIFFERENT asset in the new gallery.
     fn delete_asset(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(asset) = self.assets.get(ix) else {
             return;
         };
-        let Some(gallery_index) = asset.gallery_index else {
+        let Some(asset_id) = asset.gallery_asset_id.clone() else {
             self.status = Some("Asset is not in the gallery index — nothing to delete.".into());
             cx.notify();
             return;
@@ -496,7 +579,7 @@ impl MediaViewer {
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_delete_image",
-            serde_json::json!({ "image_index": gallery_index, "delete_file": false }),
+            serde_json::json!({ "image_id": asset_id, "delete_file": false }),
         );
         cx.spawn(async move |this, cx| {
             match task.await {
@@ -1197,19 +1280,29 @@ fn asset_from_hint(hint: &str, tool: &SharedString) -> Option<MediaAsset> {
         kind,
         tool: tool.clone(),
         gallery_index: None,
+        gallery_asset_id: None,
     })
 }
 
 /// Reconcile the asset list against one `gallery_list_assets` page.
 /// Records merge by src: a conversation-surfaced asset for the same file
-/// gains its gallery index; new gallery assets append. Then removals: the
-/// page vouches for global indexes `[offset, offset + len)` (the server's
-/// `index` is `offset + i` — the `image_index` other gallery tools accept),
-/// so an indexed asset inside that window whose src is absent from the
-/// page was deleted from the gallery — drop it. Unindexed
-/// (conversation-surfaced) assets and assets whose index falls outside the
-/// page are untouched: the page says nothing about them.
-fn merge_gallery_records(assets: &mut Vec<MediaAsset>, records: &[Value], offset: usize) {
+/// gains its gallery index and stable id; new gallery assets append. Then
+/// removals: the page vouches for global indexes `[offset, offset + len)`
+/// (the server's `index` is `offset + i` — the `image_index` other gallery
+/// tools accept), so an indexed asset inside that window whose src is
+/// absent from the page was deleted from the gallery — drop it. When the
+/// payload's `total` is known, an indexed asset at or beyond `total` is
+/// past the end of the active listing — the terminal page shrank and the
+/// tail is exhausted — drop it too (an empty last page removes nothing on
+/// its own, but `total` bounds it). Unindexed (conversation-surfaced)
+/// assets and assets whose index falls outside the page are untouched:
+/// the page says nothing about them.
+fn merge_gallery_records(
+    assets: &mut Vec<MediaAsset>,
+    records: &[Value],
+    offset: usize,
+    total: Option<u64>,
+) {
     let listed_srcs: HashSet<&str> = records
         .iter()
         .filter_map(|record| record.get("path").and_then(|path| path.as_str()))
@@ -1227,23 +1320,33 @@ fn merge_gallery_records(assets: &mut Vec<MediaAsset>, records: &[Value], offset
             .get("index")
             .and_then(|i| i.as_u64())
             .map(|i| i as usize);
-        let asset = MediaAsset {
-            body: serde_json::json!({"kind": kind, "src": src}).to_string(),
-            src: src.to_string(),
-            kind,
-            tool: "gallery".into(),
-            gallery_index,
-        };
-        if let Some(existing) = assets.iter_mut().find(|existing| existing.src == asset.src) {
-            existing.gallery_index = asset.gallery_index;
+        let gallery_asset_id = record
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(str::to_string);
+        if let Some(existing) = assets.iter_mut().find(|existing| existing.src == src) {
+            existing.gallery_index = gallery_index;
+            existing.gallery_asset_id = gallery_asset_id;
         } else {
-            assets.push(asset);
+            assets.push(MediaAsset {
+                body: serde_json::json!({"kind": kind, "src": src}).to_string(),
+                src: src.to_string(),
+                kind,
+                tool: "gallery".into(),
+                gallery_index,
+                gallery_asset_id,
+            });
         }
     }
     let window = offset..offset + records.len();
+    let active_bound = total.map(|total| total as usize);
     assets.retain(|asset| match asset.gallery_index {
-        Some(index) if window.contains(&index) => listed_srcs.contains(asset.src.as_str()),
-        _ => true,
+        Some(index) => {
+            let in_window = window.contains(&index);
+            let beyond_total = active_bound.is_some_and(|bound| index >= bound);
+            !(in_window || beyond_total) || listed_srcs.contains(asset.src.as_str())
+        }
+        None => true,
     });
 }
 
@@ -1519,6 +1622,7 @@ mod tests {
             kind: "image".into(),
             tool: "gallery".into(),
             gallery_index: Some(index),
+            gallery_asset_id: Some(format!("asset-{index}")),
         }
     }
 
@@ -1529,6 +1633,7 @@ mod tests {
             kind: "image".into(),
             tool: "generate_image".into(),
             gallery_index: None,
+            gallery_asset_id: None,
         }
     }
 
@@ -1556,7 +1661,7 @@ mod tests {
             {"index": 0, "path": "/gallery/keep-a.png", "media_type": "image"},
             {"index": 1, "path": "/gallery/keep-b.png", "media_type": "image"},
         ]);
-        merge_gallery_records(&mut assets, records.as_array().unwrap(), 0);
+        merge_gallery_records(&mut assets, records.as_array().unwrap(), 0, None);
 
         let srcs: Vec<&str> = assets.iter().map(|a| a.src.as_str()).collect();
         assert_eq!(
@@ -1600,7 +1705,7 @@ mod tests {
         let records = serde_json::json!([
             {"index": 100, "path": "/gallery/in-window-kept.png", "media_type": "image"},
         ]);
-        merge_gallery_records(&mut assets, records.as_array().unwrap(), 100);
+        merge_gallery_records(&mut assets, records.as_array().unwrap(), 100, None);
 
         let srcs: Vec<&str> = assets.iter().map(|a| a.src.as_str()).collect();
         assert_eq!(
@@ -1655,6 +1760,85 @@ mod tests {
             assert!(viewer.selected.is_none());
             assert!(viewer.confirm_delete.is_none());
             assert!(viewer.detail.is_none());
+        });
+    }
+
+    /// expect: [P1] A delayed response for a superseded listing request —
+    /// e.g. gallery A's slow response arriving after the panel already
+    /// holds gallery B — is dropped, never merged over the current view.
+    #[gpui::test]
+    fn delayed_listing_response_is_dropped(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            // Two listing requests were issued (epochs 1 and 2); epoch 2 is
+            // current. The current request's response (gallery B) merges.
+            viewer.gallery_epoch = 2;
+            viewer.apply_gallery_listing(
+                2,
+                Some(serde_json::json!({
+                    "gallery_id": "gallery-b", "total": 1, "offset": 0, "limit": 100,
+                    "assets": [{"id": "b0", "index": 0, "path": "/b.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                })),
+                cx,
+            );
+            assert_eq!(viewer.assets.len(), 1);
+            assert_eq!(viewer.assets[0].src, "/b.png");
+            assert_eq!(viewer.gallery_id.as_deref(), Some("gallery-b"));
+            // The superseded request's delayed response (gallery A, epoch 1)
+            // must not overwrite the view or retarget the gallery.
+            viewer.apply_gallery_listing(
+                1,
+                Some(serde_json::json!({
+                    "gallery_id": "gallery-a", "total": 1, "offset": 0, "limit": 100,
+                    "assets": [{"id": "a0", "index": 0, "path": "/a.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                })),
+                cx,
+            );
+            assert_eq!(viewer.assets.len(), 1, "delayed response must be dropped");
+            assert_eq!(viewer.assets[0].src, "/b.png");
+            assert_eq!(viewer.gallery_id.as_deref(), Some("gallery-b"));
+        });
+    }
+
+    /// expect: [P1] After a root switch, no stale A-gallery row survives to
+    /// act on B: the confirmed deletion is invalidated and no row carries
+    /// A's stable asset id — a delete addressed by that id cannot hit B.
+    #[gpui::test]
+    fn stale_gallery_rows_cannot_act_after_root_change(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.merge_gallery_listing(
+                Some(serde_json::json!({
+                    "gallery_id": "gallery-a", "total": 1, "offset": 0, "limit": 100,
+                    "assets": [{"id": "a0", "index": 0, "path": "/a.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                })),
+                cx,
+            );
+            viewer.confirm_delete = Some(0); // pending deletion of A's row
+            viewer.merge_gallery_listing(
+                Some(serde_json::json!({
+                    "gallery_id": "gallery-b", "total": 1, "offset": 0, "limit": 100,
+                    "assets": [{"id": "b0", "index": 0, "path": "/b.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                })),
+                cx,
+            );
+            // The switch invalidated the pending action and every A row.
+            assert!(viewer.confirm_delete.is_none(),
+                "a confirmation captured in A must not act on B");
+            assert!(viewer.assets.iter().all(|asset| asset.src != "/a.png"),
+                "A's rows are gone");
+            // B's row carries B's stable id — a delete addressed at A's id
+            // finds no target in the panel, and the server resolves ids
+            // against the active gallery, so it cannot hit B either.
+            assert!(viewer
+                .assets
+                .iter()
+                .all(|asset| asset.gallery_asset_id.as_deref() != Some("a0")));
+            assert_eq!(
+                viewer.assets[0].gallery_asset_id.as_deref(),
+                Some("b0"),
+                "actions address B's rows by B's stable id"
+            );
         });
     }
 

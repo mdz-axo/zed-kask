@@ -22,6 +22,19 @@
 //! turns newer than the watermark, so restarts and re-runs insert no
 //! duplicates. Pinned by `distillation_pass_respects_watermark`.
 //!
+//! Pending work: a thread skipped as active, or failing before its
+//! watermark advances (inference, parse, or watermark-store failure), is
+//! carried in the timer's in-memory pending set and re-examined on every
+//! later pass — its turns fall behind the scan cursor, so without this
+//! tracking no later pass would ever see them again. The set is bounded
+//! (`MAX_PENDING_THREADS`); overflow evicts the longest-pending thread
+//! with a warn naming it and its re-discovery paths (a new turn, or the
+//! restart lookback). A pass that cannot read the store does not advance
+//! the cursor, so turns stored during an outage stay visible to the
+//! healed pass. Pending state is in-memory only: a restart clears it,
+//! and the bounded first-pass lookback re-discovers recent undistilled
+//! work (the older-than-lookback miss boundary is unchanged).
+//!
 //! Observability: every pass emits a module-target `tracing::info!`
 //! summary plus a `RegulationSpan::Curation` "memory_distilled" span, and
 //! its outputs (lessons + watermarks) are queryable via
@@ -34,6 +47,7 @@ use hkask_storage::HMem;
 use hkask_types::WebID;
 use hkask_types::regulation::RegulationSpan;
 use hkask_types::template::LLMParameters;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Default pass cadence. 0 disables the pass (read from
@@ -59,6 +73,13 @@ const MAX_LESSONS_PER_THREAD: usize = 5;
 const MAX_ENTITY_CHARS: usize = 128;
 const MAX_TEXT_CHARS: usize = 2_000;
 const MAX_EVIDENCE_IDS: usize = 8;
+/// Bound on the timer's in-memory pending set (threads with un-distilled
+/// turns that fell behind the scan cursor). Overflow evicts the
+/// longest-pending thread with a warn — bounded memory, non-silent loss
+/// of revisiting. An evicted thread is re-discovered by a new turn or
+/// the restart lookback: exactly the status quo for every skipped thread
+/// before pending tracking existed.
+const MAX_PENDING_THREADS: usize = 128;
 
 /// Distillation cadence and idle threshold.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,8 +143,8 @@ pub(crate) fn spawn_distillation_timer(
     db: Arc<CuratorDb>,
     inference_port: Arc<dyn hkask_types::InferencePort>,
     webid: WebID,
+    config: DistillationConfig,
 ) {
-    let config = DistillationConfig::from_env();
     if config.cadence_secs == 0 {
         tracing::info!(
             target: "hkask.mcp.curator.distillation",
@@ -155,24 +176,33 @@ pub(crate) fn spawn_distillation_timer(
         );
     }
     handle.spawn(async move {
-        let poll_interval = std::time::Duration::from_secs(cadence.clamp(60, 3600));
+        // Poll at the configured cadence (minimum 60s). The cursor, not
+        // the poll interval, bounds what a pass sees, so a long cadence
+        // must not be silently shortened — the same one-hour-cap defect
+        // the T17 consolidation repair removed.
+        let poll_interval = std::time::Duration::from_secs(cadence.max(60));
         let mut interval = tokio::time::interval(poll_interval);
         interval.tick().await; // skip first tick
-        let mut last_pass: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut cursor = DistillationCursor::new();
         loop {
             interval.tick().await;
             let now = chrono::Utc::now();
-            let since = last_pass
-                .unwrap_or_else(|| now - chrono::Duration::seconds(FIRST_PASS_LOOKBACK_SECS));
-            let outcome =
-                run_distillation_pass(&db, inference_port.as_ref(), webid, now, idle_secs, since)
-                    .await;
+            let outcome = run_pass(
+                &db,
+                inference_port.as_ref(),
+                webid,
+                &mut cursor,
+                now,
+                idle_secs,
+            )
+            .await;
             tracing::info!(
                 target: "hkask.mcp.curator.distillation",
                 threads_examined = outcome.threads_examined,
                 threads_distilled = outcome.threads_distilled,
                 lessons_inserted = outcome.lessons_inserted,
                 lessons_skipped = outcome.lessons_skipped,
+                threads_pending = cursor.pending.len(),
                 "Memory distillation pass complete"
             );
             // Distillation-gated forgetting (operator ruling 2026-09-04):
@@ -192,20 +222,96 @@ pub(crate) fn spawn_distillation_timer(
                     "Memory forgetting pass complete"
                 );
             }
-            last_pass = Some(now);
         }
     });
 }
 
-/// One pass over the curator's own DB. Store or query failures warn and
-/// skip the pass — the timer must survive every outcome.
-async fn run_distillation_pass(
+/// Cross-pass state for the distillation timer: the scan cursor plus the
+/// threads whose un-distilled turns fell behind it.
+///
+/// `last_pass` bounds the next scan (turns stored at or after it are
+/// visible). Threads skipped as active, or failing before the watermark
+/// advanced, are carried in `pending` and re-examined explicitly — their
+/// turns are older than the cursor, so the scan alone would never see
+/// them again. Pending state is in-memory: a restart clears it and the
+/// bounded first-pass lookback re-discovers recent work.
+pub(crate) struct DistillationCursor {
+    last_pass: Option<chrono::DateTime<chrono::Utc>>,
+    /// thread_id -> when the thread was first noticed pending (eviction
+    /// order; preserved across passes).
+    pending: HashMap<String, chrono::DateTime<chrono::Utc>>,
+}
+
+impl DistillationCursor {
+    pub(crate) fn new() -> Self {
+        Self {
+            last_pass: None,
+            pending: HashMap::new(),
+        }
+    }
+
+    /// The scan window start for a pass at `now`: the previous pass's
+    /// time, or the bounded startup lookback on the first pass.
+    fn scan_since(&self, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+        self.last_pass
+            .unwrap_or_else(|| now - chrono::Duration::seconds(FIRST_PASS_LOOKBACK_SECS))
+    }
+
+    /// Merge a pass outcome. A failed scan leaves the cursor untouched —
+    /// turns stored during the outage must stay ahead of the cursor so
+    /// the healed pass sees them. Resolved threads leave `pending`;
+    /// still-unresolved threads enter it, keeping their earlier
+    /// first-seen time. Overflow evicts the longest-pending threads with
+    /// a warn naming each.
+    fn merge(&mut self, outcome: &DistillationOutcome, now: chrono::DateTime<chrono::Utc>) {
+        if outcome.scan_failed {
+            return;
+        }
+        self.last_pass = Some(now);
+        let mut merged: HashMap<String, chrono::DateTime<chrono::Utc>> = outcome
+            .threads_pending
+            .iter()
+            .map(|(thread_id, at)| {
+                (
+                    thread_id.clone(),
+                    self.pending.get(thread_id).copied().unwrap_or(*at),
+                )
+            })
+            .collect();
+        if merged.len() > MAX_PENDING_THREADS {
+            let mut by_age: Vec<(String, chrono::DateTime<chrono::Utc>)> =
+                merged.into_iter().collect();
+            by_age.sort_by_key(|(_, at)| *at);
+            let evicted = by_age.len() - MAX_PENDING_THREADS;
+            for (thread_id, _) in by_age.drain(..evicted) {
+                tracing::warn!(
+                    target: "hkask.mcp.curator.distillation",
+                    thread_id = %thread_id,
+                    pending_threads = MAX_PENDING_THREADS,
+                    "Pending-distillation set full — longest-pending thread \
+                     evicted; it is re-discovered by a new turn or the \
+                     restart lookback"
+                );
+            }
+            merged = by_age.into_iter().collect();
+        }
+        self.pending = merged;
+    }
+}
+
+/// One production pass over the curator's own DB, updating the cursor.
+///
+/// A pass that cannot read the store (or whose scan query fails) leaves
+/// the cursor unchanged — the next pass rescans the same window, so
+/// turns stored during the outage stay visible. Store failures warn and
+/// skip; the timer must survive every outcome.
+async fn run_pass(
     db: &CuratorDb,
     inference_port: &dyn hkask_types::InferencePort,
     webid: WebID,
+    cursor: &mut DistillationCursor,
     now: chrono::DateTime<chrono::Utc>,
     idle_secs: u64,
-    since: chrono::DateTime<chrono::Utc>,
 ) -> DistillationOutcome {
     let stores = db.get();
     let Some(memory) = stores.memory.as_ref() else {
@@ -213,17 +319,40 @@ async fn run_distillation_pass(
             target: "hkask.mcp.curator.distillation",
             "Curator memory store unavailable — distillation pass skipped (store self-heals on next open)"
         );
-        return DistillationOutcome::default();
+        let mut outcome = DistillationOutcome::default();
+        outcome.scan_failed = true;
+        return outcome;
     };
-    distill_store(memory, inference_port, webid, now, idle_secs, since).await
+    let since = cursor.scan_since(now);
+    let revisit: Vec<String> = cursor.pending.keys().cloned().collect();
+    let outcome = distill_store(
+        memory,
+        inference_port,
+        webid,
+        now,
+        idle_secs,
+        since,
+        &revisit,
+    )
+    .await;
+    cursor.merge(&outcome, now);
+    outcome
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct DistillationOutcome {
     pub threads_examined: usize,
     pub threads_distilled: usize,
     pub lessons_inserted: usize,
     pub lessons_skipped: usize,
+    /// The pass could not read the store — the caller's cursor must not
+    /// advance, or turns stored during the outage would fall behind it.
+    pub scan_failed: bool,
+    /// Threads still holding un-distilled turns after this pass (skipped
+    /// as active, or failed before the watermark advanced), mapped to
+    /// the pass time. The caller's cursor merges these, preserving
+    /// earlier first-seen times for eviction ordering.
+    pub threads_pending: HashMap<String, chrono::DateTime<chrono::Utc>>,
 }
 
 /// The distillation core, directly testable against a `MemoryStore`.
@@ -237,12 +366,13 @@ pub(crate) async fn distill_store(
     now: chrono::DateTime<chrono::Utc>,
     idle_secs: u64,
     since: chrono::DateTime<chrono::Utc>,
+    revisit: &[String],
 ) -> DistillationOutcome {
     let mut outcome = DistillationOutcome::default();
     // Turn discovery is the shared contract (`thread_turns`): the scan runs
     // over the shared-copy prefix, which ingest writes for EVERY turn —
     // curator and non-curator alike — so no turn is invisible to the pass.
-    let by_thread = match crate::thread_turns::shared_turns_by_thread_since(memory, since) {
+    let mut by_thread = match crate::thread_turns::shared_turns_by_thread_since(memory, since) {
         Ok(by_thread) => by_thread,
         Err(error) => {
             tracing::warn!(
@@ -250,9 +380,29 @@ pub(crate) async fn distill_store(
                 %error,
                 "Failed to query recent thread turns — distillation pass skipped"
             );
+            outcome.scan_failed = true;
             return outcome;
         }
     };
+    // Pending threads from earlier passes: their turns fall behind the
+    // cursor, so reload each thread's complete turn set (a superset of
+    // whatever the window scan returned for it).
+    for thread_id in revisit {
+        match crate::thread_turns::thread_turns(memory, thread_id) {
+            Ok(turns) => {
+                by_thread.insert(thread_id.clone(), turns);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.curator.distillation",
+                    thread_id = %thread_id,
+                    %error,
+                    "Failed to re-read pending thread's turns — retried next pass"
+                );
+                outcome.threads_pending.insert(thread_id.clone(), now);
+            }
+        }
+    }
     outcome.threads_examined = by_thread.len();
     let idle_cutoff = now - chrono::Duration::seconds(idle_secs as i64);
     for (thread_id, mut turns) in by_thread {
@@ -263,6 +413,7 @@ pub(crate) async fn distill_store(
             continue;
         };
         if newest > idle_cutoff {
+            outcome.threads_pending.insert(thread_id, now);
             continue;
         }
         let watermark_entity = format!("{WATERMARK_PREFIX}{thread_id}");
@@ -273,8 +424,9 @@ pub(crate) async fn distill_store(
                     target: "hkask.mcp.curator.distillation",
                     thread_id = %thread_id,
                     %error,
-                    "Failed to read distillation watermark — thread skipped this pass"
+                    "Failed to read distillation watermark — thread retried next pass"
                 );
+                outcome.threads_pending.insert(thread_id, now);
                 continue;
             }
         };
@@ -298,6 +450,7 @@ pub(crate) async fn distill_store(
                     %error,
                     "Distillation inference failed — thread retried next pass (watermark not advanced)"
                 );
+                outcome.threads_pending.insert(thread_id, now);
                 continue;
             }
         };
@@ -310,6 +463,7 @@ pub(crate) async fn distill_store(
                     %error,
                     "Distillation output unparseable — thread retried next pass (watermark not advanced)"
                 );
+                outcome.threads_pending.insert(thread_id, now);
                 continue;
             }
         };
@@ -340,6 +494,7 @@ pub(crate) async fn distill_store(
                 %error,
                 "Failed to store distillation watermark — thread retried next pass"
             );
+            outcome.threads_pending.insert(thread_id, now);
             continue;
         }
         let mut inserted = 0usize;
@@ -582,10 +737,12 @@ mod tests {
     }
 
     /// Scripted distillation port: returns a fixed response for every
-    /// `generate` call; `embed` uses the trait default (unavailable), which
-    /// the insert path treats as non-fatal.
+    /// `generate` call after `failures` transient errors; `embed` uses the
+    /// trait default (unavailable), which the insert path treats as
+    /// non-fatal.
     struct ScriptedDistillPort {
         response: String,
+        failures: std::sync::atomic::AtomicUsize,
     }
 
     impl hkask_types::InferencePort for ScriptedDistillPort {
@@ -596,6 +753,20 @@ mod tests {
             _tools: Option<&[hkask_types::ChatToolDefinition]>,
         ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
         {
+            // Decide (and count) the failure synchronously so the returned
+            // future captures no reference to self.
+            if self
+                .failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                let error = InferenceError::Timeout("transient test failure".to_string());
+                return Box::pin(async move { Err(error) });
+            }
             let text = self.response.clone();
             Box::pin(async move {
                 Ok(InferenceResult {
@@ -640,6 +811,7 @@ mod tests {
             webid,
         );
         let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
             response: lesson_response(
                 "operator-reporting-standard",
                 "report_language",
@@ -654,6 +826,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
+            &[],
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -715,6 +888,7 @@ mod tests {
             webid,
         );
         let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
             response: lesson_response(
                 "distillation-decision",
                 "option",
@@ -729,6 +903,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
+            &[],
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1);
@@ -764,6 +939,7 @@ mod tests {
             webid,
         );
         let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
             response: lesson_response(
                 "subject",
                 "lesson",
@@ -778,6 +954,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
+            &[],
         )
         .await;
         assert_eq!(first.lessons_inserted, 1);
@@ -790,6 +967,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
+            &[],
         )
         .await;
         assert_eq!(second.threads_distilled, 0);
@@ -819,6 +997,7 @@ mod tests {
             webid,
         );
         let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
             response: "[]".to_string(),
         };
         let outcome = distill_store(
@@ -828,6 +1007,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
+            &[],
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -856,6 +1036,7 @@ mod tests {
         );
         let bogus = "00000000-0000-0000-0000-000000000000";
         let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
             response: lesson_response(
                 "subject",
                 "lesson",
@@ -870,6 +1051,7 @@ mod tests {
             now,
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
+            &[],
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 0);
@@ -921,6 +1103,521 @@ mod tests {
         assert!(
             prompt.contains("user: please review the design"),
             "the chunk's text must appear in the prompt verbatim"
+        );
+    }
+
+    // ---- T04: pending-work revisit through the production cursor ----
+
+    fn curator_db_with_memory(
+        store: hkask_memory::MemoryStore,
+    ) -> (Arc<CuratorDb>, Arc<hkask_memory::MemoryStore>) {
+        let store = Arc::new(store);
+        let db = Arc::new(CuratorDb::from_stores(crate::CuratorStores {
+            escalation_queue: None,
+            regulation_store: None,
+            memory: Some(Arc::clone(&store)),
+        }));
+        (db, store)
+    }
+
+    /// T04: a thread skipped as active at one pass is distilled by a later
+    /// pass once idle — no new turn, no restart. Pre-fix, the cursor
+    /// advanced past the thread's turns and no later pass ever saw them.
+    #[tokio::test]
+    async fn later_pass_distills_thread_that_went_idle_without_a_new_turn() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let turn_id = turn_h_mem(
+            &store,
+            "t1",
+            "active conversation",
+            "mid-flight response",
+            chrono::Utc::now() - chrono::Duration::seconds(10),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Distilled once idle.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let mut cursor = DistillationCursor::new();
+        // Pass 1: the thread is active (newest turn 10s old) — skipped,
+        // carried as pending.
+        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let first = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass1_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(first.threads_examined, 1);
+        assert_eq!(first.threads_distilled, 0);
+        assert_eq!(first.threads_pending.len(), 1);
+        // Pass 2 (no new turn, no restart): the thread is idle — distilled.
+        let pass2_now = pass1_now + chrono::Duration::seconds(400);
+        let second = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass2_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(
+            second.threads_distilled, 1,
+            "an idle thread must be distilled by a later pass"
+        );
+        assert_eq!(second.lessons_inserted, 1);
+        assert_eq!(second.threads_pending.len(), 0);
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t1")
+                .expect("query watermarks")
+                .len(),
+            1
+        );
+    }
+
+    /// T04: a transient inference failure before the watermark advances is
+    /// retried on the next pass; the retry succeeds and distills once.
+    #[tokio::test]
+    async fn transient_inference_failure_is_retried_on_the_next_pass() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let turn_id = turn_h_mem(
+            &store,
+            "t1",
+            "question",
+            "answer",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Learned on retry.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(1),
+        };
+        let mut cursor = DistillationCursor::new();
+        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let first = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass1_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(first.threads_distilled, 0);
+        assert!(first.threads_pending.contains_key("t1"));
+        assert!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t1")
+                .expect("query watermarks")
+                .is_empty()
+        );
+        // Next pass: inference succeeds — the thread is retried and distilled.
+        let pass2_now = pass1_now + chrono::Duration::seconds(60);
+        let second = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass2_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(second.threads_distilled, 1, "failed thread must be retried");
+        assert_eq!(second.lessons_inserted, 1);
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .len(),
+            1
+        );
+    }
+
+    /// T04 control: a distilled thread is not re-examined once the cursor
+    /// has moved past it (no replay), and a genuinely new turn is picked up
+    /// by the scan window (real cursor progression).
+    #[tokio::test]
+    async fn cursor_progresses_and_successful_work_is_not_replayed() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let t1_turn = turn_h_mem(
+            &store,
+            "t1",
+            "first thread",
+            "response",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Once per thread.",
+                &[&t1_turn.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let mut cursor = DistillationCursor::new();
+        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let first = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass1_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(first.threads_distilled, 1);
+        // A new turn arrives AFTER pass 1 (store time after the cursor).
+        turn_h_mem(
+            &store,
+            "t2",
+            "second thread",
+            "response",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let pass2_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let second = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass2_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        // Only the new thread is examined: t1 is behind the cursor and not
+        // pending — successful work is not replayed.
+        assert_eq!(second.threads_examined, 1);
+        assert_eq!(second.threads_distilled, 1);
+        // One lesson per thread and one watermark per thread — no duplicates.
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t1")
+                .expect("query t1 watermarks")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t2")
+                .expect("query t2 watermarks")
+                .len(),
+            1
+        );
+    }
+
+    /// T04: a pass that cannot read the store must not advance the cursor —
+    /// turns stored before the outage stay visible to the healed pass.
+    #[tokio::test]
+    async fn scan_failure_does_not_advance_the_cursor() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let turn_id = turn_h_mem(
+            &store,
+            "t1",
+            "before outage",
+            "response",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Seen after healing.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+        // A DB whose memory store is unavailable (the outage).
+        let down_db = Arc::new(CuratorDb::from_stores(crate::CuratorStores::empty()));
+        let mut cursor = DistillationCursor::new();
+        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let first = run_pass(
+            &down_db,
+            &port,
+            webid,
+            &mut cursor,
+            pass1_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert!(first.scan_failed);
+        // The healed pass must still see the pre-outage turn: the cursor
+        // did not advance past it.
+        let pass2_now = pass1_now + chrono::Duration::seconds(60);
+        let second = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass2_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(
+            second.threads_distilled, 1,
+            "pre-outage turn must stay visible after the store heals"
+        );
+        assert_eq!(second.lessons_inserted, 1);
+    }
+
+    /// T04: the pending set is bounded — overflow evicts the longest-pending
+    /// cohort with a warn, and the newest pending thread survives (it is
+    /// still distilled once idle).
+    #[tokio::test]
+    async fn pending_threads_are_bounded_with_explicit_eviction() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let port = ScriptedDistillPort {
+            response: "[]".to_string(),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let mut cursor = DistillationCursor::new();
+        // Fill the pending set: MAX_PENDING_THREADS active threads.
+        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        for index in 0..MAX_PENDING_THREADS {
+            turn_h_mem(
+                &store,
+                &format!("t{index}"),
+                "active",
+                "response",
+                chrono::Utc::now() - chrono::Duration::seconds(10),
+                webid,
+            );
+        }
+        let first = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass1_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(first.threads_pending.len(), MAX_PENDING_THREADS);
+        assert_eq!(cursor.pending.len(), MAX_PENDING_THREADS);
+        // One more active thread overflows the set.
+        turn_h_mem(
+            &store,
+            "t-new",
+            "active",
+            "response",
+            chrono::Utc::now() - chrono::Duration::seconds(10),
+            webid,
+        );
+        let pass2_now = pass1_now + chrono::Duration::seconds(60);
+        let second = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass2_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(
+            cursor.pending.len(),
+            MAX_PENDING_THREADS,
+            "pending set must stay bounded"
+        );
+        assert!(
+            cursor.pending.contains_key("t-new"),
+            "the newest pending thread survives eviction"
+        );
+        // The survivor is still distilled once idle — eviction did not
+        // silently drop it.
+        let pass3_now = pass2_now + chrono::Duration::seconds(400);
+        let third = run_pass(
+            &db,
+            &port,
+            webid,
+            &mut cursor,
+            pass3_now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+        )
+        .await;
+        assert_eq!(third.threads_distilled, 1);
+        assert_eq!(third.threads_pending.len(), 0);
+    }
+
+    /// T04 control: the first pass scans the bounded startup lookback —
+    /// never the whole store.
+    #[test]
+    fn first_pass_scan_is_bounded_to_the_startup_lookback() {
+        let now = chrono::Utc::now();
+        let cursor = DistillationCursor::new();
+        assert_eq!(
+            cursor.scan_since(now),
+            now - chrono::Duration::seconds(FIRST_PASS_LOOKBACK_SECS)
+        );
+    }
+
+    /// T17's lesson applied to distillation: the spawned timer actually
+    /// fires — first tick skipped, first pass one interval in — and
+    /// distills an idle thread end to end.
+    #[tokio::test(start_paused = true)]
+    async fn distillation_timer_fires_after_the_first_interval_and_distills() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let turn_id = turn_h_mem(
+            &store,
+            "t1",
+            "timer question",
+            "timer answer",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = Arc::new(ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Distilled by the timer.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        });
+        spawn_distillation_timer(
+            Arc::clone(&db),
+            port,
+            webid,
+            DistillationConfig {
+                cadence_secs: 60,
+                idle_secs: 0,
+            },
+        );
+        // Before the first interval: nothing.
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        assert!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .is_empty()
+        );
+        // One interval in: the pass fires and distills.
+        tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+        for _ in 0..100 {
+            if !store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .is_empty()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t1")
+                .expect("query watermarks")
+                .len(),
+            1
+        );
+    }
+
+    /// T04/T17: a cadence longer than one hour is honored — the obsolete
+    /// 3600s poll clamp silently shortened it.
+    #[tokio::test(start_paused = true)]
+    async fn distillation_timer_honors_cadences_longer_than_one_hour() {
+        let (db, store) = curator_db_with_memory(test_store());
+        let webid = WebID::from_persona(b"curator");
+        let turn_id = turn_h_mem(
+            &store,
+            "t1",
+            "cadence question",
+            "cadence answer",
+            chrono::Utc::now() - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = Arc::new(ScriptedDistillPort {
+            response: lesson_response(
+                "subject",
+                "lesson",
+                "Distilled on cadence.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        });
+        spawn_distillation_timer(
+            Arc::clone(&db),
+            port,
+            webid,
+            DistillationConfig {
+                cadence_secs: 7200,
+                idle_secs: 0,
+            },
+        );
+        // One hour in: the old clamp would have fired a pass here.
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .is_empty(),
+            "a 7200s cadence must not fire a pass at 3600s"
+        );
+        // At the configured cadence: the pass fires.
+        tokio::time::sleep(std::time::Duration::from_secs(3601)).await;
+        for _ in 0..100 {
+            if !store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .is_empty()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("subject")
+                .expect("query lessons")
+                .len(),
+            1
         );
     }
 }
