@@ -590,6 +590,15 @@ decoupled from ingestion — it runs on the timer, never in the
    existing h_mems; the sovereignty line is drawn at modification, not
    addition.
 
+**T17 scheduling enforcement (2026-09-08):** `start_consolidation_timer`
+uses an interval of `max(consolidation_cadence_secs, 60)` seconds, skips the
+immediate first tick, and fires subsequent passes. Zero disables the timer.
+This replaces the non-firing cold-start timestamp gate; no timestamp or
+test-only consolidation entry remains. The prior one-hour polling cap was
+removed because interval ticks now perform passes directly. Paused-time
+production-timer regressions cover the cold start and a two-hour setting;
+the real pruning and ingestion-independence controls remain green.
+
 ### Distillation pass (ALWAYS-mode)
 
 **Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
@@ -1092,16 +1101,22 @@ Defined in `kask/crates/kask_bridge/src/settings.rs:211-234`; defaults at
 | `recall_limit`               | 5       | Max snippets to retrieve per recall                   |
 | `recall_min_confidence`      | 0.3     | Min confidence for a snippet to be injected           |
 | `auto_inject`                | true    | Whether to auto-inject recalled memories into prompts |
-| `memory_life_days`           | 180     | Decay constant S — **not yet wired to the curator store** (see below) |
+| `memory_life_days`           | 180     | Decay constant S applied to bridge and curator-server stores on construction/reopen (T16) |
 
-**Advertised-but-unwired:** `memory_life_days` exists in settings and the
-UI, but no production caller invokes `MemoryStore::with_memory_life_days`
-(only `memory_store.rs:208-212` defines it; zero call sites) — the curator
-store always uses the 180-day default. Likewise
-`HKASK_MEMORY_STORAGE_BUDGET` and `HKASK_MEMORY_LIFE_DAYS` appear in doc
-comments (`memory_store.rs:137-154`, `:215-219`) but no code reads them;
-the curator store intentionally uses the default budget with no env
-override (`curator_stores.rs:225-233`).
+**T16 enforcement update (2026-09-08, operator ruling 2026-09-07):**
+`RealMemoryPort::new` threads the setting into `CuratorStore`, including
+self-healing reopen; `memory/curator_stores.rs::open_curator_store` applies
+`MemoryStore::with_memory_life_days`. The curator MCP server receives
+`HKASK_MEMORY_LIFE_DAYS` through settings emission and its scoped allowlist,
+validates it, and applies it on both store-construction paths. Historical
+bridge RED observed 180 instead of configured 30 without this application;
+the restored bridge suite passes. Curator parser/store and decay-formula
+tests passed in the prior handoff. Full application/lint close-out remains
+pending; see `tasks/plan.md` for exact evidence. The Memory settings UI
+already exposes this field; no UI omission is intended.
+
+`HKASK_MEMORY_STORAGE_BUDGET` remains unwired: the curator store uses the
+default budget with no env override. T16 does not change that policy.
 
 ### Environment variables (live — read via `std::env::var`)
 

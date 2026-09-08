@@ -195,12 +195,16 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `consolidation_cadence_secs` | `u64` | `300` | 0 = disabled |
+| `consolidation_cadence_secs` | `u64` | `300` | 0 = disabled; otherwise at least 60s. First pass waits one interval; cadences above one hour are preserved. |
 | `confidence_floor` | `f64` | `0.3` | Memory retention floor (0.0–1.0) |
 | `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
 | `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
 | `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
-| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. The `HKASK_MEMORY_LIFE_DAYS` env var is advertised-but-unwired — no production caller reads it (see `architecture/memory-system-specification.md` §13) |
+| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
+
+**T16 settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
+
+Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:73–94` and writes `settings.kask.memory.memory_life_days`. The incoming handoff's claim that no memory knobs had a UI was incorrect. No new UI was added. Bridge store/emission/allowlist tests pass; the full Zed check and scoped lint close-out remain incomplete (see `tasks/plan.md`).
 
 ## Condenser (`KaskCondenserSettings`)
 

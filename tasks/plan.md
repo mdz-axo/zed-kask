@@ -3,7 +3,7 @@ title: "Kask regression-first reliability plan"
 creator: "Zed coding agent"
 date: "2026-09-07"
 type: "bibo:Document"
-status: "Implementation authorized; T01 and D01 code present, verification blocked; handoff requested"
+status: "Phase D: T16/T17/T19 tests green; app check and lint incomplete; T18 gated"
 baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 ---
 
@@ -11,13 +11,40 @@ baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 
 ## Target condition
 
-Authorization history: the operator first requested this regression-first plan, then on 2026-09-07 said **"D01 yes. please proceed"**, ratifying research retention and authorizing implementation. The latest instruction requests a continuation prompt, current plan/checklist, and handoff to another agent. Implementation is paused at that boundary. No commits, branches, unrelated policy changes, or acceptance of deferred risks were authorized.
+Authorization history: the operator first requested this regression-first plan, then on 2026-09-07 said **"D01 yes. please proceed"**, ratifying research retention and authorizing implementation. The latest instruction resumes the Phase D plan after ratifying the development-profile Clippy wrapper. New Phase D scope remains gated on validation close-out. No commits, branches, unrelated policy changes, or acceptance of deferred risks were authorized.
 
 The target is to prevent the identified loss of recoverable data, private-network boundary bypass, over-authorized external dispatch, duplicate agent creation, and false completion evidence. Fix one observable failure path at a time; deepen existing modules only after behavioral tests pass.
 
-Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01 and the D01 retention guard have implementation and tests in the working tree, but are not verified or complete. T02–T15 are untouched.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
+Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01–T03 (including T02b) and D01 are verified; T04–T15 remain untouched. T16/T17/T19 have passing tests but incomplete application/lint close-out; T18 is not started.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
 
-## Current handoff — 2026-09-07
+## Current validation close-out — 2026-09-08
+
+The operator authorized continuation, then D52's development-profile Clippy default. The original uncompiled tail is now compiled and tested at the bridge/runtime seams; **application integration and lint validation are NOT complete**, so T18 has not started. No commits, branches, staging, unstaging, or resets were performed by this agent. An external process advanced HEAD through `e102d515e8`, `eadb5b9521`, and `5fd4bac424`; the latest observed tree was clean before this documentation update. Do not use current HEAD as the pre-fix behavioral baseline: use the original `2475305420ae065b5d1792c0f25cea471e558ae3`.
+
+### Verification evidence — T16/T17/T19 and build gates
+
+| Command / experiment | Observed result |
+|---|---|
+| Operator's release build | E0592: duplicate `shutdown_all` definitions. Reconciled by retaining the lifecycle-locked implementation, not the appended union/loop duplicate. |
+| `cargo test --offline --locked -p kask_bridge --lib -j 8` | Initial compile found missing Tokio `test-util` and a twice-moved test record. After those fixes: 179 passed, zero-cadence fixture failed without Tokio. Corrected its annotation; 180/180 passed. Final suite after long-cadence regression: **181 passed, 0 failed** (build 1m39s, tests 26.83s). |
+| Historical RED: `cargo test --offline --locked -p kask_bridge --lib memory:: -j 8` | Re-applied the original timer + cadence helper from `2475305420`, initializing the deleted timestamp field's cold state to `None`; removed only `.with_memory_life_days(...)` in the bridge store. **51 passed, 3 failed**: timer never fires (wall-clock assertion), no pass at two hours, store reports **180 instead of 30**. Both worktree files restored in `finally`; index untouched; full GREEN suite above ran after restoration. |
+| Test-first `consolidation_timer_respects_cadences_longer_than_one_hour` | RED: two-hour setting pruned at one hour (0 vs 1). Changed obsolete `clamp(60, 3600)` to `max(60)`; GREEN in final suite. |
+| `cargo test --offline --locked -p hkask-mcp --lib -j 8` | **17/17 passed**, including operator's `shutdown_all_clears_every_reconnect_path`. |
+| `cargo test --offline --locked -p hkask-mcp --features test-fixture --test reconnect_integration shutdown_all_kills_live_and_pending_children -j 8 -- --test-threads=1` | Test-first RED: existing shutdown leaked a fixture child despite cleared maps (test killed its own leaked PID). Root cause: rmcp detached/graceful cleanup, not awaited kill-and-reap. Runtime now owns children independently of rmcp pipes and awaits termination. Strengthened RED: queued start after shutdown returned `Ok(())`; terminal shutdown latch now rejects it. |
+| `cargo test --offline --locked -p hkask-mcp --features test-fixture -j 8 -- --test-threads=1` | Final **17 unit + 14 real-process integration tests passed**, 0 failed; build 47.61s, unit 1.68s, integration 8.72s. Existing stop/replacement/reconnect/discovery regressions remain green. |
+| `cargo check --offline --locked -p zed -j 8` | **Timed out at 30 minutes** during dependency compilation/checking (last recorded unit `cosmic-text`); no completed Zed check. |
+| `HKASK_BUILD_JOBS=8 CARGO_NET_OFFLINE=true ./script/clippy --locked -p kask_bridge -p hkask-mcp -p hkask-mcp-curator` before D52 | **Operator-interrupted**, not passed: forced release/all-target/all-feature graph logged 266 compilation + 657 check entries, ending at `agent`. |
+| Same scoped Clippy command after D52 | **Timed out at 20 minutes**, not passed: dev graph logged 17 compilation + 207 check entries, reaching `workspace`/`agent_servers`. Progress was sampled every minute. No compiler jobs remained afterward; current swap usage was zero. No automatic retry authorized by a timeout. |
+| `bash kask/scripts/build/check-build-profile.sh` | D50 RED without external-dependency override, GREEN with it. D52 stub-Cargo RED with forced `--release`, GREEN after removal; exact flags, explicit profiles, workspace default, and failure propagation pinned without a compiler. |
+| `bash -n script/clippy kask/scripts/build/check-build-profile.sh`; `git diff --check` | Passed for the build-wrapper slice; documentation close-out diff check also passed. |
+| `bash kask/scripts/check-mcp-tool-tests.sh` | **0 violations, 0 allowlisted gaps**; presence ratchet only, not behavioral proof. |
+| `rustfmt --edition 2024 --config skip_children=true --check` on runtime.rs, reconnect_integration.rs, memory.rs, memory/curator_stores.rs | Passed. |
+
+Logs from this session remain under `/tmp/kask-phase-d-*.log` (ephemeral, not the durable evidence source). The T16 curator-server parser/store tests and hkask-memory formula test were already green in the incoming handoff; not rerun here.
+
+**Closure owner: receiving coding agent.** Remaining: operator-approved incremental lint/check window, fix any resulting diagnostics, finish residue review, then begin T18's three vertical slices. The MCP presence gate and targeted Rust formatting checks now pass. No pending task is marked complete solely on compilation or a symbol pin. D50/D52 behavior is verified at the script seam; no end-to-end build speedup is claimed. The existing Settings → Kask → Memory page already exposes `memory_life_days` (`crates/settings_ui/src/pages/kask_page/memory.rs:73–94`, linked by `kask_page.rs`): the handoff's proposed step-6 "consistent skip" was factually incorrect and is not adopted.
+
+## Historical handoff — 2026-09-07
 
 Read [kask-reliability-continuation-prompt.md](kask-reliability-continuation-prompt.md) first for the exact resume sequence and build evidence. HEAD remains `2475305420ae065b5d1792c0f25cea471e558ae3`; no commits or branches were created. Preserve all current changes.
 
@@ -216,7 +243,7 @@ Acceptance:
 
 **Operator ruling (recorded verbatim intent):** the three items surfaced by the 2026-09-07 dead-code sweep are **not open questions**. They are requirements the code pretends to meet: "memory life should map to the days in the setting — the code that fails to do this is a lie and deception"; "memory consolidation is required"; the salience failure is "another deception". "The problem is not the requirements and specifications — the problem is the shit code, and that is what we are trying to fix." These tasks build the code to meet the specifications. No item in this phase is a policy gate.
 
-**One retraction, entered into the record:** the sweep's consolidation flag was WRONG — a grep artifact (output truncated before the bridge hits). Consolidation IS built and wired: `zed/src/main.rs:1764` starts the production timer, which fires `fire_curator_consolidation_pass` (`kask_bridge/src/memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with `confidence_floor` from `KaskMemorySettings` (`main.rs:1751`); ingestion rebuilds the consolidator after a store heal (`ingest.rs:120-128`); the fire callback is tested (`memory.rs:1978`). The spec's component-table claim ("consolidation timer, memory.rs:74") is TRUE. T17 closes the one genuinely missing piece: a production-shaped timer test.
+**One retraction, entered into the record:** the sweep's consolidation flag was WRONG — a grep artifact (output truncated before the bridge hits). Consolidation IS built and wired: `zed/src/main.rs:1764` starts the production timer, which fires `fire_curator_consolidation_pass` (`kask_bridge/src/memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with `confidence_floor` from `KaskMemorySettings` (`main.rs:1751`); ingestion rebuilds the consolidator after a store heal (`ingest.rs:120-128`); the fire callback is tested (`memory.rs:1978`). The component exists and is called, but the original inference that it fires was wrong. **Subsequent correction, 2026-09-08:** the production timer's `last=None` + `fire_when_no_last=false` gate never fires. The callback-only test did not cover scheduling. Historical RED and the interval-native repair are recorded above; wiring presence is not behavioral proof.
 
 ### T16 — Wire `kask.memory.memory_life_days` into actual decay
 
@@ -247,9 +274,9 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 
 ### T17 — Consolidation: retraction + production-timer pin
 
-**Scope:** S; the retraction is complete (evidence above); the remaining build item is a production-shaped timer test. **Depends on:** none.
+**Scope:** S; production scheduling repair and timer tests. **Depends on:** none.
 
-**Build:** a test that starts `start_consolidation_timer` with a short cadence (tokio test runtime) and asserts a consolidation pass fires after the first skipped tick — the existing test at `memory.rs:1978` covers the callback, not the timer loop. This pins the wiring that `zed/src/main.rs:1764` depends on; nothing else to build.
+**Implemented:** the operator-directed interval-native timer skips the immediate tick, then fires a real pass every `max(configured cadence, 60s)`. Timestamp/flag machinery and test-only consolidation entry were removed. The old one-hour polling cap cannot be retained when every tick performs a pass: it shortened longer configured cadences. Paused-time tests pin first firing, the two-hour cadence, disabled cadence, real confidence pruning, and ingestion independence. Historical RED confirms the original scheduling defect; the full bridge suite is green. App/lint close-out remains open.
 **Observation (not a defect, recorded for the spec's next revision):** consolidation's budget-prune phase (`consolidation_service.rs:39-68`) is count-based, documented as deliberate design ("confidence-floor cleanup plus budget pruning only", spec §5; the budget as Ashby attenuator, `curator_stores.rs:226-230`). The 2026-09-04 "never count-based" ruling governs FORGETTING (turn deletion), not consolidation's confidence-ranked pruning; if the operator wants consolidation pruned of its budget leg too, that is a separate decision — the current documentation is internally consistent.
 
 ### T18 — Wire method signals and keyword overlap into the pipelines they were designed for
@@ -275,11 +302,11 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 
 ### T19 — MCP servers die with the zed-kask session (operator directive 2026-09-07)
 
-**Scope:** S–M; trust/lifecycle; `hkask-mcp` (done), `crates/zed/src/main.rs` quit hook (pending), DIVERGENCE entry. **Depends on:** none.
+**Scope:** S–M; trust/lifecycle; `hkask-mcp`, `crates/zed/src/main.rs`, D51. Runtime unit/integration tests are green; quit wiring is implemented but application check/lint close-out is pending. **Depends on:** none.
 
-**The defect:** the kill chain existed all along — children spawn with `kill_on_drop(true)` (`hkask-mcp/src/runtime.rs`, `start_connection`), and `StdioTransport::Drop` kills a still-running child (`crates/context_server/src/transport/stdio_transport.rs:229-251`) — but **app exit never runs Rust destructors**, so nothing ever dropped the transports at quit and every managed MCP server child orphaned and kept running after zed-kask shutdown. The settings-unload path (`sync_kask_mcp_runtime_servers` → `stop_server`) works; only the session-end call was missing — the deception the operator named: "the mcp servers are supposed to be killed by the shutdown of zed-kask."
+**Initial diagnosis (superseded in part by the real-process RED below):** the kill chain existed all along — children spawn with `kill_on_drop(true)` (`hkask-mcp/src/runtime.rs`, `start_connection`), and `StdioTransport::Drop` kills a still-running child (`crates/context_server/src/transport/stdio_transport.rs:229-251`) — but **app exit never runs Rust destructors**, so nothing ever dropped the transports at quit and every managed MCP server child orphaned and kept running after zed-kask shutdown. The settings-unload path (`sync_kask_mcp_runtime_servers` → `stop_server`) works; only the session-end call was missing — the deception the operator named: "the mcp servers are supposed to be killed by the shutdown of zed-kask."
 
-**Build steps:** `McpRuntime::shutdown_all()` (implemented 2026-09-07 — union of `connections` + `launch_specs` + `cancellation_tokens`, `stop_server` each; idempotent; the operator wrote the regression test test-first: `shutdown_all_clears_every_reconnect_path`). Remaining: register `cx.on_app_quit` in the kask wiring of `crates/zed/src/main.rs` (D-seam entry; run `shutdown_all()` on the tokio handle inside the quit future; **keep the returned Subscription alive** — a dropped Subscription unregisters), pin via the `kask_wiring_symbols_exist` pattern, DIVERGENCE entry.
+**Implemented and corrected:** the original lifecycle-locked `shutdown_all` survives; the duplicate union-loop definition was removed. A real-process regression disproved the handoff's "only the quit hook is missing" diagnosis: rmcp owns asynchronous graceful cleanup, so clearing maps does not await child death. The runtime now owns each spawned child before handshake, gives rmcp only its pipes, and tracks cancellable kill-and-reap tasks. Stop and shutdown await those tasks; terminal shutdown rejects queued starts. `wire_kask_mcp_shutdown` registers `on_app_quit`, runs shutdown on the Tokio handle, and `.detach()` retains the subscription. The fn-pointer pin exists; its compilation and live app quit are not claimed validated.
 
 **Acceptance:** on quit, every managed server process is gone (no `hkask` processes survive the editor); a mid-retry server's spec/token is torn down too (no resurrection post-quit); the runtime's stop path is exercised by the quit hook, not only by settings changes.
 **Refused shortcut:** relying on pipe-EOF graceful exits (a blocked server ignores EOF); PDEATHSIG (needs `unsafe`, forbidden by crate policy); only killing live connections (a mid-retry server would resurrect).
@@ -393,7 +420,7 @@ Planning baseline: earlier audit's MCP test-presence ratchet passed. Its test bu
 **Dead/redundant-code sweep (operator directive), scoped to session-touched crates.** Removed: `MemoryStore::with_storage_budget` + `default_storage_budget` (zero callers, self-documented never-wired, and count-based budgets are deprecated by operator ruling 2026-09-04; the live `storage_budget()` accessor stays — it feeds the regulation storage-ratio set-point via `kask_bridge`); 6 pre-existing `cloned_ref_to_slice_refs` clippy failures in `maintenance_inventory.rs` (`std::slice::from_ref`, which had been failing `./script/clippy -p hkask-storage` before this session). **Flags raised, then resolved by operator ruling 2026-09-07 (Phase D):**
 
 - `kask.memory.memory_life_days` — the setting feeds the regulation sensor while the store ignores it (decay always 180) → **T16, build the wiring.**
-- `consolidation_service.rs` — this flag was **RETRACTED as false**: the initial "zero external references" claim was a grep artifact (output truncated before the kask_bridge hits). Consolidation is fully wired: `zed/src/main.rs:1764` starts the production timer → `fire_curator_consolidation_pass` (`memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with the settings' `confidence_floor`; rebuilt after heals (`ingest.rs:120-128`); callback tested (`memory.rs:1978`). Remaining gap → **T17, production-timer test only.**
+- `consolidation_service.rs` — this flag was **RETRACTED as false**: the initial "zero external references" claim was a grep artifact (output truncated before the kask_bridge hits). Consolidation is fully wired: `zed/src/main.rs:1764` starts the production timer → `fire_curator_consolidation_pass` (`memory.rs:283`) → `MemoryConsolidator::consolidate` (`memory.rs:439`) with the settings' `confidence_floor`; rebuilt after heals (`ingest.rs:120-128`); callback tested (`memory.rs:1978`). That was the initial retraction, not evidence of firing. Subsequent production-timer RED found the never-fires defect; **T17 now includes the scheduling repair**, as recorded in the 2026-09-08 evidence.
 - `salience.rs` method-signals half — orphaned by the condenser removal while the module doc claims consumers that don't exist → **T18, build the wiring.**
 
 ### Verification evidence — 2026-09-07 (T02b discover-path slice)

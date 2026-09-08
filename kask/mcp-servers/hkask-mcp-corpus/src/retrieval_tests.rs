@@ -26,6 +26,7 @@ struct RecordingPort {
     pause: Option<(tokio::sync::Notify, tokio::sync::Notify)>,
     short: bool,
     wrong_dimension: bool,
+    response: Option<String>,
 }
 
 impl InferencePort for RecordingPort {
@@ -39,9 +40,10 @@ impl InferencePort for RecordingPort {
             .lock()
             .expect("prompts")
             .push(prompt.to_string());
-        Box::pin(async {
+        let response = self.response.clone().unwrap_or_else(|| SYNTHESIZED.into());
+        Box::pin(async move {
             Ok(InferenceResult {
-                text: SYNTHESIZED.into(),
+                text: response,
                 model: "offline".into(),
                 usage: hkask_types::InferenceUsage {
                     prompt_tokens: 1,
@@ -116,6 +118,62 @@ fn fixture() -> tempfile::TempDir {
 fn content(result: Result<String, hkask_mcp_server::server::McpToolError>) -> Value {
     let value: Value = serde_json::from_str(&result.expect("tool succeeds")).expect("json");
     hkask_types::tool_response::unwrap_tool_envelope(value)
+}
+
+/// expect: "Every tagged passage carries measured how-signals, even if LLM tagging degrades." [P3]
+#[tokio::test]
+async fn tagging_persists_method_signals_without_trusting_the_model() {
+    for response in [
+        json!([{"dimensions":["what"], "ontology_tags":{}, "method_signals":{"word_count":999}}])
+            .to_string(),
+        "not JSON".to_string(),
+    ] {
+        let directory = fixture();
+        let port = Arc::new(RecordingPort {
+            response: Some(response),
+            ..Default::default()
+        });
+        let server = server(Arc::clone(&port));
+        let input = directory.path().join("chunks.jsonl");
+        let output = directory.path().join("tagged.jsonl");
+        let text = "He walked and she ran. The beautiful river was silent.";
+        std::fs::write(
+            &input,
+            json!({"entity_ref":"style:test:1", "source":"test.txt", "text":text, "word_count":11})
+                .to_string(),
+        )
+        .expect("write chunks");
+        content(
+            server
+                .corpus_tag_chunks(Parameters(
+                    serde_json::from_value(json!({
+                        "chunks_jsonl":input, "output":output, "concurrency":1, "tag_batch_size":1
+                    }))
+                    .expect("tag request"),
+                ))
+                .await,
+        );
+        let row: Value =
+            serde_json::from_str(&std::fs::read_to_string(output).expect("tagged output"))
+                .expect("tagged row");
+        let expected = hkask_memory::salience::compute_method_signals(text);
+        assert_eq!(
+            row["ontology"]["method_signals"],
+            serde_json::to_value(expected).expect("signals")
+        );
+        assert_eq!(row["text"], text);
+        assert!(
+            row["dimensions"]
+                .as_array()
+                .expect("dimensions")
+                .contains(&json!("how"))
+        );
+        assert_eq!(
+            port.prompts.lock().expect("prompts").len(),
+            1,
+            "method extraction needs no extra LLM call"
+        );
+    }
 }
 
 fn embed_request(directory: &std::path::Path, database: &str, text: &str) -> EmbedRequest {
