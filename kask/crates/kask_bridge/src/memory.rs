@@ -184,8 +184,7 @@ impl RealMemoryPort {
     /// configured cadence.
     ///
     /// `tokio::time::interval` provides the pass-scheduling invariants by
-    /// construction: each tick is exactly one `poll_interval` after the
-    /// last, so passes fire at most once per cadence — no hand-rolled
+    /// construction: passes follow the interval without hand-rolled
     /// last-fired bookkeeping. The timer consumes the interval's immediate
     /// first tick as the "wait one full cadence before the first pass"
     /// grace; the poll interval is clamped to at least 60 seconds so short
@@ -203,7 +202,7 @@ impl RealMemoryPort {
         let curator_webid = self.curator_webid;
         let confidence_floor = self.confidence_floor;
         let cadence_secs = self.consolidation_cadence_secs;
-        let poll_interval = Duration::from_secs(cadence_secs.clamp(60, 3600));
+        let poll_interval = Duration::from_secs(cadence_secs.max(60));
 
         let handle = self.tokio_handle.spawn(async move {
             let mut interval = tokio::time::interval(poll_interval);
@@ -446,8 +445,8 @@ impl RealMemoryPort {
 
     /// The configured memory life in days — read from the store that actually
     /// decays, so the regulation sensor can never report fiction: when the
-    /// store is unavailable the default constant is reported (the store will
-    /// be constructed with the same default when it heals).
+    /// store is unavailable the default constant is an estimate only. A healed
+    /// store retains its configured decay constant.
     pub fn memory_life_days(&self) -> f64 {
         self.curator_store
             .get()
@@ -920,10 +919,7 @@ impl hkask_regulation::MemoryHealthSource for RealMemoryPort {
     }
 
     async fn memory_life_days(&self) -> f64 {
-        self.curator_store
-            .get()
-            .map(|s| s.memory_life_days())
-            .unwrap_or(180.0)
+        RealMemoryPort::memory_life_days(self)
     }
 }
 
@@ -1886,8 +1882,37 @@ pub(crate) mod tests {
         timer.abort();
     }
 
-    #[test]
-    fn start_consolidation_timer_is_disabled_at_zero_cadence() {
+    /// expect: "My two-hour consolidation cadence is not shortened to one hour." [P1]
+    #[tokio::test(start_paused = true)]
+    async fn consolidation_timer_respects_cadences_longer_than_one_hour() {
+        let port = in_memory_port_with_cadence(7200, 0.3);
+        let store = port.curator_store.get().expect("curator store");
+        store
+            .store(
+                hkask_storage::HMem::new(
+                    "probe:long-cadence",
+                    "fact",
+                    serde_json::json!("low confidence"),
+                    port.curator_webid,
+                )
+                .with_confidence(hkask_types::Confidence::new(0.1)),
+            )
+            .expect("seed probe");
+        let timer = port.start_consolidation_timer().expect("timer");
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        tokio::task::yield_now().await;
+        let count_at_one_hour = store.h_mem_count().expect("count");
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        tokio::task::yield_now().await;
+        let count_at_two_hours = store.h_mem_count().expect("count");
+        timer.abort();
+        assert_eq!(count_at_one_hour, 1, "must wait the configured two hours");
+        assert_eq!(count_at_two_hours, 0, "must consolidate at two hours");
+    }
+
+    #[tokio::test]
+    async fn start_consolidation_timer_is_disabled_at_zero_cadence() {
         // Cadence 0 — consolidation is disabled: no timer is started at all.
         let port = in_memory_port_with_cadence(0, 0.3);
         assert!(

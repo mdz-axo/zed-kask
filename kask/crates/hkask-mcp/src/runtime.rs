@@ -41,7 +41,7 @@ use hkask_tool_port::ToolInfo;
 use hkask_types::process_global::ProcessGlobal;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{Peer, RoleClient, ServiceExt};
-use rmcp::transport::TokioChildProcess;
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -423,6 +423,13 @@ struct Connection {
     generation: u64,
 }
 
+/// Owns process termination independently of rmcp's detached transport cleanup.
+struct ManagedChild {
+    server_id: String,
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
 /// The supervisor's view of a server's connection state.
 #[derive(Debug)]
 enum ConnectionState {
@@ -437,7 +444,9 @@ enum ConnectionState {
 #[derive(Clone)]
 pub struct McpRuntime {
     /// Serializes desired-state changes and publication, never handshake/discovery.
-    lifecycle: Arc<Mutex<()>>,
+    /// The value latches terminal session shutdown, rejecting queued starts.
+    lifecycle: Arc<Mutex<bool>>,
+    children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
     /// Registered MCP servers (metadata)
     servers: Arc<RwLock<HashMap<String, McpServer>>>,
     /// Tool registry (tool_name -> server_id)
@@ -467,7 +476,8 @@ impl McpRuntime {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            lifecycle: Arc::new(Mutex::new(())),
+            lifecycle: Arc::new(Mutex::new(false)),
+            children: Arc::new(Mutex::new(HashMap::new())),
             servers: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
@@ -580,7 +590,10 @@ impl McpRuntime {
         env: hkask_types::ServerEnv,
     ) -> Result<(), ServerStartError> {
         let spec = {
-            let _lifecycle = self.lifecycle.lock().await;
+            let shutdown = self.lifecycle.lock().await;
+            if *shutdown {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
             if self.get_peer(server_id).await.is_some() {
                 return Ok(());
             }
@@ -661,13 +674,17 @@ impl McpRuntime {
                 cmd.env(key, value);
             }
 
-            // Pipe stderr so child diagnostics are captured and tagged rather
-            // than mixed into the parent's stderr unattributed. The builder API
-            // returns the `ChildStderr` handle alongside the transport.
-            let builder = TokioChildProcess::builder(cmd).stderr(Stdio::piped());
-            let spawn_result = builder.spawn();
-            let (transport, stderr_handle) = match spawn_result {
-                Ok((transport, stderr)) => (transport, stderr),
+            // Publish process ownership under the same lock as stop/shutdown,
+            // before any handshake can stall. rmcp owns pipes, never the child.
+            let lifecycle = self.lifecycle.lock().await;
+            if spec.cancel.is_cancelled() {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = match cmd.spawn() {
+                Ok(child) => child,
                 Err(e) => {
                     last_error = Some(ServerStartError::SpawnFailed(e.to_string()));
                     warn!(
@@ -678,6 +695,7 @@ impl McpRuntime {
                         error = %e,
                         "MCP server spawn failed — will retry"
                     );
+                    drop(lifecycle);
                     if attempt + 1 >= self.config.startup_max_retries {
                         break None;
                     }
@@ -687,6 +705,44 @@ impl McpRuntime {
                     continue;
                 }
             };
+            let stdout = child.stdout.take().ok_or_else(|| {
+                ServerStartError::SpawnFailed("child stdout was not piped".into())
+            })?;
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| ServerStartError::SpawnFailed("child stdin was not piped".into()))?;
+            let stderr_handle = child.stderr.take();
+            let transport = (stdout, stdin);
+            let child_cancel = CancellationToken::new();
+            let child_guard = child_cancel.clone().drop_guard();
+            let child_id = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
+            let task = {
+                let cancel = child_cancel.clone();
+                let server_id = server_id.to_string();
+                tokio::spawn(async move {
+                    let result = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => child.kill().await,
+                        result = child.wait() => result.map(|_| ()),
+                    };
+                    if let Err(error) = result {
+                        warn!(target: "hkask.mcp", %server_id, %error, "MCP child termination/reap failed");
+                    }
+                })
+            };
+            let mut children = self.children.lock().await;
+            children.retain(|_, child| !child.task.is_finished());
+            children.insert(
+                child_id,
+                ManagedChild {
+                    server_id: server_id.to_string(),
+                    cancel: child_cancel,
+                    task,
+                },
+            );
+            drop(children);
+            drop(lifecycle);
 
             // Forward child stderr to tracing, tagged with the server_id so
             // operator logs attribute diagnostics correctly. Each line is logged
@@ -729,7 +785,7 @@ impl McpRuntime {
                         phase: "handshake",
                     })?;
             match handshake {
-                Ok(running) => break Some(running),
+                Ok(running) => break Some((running, child_guard)),
                 Err(e) => {
                     last_error = Some(ServerStartError::ConnectFailed(format!(
                         "Handshake with '{}' failed: {}",
@@ -753,7 +809,7 @@ impl McpRuntime {
             }
         };
 
-        let Some(running) = running else {
+        let Some((running, child_guard)) = running else {
             let error = last_error.unwrap_or_else(|| {
                 ServerStartError::SpawnFailed("exhausted retries without a captured error".into())
             });
@@ -768,8 +824,8 @@ impl McpRuntime {
         let generation = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
 
         // Keep the RunningService alive in a background task.
-        // When `cancel` fires, the service loop exits and the child
-        // process is cleaned up by rmcp's DropGuard.
+        // When `cancel` fires, the child guard requests kill-and-reap from
+        // our process owner; shutdown awaits that owner before returning.
         //
         // When the service loop exits on its *own* (the child died, the transport
         // closed), reap the connection so `get_peer` stops handing out a corpse.
@@ -781,6 +837,7 @@ impl McpRuntime {
         let reap_id = server_id.to_string();
         let reap_lifecycle = self.lifecycle.clone();
         tokio::spawn(async move {
+            let _child_guard = child_guard;
             let reaped = tokio::select! {
                 quit = running.waiting() => {
                     match quit {
@@ -1257,12 +1314,13 @@ impl McpRuntime {
             })?
     }
 
-    /// Shut down all managed server processes.
-    ///
-    /// Clears the launch specs too: a deliberate shutdown must not leave a
-    /// reconnect path that would resurrect servers the caller just stopped.
+    /// expect: "My MCP children stop with the session, including pending starts." [P1]
+    /// post: all owned children have completed kill-and-reap; reconnect state is
+    /// cleared and future starts are rejected. Repeated shutdown is harmless.
+    /// inv: process publication and shutdown share the lifecycle lock. [P4]
     pub async fn shutdown_all(&self) {
-        let _lifecycle = self.lifecycle.lock().await;
+        let mut shutdown = self.lifecycle.lock().await;
+        *shutdown = true;
         for (_, spec) in self.launch_specs.write().await.drain() {
             spec.cancel.cancel();
         }
@@ -1278,6 +1336,26 @@ impl McpRuntime {
         drop(tokens);
         self.last_reconnect.write().await.clear();
         self.health_failures.write().await.clear();
+        self.stop_children(None).await;
+    }
+
+    // Callers hold `lifecycle`: a child cannot be published behind the drain.
+    async fn stop_children(&self, server_id: Option<&str>) {
+        let children: Vec<_> = self
+            .children
+            .lock()
+            .await
+            .extract_if(|_, child| server_id.is_none_or(|server_id| child.server_id == server_id))
+            .map(|(_, child)| child)
+            .collect();
+        for child in &children {
+            child.cancel.cancel();
+        }
+        for child in children {
+            if let Err(error) = child.task.await {
+                warn!(target: "hkask.mcp", server_id = %child.server_id, %error, "MCP process owner failed during shutdown");
+            }
+        }
     }
 
     /// Stop a single managed server process and drop its tool registry.
@@ -1308,6 +1386,7 @@ impl McpRuntime {
         }
         self.last_reconnect.write().await.remove(server_id);
         self.health_failures.write().await.remove(server_id);
+        self.stop_children(Some(server_id)).await;
         // Drop the server's tools from the registry so stale names do not
         // resolve to a dead connection.
         let mut servers = self.servers.write().await;

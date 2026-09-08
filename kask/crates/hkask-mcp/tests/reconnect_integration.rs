@@ -169,6 +169,88 @@ async fn unload_during_discovery_stays_unloaded() {
     assert!(tools.is_empty(), "late startup published tools");
 }
 
+/// expect: "Session shutdown kills connected and still-starting MCP children." [P1]
+/// pre: one live server and one server blocked in tool discovery.
+/// post: both children are reaped, no tools remain, and repeated shutdown is harmless.
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_all_kills_live_and_pending_children() {
+    let live = Fixture::new("shutdown-live");
+    let mut pending = Fixture::new("shutdown-pending");
+    let entered = pending._tmp.path().join("entered");
+    let release = pending._tmp.path().join("never-released");
+    pending.env.insert(
+        "FIXTURE_DISCOVERY_ENTERED".into(),
+        entered.to_string_lossy().into_owned(),
+    );
+    pending.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        release.to_string_lossy().into_owned(),
+    );
+    let runtime = McpRuntime::new();
+    let binary = fixture_binary();
+    runtime
+        .start_server_with_env(
+            "live",
+            binary.to_str().expect("fixture path"),
+            hkask_types::ServerEnv::from_canonical(live.env.clone()),
+        )
+        .await
+        .expect("live server starts");
+    let live_pid = live.wait_for_pid().await;
+    let start = runtime.start_server_with_env(
+        "pending",
+        binary.to_str().expect("fixture path"),
+        hkask_types::ServerEnv::from_canonical(pending.env.clone()),
+    );
+    let stop = async {
+        wait_for(
+            || entered.exists(),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+            "pending discovery",
+        )
+        .await;
+        let pending_pid = pending.wait_for_pid().await;
+        runtime.shutdown_all().await;
+        pending_pid
+    };
+    let (result, pending_pid) = futures::join!(start, stop);
+    runtime.shutdown_all().await;
+    let mut leaked = Vec::new();
+    for pid in [live_pid, pending_pid] {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        // SAFETY: signal 0 only checks the PID written by this test's own fixture.
+        while unsafe { libc::kill(pid as i32, 0) } == 0 {
+            if std::time::Instant::now() >= deadline {
+                leaked.push(pid);
+                Fixture::kill(pid);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    assert!(leaked.is_empty(), "shutdown leaked children: {leaked:?}");
+    assert!(result.is_err(), "cancelled discovery must not publish");
+    assert!(runtime.registered_servers().await.is_empty());
+    assert!(!runtime.is_connected("live").await);
+    assert!(!runtime.is_connected("pending").await);
+    let queued_start = runtime
+        .start_server_with_env(
+            "late-start",
+            binary.to_str().expect("fixture path"),
+            hkask_types::ServerEnv::from_canonical(live.env.clone()),
+        )
+        .await;
+    runtime.shutdown_all().await;
+    assert!(
+        matches!(
+            queued_start,
+            Err(hkask_mcp::runtime::ServerStartError::Cancelled(_))
+        ),
+        "shutdown must reject queued starts, got {queued_start:?}"
+    );
+}
+
 /// expect: "Failed discovery cleans up its child even before publication" [P1]
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_failure_reaps_child() {
