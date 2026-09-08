@@ -7,17 +7,15 @@ if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
 fi
 
 set -x
-# --all-features enables every feature in every workspace crate. This is
+# --all-features enables every feature in the selected packages. This is
 # correct for the Linux-only clippy CI job: platform-specific features
 # (gpui_web/multithreaded for wasm, gpui_macos/runtime_shaders, vim/neovim)
 # do not fire on Linux. If a macOS/Windows clippy job is added, revisit this
 # flag — some features may pull platform-specific deps that fail to build.
 #
-# zed-kask: cap concurrent rustc/clippy-driver invocations. Uncapped, cargo
-# spawns one per core and each release-profile crate pins its core for minutes
-# (codegen-units=1 + thin LTO), starving local machines. The cap is
-# min(nproc, 16), so smaller machines and CI runners are unaffected. Override
-# with HKASK_BUILD_JOBS.
+# zed-kask: bound concurrent rustc/clippy-driver work so a large dependency
+# graph cannot saturate the host. Cap at min(nproc, 16); override with
+# HKASK_BUILD_JOBS.
 JOBS="${HKASK_BUILD_JOBS:-$(( $(nproc) < 16 ? $(nproc) : 16 ))}"
 
 # zed-kask: reuse compiled deps across clippy runs via sccache, when the
@@ -32,7 +30,10 @@ else
     echo "warning: sccache not found at ${HKASK_SCCACHE_DIR:-$HOME/.local/lib/kask-sccache}/sccache — running uncached (bash script/setup-sccache to enable)" >&2
 fi
 
-"${CARGO:-cargo}" clippy "$@" --jobs "$JOBS" --release --all-targets --all-features -- --deny warnings
+# zed-kask: D52 — use Cargo's dev default for the normal feedback loop.
+# Forcing release here builds a separate dependency graph from dev checks;
+# callers can still request --release or --profile explicitly via "$@".
+"${CARGO:-cargo}" clippy "$@" --jobs "$JOBS" --all-targets --all-features -- --deny warnings
 
 # If local, run other checks if we have the tools installed.
 if [[ -z "${GITHUB_ACTIONS+x}" ]]; then

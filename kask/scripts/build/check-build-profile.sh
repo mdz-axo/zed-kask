@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI gate: pin the build-profile seams (DIVERGENCE.md D46, D50).
+# CI gate: pin the build-profile seams (DIVERGENCE.md D46, D50, D52).
 #
 # The install CPU-burn defect: install.sh built the zed binary AND all 11
 # MCP servers on the `release` profile (thin LTO + codegen-units=1), so
@@ -98,5 +98,49 @@ for sccache_consumer in "$ROOT/script/setup-sccache" "$ROOT/script/clippy" "$INS
         fail "$sccache_consumer references target/sccache — cargo clean would delete the wrapper (D46 silent-uncache defect)"
     fi
 done
+
+# Exercise the wrapper without Cargo: profile selection must not silently
+# trigger a release dependency rebuild or weaken the lint coverage.
+python3 - "$ROOT/script/clippy" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+wrapper = Path(sys.argv[1])
+with tempfile.TemporaryDirectory(prefix="kask-clippy-profile-") as directory:
+    directory = Path(directory)
+    arguments_file = directory / "arguments"
+    cargo = directory / "cargo-stub"
+    cargo.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CLIPPY_ARGUMENTS"\nexit "${CLIPPY_STATUS:-0}"\n')
+    cargo.chmod(0o700)
+    environment = dict(os.environ, CARGO=str(cargo), GITHUB_ACTIONS="true",
+                       HKASK_BUILD_JOBS="8", HKASK_SCCACHE_DIR=str(directory),
+                       CLIPPY_ARGUMENTS=str(arguments_file), CLIPPY_STATUS="0")
+    cases = [
+        (["-p", "kask_bridge"], []),
+        (["--release", "-p", "hkask-mcp"], []),
+        (["--profile", "release-mcp", "--package", "hkask-mcp"], []),
+        (["--profile=dev", "-p", "kask_bridge"], []),
+        ([], ["--workspace"]),
+    ]
+    for arguments, scope in cases:
+        result = subprocess.run(["bash", str(wrapper), *arguments], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            sys.exit(f"[FAIL] clippy wrapper failed: {result.stderr}")
+        observed = arguments_file.read_text().splitlines()
+        expected = ["clippy", *arguments, *scope, "--jobs", "8", "--all-targets",
+                    "--all-features", "--", "--deny", "warnings"]
+        if observed != expected:
+            sys.exit(f"[FAIL] clippy profile/coverage drift (D52): {observed!r}; expected {expected!r}")
+    environment["CLIPPY_STATUS"] = "42"
+    result = subprocess.run(["bash", str(wrapper), "-p", "hkask-mcp"], env=environment,
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode != 42:
+        sys.exit("[FAIL] clippy wrapper must propagate Cargo's failure status (D52)")
+print("[OK] clippy wrapper: dev default, explicit profiles, lint coverage, failure propagation")
+PY
 
 echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"
