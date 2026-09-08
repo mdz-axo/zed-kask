@@ -4,15 +4,15 @@
 //! 1. **Method signals** — cheap stylometric metrics (parataxis ratio,
 //!    adjective density, dialogue ratio, etc.) that constitute the "how"
 //!    dimension of the 5W1H framework.
-//! 2. **Salience score** — weighted graph degree centrality combining entity
-//!    tag counts, method coverage, category diversity, and positional
-//!    significance into a single 0.0-1.0+ score.
+//! 2. **Salience score** — graph centrality over shared concept/entity tags.
 //! 3. **Keyword overlap score** — lightweight keyword-matching scorer for
 //!    ranking chat episodes by relevance to a query.
 //!
-//! Used by `EmbedService` at embed time (budget gating), by the style
-//! synthesizer at query time (salience-parameterized retrieval), and by chat
-//! recall (episode ranking via keyword overlap).
+//! Method signals are computed by corpus tagging, recomputed after corpus
+//! consolidation, and persisted alongside durable passage embeddings. Corpus
+//! composition matches stored signals against declared method thresholds.
+//! Corpus tagging uses graph salience; bridge chat recall uses keyword overlap
+//! for its keyword-scored candidates. No embedding-budget gate is implied.
 
 // ── Method Signals ────────────────────────────────────────────────────────
 
@@ -435,9 +435,9 @@ pub struct DeclaredMethod {
     pub description: String,
     #[serde(default)]
     pub signal: MethodThresholds,
-    /// Simplified single-threshold mode.
-    /// When set, applies as a minimum across all method signals
-    /// instead of using per-signal thresholds.
+    /// Legacy single-threshold declaration, not evaluated by `matches`.
+    /// Corpus composition rejects this field rather than silently ignoring it;
+    /// use the per-signal thresholds above.
     #[serde(default)]
     pub threshold: Option<f64>,
 }
@@ -818,6 +818,20 @@ impl BudgetConfig {
             BudgetConfig::Absolute { max_triples } => *max_triples,
         }
     }
+}
+
+/// Count query keywords present as case-insensitive passage substrings.
+///
+/// expect: "Episodes matching more of my query rank above incidental matches." [P1]
+/// pre: keywords are lowercased by the caller.
+/// post: returns the number of matching entries, from zero to keywords.len().
+/// Restored from the original method-signals implementation (`2b651fc956`).
+pub fn keyword_overlap_score(keywords: &[String], text: &str) -> usize {
+    let text_lower = text.to_lowercase();
+    keywords
+        .iter()
+        .filter(|keyword| text_lower.contains(keyword.as_str()))
+        .count()
 }
 
 #[cfg(test)]

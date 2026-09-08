@@ -690,9 +690,9 @@ impl RealMemoryPort {
                     if text.is_empty() {
                         continue;
                     }
-                    let text_lower = text.to_lowercase();
-                    // Check if ANY query word appears in the text
-                    if !query_words.iter().any(|w| text_lower.contains(w)) {
+                    let overlap =
+                        hkask_memory::salience::keyword_overlap_score(&query_words, &text);
+                    if overlap == 0 {
                         continue;
                     }
                     // Skip if already in candidates (dedup by text)
@@ -704,7 +704,9 @@ impl RealMemoryPort {
                             text,
                             entity: h_mem.entity.clone(),
                             confidence: h_mem.confidence.value(),
-                            relevance_score: 0.5, // Base relevance for keyword match
+                            // Keep the keyword leg's ceiling below a strong KNN
+                            // match, but distinguish full-query from incidental hits.
+                            relevance_score: 0.5 * overlap as f64 / query_words.len() as f64,
                         },
                         h_mem_id: h_mem.id,
                     });

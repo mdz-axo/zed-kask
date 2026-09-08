@@ -131,6 +131,8 @@ pub(crate) struct ComposeResult {
     pub generated_prose: String,
     /// Number of exemplar passages used.
     pub exemplar_count: usize,
+    /// Candidates excluded because no stored method signals were available.
+    pub method_signals_missing: usize,
     /// Centroid validation result (None if validation was skipped).
     pub validation: Option<CentroidValidation>,
 }
@@ -279,6 +281,7 @@ impl ComposeService {
         let prefix = format!("style:{}", request.cognition.author);
         let retrieval = &request.cognition.embedding.retrieval;
         let mut matched: Vec<(f64, String, f64)> = Vec::new(); // (distance, entity_ref, salience)
+        let mut method_signals_missing = 0;
 
         for r in &results {
             if !r.embedding.entity_ref.starts_with(&prefix)
@@ -318,6 +321,7 @@ impl ComposeService {
                     .iter()
                     .find(|record| record.attribute == "method_signals")
                 else {
+                    method_signals_missing += 1;
                     tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref,
                         "Method signals missing — excluding passage; re-embed to enable method-aware retrieval");
                     continue;
@@ -471,6 +475,7 @@ impl ComposeService {
         Ok(ComposeResult {
             generated_prose,
             exemplar_count,
+            method_signals_missing,
             validation,
         })
     }

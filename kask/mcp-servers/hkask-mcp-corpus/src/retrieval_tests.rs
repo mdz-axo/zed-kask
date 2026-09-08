@@ -289,22 +289,11 @@ async fn composition_filters_durable_passages_by_declared_method() {
             1,
         ),
     ] {
-        let config = serde_json::from_value(json!({
-            "author":"test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
-            "centroid_entity_ref":"style:test:centroid", "retrieval":{"k_max":10,"declared_method":method}},
-            "validation":{"centroid_distance_max":1.0}
-        })).expect("cognition config");
-        let result = crate::compose::ComposeService::compose(crate::compose::ComposeRequest {
-            prompt: "Write about a river.".into(),
-            db_path: database.clone(),
-            db_passphrase: PASSPHRASE.into(),
-            cognition: config,
-            inference_ctx: crate::inference_svc::InferenceContext::from_parts(
-                Some(port.clone()),
-                "offline",
-            ),
-            no_validate: true,
-        })
+        let result = crate::compose::ComposeService::compose(composition_request(
+            &database,
+            Arc::clone(&port),
+            method,
+        ))
         .await
         .expect("compose");
         assert_eq!(result.exemplar_count, expected_count);
@@ -312,6 +301,94 @@ async fn composition_filters_durable_passages_by_declared_method() {
         let prompt = prompts.last().expect("generation prompt");
         assert!(prompt.contains(paratactic));
         assert_eq!(prompt.contains(hypotactic), expected_count == 2);
+    }
+    let error = crate::compose::ComposeService::compose(composition_request(
+        &database,
+        Arc::clone(&port),
+        json!({"name":"legacy","threshold":0.5}),
+    ))
+    .await
+    .err()
+    .expect("unsupported shorthand must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("declared_method.threshold is unsupported")
+    );
+
+    let store =
+        crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("store");
+    let records = store
+        .query_deduped_untouched("style:test:1")
+        .expect("metadata");
+    let signals = records
+        .iter()
+        .find(|record| record.attribute == "method_signals")
+        .expect("signals");
+    store
+        .update_confidence(
+            &signals.id,
+            json!({"parataxis_ratio":"broken"}),
+            hkask_types::Confidence::new(1.0),
+        )
+        .expect("corrupt metadata fixture");
+    let method = json!({"name":"parataxis","signal":{"parataxis_ratio_min":0.9}});
+    let error = crate::compose::ComposeService::compose(composition_request(
+        &database,
+        Arc::clone(&port),
+        method.clone(),
+    ))
+    .await
+    .err()
+    .expect("corrupt metadata must surface");
+    assert!(error.to_string().contains("Invalid method signals"));
+    let unconstrained = crate::compose::ComposeService::compose(composition_request(
+        &database,
+        Arc::clone(&port),
+        Value::Null,
+    ))
+    .await
+    .expect("unconstrained retrieval");
+    assert_eq!(unconstrained.exemplar_count, 2);
+    for entity in ["style:test:1", "style:test:2"] {
+        let records = store.query_deduped_untouched(entity).expect("records");
+        for record in records
+            .iter()
+            .filter(|record| record.attribute == "method_signals")
+        {
+            store
+                .delete_h_mem(&record.id)
+                .expect("legacy metadata fixture");
+        }
+    }
+    let missing =
+        crate::compose::ComposeService::compose(composition_request(&database, port, method))
+            .await
+            .expect("missing metrics excluded");
+    assert_eq!(missing.exemplar_count, 0);
+    assert_eq!(
+        missing.method_signals_missing, 2,
+        "missing measurements must be surfaced, not reported as no matches"
+    );
+}
+
+fn composition_request(
+    database: &std::path::Path,
+    port: Arc<RecordingPort>,
+    method: Value,
+) -> crate::compose::ComposeRequest {
+    let config = serde_json::from_value(json!({
+        "author":"test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+        "centroid_entity_ref":"style:test:centroid", "retrieval":{"k_max":10,"declared_method":method}},
+        "validation":{"centroid_distance_max":1.0}
+    })).expect("cognition config");
+    crate::compose::ComposeRequest {
+        prompt: "Write about a river.".into(),
+        db_path: database.into(),
+        db_passphrase: PASSPHRASE.into(),
+        cognition: config,
+        inference_ctx: crate::inference_svc::InferenceContext::from_parts(Some(port), "offline"),
+        no_validate: true,
     }
 }
 
@@ -477,6 +554,19 @@ async fn retrieval_consolidation_survives_restart() {
                 .await,
         );
         assert_eq!(summary["reembedded"], 1, "{summary}");
+        let consolidated = std::fs::read_to_string(directory.path().join("consolidated.jsonl"))
+            .expect("consolidated output");
+        for row in consolidated.lines() {
+            let chunk: hkask_types::corpus::TaggedChunk = serde_json::from_str(row).expect("chunk");
+            assert_eq!(
+                chunk
+                    .ontology
+                    .expect("ontology")
+                    .method_signals
+                    .expect("recomputed signals"),
+                hkask_memory::salience::compute_method_signals(&chunk.text)
+            );
+        }
     }
     assert!(
         port.inputs

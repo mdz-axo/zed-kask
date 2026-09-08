@@ -173,6 +173,7 @@ impl crate::CorpusServer {
             Ok(json!({
                 "prose": result.generated_prose,
                 "exemplar_count": result.exemplar_count,
+                "method_signals_missing": result.method_signals_missing,
                 "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                 "style_passed": result.validation.map(|v| v.passed),
             }))
@@ -233,6 +234,7 @@ impl crate::CorpusServer {
                     "dimension": params.dimension,
                     "author": params.author,
                     "exemplar_count": result.exemplar_count,
+                    "method_signals_missing": result.method_signals_missing,
                     "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                     "style_passed": result.validation.map(|v| v.passed),
                 }))
