@@ -1,6 +1,6 @@
 //! Salience scoring and method signal extraction for style corpora.
 //!
-//! Computes three things from raw passage text (zero LLM cost):
+//! Provides three metadata and retrieval operations (zero LLM cost):
 //! 1. **Method signals** — cheap stylometric metrics (parataxis ratio,
 //!    adjective density, dialogue ratio, etc.) that constitute the "how"
 //!    dimension of the 5W1H framework.
@@ -23,7 +23,7 @@ pub use hkask_types::corpus::MethodSignals;
 /// All signals are cheap substring/character operations. No allocations
 /// beyond what's needed for word splitting.
 ///
-/// expect: "The system scores passage salience to gate h_mem storage budget"
+/// expect: "Passages carry measured stylistic features for method-aware retrieval."
 /// \[P3\] Motivating: Generative Space — extracts cheap stylometric signals for method-aware retrieval
 /// \[P8\] Constraining: Semantic Grounding — signals are deterministic heuristics over raw text
 /// pre:  text is a valid &str
@@ -496,7 +496,7 @@ pub struct MethodThresholds {
 impl DeclaredMethod {
     /// Check whether a passage's signals match this method's thresholds.
     ///
-    /// expect: "The system scores passage salience to gate h_mem storage budget"
+    /// expect: "Only passages meeting my declared method thresholds become exemplars."
     /// \[P3\] Motivating: Generative Space — matches passage signals against declared method thresholds
     /// \[P8\] Constraining: Semantic Grounding — unconfigured thresholds are always satisfied
     /// pre:  signals is a valid MethodSignals

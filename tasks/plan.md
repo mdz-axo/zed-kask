@@ -3,7 +3,7 @@ title: "Kask regression-first reliability plan"
 creator: "Zed coding agent"
 date: "2026-09-07"
 type: "bibo:Document"
-status: "Phase D: T16/T17/T19 tests green; app check and lint incomplete; T18 gated"
+status: "Phase D implemented; tests, lint and app check green; operator checkpoint pending"
 baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 ---
 
@@ -11,15 +11,15 @@ baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 
 ## Target condition
 
-Authorization history: the operator first requested this regression-first plan, then on 2026-09-07 said **"D01 yes. please proceed"**, ratifying research retention and authorizing implementation. The latest instruction resumes the Phase D plan after ratifying the development-profile Clippy wrapper. New Phase D scope remains gated on validation close-out. No commits, branches, unrelated policy changes, or acceptance of deferred risks were authorized.
+Authorization history: the operator first requested this regression-first plan, then on 2026-09-07 said **"D01 yes. please proceed"**, ratifying research retention and authorizing implementation. The latest instruction resumes the Phase D plan after ratifying the development-profile Clippy wrapper. The T16/T17/T19 validation gate was closed before implementing T18; Phase D implementation and automated checks are now complete. No commits, branches, unrelated policy changes, or acceptance of deferred risks were authorized.
 
 The target is to prevent the identified loss of recoverable data, private-network boundary bypass, over-authorized external dispatch, duplicate agent creation, and false completion evidence. Fix one observable failure path at a time; deepen existing modules only after behavioral tests pass.
 
-Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01–T03 (including T02b) and D01 are verified; T04–T15 remain untouched. T16/T17/T19 have passing tests but incomplete application/lint close-out; T18 is not started.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
+Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01–T03 (including T02b) and D01 are verified; T04–T15 remain untouched. T16–T19 have passing automated tests/checks/lints; operator review and a live application-quit smoke test remain at Checkpoint D.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
 
 ## Current validation close-out — 2026-09-08
 
-The operator authorized continuation, then D52's development-profile Clippy default. The original uncompiled tail is now compiled and tested at the bridge/runtime seams; **application integration and lint validation are NOT complete**, so T18 has not started. No commits, branches, staging, unstaging, or resets were performed by this agent. An external process advanced HEAD through `e102d515e8`, `eadb5b9521`, and `5fd4bac424`; the latest observed tree was clean before this documentation update. Do not use current HEAD as the pre-fix behavioral baseline: use the original `2475305420ae065b5d1792c0f25cea471e558ae3`.
+The operator authorized continuation, then D52's development-profile Clippy default. The original uncompiled tail and T18 are now compiled and tested; **the full Zed check and scoped lint passed** in the operator-approved incremental window. T18 began only after that gate closed. Live editor-quit confirmation remains an operator checkpoint, not a claimed automated result. No commits, branches, staging, unstaging, or resets were performed by this agent. An external process advanced HEAD through `e102d515e8`, `eadb5b9521`, and `5fd4bac424`; the latest observed tree was clean before this documentation update. Do not use current HEAD as the pre-fix behavioral baseline: use the original `2475305420ae065b5d1792c0f25cea471e558ae3`.
 
 ### Verification evidence — T16/T17/T19 and build gates
 
@@ -35,14 +35,39 @@ The operator authorized continuation, then D52's development-profile Clippy defa
 | `cargo check --offline --locked -p zed -j 8` | **Timed out at 30 minutes** during dependency compilation/checking (last recorded unit `cosmic-text`); no completed Zed check. |
 | `HKASK_BUILD_JOBS=8 CARGO_NET_OFFLINE=true ./script/clippy --locked -p kask_bridge -p hkask-mcp -p hkask-mcp-curator` before D52 | **Operator-interrupted**, not passed: forced release/all-target/all-feature graph logged 266 compilation + 657 check entries, ending at `agent`. |
 | Same scoped Clippy command after D52 | **Timed out at 20 minutes**, not passed: dev graph logged 17 compilation + 207 check entries, reaching `workspace`/`agent_servers`. Progress was sampled every minute. No compiler jobs remained afterward; current swap usage was zero. No automatic retry authorized by a timeout. |
+| Operator-approved resume: same scoped development-profile Clippy command | **Passed**: compilation/checking 7m04s, wrapper 447s, `--all-targets --all-features --deny warnings`; machete/typos/buf clean. |
+| Operator-approved resume: `cargo check --offline --locked -p zed -j 8` | **Passed**, 43m06s to finish the remaining dependency graph before T18. |
 | `bash kask/scripts/build/check-build-profile.sh` | D50 RED without external-dependency override, GREEN with it. D52 stub-Cargo RED with forced `--release`, GREEN after removal; exact flags, explicit profiles, workspace default, and failure propagation pinned without a compiler. |
 | `bash -n script/clippy kask/scripts/build/check-build-profile.sh`; `git diff --check` | Passed for the build-wrapper slice; documentation close-out diff check also passed. |
 | `bash kask/scripts/check-mcp-tool-tests.sh` | **0 violations, 0 allowlisted gaps**; presence ratchet only, not behavioral proof. |
 | `rustfmt --edition 2024 --config skip_children=true --check` on runtime.rs, reconnect_integration.rs, memory.rs, memory/curator_stores.rs | Passed. |
 
-Logs from this session remain under `/tmp/kask-phase-d-*.log` (ephemeral, not the durable evidence source). The T16 curator-server parser/store tests and hkask-memory formula test were already green in the incoming handoff; not rerun here.
+Some earlier logs were ephemeral under `/tmp/kask-phase-d-*.log` and are no longer available; this table records the outputs observed in-session. Final bridge/types/app-check logs are under `target/kask-t18-*.log`. The T16 curator-server parser/store tests and hkask-memory formula test were already green in the incoming handoff; not rerun here.
 
-**Closure owner: receiving coding agent.** Remaining: operator-approved incremental lint/check window, fix any resulting diagnostics, finish residue review, then begin T18's three vertical slices. The MCP presence gate and targeted Rust formatting checks now pass. No pending task is marked complete solely on compilation or a symbol pin. D50/D52 behavior is verified at the script seam; no end-to-end build speedup is claimed. The existing Settings → Kask → Memory page already exposes `memory_life_days` (`crates/settings_ui/src/pages/kask_page/memory.rs:73–94`, linked by `kask_page.rs`): the handoff's proposed step-6 "consistent skip" was factually incorrect and is not adopted.
+**Closure:** automated checks passed; the operator owns Checkpoint D review and live editor-quit confirmation. T04–T15 remain in their existing queue and are not executed by this close-out. The MCP presence gate and targeted Rust formatting checks pass. No pending task is marked complete solely on compilation or a symbol pin. D50/D52 behavior is verified at the script seam; no end-to-end build speedup is claimed. The existing Settings → Kask → Memory page already exposes `memory_life_days` (`crates/settings_ui/src/pages/kask_page/memory.rs:73–94`, linked by `kask_page.rs`): the handoff's proposed step-6 "consistent skip" was factually incorrect and is not adopted.
+
+### T18 implementation and verification — 2026-09-08
+
+**Delivered:** typed `MethodSignals` lives in `hkask-types::corpus` and is re-exported from `hkask-memory::salience` (no reverse dependency). Tagging stores computed `ontology.method_signals` even on LLM fallback, and consolidation recomputes it after synthesis. `PassageIndex::publish_durable` persists/replaces current passage text and signals under the same entity, with the server's writer identity and ontology provenance; embedding/consolidation callers carry that identity. This additional persistence step was necessary: composition reads h_mems, not tagged JSONL, so tag-time metadata alone would still be unwired.
+
+The existing cognition YAML accepts `embedding.retrieval.declared_method`; all configured `signal` thresholds are checked by `DeclaredMethod::matches`. No declaration preserves selection; missing signals are counted in `method_signals_missing`, corrupt signals/read failures error, and the unimplemented legacy scalar `threshold` is explicitly rejected. Existing DBs need `corpus_embed` backfill to gain the new metadata; no operator corpus was modified. Metadata/vector publication retains the existing explicit partial-failure contract, not a new transactional guarantee.
+
+Recovered `keyword_overlap_score` from `2b651fc956` (later deleted in `73554617ce`) and wired it into keyword episode relevance as `0.5 × matches / query entries`. Semantic scoring, query-word selection, connectedness/confidence weighting, and dedup precedence remain unchanged. Wiring also exposed short-passage `0/0` in passive-voice estimation; the denominator now has a minimum of one and a JSON round-trip regression pins finite output.
+
+| Command / experiment | Observed result |
+|---|---|
+| `cargo test --offline --locked -p hkask-mcp-corpus --lib tagging_persists_method_signals_without_trusting_the_model -j 8` | Initial fixture lacked classifier configuration; corrected with an isolated test process and offline inference. Behavioral RED: `ontology.method_signals` was Null vs measured object. GREEN after wiring; valid/spoofed and malformed LLM output both covered, one LLM call per tag batch. |
+| Same corpus command filtered to `durable_embeddings_keep_current_method_signals` | RED: no persisted signals. GREEN: signals/text survive reopen and replacement, correct writer identity, exactly two current metadata rows per passage. |
+| Same corpus command filtered to `composition_filters_durable_passages_by_declared_method` | RED: two exemplars selected instead of one. Exposed the short-passage NaN on first wired run; fixed at extraction. Final GREEN covers matching/unconstrained requests, corrupt/missing metrics and unsupported shorthand; missing metrics are surfaced, not just empty-success asserted. |
+| `cargo test --offline --locked -p hkask-memory --lib method_signals_round_trip_for_short_passages -j 8` | RED: null could not deserialize as f32. Fixed the zero estimated-verb denominator; GREEN in the full suite. |
+| `cargo test --offline --locked -p kask_bridge --lib recall_ranks_keyword_episodes_by_overlap -j 8` | RED: weak one-keyword episode ranked above stronger overlap. GREEN after normalized scorer wiring. |
+| `cargo test --offline --locked -p hkask-mcp-corpus -p hkask-memory --lib -j 8` | **85 corpus + 32 memory tests passed**, 0 failed. Corpus lib suite includes public-tool retrieval tests and consolidation metric recomputation; no separate tool-behavior target exists in this crate. |
+| `cargo test --offline --locked -p kask_bridge --lib -j 8` | Final observed run: **182 passed**, 0 failed, including the new ranking test. Re-ran when the earlier temporary log was unavailable; retained under `target/`. |
+| `cargo test --offline --locked -p hkask-types --lib -j 8` | **33 passed**, 0 failed. |
+| `HKASK_BUILD_JOBS=8 CARGO_NET_OFFLINE=true ./script/clippy --locked -p hkask-types -p hkask-memory -p kask_bridge -p hkask-mcp -p hkask-mcp-curator -p hkask-mcp-corpus` | **Passed**, dev/all-targets/all-features/warnings-as-errors; machete, typos and buf checks clean. Observed wrapper elapsed 73s. |
+| `cargo check --offline --locked -p zed -j 8` after T18 | **Passed**, 31.53s; retained as `target/kask-t18-zed-check.log`. |
+
+**Scope/residue:** no new production files, crates, dependencies, settings pages, or MCP tools. Changes stay in shared corpus types, salience, bridge recall, corpus tagging/consolidation/publication/composition and their existing tests/docs. Test data is isolated below target and temporary directories; no live providers or operator-data backfill were used. The source comment corrections made after validation only clarify measurement purpose. Final explicit-file rustfmt, build-profile pins, MCP presence ratchet (0 violations/0 gaps), and diff checks passed after the documentation updates.
 
 ## Historical handoff — 2026-09-07
 
@@ -276,7 +301,7 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 
 **Scope:** S; production scheduling repair and timer tests. **Depends on:** none.
 
-**Implemented:** the operator-directed interval-native timer skips the immediate tick, then fires a real pass every `max(configured cadence, 60s)`. Timestamp/flag machinery and test-only consolidation entry were removed. The old one-hour polling cap cannot be retained when every tick performs a pass: it shortened longer configured cadences. Paused-time tests pin first firing, the two-hour cadence, disabled cadence, real confidence pruning, and ingestion independence. Historical RED confirms the original scheduling defect; the full bridge suite is green. App/lint close-out remains open.
+**Implemented:** the operator-directed interval-native timer skips the immediate tick, then fires a real pass every `max(configured cadence, 60s)`. Timestamp/flag machinery and test-only consolidation entry were removed. The old one-hour polling cap cannot be retained when every tick performs a pass: it shortened longer configured cadences. Paused-time tests pin first firing, the two-hour cadence, disabled cadence, real confidence pruning, and ingestion independence. Historical RED confirms the original scheduling defect; the full bridge suite is green. App compilation and scoped lint subsequently passed (evidence above).
 **Observation (not a defect, recorded for the spec's next revision):** consolidation's budget-prune phase (`consolidation_service.rs:39-68`) is count-based, documented as deliberate design ("confidence-floor cleanup plus budget pruning only", spec §5; the budget as Ashby attenuator, `curator_stores.rs:226-230`). The 2026-09-04 "never count-based" ruling governs FORGETTING (turn deletion), not consolidation's confidence-ranked pruning; if the operator wants consolidation pruned of its budget leg too, that is a separate decision — the current documentation is internally consistent.
 
 ### T18 — Wire method signals and keyword overlap into the pipelines they were designed for
@@ -302,11 +327,11 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 
 ### T19 — MCP servers die with the zed-kask session (operator directive 2026-09-07)
 
-**Scope:** S–M; trust/lifecycle; `hkask-mcp`, `crates/zed/src/main.rs`, D51. Runtime unit/integration tests are green; quit wiring is implemented but application check/lint close-out is pending. **Depends on:** none.
+**Scope:** S–M; trust/lifecycle; `hkask-mcp`, `crates/zed/src/main.rs`, D51. Runtime unit/integration tests, application check and lint are green; live editor-quit confirmation is the operator checkpoint. **Depends on:** none.
 
 **Initial diagnosis (superseded in part by the real-process RED below):** the kill chain existed all along — children spawn with `kill_on_drop(true)` (`hkask-mcp/src/runtime.rs`, `start_connection`), and `StdioTransport::Drop` kills a still-running child (`crates/context_server/src/transport/stdio_transport.rs:229-251`) — but **app exit never runs Rust destructors**, so nothing ever dropped the transports at quit and every managed MCP server child orphaned and kept running after zed-kask shutdown. The settings-unload path (`sync_kask_mcp_runtime_servers` → `stop_server`) works; only the session-end call was missing — the deception the operator named: "the mcp servers are supposed to be killed by the shutdown of zed-kask."
 
-**Implemented and corrected:** the original lifecycle-locked `shutdown_all` survives; the duplicate union-loop definition was removed. A real-process regression disproved the handoff's "only the quit hook is missing" diagnosis: rmcp owns asynchronous graceful cleanup, so clearing maps does not await child death. The runtime now owns each spawned child before handshake, gives rmcp only its pipes, and tracks cancellable kill-and-reap tasks. Stop and shutdown await those tasks; terminal shutdown rejects queued starts. `wire_kask_mcp_shutdown` registers `on_app_quit`, runs shutdown on the Tokio handle, and `.detach()` retains the subscription. The fn-pointer pin exists; its compilation and live app quit are not claimed validated.
+**Implemented and corrected:** the original lifecycle-locked `shutdown_all` survives; the duplicate union-loop definition was removed. A real-process regression disproved the handoff's "only the quit hook is missing" diagnosis: rmcp owns asynchronous graceful cleanup, so clearing maps does not await child death. The runtime now owns each spawned child before handshake, gives rmcp only its pipes, and tracks cancellable kill-and-reap tasks. Stop and shutdown await those tasks; terminal shutdown rejects queued starts. `wire_kask_mcp_shutdown` registers `on_app_quit`, runs shutdown on the Tokio handle, and `.detach()` retains the subscription. The fn-pointer pin exists; production quit wiring compiled in the full Zed check. The Zed unit-test pin itself and live editor quit were not separately executed.
 
 **Acceptance:** on quit, every managed server process is gone (no `hkask` processes survive the editor); a mid-retry server's spec/token is torn down too (no resurrection post-quit); the runtime's stop path is exercised by the quit hook, not only by settings changes.
 **Refused shortcut:** relying on pipe-EOF graceful exits (a blocked server ignores EOF); PDEATHSIG (needs `unsafe`, forbidden by crate policy); only killing live connections (a mid-retry server would resurrect).

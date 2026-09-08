@@ -154,6 +154,54 @@ for the decision record and full operational contract.
 | `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. Accepts an optional `config_path` to load a cognition config YAML (mashup or style synthesizer) with a Jinja2 system prompt template. |
 | `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Accepts an optional `config_path` for a cognition config YAML. |
 
+#### Method-aware composition (T18)
+
+Tagging writes deterministic stylometric measurements to
+`TaggedChunk.ontology.method_signals` and includes the `how` dimension, even
+when LLM tagging falls back. The numeric signals do not enter the concept
+centrality graph. Consolidation recomputes them from synthesized text rather
+than inheriting stale source measurements.
+
+Durable embed/consolidate publication also upserts `text` and `method_signals`
+h_mems under the passage entity, attributed to the server's writer WebID.
+Replacement refreshes both without accumulating old rows. These records make
+composition's metadata lookup reachable from the actual corpus pipeline;
+no embedding-budget gate is introduced. Publication retains its existing
+partial-failure contract: storage errors propagate, but the vector and h_mem
+writes are not advertised as one transaction.
+
+The existing cognition YAML, supplied through `config_path`, accepts this
+fragment alongside the other required embedding/validation configuration:
+
+```yaml
+embedding:
+  retrieval:
+    declared_method:
+      name: concise-parataxis
+      signal:
+        parataxis_ratio_min: 0.8
+        adjective_density_max: 10.0
+        avg_sentence_length_max: 20.0
+```
+
+All supplied per-signal thresholds must match. Omitting `declared_method`
+preserves selection behavior. Missing stored signals exclude the passage and
+increment `method_signals_missing` in compose/rewrite output; malformed
+signals or a failed metadata read are errors, not assumed matches. The legacy
+single `declared_method.threshold` shorthand is not implemented and is
+explicitly rejected; use `signal` fields.
+
+**Existing corpora:** legacy JSONL without method metadata still deserializes.
+To enable method filtering in an existing database, re-run `corpus_embed`
+with the original passage JSONL and the same DB/entity references. It computes
+and persists current measurements without an extra LLM generation call;
+normal embedding calls/costs still apply. No backfill has been run against
+operator data by this change.
+
+Offline regressions cover tagging (including malformed/spoofed model output),
+durable replacement, consolidation recomputation, matching and unconstrained
+composition, missing/corrupt metrics, and unsupported shorthand.
+
 ### Manage (4)
 
 | Tool | Description |

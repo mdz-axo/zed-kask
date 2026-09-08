@@ -483,7 +483,11 @@ status: VERIFIED
 2. **Keyword (prefix + word overlap):** Load `curator:thread:*` chunk
    h_mems in a single perspective-free prefix query (capped at
    `limit × 10`, minimum 50) → filter by query-word substring overlap
-   (words > 3 chars, first 5 words) → relevance = `0.5` constant.
+   (words > 3 chars, first 5 words) → relevance =
+   `0.5 × matched query entries / query entries` via
+   `hkask_memory::salience::keyword_overlap_score` (T18, 2026-09-08).
+   This replaces the constant score while preserving the keyword leg's
+   0.5 ceiling, confidence/connectedness weighting, and semantic dedup precedence.
 
 ### Merge, rank, inject
 
@@ -521,7 +525,7 @@ flowchart TD
 
     SemanticCandidates --> LoadPrefix["Load curator:thread:* chunk h_mems<br/>by prefix, perspective-free<br/>(recall_budget = limit × 10, min 50)"]
     LoadPrefix --> Keyword["Filter by query-word<br/>substring overlap (words > 3 chars, first 5)"]
-    Keyword --> KeywordCandidates["Keyword candidates<br/>relevance = 0.5<br/>(skip texts already present)"]
+    Keyword --> KeywordCandidates["Keyword relevance = 0.5 × matched/query; skip duplicate texts"]
 
     KeywordCandidates --> Sort["Sort by<br/>relevance × confidence ×<br/>(1 + min(connectedness × 0.1, 0.5))"]
     Sort --> Truncate["Truncate to recall_limit"]
@@ -1111,8 +1115,8 @@ self-healing reopen; `memory/curator_stores.rs::open_curator_store` applies
 validates it, and applies it on both store-construction paths. Historical
 bridge RED observed 180 instead of configured 30 without this application;
 the restored bridge suite passes. Curator parser/store and decay-formula
-tests passed in the prior handoff. Full application/lint close-out remains
-pending; see `tasks/plan.md` for exact evidence. The Memory settings UI
+tests passed in the prior handoff. Full application check and scoped lint subsequently passed;
+see `tasks/plan.md` for exact evidence. The Memory settings UI
 already exposes this field; no UI omission is intended.
 
 `HKASK_MEMORY_STORAGE_BUDGET` remains unwired: the curator store uses the

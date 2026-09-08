@@ -204,7 +204,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 **T16 settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
 
-Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:73–94` and writes `settings.kask.memory.memory_life_days`. The incoming handoff's claim that no memory knobs had a UI was incorrect. No new UI was added. Bridge store/emission/allowlist tests pass; the full Zed check and scoped lint close-out remain incomplete (see `tasks/plan.md`).
+Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:73–94` and writes `settings.kask.memory.memory_life_days`. The incoming handoff's claim that no memory knobs had a UI was incorrect. No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (see `tasks/plan.md`).
 
 ## Condenser (`KaskCondenserSettings`)
 

@@ -166,7 +166,7 @@ pub struct MethodSignals {
 /// Dublin Core + PKO provenance and computed method metadata for a chunk.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ChunkOntology {
-    /// Dublin Core type (always "bibo:Document" for consolidated chunks).
+    /// Dublin Core type from tagging, or "bibo:Document" for consolidated chunks.
     pub dc_type: String,
     /// Dublin Core subject — the concepts as ontology terms.
     pub dc_subject: Vec<String>,
