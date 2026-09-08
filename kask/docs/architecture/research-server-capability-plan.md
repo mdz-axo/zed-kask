@@ -226,11 +226,15 @@ corroboration analog is citation-based, same blind spot). The
   and the signal basis SAYS so ("no content — duplication not checkable").
 - **Tier 2 (embedding-assisted, optional, Commit 6):** cosine ≥ 0.85
   (`corpus_deduplicate`'s threshold) via the existing `InferencePort::embed`
-  (`inference_port.rs:296`) — the same port already wired for rerank, model
-  resolved through `hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`
-  + `HKASK_EMBEDDING_MODEL` (wiring mirrors the rerank model chain
-  end-to-end: model_constants → settings → `emit_research_env` →
-  config_env allowlist → `research_allowlist_matches_actual_reads` pin).
+  (`inference_port.rs:296`) — the same port already wired for rerank. Model
+  resolution: `hkask_inference::model_constants::embedding_model()` (reads
+  `HKASK_EMBEDDING_MODEL`, returns `Option<String>` — unset is a legitimate
+  DEGRADED mode, not a hard failure, because the deterministic floor
+  exists). Wiring follows the corpus emission precedent
+  (`emit_corpus_embedding_env` emits unconditionally — consuming servers
+  have no fallback for unset env, `mcp_env.rs:183-194`): extend the
+  emission to the research server's env, add the `config_env` allowlist
+  entry, extend `research_allowlist_matches_actual_reads`.
   Degradation follows the rerank decision record verbatim: embed
   unavailable → shingles-only, surfaced as `duplication_mode: "shingles"`
   with the reason, never a silent fallback.
@@ -470,9 +474,10 @@ landed (or the operator explicitly re-sequences).**
    pool registration → `resolve_paper` records via `run_id`.
 6. **Commit 6 (C1 embedding tier):** failing degradation tests (embed
    unavailable → `duplication_mode: "shingles"` surfaced with reason) →
-   `InferencePort::embed` path + `HKASK_EMBEDDING_MODEL` wiring
-   (model_constants → settings → `emit_research_env` → config_env
-   allowlist → `research_allowlist_matches_actual_reads` pin) →
+   `InferencePort::embed` path + `HKASK_EMBEDDING_MODEL` wiring for the
+   research server (`model_constants::embedding_model()` resolution;
+   unconditional emission per the `emit_corpus_embedding_env` precedent →
+   config_env allowlist + `research_allowlist_matches_actual_reads` pin) →
    cosine-tier clustering behind the same signal.
 7. **Docs commit:** update `docs/reference/mcp-servers/research.md`
    (tool count, new env/passphrase notes, DDL name) per doc-update

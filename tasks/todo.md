@@ -1,5 +1,7 @@
 # Kask reliability checklist
 
+Current handoff: [Final verification and remaining program](kask-reliability-final-verification-continuation.md), with build status superseded by [plan.md](plan.md)'s release/runtime evidence. Both release-build commands passed using current artifacts; live editor-quit confirmation and operator reviews remain pending. The whole reliability program is not complete.
+
 Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
 **Implementation authorized 2026-09-07.** T01 and D01 are now verified (2026-09-07): RED observed pre-fix, GREEN post-fix, crate suites, companies compatibility, check and clippy all run — exact evidence in [plan.md](plan.md). T02/T02b/T03 are also verified; T04–T15 remain untouched. Technical closure owner: receiving coding agent. Policy owner: operator. Checked items below certify only the named activity, not the whole repair.
@@ -55,7 +57,10 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 - [x] **D50 — external release dependency codegen override.** Applied with DIVERGENCE entry and TOML-parsed pin; RED without override, GREEN with it. Thin LTO unchanged; wildcard covers non-workspace dependencies only. No measured build-speed claim.
 - [x] **D52 — development-profile Clippy default** (operator-ratified 2026-09-08). Stub-Cargo RED/GREEN verifies default dev, explicit profiles, retained lint flags/jobs/scope, and failure propagation. Shell syntax/diff checks passed; no compiler launched by the pin.
 - [x] **Automated validation close-out:** after the recorded timeout/interruption, operator-approved incremental resumes passed lint (447s wrapper) and full Zed check (43m06s) before T18. Final post-T18 six-crate lint passed (73s), Zed check passed (31.53s), all affected tests above passed. Build-profile pins, MCP test-presence ratchet, formatting and diff checks pass. Exact commands/results in plan.md.
-- [ ] **Checkpoint D — operator review and live editor-quit smoke test.** Confirm no managed MCP child survives closing the rebuilt editor. Review the corrected consolidation retraction, constructor-time memory setting semantics, and optional corpus method-metadata backfill. T04–T15 remain queued; no implicit acceptance of those risks.
+- [x] **Build-only release verification — 2026-09-08.** Verified pushed `2aef59d09b`, no competing compiler before either command, sccache enabled, eight jobs, offline/locked: editor `release` exit 0 (1.01s wall / 0.87s Cargo), 11 canonical servers `release-mcp` exit 0 (0.71s wall / 0.60s Cargo). Cargo reused existing current artifacts; no fresh relink claimed. Editor linker warnings retained. Exact commands/metadata/logs: `target/kask-reliability-rebuild-20260908T222941Z/`, summarized in plan.md.
+- [x] **Identify the actual running build.** `/proc/<pid>/exe` ELF build IDs for editor PID 90198 and its 11 managed children match the corresponding release artifacts. Installed paths are under `.local/bin`; whole-file SHA-256 values differ, so this is build-ID evidence, not byte equality. No installation/restart performed by this continuation agent.
+- [ ] **Live normal-quit observation.** Coordinate with the operator, arm an independent bounded watcher, refresh parent/child PID + start-time identities, and observe termination/reaping after operator-initiated normal quit. No watcher armed or quit observed yet. Existing connected/pending-child fixture evidence is not a live app pass.
+- [ ] **Checkpoint D — operator review and live editor-quit smoke test.** Confirm no managed MCP child survives closing the build-ID-matched editor. Review the corrected consolidation retraction, constructor-time memory setting semantics, and optional corpus method-metadata backfill (not authorized or performed). T04–T15 remain queued; no implicit acceptance of those risks.
 
 ## Phase B — Make completion and retry states reliable
 

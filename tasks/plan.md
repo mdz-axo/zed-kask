@@ -3,7 +3,7 @@ title: "Kask regression-first reliability plan"
 creator: "Zed coding agent"
 date: "2026-09-07"
 type: "bibo:Document"
-status: "Phase D implemented; tests, lint and app check green; operator checkpoint pending"
+status: "Phase D automated checks and release builds verified; live quit and operator checkpoints pending"
 baseline: "2475305420ae065b5d1792c0f25cea471e558ae3"
 ---
 
@@ -18,6 +18,30 @@ The target is to prevent the identified loss of recoverable data, private-networ
 Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01–T03 (including T02b) and D01 are verified; T04–T15 remain untouched. T16–T19 have passing automated tests/checks/lints; operator review and a live application-quit smoke test remain at Checkpoint D.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
 
 ## Current validation close-out — 2026-09-08
+
+**Current continuation:** [Final verification and remaining program continuation](kask-reliability-final-verification-continuation.md). Its unstarted-build statement is superseded by the release-build evidence below. Both build-only commands passed; normal editor quit and operator reviews at Checkpoints A/D remain unobserved. The reliability program is **not complete**.
+
+### Release build and runtime identity — 2026-09-08
+
+**Scope:** execute the operator-authorized build-only commands, verify artifact/runtime identity, and update this plan/checklist. Magna Carta P1/P4 prohibit expanding that authorization into installation, restart, data backfill, or policy decisions. IS/OUGHT prohibits treating a successful build or matching binary identity as observed shutdown. No production source/configuration was edited and no installation, launch, quit, backfill, commit, staging, reset, or push was performed by this continuation agent.
+
+**Revision/preflight:** local `main`, `origin/main`, and `git ls-remote --exit-code origin refs/heads/main` matched `2aef59d09b715633d1bf80756f7cefda6eab38c9`. HEAD remained unchanged across both builds. Compiler-process checks were empty before each Cargo invocation and after completion. Existing task handoff changes and unrelated research documentation changes were preserved; the index was untouched. The current `kask/scripts/build/mcp-servers.txt` contains the 11 packages listed below.
+
+Both commands used `RUSTC_WRAPPER=/home/mdz-axolotl/.local/lib/kask-sccache/sccache`, eight jobs, offline/locked resolution, and independent 3600-second limits. The inspected cache reported 9 GiB used / 10 GiB maximum, 4 Rust hits / 578 Rust misses before these builds; no cache/configuration/statistics reset was performed.
+
+| Command / observation | Observed result |
+|---|---|
+| `cargo build --offline --locked --release --package zed --jobs 8` | **Exit 0**, wrapper elapsed **1.01s**, Cargo **0.87s**; started `2026-09-08T22:29:42Z`. Output is `target/release/zed-kask` (package `zed`, binary `zed-kask`). Cached linker output reports 62 WebRTC/OpenSSL symbol-type mismatches; retained in the log, not claimed fixed. |
+| `cargo build --offline --locked --profile release-mcp --jobs 8 --package hkask-mcp-research --package hkask-mcp-companies --package hkask-mcp-corpus --package hkask-mcp-training --package hkask-mcp-kata-kanban --package hkask-mcp-curator --package hkask-mcp-portfolio --package hkask-mcp-scenarios --package hkask-mcp-prediction-markets --package hkask-mcp-swarm --package hkask-mcp-media` | **Exit 0**, wrapper elapsed **0.71s**, Cargo **0.60s**; started `2026-09-08T22:30:20Z`. All 11 executable artifacts present under `target/release-mcp/`. |
+| Artifact freshness | Cargo reused already-current artifacts, not a fresh compile/relink. Observed artifact mtimes precede these commands: editor `22:17:29Z`, servers `22:18:59Z`–`22:20:04Z`. Build completion is supported by actual Cargo exits, not existence alone; this continuation does not claim to have produced those earlier artifacts. |
+| Live executable identity via `/proc/<pid>/exe` | Editor PID **90198**, path `/home/mdz-axolotl/.local/bin/zed-kask`; 11 directly parented managed children, also under `.local/bin`. All 12 ELF build IDs match the corresponding verified release artifacts. Editor build ID: `5274b415107243332ebf12a1f3068694d0928f49`. Whole-file SHA-256 differs for all 12; identity evidence is explicitly ELF build-ID matching, not byte equality. |
+| Live shutdown | **Not observed.** No watcher has been armed and no process was stopped. Refresh PID/start-time identity immediately before the operator-controlled test. |
+
+**Durable logs:** `target/kask-reliability-rebuild-20260908T222941Z/{editor,servers}.log`; companion `{editor,servers}.json` record exact commands, revision, timestamps, wrapper, exit status and elapsed time. `live-executable-identities.json` records the 12 PID/parent/start-time identities, executable paths, SHA-256 values and ELF build IDs. Existing earlier test evidence below was not indiscriminately rerun; no new behavioral RED/GREEN is claimed for this evidence-only slice.
+
+**Next operator-controlled steps:** confirm Checkpoint A review; arrange an independent bounded read-only watcher, refresh owned child identities, then let the operator normally quit the build-ID-matched editor. Record child termination/reaping and any survivors without blanket-killing services. Confirm normal quit with the operator (process disappearance alone does not establish how it exited). The isolated pending-start/nonresponsive fixture evidence remains in the T19 table; it does not replace a live application result. Source inspection confirms `--user-data-dir` exists, but no isolated app was launched or complete Kask-data/keychain isolation claimed.
+
+**Closure ledger:** release-build verification — fixed/verified, coding agent; executable identity — verified by ELF build IDs, coding agent; Checkpoint D live quit/review — awaiting operator coordination, coding agent observes and operator confirms; Checkpoint A review — operator decision, blocks Phase B; T04–T08 — coding agent queue after review and task-specific policy gates; T09–T15 — coding agent elaboration plus operator scheduling, not execution-authorized. Deferral risks remain in the risk register; no acceptance of those risks is inferred.
 
 The operator authorized continuation, then D52's development-profile Clippy default. The original uncompiled tail and T18 are now compiled and tested; **the full Zed check and scoped lint passed** in the operator-approved incremental window. T18 began only after that gate closed. Live editor-quit confirmation remains an operator checkpoint, not a claimed automated result. No commits, branches, staging, unstaging, or resets were performed by this agent. An external process advanced HEAD through `e102d515e8`, `eadb5b9521`, and `5fd4bac424`; the latest observed tree was clean before this documentation update. Do not use current HEAD as the pre-fix behavioral baseline: use the original `2475305420ae065b5d1792c0f25cea471e558ae3`.
 
@@ -264,7 +288,7 @@ Acceptance:
 
 ## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
 
-**Continuation:** the phase is mid-flight — read [kask-phase-d-continuation-prompt.md](kask-phase-d-continuation-prompt.md) FIRST for the exact unvalidated-changes inventory, build discipline (one build at a time on this box — the 12-hour swap-thrash lesson), and the resume order (validate-or-revert before anything new). Editor sessions degrade with transcript size; keep tool outputs trimmed.
+**Continuation:** Phase D implementation, automated checks, and release-build commands are complete; the commands reused current artifacts. Read the release/runtime evidence above and [the continuation](kask-reliability-final-verification-continuation.md) for the still-pending live functionality checks and remaining T04–T15 work. The continuation's unstarted-build statement is superseded by this evidence. The older [Phase D prompt](kask-phase-d-continuation-prompt.md) is historical and includes claims corrected by this phase's evidence. Keep one build at a time and outputs trimmed.
 
 **Operator ruling (recorded verbatim intent):** the three items surfaced by the 2026-09-07 dead-code sweep are **not open questions**. They are requirements the code pretends to meet: "memory life should map to the days in the setting — the code that fails to do this is a lie and deception"; "memory consolidation is required"; the salience failure is "another deception". "The problem is not the requirements and specifications — the problem is the shit code, and that is what we are trying to fix." These tasks build the code to meet the specifications. No item in this phase is a policy gate.
 
