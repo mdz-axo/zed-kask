@@ -46,6 +46,7 @@ pub(crate) struct ChunkConsolidationRequest {
 pub struct ConsolidationService {
     inference_router: Arc<dyn InferencePort>,
     index: Arc<crate::index::PassageIndex>,
+    writer: hkask_types::WebID,
     #[cfg(test)]
     pub(crate) after_snapshot: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
 }
@@ -54,10 +55,12 @@ impl ConsolidationService {
     pub(crate) fn new(
         inference_router: Arc<dyn InferencePort>,
         index: Arc<crate::index::PassageIndex>,
+        writer: hkask_types::WebID,
     ) -> Self {
         Self {
             inference_router,
             index,
+            writer,
             #[cfg(test)]
             after_snapshot: None,
         }
@@ -96,6 +99,7 @@ impl ConsolidationService {
                 prefix.clone(),
                 CONSOLIDATED_PREFIX.to_string(),
             ]),
+            self.writer,
         )?;
         let input =
             crate::services::cluster::load_clusters(&tagged_jsonl, &db_path, &passphrase, &prefix)?;
@@ -270,11 +274,12 @@ impl ConsolidationService {
                     .collect();
 
                 // Dublin Core + PKO metadata for the consolidated chunk
-                let ontology = ChunkOntology {
+                let mut ontology = ChunkOntology {
                     dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
                     dc_subject: concepts.clone(),
                     dc_source: source.clone(),
                     pko_extracted_from: consolidated_from.clone(),
+                    method_signals: None,
                 };
 
                 // Merge ontology tags from all cluster members
@@ -368,6 +373,9 @@ impl ConsolidationService {
                 ));
 
                 let word_count = text.split_whitespace().count();
+                // Synthesis changes the text; source-passage metrics are stale.
+                ontology.method_signals =
+                    Some(hkask_memory::salience::compute_method_signals(&text));
                 consolidated.push(TaggedChunk {
                     entity_ref,
                     source: source.clone(),

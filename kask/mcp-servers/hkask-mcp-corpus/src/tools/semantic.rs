@@ -302,6 +302,7 @@ impl CorpusServer {
             crate::index::PublicationScope::Entities(
                 chunks.iter().map(|chunk| chunk.0.clone()).collect(),
             ),
+            self.webid,
         )?;
 
         let batch = batch_size.max(1);

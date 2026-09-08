@@ -77,6 +77,10 @@ pub(crate) struct RetrievalSection {
     /// Top-K by salience: only consider the K most salient matching passages.
     #[serde(default)]
     pub salience_top_k: Option<usize>,
+    /// Require every configured per-signal threshold of this declared method.
+    /// Missing method metadata excludes a passage; omitted declaration preserves retrieval.
+    #[serde(default)]
+    pub declared_method: Option<hkask_memory::salience::DeclaredMethod>,
 }
 
 impl Default for RetrievalSection {
@@ -86,6 +90,7 @@ impl Default for RetrievalSection {
             distance_threshold: default_distance_threshold(),
             salience_min: 0.0,
             salience_top_k: None,
+            declared_method: None,
         }
     }
 }
@@ -160,6 +165,21 @@ impl ComposeService {
     /// # expect: "The service layer enables generative access to domain capabilities"
     #[must_use = "result must be used"]
     pub async fn compose(request: ComposeRequest) -> Result<ComposeResult, ServiceError> {
+        if request
+            .cognition
+            .embedding
+            .retrieval
+            .declared_method
+            .as_ref()
+            .is_some_and(|method| method.threshold.is_some())
+        {
+            return Err(ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::User,
+                source: None,
+                message: "declared_method.threshold is unsupported; configure per-signal thresholds in declared_method.signal".into(),
+            });
+        }
         // Input length validation
         if request.prompt.len() > 50_000 {
             return Err(ServiceError::Domain {
@@ -269,24 +289,55 @@ impl ComposeService {
                 continue;
             }
 
-            // Look up salience from h_mems
-            let salience = match store.query_deduped(&r.embedding.entity_ref) {
-                Ok(h_mems) => h_mems
-                    .iter()
-                    .find(|t| t.attribute == "salience")
-                    .and_then(|t| t.value.as_f64())
-                    .unwrap_or(0.0),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.corpus.compose",
-                        entity_ref = %r.embedding.entity_ref,
-                        error = %e,
-                        "Salience lookup failed — passage filtered by default \
-                         salience_min (treated as 0.0)"
-                    );
-                    0.0
+            let h_mems = match store.query_deduped(&r.embedding.entity_ref) {
+                Ok(h_mems) => h_mems,
+                Err(error) => {
+                    if retrieval.declared_method.is_some() {
+                        return Err(ServiceError::Domain {
+                            kind: ErrorKind::BadRequest,
+                            domain: DomainKind::Memory,
+                            source: None,
+                            message: format!(
+                                "Cannot check declared method for {}: {error}",
+                                r.embedding.entity_ref
+                            ),
+                        });
+                    }
+                    tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref, %error,
+                        "Salience lookup failed — treating salience as 0.0");
+                    Vec::new()
                 }
             };
+            let salience = h_mems
+                .iter()
+                .find(|record| record.attribute == "salience")
+                .and_then(|record| record.value.as_f64())
+                .unwrap_or(0.0);
+            if let Some(method) = &retrieval.declared_method {
+                let Some(record) = h_mems
+                    .iter()
+                    .find(|record| record.attribute == "method_signals")
+                else {
+                    tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref,
+                        "Method signals missing — excluding passage; re-embed to enable method-aware retrieval");
+                    continue;
+                };
+                let signals = serde_json::from_value::<hkask_memory::salience::MethodSignals>(
+                    record.value.clone(),
+                )
+                .map_err(|error| ServiceError::Domain {
+                    kind: ErrorKind::BadRequest,
+                    domain: DomainKind::Memory,
+                    source: None,
+                    message: format!(
+                        "Invalid method signals for {}: {error}",
+                        r.embedding.entity_ref
+                    ),
+                })?;
+                if !method.matches(&signals) {
+                    continue;
+                }
+            }
 
             if salience < retrieval.salience_min {
                 continue;
@@ -296,7 +347,7 @@ impl ComposeService {
         }
 
         debug!(
-            "Filtered: {} of {} results passed prefix/distance/salience gates (threshold={})",
+            "Filtered: {} of {} results passed prefix/distance/salience/method gates (threshold={})",
             matched.len(),
             results.len(),
             retrieval.distance_threshold

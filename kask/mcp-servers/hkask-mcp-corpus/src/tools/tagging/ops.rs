@@ -118,10 +118,8 @@ fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
 // penalty suppresses, drowning the real shared-concept signal). Dimensions stay
 // on the TaggedChunk as metadata for downstream use.
 //
-// NOTE: this path exercises ONLY the graph-centrality core. The richer parts of
-// hkask_memory::salience (MethodSignals stylistic analysis, BudgetConfig h_mem
-// budget gating, declared-entity tag_entities) are NOT used here — docproc
-// tags are LLM-extracted ontology concepts, not declared named entities.
+// Method signals are stored separately as numeric ontology metadata, not
+// mixed into this concept graph as if measurements were shared concepts.
 fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
     let all_tags: Vec<hkask_memory::salience::EntityTags> = tagged
         .iter()
@@ -501,12 +499,23 @@ impl CorpusServer {
                         }
                     }
 
+                    let ontology = hkask_types::corpus::ChunkOntology {
+                        dc_type: tags.dc_type.clone(),
+                        dc_subject: tags.dc_subject.clone(),
+                        dc_source: chunk.source.clone(),
+                        pko_extracted_from: vec![chunk.entity_ref.clone()],
+                        method_signals: Some(hkask_memory::salience::compute_method_signals(&chunk.text)),
+                    };
+                    let mut dimensions = tags.dimensions;
+                    if !dimensions.iter().any(|dimension| dimension == "how") {
+                        dimensions.push("how".to_string());
+                    }
                     TaggedChunk {
                         entity_ref: chunk.entity_ref.clone(),
                         source: chunk.source.clone(),
                         text: chunk.text.clone(),
                         word_count: chunk.word_count,
-                        dimensions: tags.dimensions,
+                        dimensions,
                         dc_type: tags.dc_type,
                         dc_subject: tags.dc_subject,
                         ontology_tags: tags.ontology_tags,
@@ -514,7 +523,7 @@ impl CorpusServer {
                         expertise_level: tags.expertise_level,
                         salience: 0.0,
                         consolidated_from: Vec::new(),
-                        ontology: None,
+                        ontology: Some(ontology),
                     }
                 })
                 .collect();

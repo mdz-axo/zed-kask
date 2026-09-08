@@ -123,6 +123,27 @@ fn content(result: Result<String, hkask_mcp_server::server::McpToolError>) -> Va
 /// expect: "Every tagged passage carries measured how-signals, even if LLM tagging degrades." [P3]
 #[tokio::test]
 async fn tagging_persists_method_signals_without_trusting_the_model() {
+    // Isolate the model setting from parallel tests; inference remains offline.
+    if std::env::var_os("KASK_T18_TAG_FIXTURE").is_none() {
+        let output = tokio::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "retrieval_tests::tagging_persists_method_signals_without_trusting_the_model",
+                "--nocapture",
+            ])
+            .env("KASK_T18_TAG_FIXTURE", "1")
+            .env("HKASK_CLASSIFIER_MODEL", "offline")
+            .output()
+            .await
+            .expect("run isolated tagging test");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     for response in [
         json!([{"dimensions":["what"], "ontology_tags":{}, "method_signals":{"word_count":999}}])
             .to_string(),
@@ -173,6 +194,124 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
             1,
             "method extraction needs no extra LLM call"
         );
+    }
+}
+
+/// expect: "Composition can read current passage text and method signals after embedding or replacement." [P3]
+#[tokio::test]
+async fn durable_embeddings_keep_current_method_signals() {
+    let directory = fixture();
+    let server = server(Arc::new(RecordingPort::default()));
+    for text in [
+        "He ran and she walked.",
+        "Although it rained, the beautiful river glittered.",
+    ] {
+        content(
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "methods.db",
+                    text,
+                )))
+                .await,
+        );
+        let store = crate::helpers::open_memory_store(
+            &directory.path().join("methods.db").to_string_lossy(),
+            PASSPHRASE,
+        )
+        .expect("reopen store");
+        let records = store
+            .query_deduped_untouched("corpus:test:1")
+            .expect("metadata");
+        let signals = records
+            .iter()
+            .find(|record| record.attribute == "method_signals")
+            .expect("persisted method signals");
+        assert_eq!(
+            signals.value,
+            serde_json::to_value(hkask_memory::salience::compute_method_signals(text))
+                .expect("signals")
+        );
+        assert_eq!(signals.access.owner_webid, server.webid);
+        assert_eq!(
+            records
+                .iter()
+                .find(|record| record.attribute == "text")
+                .expect("text")
+                .value,
+            json!(text)
+        );
+        assert_eq!(
+            store.h_mem_count().expect("count"),
+            2,
+            "replacement must not accumulate stale metrics/text"
+        );
+    }
+}
+
+/// expect: "Declared style methods select only matching stored passages; no declaration preserves retrieval." [P3]
+#[tokio::test]
+async fn composition_filters_durable_passages_by_declared_method() {
+    let directory = fixture();
+    let port = Arc::new(RecordingPort::default());
+    let server = server(Arc::clone(&port));
+    let paratactic = "The water glittered and the boat drifted.";
+    let hypotactic = "Because the water glittered, the boat drifted.";
+    let input = directory.path().join("style.jsonl");
+    std::fs::write(
+        &input,
+        [("style:test:1", paratactic), ("style:test:2", hypotactic)]
+            .into_iter()
+            .map(|(entity_ref, text)| {
+                json!({"entity_ref":entity_ref,"source":"style.txt","text":text}).to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("style input");
+    let database = directory.path().join("style.db");
+    content(
+        server
+            .corpus_embed(Parameters(EmbedRequest {
+                chunks_jsonl: input.to_string_lossy().into(),
+                tagged_jsonl: None,
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                model: Some("offline".into()),
+                batch_size: 10,
+            }))
+            .await,
+    );
+    for (method, expected_count) in [
+        (Value::Null, 2),
+        (
+            json!({"name":"parataxis","signal":{"parataxis_ratio_min":0.9}}),
+            1,
+        ),
+    ] {
+        let config = serde_json::from_value(json!({
+            "author":"test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+            "centroid_entity_ref":"style:test:centroid", "retrieval":{"k_max":10,"declared_method":method}},
+            "validation":{"centroid_distance_max":1.0}
+        })).expect("cognition config");
+        let result = crate::compose::ComposeService::compose(crate::compose::ComposeRequest {
+            prompt: "Write about a river.".into(),
+            db_path: database.clone(),
+            db_passphrase: PASSPHRASE.into(),
+            cognition: config,
+            inference_ctx: crate::inference_svc::InferenceContext::from_parts(
+                Some(port.clone()),
+                "offline",
+            ),
+            no_validate: true,
+        })
+        .await
+        .expect("compose");
+        assert_eq!(result.exemplar_count, expected_count);
+        let prompts = port.prompts.lock().expect("prompts");
+        let prompt = prompts.last().expect("generation prompt");
+        assert!(prompt.contains(paratactic));
+        assert_eq!(prompt.contains(hypotactic), expected_count == 2);
     }
 }
 
@@ -735,6 +874,7 @@ async fn retrieval_consolidation_snapshot_is_protected() {
         let mut service = crate::services::consolidation::ConsolidationService::new(
             Arc::clone(&server.inference_router),
             Arc::clone(&server.index),
+            server.webid,
         );
         service.after_snapshot = Some(Arc::clone(&pause));
         let (result, ()) = tokio::join!(

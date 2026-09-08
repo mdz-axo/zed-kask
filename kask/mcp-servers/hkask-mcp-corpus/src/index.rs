@@ -57,6 +57,7 @@ impl Publication {
 
 pub(crate) struct DurableWrite {
     store: MemoryStore,
+    writer: hkask_types::WebID,
     publication: Arc<Publication>,
 }
 
@@ -110,11 +111,16 @@ impl PassageIndex {
         path: &str,
         passphrase: &str,
         scope: PublicationScope,
+        writer: hkask_types::WebID,
     ) -> Result<DurableWrite, McpToolError> {
         let mut state = self.lock()?;
         let store = open_memory_store(path, passphrase)?;
         let publication = Self::begin(&mut state, database_origin(path)?, scope);
-        Ok(DurableWrite { store, publication })
+        Ok(DurableWrite {
+            store,
+            writer,
+            publication,
+        })
     }
 
     pub fn begin_ephemeral(
@@ -148,6 +154,43 @@ impl PassageIndex {
         // MemoryStore inserts, rather than upserts. Evict before replacement so a
         // partial DB failure cannot leave a known-stale cache entry serving answers.
         state.passages.remove(&key);
+        let existing = write
+            .store
+            .query_deduped_untouched(entity_ref)
+            .map_err(|error| {
+                map_memory_store_error(error, "Cannot read passage metadata for replacement")
+            })?;
+        let signals = serde_json::to_value(hkask_memory::salience::compute_method_signals(text))
+            .map_err(|error| {
+                McpToolError::internal(format!("Cannot serialize method signals: {error}"))
+            })?; // rr0044-ok: own deterministic struct
+        for (attribute, value) in [("text", json!(text)), ("method_signals", signals)] {
+            if let Some(record) = existing.iter().find(|record| record.attribute == attribute) {
+                write
+                    .store
+                    .update_confidence(&record.id, value, hkask_types::Confidence::new(1.0))
+                    .map_err(|error| {
+                        map_memory_store_error(error, "Cannot replace passage metadata")
+                    })?;
+            } else {
+                let mut ontology = hkask_types::HMemOntology::state(
+                    hkask_bridge_ontology::dc_bibo::DOCUMENT,
+                    Vec::new(),
+                    entity_ref,
+                );
+                ontology.pko_procedure = Some("PassageIndex::publish_durable".to_string());
+                ontology.pko_step = Some(entity_ref.to_string());
+                write
+                    .store
+                    .store(
+                        hkask_storage::HMem::new(entity_ref, attribute, value, write.writer)
+                            .with_ontology(ontology),
+                    )
+                    .map_err(|error| {
+                        map_memory_store_error(error, "Cannot store passage metadata")
+                    })?;
+            }
+        }
         write
             .store
             .delete_embeddings_by_entity(entity_ref)

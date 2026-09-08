@@ -1979,6 +1979,44 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "Keyword recall prefers an episode matching more of my query, not a fixed relevance score." [P1]
+    #[tokio::test]
+    async fn recall_ranks_keyword_episodes_by_overlap() {
+        let port = in_memory_port();
+        let store = port.curator_store.get().expect("store");
+        for (entity, text, confidence) in [
+            (
+                "curator:thread:strong",
+                "The orchard harvest was abundant.",
+                0.6,
+            ),
+            ("curator:thread:weak", "The orchard road was repaired.", 1.0),
+        ] {
+            store
+                .store(
+                    hkask_storage::HMem::new(
+                        entity,
+                        "chunk",
+                        serde_json::json!(text),
+                        port.curator_webid,
+                    )
+                    .with_confidence(hkask_types::Confidence::new(confidence)),
+                )
+                .expect("seed episode");
+        }
+        let snippets = port
+            .recall_context_curator("orchard harvest", 2)
+            .await
+            .expect("recall");
+        assert_eq!(snippets.len(), 2);
+        assert_eq!(
+            snippets.first().expect("best").entity,
+            "curator:thread:strong"
+        );
+        assert_eq!(snippets.first().expect("best").relevance_score, 0.5);
+        assert_eq!(snippets.last().expect("second").relevance_score, 0.25);
+    }
+
     /// A failed embedding call must degrade recall to the keyword leg —
     /// never error, never lose keyword-matched turns. This pins the
     /// behavioral contract of the embed-failure branch in `recall_from`:

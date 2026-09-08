@@ -104,19 +104,23 @@ impl CorpusServer {
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
-            ConsolidationService::new(Arc::clone(&self.inference_router), Arc::clone(&self.index))
-                .consolidate(ChunkConsolidationRequest {
-                    tagged_jsonl: req.tagged_jsonl,
-                    output: req.output,
-                    db_path: req.db_path,
-                    passphrase: req.passphrase,
-                    prefix: req.prefix,
-                    threshold: req.threshold,
-                    concurrency: req.concurrency,
-                    max_chunks_per_cluster: req.max_chunks_per_cluster,
-                    dry_run: req.dry_run,
-                })
-                .await
+            ConsolidationService::new(
+                Arc::clone(&self.inference_router),
+                Arc::clone(&self.index),
+                self.webid,
+            )
+            .consolidate(ChunkConsolidationRequest {
+                tagged_jsonl: req.tagged_jsonl,
+                output: req.output,
+                db_path: req.db_path,
+                passphrase: req.passphrase,
+                prefix: req.prefix,
+                threshold: req.threshold,
+                concurrency: req.concurrency,
+                max_chunks_per_cluster: req.max_chunks_per_cluster,
+                dry_run: req.dry_run,
+            })
+            .await
         })
         .await
     }

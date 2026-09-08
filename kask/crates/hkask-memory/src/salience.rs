@@ -16,70 +16,7 @@
 
 // ── Method Signals ────────────────────────────────────────────────────────
 
-/// Cheaply-computed stylometric signals for a passage.
-///
-/// All fields are derived from simple text analysis — no model inference.
-/// These constitute the "how" (methods/techniques) dimension of the 5W1H
-/// metadata layer.
-
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct MethodSignals {
-    /// Ratio of coordinating conjunctions (and, but, or) to total
-    /// conjunctions. High = paratactic (Hemingway). Low = hypotactic (Wilde).
-    pub parataxis_ratio: f32,
-
-    /// Approximate adjective count per 100 words. Uses suffix heuristics
-    /// (-y, -ous, -ful, -less, -ive, -able, -al, -ent, -ic, -ish).
-    pub adjective_density: f32,
-
-    /// Words ending in -ly per 100 words (filtered for common false
-    /// positives like "only", "early", "family").
-    pub adverb_density: f32,
-
-    /// Ratio of "was/were `<verb>ed`" patterns to total verbs.
-    pub passive_voice_ratio: f32,
-
-    /// Words inside double-quote characters divided by total words.
-    pub dialogue_ratio: f32,
-
-    /// Standard deviation of sentence lengths within the passage.
-    pub sentence_length_variance: f32,
-
-    /// Hedge words ("perhaps", "maybe", "seemed", "almost", "rather",
-    /// "quite") per 100 words. Indicates qualification/uncertainty.
-    pub hedge_density: f32,
-
-    /// Intensifiers ("very", "really", "absolutely", "extremely",
-    /// "utterly", "completely") per 100 words.
-    pub intensifier_density: f32,
-
-    /// Tangible/concrete nouns ÷ abstract nouns (rough suffix heuristic).
-    /// High = sensory, concrete. Low = abstract, conceptual.
-    pub concrete_noun_ratio: f32,
-
-    /// Sensory words (sight, sound, touch, taste, smell) per 100 words.
-    pub sensory_word_ratio: f32,
-
-    /// Total word count of the passage.
-    pub word_count: usize,
-
-    /// Number of sentences in the passage.
-    pub sentence_count: usize,
-
-    /// Average sentence length (words/sentences).
-    pub avg_sentence_length: f32,
-
-    // ── Academic-specific signals ───────────────────────────────────────
-    /// Citation count per 1000 words. Detects patterns like "(Author, Year)"
-    /// and ``[1]``, ``[2,3]`` reference markers.
-    pub citation_density: f32,
-    /// Ratio of formal notation (math, code, LaTeX) characters to total
-    /// characters. High in quantitative/CS papers, low in humanities.
-    pub formalism_ratio: f32,
-    /// Domain-specific terminology per 100 words. Detects multi-syllable
-    /// words with Greek/Latin roots, acronyms, and technical compounds.
-    pub technical_term_density: f32,
-}
+pub use hkask_types::corpus::MethodSignals;
 
 /// Compute method signals from raw passage text.
 ///
@@ -210,11 +147,9 @@ pub fn compute_method_signals(text: &str) -> MethodSignals {
             (first == "was" || first == "were") && (second.ends_with("ed") && second.len() > 4)
         })
         .count();
-    let passive_voice_ratio = if word_count > 0 {
-        passive_count as f32 / (word_count / 10) as f32
-    } else {
-        0.0
-    };
+    // The coarse verb estimate must stay nonzero for short passages; 0/0
+    // becomes NaN and serializes as null, making stored signals unreadable.
+    let passive_voice_ratio = passive_count as f32 / (word_count / 10).max(1) as f32;
 
     // Dialogue ratio: words inside double quotes
     let in_quotes = {
@@ -885,4 +820,19 @@ impl BudgetConfig {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: "Short passages have finite method measurements that survive storage." [P3]
+    #[test]
+    fn method_signals_round_trip_for_short_passages() {
+        for text in ["", "A river.", "It was polished.", "He ran and she walked."] {
+            let signals = compute_method_signals(text);
+            let encoded = serde_json::to_value(&signals).expect("serialize signals");
+            let decoded: MethodSignals =
+                serde_json::from_value(encoded).expect("deserialize finite signals");
+            assert_eq!(signals, decoded, "passage: {text}");
+        }
+    }
+}

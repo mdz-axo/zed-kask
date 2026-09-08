@@ -98,7 +98,72 @@ impl<'de> Deserialize<'de> for ExpertiseLevel {
     }
 }
 
-/// Dublin Core + PKO metadata attached to consolidated chunks.
+/// Cheaply-computed stylometric signals for a passage.
+///
+/// All fields are derived from simple text analysis — no model inference.
+/// These constitute the "how" (methods/techniques) dimension of the 5W1H
+/// metadata layer.
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MethodSignals {
+    /// Ratio of coordinating conjunctions (and, but, or) to total
+    /// conjunctions. High = paratactic (Hemingway). Low = hypotactic (Wilde).
+    pub parataxis_ratio: f32,
+
+    /// Approximate adjective count per 100 words. Uses suffix heuristics
+    /// (-y, -ous, -ful, -less, -ive, -able, -al, -ent, -ic, -ish).
+    pub adjective_density: f32,
+
+    /// Words ending in -ly per 100 words (filtered for common false
+    /// positives like "only", "early", "family").
+    pub adverb_density: f32,
+
+    /// Ratio of "was/were `<verb>ed`" patterns to total verbs.
+    pub passive_voice_ratio: f32,
+
+    /// Words inside double-quote characters divided by total words.
+    pub dialogue_ratio: f32,
+
+    /// Standard deviation of sentence lengths within the passage.
+    pub sentence_length_variance: f32,
+
+    /// Hedge words ("perhaps", "maybe", "seemed", "almost", "rather",
+    /// "quite") per 100 words. Indicates qualification/uncertainty.
+    pub hedge_density: f32,
+
+    /// Intensifiers ("very", "really", "absolutely", "extremely",
+    /// "utterly", "completely") per 100 words.
+    pub intensifier_density: f32,
+
+    /// Tangible/concrete nouns ÷ abstract nouns (rough suffix heuristic).
+    /// High = sensory, concrete. Low = abstract, conceptual.
+    pub concrete_noun_ratio: f32,
+
+    /// Sensory words (sight, sound, touch, taste, smell) per 100 words.
+    pub sensory_word_ratio: f32,
+
+    /// Total word count of the passage.
+    pub word_count: usize,
+
+    /// Number of sentences in the passage.
+    pub sentence_count: usize,
+
+    /// Average sentence length (words/sentences).
+    pub avg_sentence_length: f32,
+
+    // ── Academic-specific signals ───────────────────────────────────────
+    /// Citation count per 1000 words. Detects patterns like "(Author, Year)"
+    /// and ``[1]``, ``[2,3]`` reference markers.
+    pub citation_density: f32,
+    /// Ratio of formal notation (math, code, LaTeX) characters to total
+    /// characters. High in quantitative/CS papers, low in humanities.
+    pub formalism_ratio: f32,
+    /// Domain-specific terminology per 100 words. Detects multi-syllable
+    /// words with Greek/Latin roots, acronyms, and technical compounds.
+    pub technical_term_density: f32,
+}
+
+/// Dublin Core + PKO provenance and computed method metadata for a chunk.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ChunkOntology {
     /// Dublin Core type (always "bibo:Document" for consolidated chunks).
@@ -109,6 +174,9 @@ pub struct ChunkOntology {
     pub dc_source: String,
     /// PKO provenance — wasExtractedFrom the original chunk refs.
     pub pko_extracted_from: Vec<String>,
+    /// Deterministic 5W1H "how" metrics; absent on legacy, untagged records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method_signals: Option<MethodSignals>,
 }
 
 /// A chunk annotated with multi-dimensional ontology tags.
@@ -195,7 +263,7 @@ pub struct TaggedChunk {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consolidated_from: Vec<String>,
 
-    /// Dublin Core + PKO metadata for consolidated chunks.
+    /// Dublin Core + PKO metadata and method signals from tagging/consolidation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<ChunkOntology>,
 }
