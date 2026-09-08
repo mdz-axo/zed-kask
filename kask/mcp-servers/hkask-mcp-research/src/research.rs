@@ -25,7 +25,7 @@ use providers::{
 
 pub(crate) use cache::{ResponseCache, cache_key};
 pub(crate) use feed::{discover_feeds, fetch_feed};
-pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
+pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort, validated_fetch_client};
 pub(crate) use rss_types::{
     Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
     GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MarkReadRequest,

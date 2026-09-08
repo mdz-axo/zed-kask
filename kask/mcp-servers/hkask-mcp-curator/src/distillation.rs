@@ -369,7 +369,12 @@ pub(crate) async fn distill_store(
     outcome
 }
 
-fn parse_watermark_through(h_mem: &HMem) -> Option<chrono::DateTime<chrono::Utc>> {
+/// Parse a watermark's `through` position — the `observed_at` of the newest
+/// turn the pass distilled. Shared with the forgetting pass, which uses it
+/// as the coverage boundary: a turn is covered by the watermark (its lessons
+/// proven extracted) exactly when its `observed_at` ≤ `through` — the same
+/// predicate this pass uses to select pending turns (strictly newer).
+pub(crate) fn parse_watermark_through(h_mem: &HMem) -> Option<chrono::DateTime<chrono::Utc>> {
     h_mem
         .value
         .get("through")

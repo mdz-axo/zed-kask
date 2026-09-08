@@ -190,6 +190,39 @@ status: VERIFIED (v6 — 2026-09-03: tool count 19 after folding scenario_resear
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`
 - **Independent:** `scenario_triage`, `scenario_status` callable at any point
 
+## Forecast persistence
+
+`scenario_score` durably tracks every forecast and outcome in `ForecastStore`
+(`src/superforecast/store.rs`): an append-only JSON-line journal (one line per
+mutation, `fsync`ed before the record is admitted to memory) plus a full
+snapshot compacted from it. On load, the snapshot is applied first and the
+journal is replayed on top of it, last write wins.
+
+Durability ordering — verified by regression (`tests/tool_behavior.rs`):
+
+- A failed snapshot publication leaves the journal intact, so reopening
+  recovers every acknowledged record exactly once
+  (`snapshot_failure_preserves_journal_for_recovery`).
+- A journal write failure surfaces as a tool error before the record is
+  admitted to memory or published (`journal_failure_is_surfaced_before_memory_changes`).
+- A snapshot published with its journal not yet cleared — the crash window
+  between publication and truncation — recovers exactly once with the
+  journal's last write winning, never the stale snapshot or a duplicate
+  (`snapshot_with_uncleared_journal_recovers_exactly_once`).
+- Compaction writes a synced same-directory `tempfile` and publishes it by
+  atomic rename before the journal is truncated (and directory-synced on
+  Unix); `scenario_score` surfaces persistence errors and notes that earlier
+  records may already be journaled rather than claiming request rollback.
+
+Not claimed: the store assumes a single writing process (no multi-process
+locking), and only `fsync` ordering is verified — no power-loss/crash-consistency
+guarantee is tested. The property that a failed replacement leaves the previous
+snapshot readable is enforced by construction (temp file + atomic rename; a
+failed write cannot touch the published file), but it has no deterministic
+failure-injection fixture: the only publication failure that is
+privilege-independent — a directory at the destination — cannot coexist with
+a prior snapshot file at that path. It is design-reviewed, not test-pinned.
+
 ## Cross-links
 
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets_set`; CMP indices consumed by `scenario_from_cmp_indices`

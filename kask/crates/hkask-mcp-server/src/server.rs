@@ -29,7 +29,10 @@ mod validation;
 
 // ── Re-exports ─────────────────────────────────────────────────────────────
 
-pub use crate::security::{validate_tool_url_permissive, validate_tool_url_with_dns};
+pub use crate::security::{
+    validate_resolved_addresses, validate_tool_url_literal, validate_tool_url_permissive,
+    validate_tool_url_with_dns,
+};
 pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
 pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};

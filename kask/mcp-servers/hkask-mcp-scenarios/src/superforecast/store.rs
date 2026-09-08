@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 use crate::types::StoredForecastRecord;
 
@@ -81,63 +81,83 @@ impl ForecastStore {
 
     /// Append a single record entry to the journal (O(1) write per mutation).
     /// Only writes the changed record, not the full dataset.
-    fn save_entry(&self, key: &str, record: &StoredForecastRecord) {
-        if let (Some(jp), Some(dp)) = (&self.journal_path, &self.data_path) {
-            if let Some(parent) = dp.parent()
-                && let Err(e) = fs::create_dir_all(parent)
+    fn save_entry(&self, key: &str, record: &StoredForecastRecord) -> io::Result<()> {
+        if let Some(journal_path) = &self.journal_path {
+            if let Some(parent) = journal_path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
             {
-                tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to create parent dir for forecast journal");
+                fs::create_dir_all(parent)?;
             }
-            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(jp)
-                && let Ok(line) = serde_json::to_string(&serde_json::json!({
-                    "key": key,
-                    "record": record
-                }))
-                && let Err(e) = writeln!(file, "{}", line)
-            {
-                tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to append to forecast journal — in-memory state is ahead of disk");
-            }
+            let mut line = serde_json::to_vec(&serde_json::json!({
+                "key": key,
+                "record": record
+            }))?;
+            line.push(b'\n');
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(journal_path)?;
+            file.write_all(&line)?;
+            file.sync_all()?;
         }
+        Ok(())
     }
 
     /// Insert a record and persist via single-entry journal append.
-    pub(crate) fn insert(&mut self, key: String, record: StoredForecastRecord) {
-        self.save_entry(&key, &record);
+    pub(crate) fn insert(&mut self, key: String, record: StoredForecastRecord) -> io::Result<()> {
+        self.save_entry(&key, &record)?;
         self.records.insert(key, record);
         self.journal_count += 1;
         if self.journal_count >= JOURNAL_COMPACT_THRESHOLD {
-            self.compact();
+            self.compact()?;
         }
+        Ok(())
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<&StoredForecastRecord> {
         self.records.get(key)
     }
 
-    /// Persist all changes (writes full snapshot, truncates journal).
-    pub fn persist(&self) {
-        self.compact();
+    /// expect: "A snapshot failure must not destroy my recovery journal." [P1]
+    /// pre: this store exclusively owns writes to its snapshot and journal.
+    /// post: the journal is cleared only after a complete snapshot is published;
+    /// any persistence failure is returned to the caller.
+    pub fn persist(&mut self) -> io::Result<()> {
+        self.compact()
     }
 
-    /// Compact: write full snapshot, truncate journal.
-    fn compact(&self) {
-        if let Some(ref dp) = self.data_path {
-            if let Some(parent) = dp.parent()
-                && let Err(e) = fs::create_dir_all(parent)
-            {
-                tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to create parent dir for forecast snapshot");
-            }
-            if let Ok(data) = serde_json::to_string_pretty(&self.records) {
-                if let Err(e) = fs::write(dp, data) {
-                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to write forecast snapshot — in-memory state is ahead of disk");
-                }
-                if let Some(ref jp) = self.journal_path
-                    && let Err(e) = fs::write(jp, "")
-                {
-                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to truncate forecast journal after compaction");
-                }
+    fn compact(&mut self) -> io::Result<()> {
+        if let Some(snapshot_path) = &self.data_path {
+            let parent = snapshot_path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            fs::create_dir_all(parent)?;
+            // Same-directory replacement keeps the previous snapshot readable
+            // until the complete new snapshot is ready; failed writes clean up
+            // their temporary file without touching the recovery journal.
+            let data = serde_json::to_vec_pretty(&self.records)?;
+            let mut snapshot = tempfile::NamedTempFile::new_in(parent)?;
+            snapshot.write_all(&data)?;
+            snapshot.as_file().sync_all()?;
+            snapshot
+                .persist(snapshot_path)
+                .map_err(|error| error.error)?;
+            // On Unix, persist the rename before discarding its recovery input.
+            #[cfg(unix)]
+            fs::File::open(parent)?.sync_all()?;
+            if let Some(journal_path) = &self.journal_path {
+                let journal = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(journal_path)?;
+                journal.sync_all()?;
             }
         }
+        self.journal_count = 0;
+        Ok(())
     }
 
     pub fn len(&self) -> usize {

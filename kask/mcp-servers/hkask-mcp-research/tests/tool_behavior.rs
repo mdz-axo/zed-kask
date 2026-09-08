@@ -26,8 +26,8 @@ use hkask_mcp_research::research::cache::ResponseCache;
 use hkask_mcp_research::research::db::RSS_SCHEMA_DDL;
 use hkask_mcp_research::research::providers::{ProviderSearchOutput, WebSearchPort};
 use hkask_mcp_research::research::rss_types::{
-    GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest, UnreadCountRequest,
-    UnsubscribeRequest,
+    DiscoverRequest, GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest,
+    UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
@@ -219,6 +219,9 @@ fn make_server_without_db() -> ResearchServer {
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
         None,
     )
@@ -242,6 +245,9 @@ fn make_server_with_rss_db() -> ResearchServer {
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         Some(pool),
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
@@ -531,6 +537,118 @@ async fn web_browse_surfaces_missing_credentials_as_permission_denied() {
     assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
+// ── web_extract / web_browse SSRF destination gate ─────────────────────
+
+/// Control: the pre-existing strict gate refuses a loopback destination at
+/// the tool layer, before any provider is consulted.
+#[tokio::test]
+async fn web_extract_rejects_loopback_destination() {
+    let server = make_server_without_db();
+    let error = err(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "http://127.0.0.1:9/path".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Loopback"),
+        "error must name the loopback rejection: {}",
+        error.message
+    );
+}
+
+/// expect: "An URL that connects to loopback by spelling 'this network'
+/// must be rejected." [P4]
+/// On Linux, connecting to 0.0.0.0 routes to loopback, so it must not pass
+/// the destination gate (the pre-fix validator admitted it).
+#[tokio::test]
+async fn web_extract_rejects_unspecified_destination() {
+    let server = make_server_without_db();
+    let error = err(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "http://0.0.0.0:6379/".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Unspecified"),
+        "error must name the unspecified rejection: {}",
+        error.message
+    );
+}
+
+/// expect: "Neither address family can re-spell a forbidden IPv4
+/// destination." [P4]
+/// 64:ff9b::7f00:1 is 127.0.0.1 under the NAT64 well-known prefix.
+#[tokio::test]
+async fn web_extract_rejects_nat64_loopback_destination() {
+    let server = make_server_without_db();
+    let error = err(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "http://[64:ff9b::7f00:1]:9/".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Loopback"),
+        "error must name the loopback rejection: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn web_browse_rejects_unspecified_destination() {
+    let server = make_server_without_db();
+    let error = err(server
+        .web_browse(Parameters(BrowseRequest {
+            url: "http://0.0.0.0:6379/".to_string(),
+            instruction: None,
+            timeout_secs: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Unspecified"),
+        "error must name the unspecified rejection: {}",
+        error.message
+    );
+}
+
+/// Pins the strict destination gate for the discover tool: its initial URL is
+/// user-supplied (unlike user-curated RSS feeds), so it goes through the same
+/// strict validation as `web_extract` — including the unspecified-address
+/// class that connects to loopback on Linux.
+#[tokio::test]
+async fn rss_discover_feeds_rejects_unspecified_destination() {
+    let server = make_server_without_db();
+    let error = err(server
+        .rss_discover_feeds(Parameters(DiscoverRequest {
+            url: "http://0.0.0.0:6379/".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Unspecified"),
+        "error must name the unspecified rejection: {}",
+        error.message
+    );
+}
+
 // ── RSS tools without DB (permission_denied) ───────────────────────────────
 
 #[tokio::test]
@@ -736,6 +854,9 @@ fn make_server_with_pool_and_port(
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
@@ -1129,6 +1250,9 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
         Arc::new(ResponseCache::new(0, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),

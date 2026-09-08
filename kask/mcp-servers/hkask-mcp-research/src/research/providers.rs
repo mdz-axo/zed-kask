@@ -19,7 +19,7 @@ pub(crate) use arxiv::ArxivProvider;
 pub(crate) use brave::BraveProvider;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
-pub(crate) use raw_fetch::{RawFetchProvider, truncate_str};
+pub(crate) use raw_fetch::{RawFetchProvider, truncate_str, validated_fetch_client};
 pub(crate) use semantic_scholar::SemanticScholarProvider;
 pub(crate) use serapi::SerapiProvider;
 pub(crate) use tavily::TavilyProvider;

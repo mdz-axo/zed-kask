@@ -581,6 +581,22 @@ impl MemoryStore {
         Ok(self.embedding.delete_all_by_entity_ref(entity_ref)?)
     }
 
+    /// Delete the embedding rows of one entity whose passage text is in
+    /// `passages`. The coverage-scoped forgetting pass uses this to remove
+    /// only the embeddings of chunks a distillation watermark proves
+    /// distilled, keeping newer chunks' embeddings recallable. Rows whose
+    /// passage is not listed (including NULL-passage legacy rows) survive —
+    /// the caller decides what is covered.
+    pub fn delete_embeddings_by_entity_passages(
+        &self,
+        entity_ref: &str,
+        passages: &[String],
+    ) -> Result<usize, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .delete_by_entity_ref_and_passages(entity_ref, passages)?)
+    }
+
     /// Delete vector rows orphaned from their metadata rows. KNN's
     /// inner join already ignores orphans; this reclaims the space.
     pub fn delete_orphaned_embeddings(&self) -> Result<usize, MemoryStoreError> {

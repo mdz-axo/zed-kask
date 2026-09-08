@@ -31,7 +31,7 @@ use crate::research::{
     ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResponseCache, SearchMetadata,
     SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
     SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
-    cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile,
+    cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile, validated_fetch_client,
 };
 
 // ── Constants ──
@@ -54,6 +54,13 @@ hkask_mcp_server::mcp_server!(
         pub rate_limiter: RateLimiter,
         pub rss_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
         pub rss_client: Client,
+        /// Strict-policy fetch client for `rss_discover_feeds`: every redirect
+        /// hop re-validated, every connect-time DNS resolution gated, proxies
+        /// disabled (`validated_fetch_client`). The permissive `rss_client`
+        /// above is deliberately different — user-curated RSS fetches may live
+        /// on local networks by ratified policy, so they keep default redirect
+        /// following. Do not use `rss_client` for arbitrary user URLs.
+        pub discover_client: Client,
         /// Inference port for the deep strategy's templated LLM rerank.
         /// Resolved via `hkask_inference::resolve_inference_port()` — a
         /// `LazyInferencePort` that bridges to zed's LanguageModelRegistry
@@ -941,7 +948,7 @@ impl ResearchServer {
         execute_tool(self, "rss_discover_feeds", async {
             self.rate_limiter.check("rss_discover_feeds")?;
             validate_tool_url_with_dns(&url).await?;
-            match discover_feeds(&self.rss_client, &url).await {
+            match discover_feeds(&self.discover_client, &url).await {
                 Ok(feeds) => {
                     Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
                 }
@@ -1747,6 +1754,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     detail: e.to_string(),
                 })?;
 
+            // Strict-policy fetch client for `rss_discover_feeds` — every
+            // redirect hop and every connect-time resolution gated.
+            let discover_client = validated_fetch_client().map_err(|e| {
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "research discover client build".into(),
+                    detail: e.to_string(),
+                }
+            })?;
+
             // Resolve the inference port for the deep strategy's LLM rerank.
             // Resolved above (before the sync construction closure); the lazy
             // port re-tries the bridge on each call, so a socket that appears
@@ -1761,6 +1777,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 RateLimiter::new(RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECS),
                 rss_db,
                 rss_client,
+                discover_client,
                 inference_port.clone(),
                 // The visible settings chain, resolved once at the
                 // construction seam (no hidden constant — the operator's

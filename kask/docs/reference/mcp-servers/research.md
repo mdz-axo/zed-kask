@@ -1,7 +1,7 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-29
+last_updated: 2026-09-07
 version: "0.39.0"
 status: "Active"
 domain: "Inference"
@@ -32,6 +32,68 @@ response caching, and rate limiting.
 - **Result path:** provider responses reach the caller verbatim in the
   `{"content": ...}` envelope; body-read failures are errors, never empty
   successes.
+
+## Extraction destination policy (SSRF) — verified 2026-09-07
+
+Three layered gates govern every destination a fetch connects to:
+
+1. **Tool layer** — `validate_tool_url_with_dns` (strict): scheme,
+   embedded-credential, and literal/dns-resolved address checks before the
+   request reaches the pool.
+2. **Pool boundary** — `extract_with_fallback` / `browse_with_fallback`
+   re-validate (`validate_provider_url`) so each provider in the fallback
+   chain is behind the same gate.
+3. **Raw-fetch transport** (`providers/raw_fetch.rs`) — the inner gate:
+   a custom reqwest redirect policy re-runs the strict literal checks on
+   **every redirect hop** and bounds the chain (10 hops, cycles refused); a
+   validating DNS resolver
+   (`hkask-mcp-server::server::validate_resolved_addresses`) rejects any
+   connect-time resolution that lands on loopback/private/unspecified, so a
+   hostname cannot re-bind between validation and connect (the DNS-rebinding
+   TOCTOU is closed at this transport — other consumers of the shared
+   validator keep the documented gap); and proxies are disabled
+   (`.no_proxy()`), so the connected destination is always the validated one.
+
+Redirect content is labeled with the final URL it actually came from.
+
+**Address-class policy** (`hkask-mcp-server/src/security.rs`): loopback,
+   RFC1918/link-local IPv4, ULA/link-local IPv6, IPv4-mapped IPv6, IPv4
+   compatible with NAT64 (`64:ff9b::/96`) unmasking, and unspecified
+   destinations (`0.0.0.0/8`, `::` — connecting to `0.0.0.0` routes to
+   loopback on Linux) are all refused under the strict config.
+
+**Permissive policy unchanged:** RSS subscribe/fetch/synthesize use the
+   permissive config (user-curated feeds may live on local networks) — that
+   policy is untouched, including for the new address classes.
+
+**Operator-visible proxy behavior:** raw fetches deliberately ignore
+   `HTTP(S)_PROXY`/`ALL_PROXY` (warned at client build); a proxied destination
+   cannot be validated, so it is not silently used. Provider-API clients
+   (Firecrawl/Tavily/Exa/Brave/SerpAPI) keep their own proxy support.
+
+Verified regressions (`providers/raw_fetch.rs` inline tests +
+`tests/tool_behavior.rs`): a redirect to a loopback literal, the 169.254.169.254
+metadata address, or a `localhost` name never reaches the sentinel (request
+counters prove zero); chains are bounded; cycles refused; the pre-fix behavior
+(following the forbidden redirect and returning its content) was observed as
+RED before the fix.
+
+**Boundaries of this gate, stated explicitly:** third-party provider APIs fetch
+target URLs server-side from their own network position — that fetch is not
+this transport and cannot be gated here; and a permitted-redirect (public→public)
+end-to-end fixture is not constructible on loopback under the strict gate —
+the follow decision is pinned by the redirect-policy unit tests, and the
+enforcement tests prove the policy runs on every hop.
+
+**Discover path (T02b, verified 2026-09-07):** `rss_discover_feeds` validates
+its user-supplied URL with the strict gate and fetches through its own
+`discover_client` field — the same validated client construction as RawFetch
+(`validated_fetch_client`: per-hop redirect gate, connect-time resolver,
+no-proxy), wired through `ResearchServer::new`. Its reqwest cause chain is
+rendered in full, so a rejected hop names its reason. The permissive
+`rss_client` remains deliberately separate: `rss_subscribe`/`rss_fetch`/
+`rss_synthesize` are user-curated by ratified policy and keep default redirect
+following — do not pass that client to strict-policy fetches.
 
 ## Deep-search rerank — decision record
 

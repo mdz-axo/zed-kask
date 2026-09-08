@@ -1035,12 +1035,12 @@ fn _datelike_used(_: &chrono::NaiveDate) -> i32 {
         .num_days_from_ce()
 }
 
+/// expect: [P1] Portfolio-only legacy data remains disposable without blocking startup.
+/// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
 #[test]
-fn new_discards_stale_db_when_schema_init_fails() {
-    // Simulate a legacy DB created by an older schema: the `transactions` table
-    // exists but lacks the `asset_type` column the current DDL's index references.
-    // `PortfolioStore::new` must detect the schema-init failure, delete the stale
-    // file, and recreate from scratch rather than leaving the server to crash.
+fn schema_recovery_discards_stale_portfolio_data() {
+    // The missing asset_type column makes index creation fail; portfolio-only
+    // legacy data remains disposable under D01.
     let dir = tempfile::tempdir().unwrap();
     let owner_dir = dir.path().join(sanitize_name(
         &WebID::from_persona(b"anonymous").to_string(),
@@ -1049,31 +1049,7 @@ fn new_discards_stale_db_when_schema_init_fails() {
     let db_path = owner_dir.join("master.db");
     {
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE portfolios (name TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-             CREATE TABLE transactions (
-                 id TEXT PRIMARY KEY,
-                 portfolio_name TEXT NOT NULL,
-                 date TEXT NOT NULL,
-                 type TEXT NOT NULL,
-                 symbol TEXT,
-                 quantity REAL,
-                 price REAL,
-                 commission REAL,
-                 amount REAL,
-                 weight REAL,
-                 currency TEXT,
-                 notes TEXT,
-                 created_at TEXT NOT NULL
-             );",
-        )
-        .unwrap();
-        // Stale data that should NOT survive the schema reset.
-        conn.execute(
-            "INSERT INTO portfolios (name, created_at) VALUES ('legacy', '2020-01-01')",
-            [],
-        )
-        .unwrap();
+        seed_legacy_portfolio_schema(&conn).expect("legacy portfolio fixture");
     }
 
     let store = PortfolioStore::with_dir_for_owner(
@@ -1081,8 +1057,7 @@ fn new_discards_stale_db_when_schema_init_fails() {
         WebID::from_persona(b"anonymous"),
     );
 
-    // The stale DB was replaced; the legacy portfolio is gone, and the current
-    // schema (with asset_type) is in place.
+    // Recovery discarded the legacy portfolio and installed the current schema.
     assert_eq!(store.list().unwrap(), Vec::<String>::new());
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let has_asset_type: i64 = conn
@@ -1096,4 +1071,223 @@ fn new_discards_stale_db_when_schema_init_fails() {
         has_asset_type, 1,
         "asset_type column should exist after reset"
     );
+}
+
+fn seed_legacy_portfolio_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE portfolios (name TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+         CREATE TABLE transactions (
+             id TEXT PRIMARY KEY,
+             portfolio_name TEXT NOT NULL,
+             date TEXT NOT NULL,
+             type TEXT NOT NULL,
+             symbol TEXT,
+             quantity REAL,
+             price REAL,
+             commission REAL,
+             amount REAL,
+             weight REAL,
+             currency TEXT,
+             notes TEXT,
+             created_at TEXT NOT NULL
+         );
+         INSERT INTO portfolios (name, created_at) VALUES ('legacy', '2020-01-01');",
+    )
+}
+
+fn seed_research_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    // Mirror companies' COMPANIES_SCHEMA_DDL without reversing its dependency
+    // on portfolio. In particular, retain the cascading parent relationships.
+    connection.execute_batch(
+        r#"PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS notes (
+             id TEXT PRIMARY KEY,
+             portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
+             symbol TEXT NOT NULL,
+             date TEXT NOT NULL,
+             title TEXT NOT NULL,
+             body TEXT NOT NULL,
+             tags TEXT DEFAULT '[]',
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_notes_portfolio ON notes(portfolio_name);
+         CREATE INDEX IF NOT EXISTS idx_notes_symbol ON notes(symbol);
+         CREATE TABLE IF NOT EXISTS files (
+             id TEXT PRIMARY KEY,
+             portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
+             symbol TEXT NOT NULL,
+             date TEXT NOT NULL,
+             filename TEXT NOT NULL,
+             mime_type TEXT NOT NULL,
+             size INTEGER NOT NULL,
+             path TEXT NOT NULL,
+             notes TEXT DEFAULT '',
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_files_portfolio ON files(portfolio_name);
+         CREATE INDEX IF NOT EXISTS idx_files_symbol ON files(symbol);
+         CREATE TABLE IF NOT EXISTS forecasts (
+             id TEXT PRIMARY KEY,
+             symbol TEXT NOT NULL,
+             revision_of TEXT,
+             snapshot TEXT NOT NULL,
+             outcomes TEXT NOT NULL DEFAULT '[]',
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);
+         INSERT INTO notes VALUES (
+             'note-1', 'legacy', 'AAPL', '2026-09-01', 'Thesis', 'Durable research',
+             '["investment"]', '2026-09-01T00:00:00Z'
+         );
+         INSERT INTO files VALUES (
+             'file-1', 'legacy', 'AAPL', '2026-09-01', 'report.txt', 'text/plain',
+             16, 'attachments/report.txt', 'Supporting evidence', '2026-09-01T00:00:00Z'
+         );
+         INSERT INTO forecasts VALUES (
+             'forecast-1', 'AAPL', NULL, '{"price_target":200}',
+             '[{"price":190,"date":"2026-09-02"}]', '2026-09-01T00:00:00Z'
+         );
+         INSERT INTO forecasts VALUES (
+             'forecast-2', 'AAPL', 'forecast-1', '{"price_target":210}',
+             '[{"price":205,"date":"2026-09-03"}]', '2026-09-02T00:00:00Z'
+         );"#,
+    )
+}
+
+fn stored_rows(
+    connection: &rusqlite::Connection,
+    query: &str,
+) -> rusqlite::Result<Vec<Vec<rusqlite::types::Value>>> {
+    let mut statement = connection.prepare(query)?;
+    let column_count = statement.column_count();
+    statement
+        .query_map([], |row| {
+            (0..column_count).map(|column| row.get(column)).collect()
+        })?
+        .collect()
+}
+
+fn research_database_snapshot(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
+    [
+        "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name",
+        "SELECT * FROM portfolios ORDER BY name",
+        "SELECT * FROM transactions ORDER BY id",
+        "SELECT * FROM notes ORDER BY id",
+        "SELECT * FROM files ORDER BY id",
+        "SELECT * FROM forecasts ORDER BY id",
+    ]
+    .into_iter()
+    .map(|query| stored_rows(connection, query))
+    .collect()
+}
+
+/// expect: [P1] Research, attachment metadata, and portfolio parents survive a
+/// refused recovery, including forecast revisions and recorded outcomes.
+/// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
+#[test]
+fn schema_recovery_preserves_mixed_database() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("master.db");
+    let connection = rusqlite::Connection::open(&path)?;
+    seed_legacy_portfolio_schema(&connection)?;
+    seed_research_schema(&connection)?;
+    let before = research_database_snapshot(&connection)?;
+    drop(connection);
+
+    let error = store::open_with_schema_recovery(&path).expect_err("shared reset must be refused");
+    assert!(error.to_string().contains("non-portfolio"), "{error}");
+    assert!(
+        error.to_string().contains(path.to_string_lossy().as_ref()),
+        "{error}"
+    );
+    let connection = rusqlite::Connection::open(&path)?;
+    assert_eq!(research_database_snapshot(&connection)?, before);
+    assert!(stored_rows(&connection, "PRAGMA foreign_key_check")?.is_empty());
+    Ok(())
+}
+
+/// expect: [P1] Recovery does not assume unfamiliar tables are disposable.
+/// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
+#[test]
+fn schema_recovery_refuses_unknown_non_portfolio_table() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("master.db");
+    let connection = rusqlite::Connection::open(&path)?;
+    seed_legacy_portfolio_schema(&connection)?;
+    connection.execute_batch("CREATE TABLE sqliteXresearch (body TEXT); INSERT INTO sqliteXresearch VALUES ('retain me');")?;
+    let schema_query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name";
+    let before = stored_rows(&connection, schema_query)?;
+    drop(connection);
+
+    let error =
+        store::open_with_schema_recovery(&path).expect_err("unknown table must block reset");
+    assert!(error.to_string().contains("non-portfolio"), "{error}");
+    let connection = rusqlite::Connection::open(&path)?;
+    assert_eq!(stored_rows(&connection, schema_query)?, before);
+    let body: String =
+        connection.query_row("SELECT body FROM sqliteXresearch", [], |row| row.get(0))?;
+    assert_eq!(body, "retain me");
+    let parent: String =
+        connection.query_row("SELECT name FROM portfolios", [], |row| row.get(0))?;
+    assert_eq!(parent, "legacy");
+    Ok(())
+}
+
+/// expect: [P1] A failed portfolio-only reset restores already-dropped tables.
+/// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
+#[test]
+fn schema_recovery_rolls_back_failed_portfolio_reset() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("master.db");
+    let connection = rusqlite::Connection::open(&path)?;
+    seed_legacy_portfolio_schema(&connection)?;
+    // DROP TABLE daily_holdings fails after daily_returns has been dropped.
+    connection.execute_batch(
+        "CREATE TABLE daily_returns (marker TEXT);
+         INSERT INTO daily_returns VALUES ('retain on failure');
+         CREATE VIEW daily_holdings AS SELECT name FROM portfolios;",
+    )?;
+    let schema_query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name";
+    let before = stored_rows(&connection, schema_query)?;
+    drop(connection);
+
+    let error = store::open_with_schema_recovery(&path).expect_err("reset must fail on a view");
+    assert!(
+        error
+            .to_string()
+            .contains("failed to reset portfolio schema"),
+        "{error}"
+    );
+    let connection = rusqlite::Connection::open(&path)?;
+    assert_eq!(stored_rows(&connection, schema_query)?, before);
+    let marker: String =
+        connection.query_row("SELECT marker FROM daily_returns", [], |row| row.get(0))?;
+    assert_eq!(marker, "retain on failure");
+    let parent: String =
+        connection.query_row("SELECT name FROM portfolios", [], |row| row.get(0))?;
+    assert_eq!(parent, "legacy");
+    Ok(())
+}
+
+/// expect: [P1] Compatible shared databases still open with research unchanged.
+/// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
+#[test]
+fn schema_recovery_opens_compatible_mixed_database() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let portfolio = PortfolioStore::with_dir(directory.path().to_path_buf());
+    portfolio.create("legacy", AssetType::Stock)?;
+    let path = directory.path().join("master.db");
+    let connection = rusqlite::Connection::open(&path)?;
+    seed_research_schema(&connection)?;
+    let before = research_database_snapshot(&connection)?;
+    drop(connection);
+
+    assert_eq!(store::open_with_schema_recovery(&path)?, path);
+    let connection = rusqlite::Connection::open(&path)?;
+    assert_eq!(research_database_snapshot(&connection)?, before);
+    assert_eq!(portfolio.list()?, vec!["legacy".to_string()]);
+    assert!(stored_rows(&connection, "PRAGMA foreign_key_check")?.is_empty());
+    Ok(())
 }

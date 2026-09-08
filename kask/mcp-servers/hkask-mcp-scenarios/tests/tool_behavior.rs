@@ -1,12 +1,12 @@
 //! Tool-behavior contract tests for the scenarios MCP server.
 //!
 //! Drives the real `#[tool]` methods through their public `Parameters<T>`
-//! seam, in-process, with an in-memory `ForecastStore`. Covers the testing
+//! seam, in-process, with in-memory and temporary file-backed stores. Covers the testing
 //! standard minimum (docs/reference/mcp-servers/README.md §Testing standard):
 //! happy path, invalid input, boundary/edge cases, and error-specificity.
 //!
-//! No network: this server has no reqwest dependency, so every tool is pure
-//! computation over caller-supplied inputs and the in-memory store.
+//! No network: persistence regressions use temporary files and deterministic
+//! filesystem failures; other tools operate on caller-supplied inputs.
 
 #![cfg(test)]
 
@@ -28,6 +28,241 @@ fn make_server() -> ScenariosServer {
     let tree_cache = Mutex::new(None);
     let called_tools = Mutex::new(HashSet::new());
     ScenariosServer::new(WebID::new(), forecast_store, tree_cache, called_tools)
+}
+
+fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
+    ScenariosServer::new(
+        WebID::new(),
+        Arc::new(Mutex::new(ForecastStore::new(Some(path.to_path_buf())))),
+        Mutex::new(None),
+        Mutex::new(HashSet::new()),
+    )
+}
+
+/// The store key `scenario_score` derives for this fixture's single event
+/// (`"{forecast_id}:{event_id}"`).
+const REGRESSION_KEY: &str = "persistence-regression:event";
+
+fn persistence_score_request(probability: f64, occurred: bool) -> ScoreRequest {
+    ScoreRequest {
+        forecast_id: "persistence-regression".to_string(),
+        events: vec![independent_event("event", "durable event", probability)],
+        outcomes: vec![OutcomeEntry {
+            event_id: "event".to_string(),
+            occurred,
+        }],
+    }
+}
+
+/// Parse the journal's newline-delimited entries into (key, record) pairs.
+/// Panics on malformed lines so a torn journal fails the test loudly rather
+/// than being silently accepted as the expected durable state.
+fn parse_journal_entries(
+    bytes: &[u8],
+) -> Result<Vec<(String, serde_json::Value)>, Box<dyn std::error::Error>> {
+    let mut entries = Vec::new();
+    for line in std::str::from_utf8(bytes)?.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: serde_json::Value = serde_json::from_str(line)?;
+        let key = entry["key"]
+            .as_str()
+            .unwrap_or_else(|| panic!("journal entry must carry a key, got: {entry}"))
+            .to_string();
+        entries.push((key, entry["record"].clone()));
+    }
+    Ok(entries)
+}
+
+/// expect: "A failed snapshot must not erase my scored forecast." [P1]
+/// pre: journal append succeeds but snapshot publication is blocked.
+/// post: the journal recovers the complete resolved record after reopening.
+#[tokio::test]
+async fn snapshot_failure_preserves_journal_for_recovery() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let snapshot_path = directory.path().join("forecasts.json");
+    let journal_path = snapshot_path.with_extension("json.journal");
+    let server = file_backed_server(&snapshot_path);
+    // A directory at the destination rejects both direct writes and atomic
+    // replacement, independently of the test runner's filesystem privileges.
+    std::fs::create_dir(&snapshot_path)?;
+    let result = server
+        .scenario_score(Parameters(persistence_score_request(0.9, false)))
+        .await;
+    assert!(result.is_err(), "persistence failure must reach the caller");
+    // The retained journal must be the complete two-entry history for the
+    // scored record — the pending insert followed by the resolved update —
+    // not merely a non-empty file.
+    let entries = parse_journal_entries(&std::fs::read(&journal_path)?)?;
+    assert_eq!(entries.len(), 2, "journal must retain insert + resolution");
+    assert_eq!(entries[0].0, REGRESSION_KEY);
+    assert_eq!(entries[0].1["probability"], 0.9);
+    assert_eq!(entries[0].1["outcome"], serde_json::Value::Null);
+    assert_eq!(entries[1].0, REGRESSION_KEY);
+    assert_eq!(entries[1].1["probability"], 0.9);
+    assert_eq!(entries[1].1["outcome"], false);
+    assert!(
+        entries[1].1["resolved_at"].is_string(),
+        "the journaled resolution must carry its resolution date"
+    );
+    // The failed publication must clean up its temporary snapshot file.
+    let residue: Vec<String> = std::fs::read_dir(directory.path())?
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".tmp"))
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "failed publication left residue: {residue:?}"
+    );
+    std::fs::remove_dir(&snapshot_path)?;
+
+    // Recovery must be observable through the read seam BEFORE any retry:
+    // a re-score would repair a broken replay and hide the regression.
+    let recovered = file_backed_server(&snapshot_path);
+    let status = parse(
+        &recovered
+            .scenario_status(Parameters(StatusRequest {}))
+            .await?,
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 1);
+    assert_eq!(status["pipeline"]["resolved_count"], 1);
+    assert_eq!(status["pipeline"]["pending_count"], 0);
+    let brier = status["pipeline"]["overall_brier"]
+        .as_f64()
+        .expect("recovered resolved record must be Brier-scored");
+    assert!(
+        (brier - 0.81).abs() < 1e-9,
+        "Brier must be (0.9 - 0)^2, got {brier}"
+    );
+    let recent = &status["pipeline"]["recent_forecasts"][0];
+    assert_eq!(recent["forecast_id"], "persistence-regression");
+    assert_eq!(recent["event_id"], "event");
+    assert_eq!(recent["probability"], 0.9);
+    assert_eq!(recent["outcome"], false);
+
+    // With the blockage cleared, the retry must succeed, publish a snapshot,
+    // and only then clear the journal.
+    recovered
+        .scenario_score(Parameters(persistence_score_request(0.9, false)))
+        .await?;
+    assert!(std::fs::read(&journal_path)?.is_empty());
+    let snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(&snapshot_path)?)?;
+    assert_eq!(snapshot[REGRESSION_KEY]["outcome"], false);
+    assert_eq!(snapshot[REGRESSION_KEY]["probability"], 0.9);
+    let reopened = file_backed_server(&snapshot_path);
+    let status = parse(
+        &reopened
+            .scenario_status(Parameters(StatusRequest {}))
+            .await?,
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 1);
+    assert_eq!(status["pipeline"]["pending_count"], 0);
+    Ok(())
+}
+
+/// expect: "A published snapshot with its uncleared journal must recover my
+/// forecast exactly once, with the journal's last write winning." [P1]
+/// pre: a snapshot is published and the process dies before journal
+/// truncation — reproduced by restoring the pre-truncation journal bytes
+/// over a published snapshot whose overlapping record carries different
+/// values, so a skipped or wrong-order replay is detectable.
+/// post: reopening yields exactly one record matching the journal's final
+/// entry — never the stale snapshot version, the pending first entry, or a
+/// duplicate.
+#[tokio::test]
+async fn snapshot_with_uncleared_journal_recovers_exactly_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let snapshot_path = directory.path().join("forecasts.json");
+    let journal_path = snapshot_path.with_extension("json.journal");
+    // Force a failed publication to obtain production-written journal
+    // entries (probability 0.9, resolved false) that truncation would
+    // otherwise discard.
+    let server = file_backed_server(&snapshot_path);
+    std::fs::create_dir(&snapshot_path)?;
+    assert!(
+        server
+            .scenario_score(Parameters(persistence_score_request(0.9, false)))
+            .await
+            .is_err()
+    );
+    let retained_journal = std::fs::read(&journal_path)?;
+    std::fs::remove_dir(&snapshot_path)?;
+
+    // Publish a snapshot holding a DIFFERENT version of the same record
+    // (probability 0.3, resolved true). The journal is removed first so the
+    // publisher starts from an empty store — `scenario_score` never rewrites
+    // the probability of a record it already holds.
+    std::fs::remove_file(&journal_path)?;
+    let publisher = file_backed_server(&snapshot_path);
+    publisher
+        .scenario_score(Parameters(persistence_score_request(0.3, true)))
+        .await?;
+    assert!(
+        std::fs::read(&journal_path)?.is_empty(),
+        "successful publication must clear the journal"
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(&snapshot_path)?)?;
+    assert_eq!(snapshot[REGRESSION_KEY]["probability"], 0.3);
+    assert_eq!(snapshot[REGRESSION_KEY]["outcome"], true);
+    // Simulate the crash window: the journal from before the publication is
+    // still present next to the newly published snapshot.
+    std::fs::write(&journal_path, &retained_journal)?;
+
+    // Reopen: the journal's last entry (probability 0.9, outcome false) must
+    // win over the snapshot without duplicating the record.
+    let reopened = file_backed_server(&snapshot_path);
+    let status = parse(
+        &reopened
+            .scenario_status(Parameters(StatusRequest {}))
+            .await?,
+    );
+    assert_eq!(
+        status["pipeline"]["forecast_count"], 1,
+        "an overlapping journal must not duplicate the recovered record"
+    );
+    assert_eq!(status["pipeline"]["pending_count"], 0);
+    let brier = status["pipeline"]["overall_brier"]
+        .as_f64()
+        .expect("recovered resolved record must be Brier-scored");
+    assert!(
+        (brier - 0.81).abs() < 1e-9,
+        "Brier must be (0.9 - 0)^2, got {brier}"
+    );
+    let recent = &status["pipeline"]["recent_forecasts"][0];
+    assert_eq!(recent["forecast_id"], "persistence-regression");
+    assert_eq!(recent["event_id"], "event");
+    assert_eq!(
+        recent["probability"], 0.9,
+        "journal replay must win over the stale snapshot"
+    );
+    assert_eq!(
+        recent["outcome"], false,
+        "the journal's last entry must win, not its first entry or the snapshot"
+    );
+    Ok(())
+}
+
+/// expect: "A journal failure cannot be reported as a saved forecast." [P1]
+/// pre: journal append is blocked, while the snapshot destination is writable.
+/// post: the tool errors without publishing or admitting an unsaved record.
+#[tokio::test]
+async fn journal_failure_is_surfaced_before_memory_changes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let snapshot_path = directory.path().join("forecasts.json");
+    let server = file_backed_server(&snapshot_path);
+    std::fs::create_dir(snapshot_path.with_extension("json.journal"))?;
+    let result = server
+        .scenario_score(Parameters(persistence_score_request(0.9, false)))
+        .await;
+    assert!(result.is_err(), "journal failure must reach the caller");
+    let status = parse(&server.scenario_status(Parameters(StatusRequest {})).await?);
+    assert_eq!(status["pipeline"]["forecast_count"], 0);
+    assert!(!snapshot_path.exists());
+    Ok(())
 }
 
 /// Parse a tool output string, unwrapping the `{"content": ...}` envelope.

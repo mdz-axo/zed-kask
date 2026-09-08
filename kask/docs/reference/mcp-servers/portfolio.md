@@ -28,6 +28,31 @@ The store supports nested portfolios (a portfolio of CMP indices, each of which
 is a portfolio of contracts) via the `AssetType` enum (`Stock`,
 `PredictionContract`, `Portfolio`).
 
+### Shared-database recovery — D01 ratified 2026-09-07
+
+The operator confirmed that companies research notes and forecasts **must survive
+portfolio schema recovery** ("D01 yes. please proceed"). This supersedes the
+whole-file discard policy introduced by `804cf441a8`/`f28789fc81` where the
+portfolio database also contains another domain's data. Portfolio-only legacy
+data remains disposable; this decision does not authorize deleting research or
+silently migrating its relationships.
+
+Recovery must refuse a destructive reset when non-portfolio tables are present,
+preserving their rows and the portfolio parents referenced by research notes
+and attachments. An incompatible shared database may report an explicit startup
+error rather than lose data. Compatible shared databases continue to open.
+
+Enforced transactionally in `open_with_schema_recovery`
+(`src/store.rs`): an IMMEDIATE transaction wraps DDL, the `sqlite_schema`
+ownership inspection (internal `sqlite_*` names excluded via GLOB), and the
+portfolio-only drop-and-rebuild; any other table, an inspection error, or a
+failed reset rolls back. Verified 2026-09-07: the five `schema_recovery_*`
+regressions in `src/tests.rs` pass, including observed pre-fix RED (the
+unlink/recreate recovery destroyed seeded research rows) and post-fix GREEN;
+the companies crate's 68-test suite is green over the shared DB. The
+user-visible trade-off stands: incompatible shared databases now error at
+startup instead of silently losing research — no migration is attempted.
+
 ### Materialized views
 
 - **`daily_holdings`** — end-of-day positions, cached for fast retrieval by the

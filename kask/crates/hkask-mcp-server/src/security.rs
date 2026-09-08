@@ -23,6 +23,9 @@ pub(crate) enum SecurityError {
     #[error("Loopback address not allowed: {0}")]
     LoopbackNotAllowed(String),
 
+    #[error("Unspecified destination address not allowed: {0}")]
+    UnspecifiedAddressNotAllowed(String),
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 }
@@ -101,6 +104,84 @@ fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
     Ok((scheme, hostname))
 }
 
+/// Check one literal or resolved destination address against the config.
+///
+/// IPv6 addresses that embed an IPv4 destination (the deprecated
+/// IPv4-compatible form and the NAT64 well-known prefix 64:ff9b::/96) are
+/// unmasked and the embedded IPv4 destination is checked as IPv4, so neither
+/// address family can re-spell a forbidden destination as the other.
+/// `to_canonical` already unmaps the IPv4-mapped form (::ffff:a.b.c.d) before
+/// this runs. Native IPv6 categories (loopback, ULA, link-local, unspecified)
+/// are checked on the untranslated address first so their messages stay exact.
+fn policy_check_address(
+    address: &IpAddr,
+    config: &UrlValidationConfig,
+) -> Result<(), SecurityError> {
+    match address.to_canonical() {
+        IpAddr::V4(v4) => policy_check_ipv4(v4, config),
+        IpAddr::V6(v6) => {
+            if !config.allow_private_ips && v6.is_unspecified() {
+                return Err(SecurityError::UnspecifiedAddressNotAllowed(v6.to_string()));
+            }
+            if !config.allow_loopback && v6.is_loopback() {
+                return Err(SecurityError::LoopbackNotAllowed(v6.to_string()));
+            }
+            if !config.allow_private_ips && is_private_ip(&IpAddr::V6(v6)) {
+                return Err(SecurityError::PrivateIpNotAllowed(v6.to_string()));
+            }
+            if let Some(embedded) = embedded_ipv4(v6) {
+                policy_check_ipv4(embedded, config)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn policy_check_ipv4(
+    v4: std::net::Ipv4Addr,
+    config: &UrlValidationConfig,
+) -> Result<(), SecurityError> {
+    // 0.0.0.0/8 ("this network") is never a real destination, and on Linux
+    // connecting to 0.0.0.0 routes to loopback — it re-enters exactly the
+    // services this gate exists to protect. Gated by the private-IP allowance
+    // so the permissive (user-curated RSS) policy is unchanged.
+    if !config.allow_private_ips && v4.octets()[0] == 0 {
+        return Err(SecurityError::UnspecifiedAddressNotAllowed(v4.to_string()));
+    }
+    if !config.allow_loopback && v4.is_loopback() {
+        return Err(SecurityError::LoopbackNotAllowed(v4.to_string()));
+    }
+    if !config.allow_private_ips && is_private_ip(&IpAddr::V4(v4)) {
+        return Err(SecurityError::PrivateIpNotAllowed(v4.to_string()));
+    }
+    Ok(())
+}
+
+/// The IPv4 destination embedded in a non-mapped IPv6 address, if any.
+///
+/// Covers the deprecated IPv4-compatible form (::a.b.c.d, all of the first
+/// six segments zero, excluding unspecified `::`) and the NAT64 well-known
+/// prefix (64:ff9b::/96). The IPv4-mapped form is handled earlier by
+/// `to_canonical`.
+fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    let segments = v6.segments();
+    let compatible =
+        v6.segments()[0..6].iter().all(|&segment| segment == 0) && !v6.is_unspecified();
+    let nat64 = segments[0] == 0x64
+        && segments[1] == 0xff9b
+        && segments[2..6].iter().all(|&segment| segment == 0);
+    if compatible || nat64 {
+        Some(std::net::Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        ))
+    } else {
+        None
+    }
+}
+
 /// Validate a URL for use in MCP web/scholar requests.
 ///
 /// Checks:
@@ -108,7 +189,9 @@ fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
 /// - Rejects URLs with embedded credentials (user:pass@host)
 /// - Rejects private IPs unless explicitly permitted
 /// - Rejects loopback addresses unless explicitly permitted
-/// - Applies the same policy to IPv4 and IPv4-mapped IPv6
+/// - Rejects unspecified destinations (0.0.0.0/8, ::) under the private gate
+/// - Applies the same policy to IPv4, IPv4-mapped IPv6, and IPv4 embedded in
+///   IPv6-compatible/NAT64 addresses
 pub(crate) fn validate_url(
     raw_url: &str,
     config: &UrlValidationConfig,
@@ -118,20 +201,16 @@ pub(crate) fn validate_url(
     let ip: Option<IpAddr> = hostname.parse().ok();
 
     if let Some(ip) = ip {
-        let ip = ip.to_canonical();
-        if ip.is_loopback() && !config.allow_loopback {
-            return Err(SecurityError::LoopbackNotAllowed(ip.to_string()));
-        }
-        if is_private_ip(&ip) && !config.allow_private_ips {
-            return Err(SecurityError::PrivateIpNotAllowed(ip.to_string()));
-        }
+        policy_check_address(&ip, config)?;
     }
 
     // NOTE: this sync check only catches *literal-IP* hostnames. A
     // non-literal hostname (e.g. `attacker.example` resolving to `127.0.0.1`
     // or `169.254.169.254`) passes this check because `hostname.parse()`
     // returns `None` for DNS names. Use [`validate_url_with_dns`] for
-    // defense-in-depth DNS resolution that closes this gap.
+    // defense-in-depth DNS resolution that closes this gap, or pair
+    // [`validate_tool_url_literal`] with a connect-time validating resolver
+    // (see the research crate's raw-fetch client).
     Ok(())
 }
 
@@ -146,11 +225,14 @@ pub(crate) fn validate_url(
 /// hostname (e.g. `attacker.example` resolving to `127.0.0.1` or
 /// `169.254.169.254`) passes the literal-IP check but is caught here.
 ///
-/// A TOCTOU remains between this resolve and the downstream `reqwest` connect
-/// (DNS rebinding), but the gap closed here is the absence of any DNS step at
-/// all — the pre-fix code never resolved the hostname. A custom reqwest
-/// connector that re-checks the resolved IP at connect time would close the
-/// TOCTOU; that is future hardening, not in scope for this fix.
+/// A TOCTOU remains between this resolve and the downstream connect for any
+/// consumer that fetches with its own uncontrolled client (DNS rebinding:
+/// the resolver may answer differently at connect time). Consumers that need
+/// the validated destination to be the connected one must re-validate at
+/// connect time — the research crate's raw-fetch client does this with a
+/// validating `reqwest::dns::Resolve` implementation
+/// ([`validate_resolved_addresses`]), so its gap is closed at the transport.
+/// Other consumers of this function keep the documented gap.
 pub(crate) async fn validate_url_with_dns(
     raw_url: &str,
     config: &UrlValidationConfig,
@@ -180,27 +262,53 @@ pub(crate) async fn validate_url_with_dns(
         })?
         .collect();
 
+    validate_resolved_addresses_core(hostname, &resolved, config)
+}
+
+/// Strictly validate an already-resolved address list for one hostname.
+///
+/// The address-policy core of [`validate_url_with_dns`], shared with
+/// connect-time validating DNS resolvers (the research crate's raw-fetch
+/// client) that gate the exact addresses a connection will use. The hostname
+/// is folded into the error message so the caller can see which name resolved
+/// to the forbidden destination.
+pub(crate) fn validate_resolved_addresses_core(
+    hostname: &str,
+    resolved: &[SocketAddr],
+    config: &UrlValidationConfig,
+) -> Result<(), SecurityError> {
     if resolved.is_empty() {
         return Err(SecurityError::InvalidUrl(format!(
             "DNS returned no addresses for {hostname}"
         )));
     }
 
-    for addr in &resolved {
-        let ip = addr.ip().to_canonical();
-        if ip.is_loopback() && !config.allow_loopback {
-            return Err(SecurityError::LoopbackNotAllowed(format!(
-                "{hostname} resolves to loopback {ip}"
-            )));
-        }
-        if is_private_ip(&ip) && !config.allow_private_ips {
-            return Err(SecurityError::PrivateIpNotAllowed(format!(
-                "{hostname} resolves to private IP {ip}"
-            )));
-        }
+    for address in resolved {
+        policy_check_address(&address.ip(), config)
+            .map_err(|error| with_hostname(hostname, error))?;
     }
 
     Ok(())
+}
+
+/// Fold the hostname into a resolved-address policy error so DNS-path errors
+/// name the offending host ("x resolves to loopback 127.0.0.1") while literal
+/// errors keep the bare address form.
+fn with_hostname(hostname: &str, error: SecurityError) -> SecurityError {
+    match error {
+        SecurityError::LoopbackNotAllowed(address) => {
+            SecurityError::LoopbackNotAllowed(format!("{hostname} resolves to loopback {address}"))
+        }
+        SecurityError::PrivateIpNotAllowed(address) => SecurityError::PrivateIpNotAllowed(format!(
+            "{hostname} resolves to private IP {address}"
+        )),
+        SecurityError::UnspecifiedAddressNotAllowed(address) => {
+            SecurityError::UnspecifiedAddressNotAllowed(format!(
+                "{hostname} resolves to unspecified address {address}"
+            ))
+        }
+        other => other,
+    }
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {
@@ -252,6 +360,37 @@ pub async fn validate_tool_url_with_dns(url: &str) -> Result<(), McpToolError> {
 #[must_use = "result must be used"]
 pub fn validate_tool_url_permissive(url: &str) -> Result<(), McpToolError> {
     validate_url(url, &UrlValidationConfig::permissive())
+        .map_err(|e| McpToolError::invalid_argument(format!("URL validation failed: {e}")))
+}
+
+/// Validate a tool URL with the strict config, synchronously, literal-IPs only.
+///
+/// For contexts that cannot await — e.g. a reqwest redirect-policy callback
+/// that must re-run the destination checks on every redirect hop. This covers
+/// scheme, embedded credentials, and literal-IP destinations; it does NOT
+/// resolve hostnames. Any caller using it to gate redirects MUST pair it with
+/// a connect-time validating DNS resolver
+/// ([`validate_resolved_addresses`]) so DNS-named redirect targets cannot
+/// reach forbidden addresses; literal-IP redirect targets are fully covered
+/// here because no resolution occurs for them.
+#[must_use = "result must be used"]
+pub fn validate_tool_url_literal(url: &str) -> Result<(), McpToolError> {
+    validate_url(url, &UrlValidationConfig::default())
+        .map_err(|e| McpToolError::invalid_argument(format!("URL validation failed: {e}")))
+}
+
+/// Strictly validate a resolved address list for one hostname.
+///
+/// For connect-time DNS resolvers that gate the exact destination a
+/// connection will use: the addresses passed here ARE the addresses the
+/// caller connects to, so this closes the resolve-to-connect (DNS-rebinding)
+/// gap that pre-validation alone cannot.
+#[must_use = "result must be used"]
+pub fn validate_resolved_addresses(
+    hostname: &str,
+    addresses: &[SocketAddr],
+) -> Result<(), McpToolError> {
+    validate_resolved_addresses_core(hostname, addresses, &UrlValidationConfig::default())
         .map_err(|e| McpToolError::invalid_argument(format!("URL validation failed: {e}")))
 }
 
@@ -395,5 +534,74 @@ mod tests {
         // needs a real resolver and isn't unit-testable without DNS).
         let strict = UrlValidationConfig::default();
         assert!(validate_url("https://example.com", &strict).is_ok());
+    }
+
+    /// expect: "A URL that connects to loopback by spelling 'this network'
+    /// must be rejected." [P4]
+    #[test]
+    fn strict_validation_rejects_unspecified_destination() {
+        for url in [
+            "http://0.0.0.0/",
+            "http://0.0.0.0:6379/",
+            "http://0.1.2.3/",
+            "http://[::]/",
+        ] {
+            let strict = validate_tool_url_literal(url);
+            assert!(strict.is_err(), "strict validation admitted {url}");
+            assert!(
+                strict.unwrap_err().message.contains("Unspecified"),
+                "error must name the unspecified rejection: {url}"
+            );
+            // The permissive (user-curated RSS) policy is unchanged: local
+            // destinations remain allowed when the user chose them.
+            assert!(
+                validate_tool_url_permissive(url).is_ok(),
+                "permissive validation must keep allowing {url}"
+            );
+        }
+    }
+
+    /// expect: "Neither address family can re-spell a forbidden IPv4
+    /// destination." [P4]
+    #[test]
+    fn strict_validation_rejects_nat64_and_compatible_respellings() {
+        // NAT64 well-known prefix embedding 127.0.0.1 / 10.0.0.1.
+        assert!(validate_tool_url_literal("http://[64:ff9b::7f00:1]/").is_err());
+        assert!(validate_tool_url_literal("http://[64:ff9b::a00:1]/").is_err());
+        // NAT64 embedding a public address stays reachable.
+        assert!(validate_tool_url_literal("http://[64:ff9b::808:808]/").is_ok());
+        // Deprecated IPv4-compatible form embedding loopback/private.
+        assert!(validate_tool_url_literal("http://[::7f00:1]/").is_err());
+        assert!(validate_tool_url_literal("http://[::a00:1]/").is_err());
+        // ::1 itself is native v6 loopback, not a compatible-form embedding —
+        // its rejection message must stay the loopback one.
+        let error = validate_tool_url_literal("http://[::1]/").unwrap_err();
+        assert!(error.message.contains("Loopback"), "::1: {error}");
+    }
+
+    /// expect: "A validating resolver rejects the exact address list a
+    /// connection would use." [P4]
+    #[test]
+    fn validate_resolved_addresses_rejects_any_forbidden_member() {
+        let public: std::net::SocketAddr = "8.8.8.8:443".parse().unwrap();
+        let loopback: std::net::SocketAddr = "127.0.0.1:443".parse().unwrap();
+        let private: std::net::SocketAddr = "169.254.169.254:80".parse().unwrap();
+
+        let ok = validate_resolved_addresses("host", &[public]);
+        assert!(ok.is_ok(), "a public-only resolution must pass");
+
+        let error = validate_resolved_addresses("host", &[public, loopback]).unwrap_err();
+        assert!(
+            error.message.contains("host resolves to loopback"),
+            "mixed resolution must name the host and address: {error}"
+        );
+        assert!(
+            validate_resolved_addresses("host", &[private]).is_err(),
+            "private resolution must be rejected"
+        );
+        assert!(
+            validate_resolved_addresses("host", &[]).is_err(),
+            "empty resolution must be rejected"
+        );
     }
 }

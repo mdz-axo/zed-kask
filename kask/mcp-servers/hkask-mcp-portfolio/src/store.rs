@@ -1,5 +1,5 @@
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::path::PathBuf;
 
 use crate::returns::{CachedPriceResolver, parse_ymd};
@@ -79,26 +79,82 @@ pub struct PortfolioStore {
 
 /// Open the portfolio DB at `path` and apply [`SCHEMA_DDL`].
 ///
-/// If schema initialization fails on an existing DB created by an older
-/// schema (e.g. a missing `asset_type` column that the index DDL references),
-/// the stale file is deleted and recreated from scratch. No migration path is
-/// maintained — portfolio data is treated as disposable across schema changes.
-fn open_with_schema_recovery(path: &std::path::Path) -> Result<PathBuf, PortfolioError> {
-    let conn =
-        Connection::open(path).map_err(|e| format!("failed to open portfolio database: {e}"))?;
-    if let Err(e) = conn.execute_batch(SCHEMA_DDL) {
-        eprintln!(
-            "portfolio schema initialization failed on existing DB at {} — \
-             discarding stale file and recreating from scratch: {e}",
-            path.display()
-        );
-        drop(conn);
-        std::fs::remove_file(path)
-            .map_err(|e| format!("failed to remove stale portfolio database: {e}"))?;
-        let conn = Connection::open(path)
-            .map_err(|e| format!("failed to reopen portfolio database: {e}"))?;
-        conn.execute_batch(SCHEMA_DDL)
-            .map_err(|e| format!("failed to initialize portfolio schema: {e}"))?;
+/// expect: Research must survive portfolio recovery (D01).
+/// [P1] Motivating: User-owned research is not disposable portfolio data.
+/// [P2] Constraining: Portfolio reset consent does not extend to other domains.
+/// [P4] Constraining: Reset only portfolio-owned tables, never the shared file.
+/// pre: The database can be opened and a write transaction acquired.
+/// post: Initialize compatible schemas; reset incompatible portfolio-only
+/// schemas; otherwise return an error and roll back all schema/data changes.
+pub(super) fn open_with_schema_recovery(path: &std::path::Path) -> Result<PathBuf, PortfolioError> {
+    let mut connection = Connection::open(path)
+        .map_err(|error| format!("failed to open portfolio database: {error}"))?;
+    // Keep the ownership check and reset under one write lock so another
+    // connection cannot add research tables between inspection and deletion.
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to begin portfolio schema transaction: {error}"))?;
+    let initialization: Result<(), PortfolioError> = (|| {
+        if let Err(schema_error) = transaction.execute_batch(SCHEMA_DDL) {
+            let non_portfolio_table: Option<String> = transaction
+                .query_row(
+                    "SELECT name FROM sqlite_schema
+                     WHERE type = 'table' AND name NOT GLOB 'sqlite_*'
+                       AND name NOT IN ('portfolios', 'transactions', 'price_cache',
+                                        'daily_holdings', 'daily_returns')
+                     ORDER BY name LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!(
+                        "failed to inspect portfolio database {} after schema failure \
+                         ({schema_error}); refusing reset: {error}",
+                        path.display()
+                    )
+                })?;
+            if let Some(table) = non_portfolio_table {
+                return Err(format!(
+                    "portfolio schema initialization failed at {}: {schema_error}; \
+                     refusing reset because non-portfolio table '{table}' is present",
+                    path.display()
+                )
+                .into());
+            }
+            tracing::warn!(
+                path = %path.display(),
+                error = %schema_error,
+                "portfolio schema initialization failed; resetting portfolio-only tables"
+            );
+            transaction
+                .execute_batch(
+                    "DROP TABLE IF EXISTS daily_returns;
+                     DROP TABLE IF EXISTS daily_holdings;
+                     DROP TABLE IF EXISTS price_cache;
+                     DROP TABLE IF EXISTS transactions;
+                     DROP TABLE IF EXISTS portfolios;",
+                )
+                .and_then(|()| transaction.execute_batch(SCHEMA_DDL))
+                .map_err(|error| {
+                    format!(
+                        "failed to reset portfolio schema at {} after {schema_error}: {error}",
+                        path.display()
+                    )
+                })?;
+        }
+        Ok(())
+    })();
+    match initialization {
+        Ok(()) => transaction
+            .commit()
+            .map_err(|error| format!("failed to commit portfolio schema: {error}"))?,
+        Err(error) => {
+            transaction.rollback().map_err(|rollback_error| {
+                format!("{error}; failed to roll back portfolio schema: {rollback_error}")
+            })?;
+            return Err(error);
+        }
     }
     Ok(path.to_path_buf())
 }
@@ -106,11 +162,10 @@ fn open_with_schema_recovery(path: &std::path::Path) -> Result<PathBuf, Portfoli
 impl PortfolioStore {
     /// Creates storage scoped to the authenticated server owner.
     ///
-    /// If the existing database was created by an older schema that the current
-    /// DDL cannot reconcile (e.g. a missing `asset_type` column on `transactions`
-    /// that the index DDL references), the stale file is deleted and recreated
-    /// from scratch. No backward-compatibility/migration path is maintained —
-    /// portfolio data is treated as disposable across schema changes.
+    /// Incompatible portfolio-only schemas are reset without migration;
+    /// portfolio data remains disposable across schema changes. If any
+    /// non-portfolio table is present, incompatible schemas instead return an
+    /// error without changing the database, preserving research and its parents.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
         // Databases live in the internal data dir (the ONLY thing that lives
         // there — artifact files like transactions go to the visible

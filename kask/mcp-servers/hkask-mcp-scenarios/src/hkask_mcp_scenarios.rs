@@ -1344,12 +1344,9 @@ impl ScenariosServer {
                 "reference": "Brier (1950). Score = (p - o)² where p = forecast probability, o = outcome (1 if occurred, 0 if not). Lower is better."
             });
 
-            // Store forecasts and resolve outcomes for calibration tracking (P2).
-            // Each new record is inserted via `insert` (which appends to the
-            // journal — durable). Outcome updates on existing records are also
-            // done via `insert` (not `get_mut`) so the outcome is durably
-            // journaled, not just in-memory. `persist()` at the end is a
-            // belt-and-suspenders full snapshot.
+            // Outcome updates must be journaled too, not just changed in memory.
+            // A later compaction error may leave already-journaled records; report
+            // that uncertainty rather than claiming the entire request rolled back.
             {
                 let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
                 let now = chrono::Utc::now().date_naive();
@@ -1368,7 +1365,9 @@ impl ScenariosServer {
                             outcome: None,
                             resolved_at: None,
                             category: Some(event.scenario_type.as_str().to_string()),
-                        });
+                        }).map_err(|error| McpToolError::internal(format!(
+                            "Forecast persistence failed; earlier records may already be journaled: {error}"
+                        )))?;
                     }
                     if let Some((_, occurred)) = event_outcome {
                         // Re-insert the record with the outcome set — this
@@ -1377,11 +1376,15 @@ impl ScenariosServer {
                         if let Some(mut record) = store.get(&key).cloned() {
                             record.outcome = Some(*occurred);
                             record.resolved_at = Some(now);
-                            store.insert(key.clone(), record);
+                            store.insert(key.clone(), record).map_err(|error| McpToolError::internal(format!(
+                                "Forecast outcome persistence failed; earlier records may already be journaled: {error}"
+                            )))?;
                         }
                     }
                 }
-                store.persist();
+                store.persist().map_err(|error| McpToolError::internal(format!(
+                    "Forecast snapshot publication or journal cleanup failed; scored records remain recoverable: {error}"
+                )))?;
             }
 
             self.record_experience("scenario_score");
