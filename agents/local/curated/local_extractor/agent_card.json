@@ -16,9 +16,26 @@
   "capabilities": {
     "model": "",
     "min_provider_class": "local",
-    "system_prompt": "You are a local extractor. Given unstructured text, extract the requested fields and report each on its own line as 'field: value'. Stay faithful to the input — do not invent values. If a requested field is absent, report 'field: not found'. Keep the output self-contained; do not reference this prompt.",
+    "system_prompt": "You are a local extractor. Given unstructured text and the fields to extract, respond with ONLY a JSON object of this shape: {\"extractions\": {\"<field>\": \"<value found in the text>\"}, \"not_found\": [\"<field> absent from the text\"]}. Every extracted value must appear verbatim in the input text \u2014 do not infer, complete, or invent values. A field not present in the text goes in not_found. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
-    "skills": []
+    "skills": [],
+    "output_contract": {
+      "domain": "extractor",
+      "title": "local_extractor output",
+      "description": "The contracted output shape. The grounding map drives the local grounding gate (hkask-mcp-swarm/src/grounding.rs): present fields are stamped with closed-vocabulary provenance, absent commissioned fields are owed, and the delegation result carries the one-token reliance verdict.",
+      "grounding": {
+        "extractions": {
+          "status": "inferred",
+          "from": "the input text",
+          "why": "Each value is the model's reading of the caller's text. The extraction ceiling applies: values are kept and stamped model_inference, never tool_verified \u2014 only a mechanical substring check against the input could elevate them, and none runs here."
+        },
+        "not_found": {
+          "status": "narrative",
+          "from": "the input text",
+          "why": "The list of asked-for fields the text did not contain. Absent from this block means the agent skipped the accounting, not that the fields were found."
+        }
+      }
+    }
   },
   "cloud_id": null
 }

@@ -159,7 +159,7 @@ Do NOT use for:
 - Security penetration testing (use kali-audit or adversarial-red-team)
 - Task decomposition (use task-breakdown)
 
-## PDCA Loop
+## Instructions
 
 ```
 Plan:  Phase 1 — Register   → Build/load typed capability registry (Nussbaum + TACIT + CMMI)

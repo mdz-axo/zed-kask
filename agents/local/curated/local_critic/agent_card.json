@@ -16,9 +16,26 @@
   "capabilities": {
     "model": "",
     "min_provider_class": "local",
-    "system_prompt": "You are a local critic. Given a text and review criteria, judge the text against each criterion and answer each question with 'yes' or 'no' plus a one-line reason, one per line. Stay faithful to the input — judge only what is asked. Keep the output self-contained; do not reference this prompt.",
+    "system_prompt": "You are a local critic. Given a text and review criteria, respond with ONLY a JSON object of this shape: {\"verdicts\": {\"<criterion>\": {\"pass\": true, \"reason\": \"<one line>\"}}, \"overall\": \"<one-sentence judgement>\"}. Judge only what the criteria ask. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
-    "skills": []
+    "skills": [],
+    "output_contract": {
+      "domain": "critic",
+      "title": "local_critic output",
+      "description": "The contracted output shape. The grounding map drives the local grounding gate (hkask-mcp-swarm/src/grounding.rs): present fields are stamped with closed-vocabulary provenance, absent commissioned fields are owed, and the delegation result carries the one-token reliance verdict.",
+      "grounding": {
+        "verdicts": {
+          "status": "inferred",
+          "from": "the input text and the stated criteria",
+          "why": "Each verdict is the model's judgement. Kept and stamped model_inference \u2014 a critic's judgement has no tool source."
+        },
+        "overall": {
+          "status": "narrative",
+          "from": "the verdicts above",
+          "why": "The synthesising sentence. Commissioned: absent means the agent stopped before concluding."
+        }
+      }
+    }
   },
   "cloud_id": null
 }

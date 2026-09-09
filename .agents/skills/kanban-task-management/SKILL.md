@@ -37,7 +37,7 @@ Decompose → Delegate → Operate
 - For convergent planning with dependency graphs (use `task-breakdown`)
 - For TDD execution of vertical slices (use `tdd`)
 
-## Phase Selection (Triage)
+## Instructions
 
 The first step (`triage.j2`) examines the available inputs and determines
 which phase to run:

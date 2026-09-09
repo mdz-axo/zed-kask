@@ -12,13 +12,13 @@
 
 - **Local and single-user.** Not a cloud platform, not a hosted agent framework. There is no autonomous agent loop by default: the human is in the loop, and skills escalate _to the user_.
 - **Sovereign data.** Memory, ledgers, and galleries live in local SQLCipher databases under a single passphrase held in your keychain; rotating it re-keys every database, with rollback on partial failure. External services — the Agent Bestiary World swarm catalog, RunPod inference endpoints, web research providers — are integrations you configure with your own credentials, not a host.
-- **Minimal divergence.** Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the named seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md) (D1–D39), each pinned by a test.
+- **Minimal divergence.** Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the named seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md) (D1–D52; D4, D10, D17, D19, and D30 retired), each pinned by a test.
 
 ## What you get
 
 ### Skills
 
-**68 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (316 seeded Jinja2 templates across 64 crates) for structured prompt scaffolding.
+**77 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (324 seeded Jinja2 templates across 67 crates) for structured prompt scaffolding.
 
 Shipped skills are seeded **once** to the global skills directory (`~/.local/share/zed-kask/skills/`); the disk copy is the runtime source of truth, and your edits take effect immediately without recompilation. The 23 **core skills** (quality gates, curator methodologies, skill authoring) are the exception: always-on, re-seeded on every startup, and locked against editing — a hand edit can never silently weaken a gate. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/diataxis/`](./kask/docs/diataxis/) for per-crate explanations.
 
@@ -32,11 +32,11 @@ Four native panels extend the steering surface. The **swarm panel** composes and
 
 ### Media generation
 
-The `media` MCP server is the fleet's second largest (68 tools): image and video generation, voice synthesis, transcription, face recognition, and a persistent gallery. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
+The `media` MCP server is the fleet's second largest (80 tools): image and video generation, voice synthesis, transcription, face recognition, and a persistent gallery. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
 
 ### MCP servers
 
-**11 built-in MCP servers** (**357 registered tools** fleet-wide) are launched by zed's `context_server` host as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**11 built-in MCP servers** (**377 registered tools** fleet-wide) are launched by zed's `context_server` host as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
 | Server                 | Surface                                                       |
 | ---------------------- | ------------------------------------------------------------- |
@@ -47,7 +47,7 @@ The `media` MCP server is the fleet's second largest (68 tools): image and video
 | `media`                | AI media generation (image, video, audio, gallery)             |
 | `portfolio`            | Transaction-ledger portfolio store with holdings/returns views |
 | `prediction-markets`   | Polymarket/Kalshi base rates, calibration, residuals          |
-| `research`             | Web search, extraction, browsing, RSS feeds                    |
+| `research`             | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger |
 | `scenarios`            | Event-tree forecasting (Tetlock/Schwartz/Chermack)            |
 | `swarm`                | ABW cloud swarms + local swarm substrate + Xaman Ek curator   |
 | `training`             | LoRA/QLoRA training pipeline (dataset, submit, validate)      |

@@ -640,6 +640,32 @@ fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, 
     }
 }
 
+/// zed-kask: D-seam — T15 (channel a) advice-apply bridge decision. A
+/// successful `curator_advice_mark_applied` whose response names a skill IS
+/// the operator accepting that skill's recommendation (lora-training: "the
+/// operator reacts to a recommendation") — returns the skill to feed the
+/// operator-feedback hook. Extracted from the `run` wrapper so the decision
+/// is pinnable without a full MCP-server fixture (the `mcp_run_outcome`
+/// precedent). The success path's `raw_output` is the response text as a
+/// JSON *string* (the `{"content": ...}` envelope), so the skill id is
+/// read through `parse_tool_response` — reading `raw_output` as an object
+/// silently never fires (the envelope trap `tool_response.rs` documents:
+/// every field read returns `None` with no error).
+fn advice_apply_feedback_skill(
+    tool_name: &str,
+    result: &Result<AgentToolOutput, AgentToolOutput>,
+) -> Option<String> {
+    if tool_name != "curator_advice_mark_applied" {
+        return None;
+    }
+    let output = result.as_ref().ok()?;
+    let response = hkask_types::tool_response::parse_tool_response(output.raw_output.as_str()?)?;
+    response
+        .get("skill_id")
+        .and_then(|skill_id| skill_id.as_str())
+        .map(str::to_string)
+}
+
 /// Build the error output for a model-caused invalid-JSON tool call — the
 /// typed `{"error", "kind": "invalid_argument"}` envelope so
 /// `mcp_run_outcome` classifies the failure structurally. The ledger then
@@ -778,15 +804,8 @@ impl AnyAgentTool for ContextServerTool {
             // durable record in the escalation context; this fires the live
             // `reg.skill.<id>.operator_feedback` span the metacognition
             // drift consumer reads.
-            if success
-                && tool_name == "curator_advice_mark_applied"
-                && let Ok(output) = &result
-                && let Some(skill_id) = output
-                    .raw_output
-                    .get("skill_id")
-                    .and_then(|skill_id| skill_id.as_str())
-            {
-                crate::record_operator_feedback(skill_id, true, None);
+            if let Some(skill_id) = advice_apply_feedback_skill(&tool_name, &result) {
+                crate::record_operator_feedback(&skill_id, true, None);
             }
             result
         })
@@ -1367,6 +1386,69 @@ mod tests {
             Some("invalid_argument"),
             "a model-caused input failure must classify as caller-caused, \
              not as raw error text counting against tool reliability"
+        );
+    }
+
+    /// T15 (channel a): the advice-apply bridge fires only for a successful
+    /// `curator_advice_mark_applied` whose response names a skill. The
+    /// fixture mirrors the real response shape: the success path's
+    /// `raw_output` is the response text as a JSON *string* (the
+    /// `{"content": ...}` envelope), so the decision must parse it — reading
+    /// `raw_output` as an object silently never matches (the envelope trap
+    /// `tool_response.rs` documents: every field read returns `None` with
+    /// no error).
+    #[test]
+    fn test_advice_apply_bridge_fires_only_on_skill_naming_success() {
+        let applied_with_skill = Ok(AgentToolOutput {
+            raw_output: serde_json::Value::String(
+                r#"{"content":{"id":"esc-1","applied_at":"2026-09-09T00:00:00Z","review_due_at":"2026-09-16T00:00:00Z","review":{"status":"observation_window","finalized":false,"causal_attribution":"unverified"},"skill_id":"lora-training"}}"#
+                    .into(),
+            ),
+            llm_output: vec![],
+        });
+        assert_eq!(
+            advice_apply_feedback_skill("curator_advice_mark_applied", &applied_with_skill),
+            Some("lora-training".to_string()),
+            "a successful apply naming a skill is acceptance feedback for that skill"
+        );
+
+        // The curator echoes `skill_id: null` when the apply carried none —
+        // no skill named, no feedback span.
+        let applied_without_skill = Ok(AgentToolOutput {
+            raw_output: serde_json::Value::String(
+                r#"{"content":{"id":"esc-2","skill_id":null}}"#.into(),
+            ),
+            llm_output: vec![],
+        });
+        assert_eq!(
+            advice_apply_feedback_skill("curator_advice_mark_applied", &applied_without_skill),
+            None
+        );
+
+        // A failed apply never fires, even when the payload names a skill.
+        let failed = Err(AgentToolOutput {
+            raw_output: serde_json::json!({"skill_id": "lora-training"}),
+            llm_output: vec![],
+        });
+        assert_eq!(
+            advice_apply_feedback_skill("curator_advice_mark_applied", &failed),
+            None
+        );
+
+        // Any other tool never fires.
+        assert_eq!(
+            advice_apply_feedback_skill("curator_ping", &applied_with_skill),
+            None
+        );
+
+        // Unparsable response text never fires.
+        let unparsable = Ok(AgentToolOutput {
+            raw_output: serde_json::Value::String("not json".into()),
+            llm_output: vec![],
+        });
+        assert_eq!(
+            advice_apply_feedback_skill("curator_advice_mark_applied", &unparsable),
+            None
         );
     }
 

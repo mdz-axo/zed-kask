@@ -9,7 +9,7 @@ Applies the MAIA v3 listening template to an earnings-call transcript. The
 template is a semantic evaluation procedure over text — it extracts claims,
 classifies them by horizon, and emits per-section verdicts with evidence.
 
-## The retrieve-cite-verify process
+## Instructions
 
 The no-fabrication invariant is enforced by the process, not by the prompt:
 

@@ -4767,6 +4767,76 @@ mod internal_tests {
         set_skill_outcome_recorder(std::sync::Arc::new(|_, _, _| {}));
     }
 
+    /// T15: the operator-feedback recorder records, is replaceable, and —
+    /// unwired — drops with a debug log, never a panic (the absent-input
+    /// state stays explicitly unobserved). Same process-global slot
+    /// discipline as the outcome recorder test above.
+    #[test]
+    fn operator_feedback_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        set_operator_feedback_recorder(std::sync::Arc::new(move |skill_id, accepted, note| {
+            if let Ok(mut entries) = captured.lock() {
+                entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));
+            }
+        }));
+        record_operator_feedback("lora-training", true, None);
+        record_operator_feedback(
+            "task-breakdown",
+            false,
+            Some("overridden: slice 3 too coarse"),
+        );
+        let relevant: Vec<(String, bool, Option<String>)> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| id == "lora-training" || id == "task-breakdown")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant,
+            vec![
+                ("lora-training".to_string(), true, None),
+                (
+                    "task-breakdown".to_string(),
+                    false,
+                    Some("overridden: slice 3 too coarse".to_string())
+                )
+            ],
+            "both channels' dispositions reach the recorder in order"
+        );
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        set_operator_feedback_recorder(std::sync::Arc::new(move |_, _, _| {
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
+        }));
+        record_operator_feedback("media-workflow", false, Some("wrong codec"));
+        assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
+        let relevant_after: Vec<_> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| {
+                    id == "lora-training" || id == "task-breakdown" || id == "media-workflow"
+                })
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant_after.len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
+
+        // Leave the global slot inert for subsequent parallel tests.
+        set_operator_feedback_recorder(std::sync::Arc::new(|_, _, _| {}));
+    }
+
     /// An injector that recalls nothing. Wiring it must be observationally
     /// inert for the turn loop — `inject_context` returns no messages, so the
     /// `!injected.is_empty()` guard in `run_turn_internal` splices nothing.

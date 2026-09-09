@@ -9,11 +9,13 @@ description: >-
 
 # GPUI Benchmarks
 
+## When to Use
+
 Use this skill when a user asks to benchmark GPUI code, reproduce a UI hang or frame drop, evaluate a performance fix, use `#[gpui::bench]`, interpret `BenchReport`, or review whether a GPUI benchmark represents production.
 
 The primary goal is UI responsiveness. Throughput matters, but a UI that finishes work quickly while blocking input and frames is still regressed.
 
-## Start with the performance question
+## Instructions — start with the performance question
 
 Before editing, establish or derive:
 
@@ -27,7 +29,7 @@ Before editing, establish or derive:
 
 Ask only for inputs that cannot be derived from the repository, issue, trace, or existing benchmark.
 
-## Non-negotiable rules
+## Constraints
 
 - A benchmark must not enable any crate's `test-support` feature, directly or transitively.
 - Use production constructors, storage, executors, rendering, synchronization, and data sizes whenever practical.

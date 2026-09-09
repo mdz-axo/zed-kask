@@ -43,6 +43,16 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 4. Find deeper connections to broader Lisp patterns, comparing the design to CLHS/SRFI functions, classic papers, and cross-dialect equivalents.
 5. Produce refinement directives for each gap or edge case, stating the specific change required, the principle addressed, and the expected improvement.
 
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `idiomatic-lisp-inquiry.j2` | Inquiry phase: evaluate the design against the eight Lisp principles, list invariants and invalid states, rank principle violations by severity. |
+| `idiomatic-lisp-design.j2` | Design phase: choose abstraction mechanisms (function, macro, closure, data-driven dispatch), design for the correct evaluation model, hygienic macros, tail-call optimization. |
+| `idiomatic-lisp-challenge.j2` | Challenge phase: adversarial review — gaps, edge cases, counterexamples verified via `lisp_eval`, refinement directives. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `idiomatic-lisp/idiomatic-lisp-inquiry`) and a context object with the required variables.
+
 ## Constraints
 
 - Use `lisp_eval` to verify deterministic structural properties (invariant checks, scoring, convergence signals). The interpreter is sandboxed: no I/O, no filesystem, no network, bounded steps+depth.

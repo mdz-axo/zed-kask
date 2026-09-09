@@ -25,7 +25,7 @@ Substrate-analysis process for interdisciplinary concept generation. Finds **whe
 - **Surface**: the gradient-hunter eight-shape taxonomy (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) + the seven-class reason taxonomy (Rubin MCAR/MAR/MNAR + spin glass metastable trap + allostery broken coupling).
 - **Domain supplement**: the project's 5 domain-supplement ontology namespaces (FIBO, SEPIO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core, extended via OBO Foundry / OntoBee / BioPortal.
 
-## PDCA Shape
+## Instructions
 
 ```
 Plan:   Phase 1 — Inventory    → Enumerate ontology namespaces + key concepts

@@ -39,7 +39,7 @@ bindings the Lisp form can access via `assoc`.
 - For persistent REPL or self-evolving tool scenarios — kask's interpreter is
   deliberately stateless.
 
-## The lisp_eval Pattern
+## Instructions
 
 The canonical example implements four structural invariants via recursive
 Lisp helpers. The agent calls `lisp_eval` with:
@@ -87,11 +87,20 @@ Key points:
   are treated as empty lists. No need for a recursive `append2` helper.
 - `concat` is a builtin: `(concat s1 s2 ...)` joins strings. Use this to build
   defect labels from field names: `(concat "missing_" key)`.
-- Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`).
+- Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`). `t` is also bound and
+  truthy — usable as the cond else-clause: `(cond (test then) (t else))`.
 - `assoc` tests for key _presence_, not non-empty value. An empty-string
   `falsifier` is a present key — it is a semantic defect the LLM should catch,
   not a structural one Lisp flags. To flag empty values, add a `length` check
   on the `assoc` result.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `report.j2` | Final report — surviving hypothesis set with the Lisp verdict and convergence score. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `lisp-scaffold-reasoning/report`) and a context object with the required variables.
 
 ## Constraints
 
@@ -99,7 +108,7 @@ Key points:
   notation. Use infix for simple scoring (`score_a * 0.6 + score_b * 0.4`),
   prefix for complex nested logic with `let`, `if`, `assoc`.
 - No `eval` builtin (Lisp code cannot evaluate arbitrary strings). No
-  `load`/`require`. Bounded recursion depth (default 64) and bounded
+  `load`/`require`. Bounded recursion depth (default 1024) and bounded
   evaluation steps (default 100000). Both are configurable per call via
   `max_steps` and `max_depth` parameters.
 - The tool is sandboxed: no I/O, no filesystem, no network, no side effects.

@@ -1,6 +1,5 @@
 ---
 name: eqm-improvement
-visibility: public
 description: "Improve a forecast rationale's quality by reverse-engineering the reasoning patterns the 60 EQMs specify. PDCA loop: score, target, rewrite, re-score, iterate to convergence. Preserves the forecast probability and grounds evidence in real sources."
 ---
 
@@ -123,8 +122,7 @@ marker-keywords the scorer rewards. Three mitigations, all required:
      delegate to `superforecasting/stage_2_outside_view` or
      `hkask-mcp-research` (web_search) for real data. If no real evidence
      found, note the gap honestly.
-   - For `confirmation_bias`, delegate to `falsifiability/falsifiability-
-     hypothesize` for genuine opposing hypotheses (not strawmen).
+   - For `confirmation_bias`, delegate to `falsifiability/falsifiability-hypothesize` for genuine opposing hypotheses (not strawmen).
 3. Produce the improved rationale.
 
 ### Convergence (Steps 6-9: Check + Act — deterministic compute, no LLM)
@@ -146,6 +144,8 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 | `eqm-imp-target.j2` | Kata Step 3 (Establish Target Condition): set marker-level targets derived from EQM descriptions (what a 2 looks like). Prioritize red flags over green flags per the asymmetric signal. |
 | `eqm-imp-predict.j2` | Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Carry confidence in [0,1] for Brier scoring. |
 | `eqm-imp-experiment.j2` | Kata Step 5 (Experiment / Do): rewrite the rationale to address each failing marker, guided by the EQM description. Preserves forecast probability. Never fabricates evidence — delegates to superforecasting/research/falsifiability for real data. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `eqm-improvement/eqm-imp-direction`) and a context object with the required variables.
 
 ## Constraints
 

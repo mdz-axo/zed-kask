@@ -747,4 +747,132 @@ mod tests {
         }
         assert_eq!(reliance_why("nonexistent"), "unknown reliance token");
     }
+
+    // ── the live contract corpus ─────────────────────────────────────────
+    //
+    // fermi pins its cards to their sketches with a corpus test
+    // (`tests/contract_sketch_corpus.rs`); the local analog pins the LIVE
+    // cards to the gate. This is the evidence that "delegate to any local
+    // agent and get a meaningful verdict" is true of the fleet that
+    // actually exists — not just of fixtures: every card in
+    // agents/local/curated carries a grounding map the gate can read, and
+    // grading a compliant response yields `clean` while grading one with
+    // commissioned work absent yields `incomplete`.
+
+    /// Load the live local cards. Skips (returns empty) when the agents dir
+    /// is absent — the corpus test then no-ops rather than fail in
+    /// checkouts that ship without the registry.
+    fn live_cards() -> Vec<crate::local_registry::LocalAgentCard> {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let dir = std::path::Path::new(manifest).join("../../../agents/local/curated");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|entry| {
+                let path = entry.ok()?.path().join("agent_card.json");
+                let text = std::fs::read_to_string(path).ok()?;
+                serde_json::from_str(&text).ok()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_live_card_carries_a_grounding_map_the_gate_can_read() {
+        let cards = live_cards();
+        if cards.is_empty() {
+            return; // registry not shipped in this checkout
+        }
+        assert!(!cards.is_empty(), "the local registry ships cards");
+        for card in &cards {
+            let contract = card
+                .capabilities
+                .output_contract
+                .as_ref()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "live card '{}' declares no output_contract — its delegations \
+                         can only ever return reliance 'unchecked'",
+                        card.agent_id
+                    )
+                });
+            let grounding = contract
+                .get("grounding")
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "live card '{}' has an output_contract with no grounding map",
+                        card.agent_id
+                    )
+                });
+            assert!(
+                !grounding.is_empty(),
+                "{}: empty grounding map",
+                card.agent_id
+            );
+            for (block, declaration) in grounding {
+                let status = declaration_status(declaration);
+                assert!(
+                    KNOWN_STATUSES.contains(&status.as_str()),
+                    "live card '{}' block '{}' declares unknown status '{status}' — \
+                     the gate would treat it as narrative and name it in every report",
+                    card.agent_id,
+                    block
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grading_a_live_card_response_distinguishes_work_done_from_work_owed() {
+        let cards = live_cards();
+        if cards.is_empty() {
+            return; // registry not shipped in this checkout
+        }
+        for card in &cards {
+            let contract = card
+                .capabilities
+                .output_contract
+                .as_ref()
+                .expect("checked above");
+            let grounding = contract
+                .get("grounding")
+                .and_then(Value::as_object)
+                .expect("checked above");
+            // A compliant response: every contracted block present.
+            let compliant: Map<String, Value> = grounding
+                .keys()
+                .map(|block| (block.clone(), Value::String("content".to_string())))
+                .collect();
+            let compliant_text = Value::Object(compliant).to_string();
+            let outcome = grade(Some(contract), &compliant_text, &[], None);
+            assert_eq!(
+                outcome.reliance.get("status").and_then(Value::as_str),
+                Some("clean"),
+                "{}: a compliant response must grade clean",
+                card.agent_id
+            );
+            // Commissioned work absent: every contracted block missing. Only
+            // asserted for cards that commission work (inferred/narrative
+            // blocks) — a derived/unavailable-only contract legitimately
+            // grades clean on empty (the contract requires null).
+            let commissions_work = grounding.values().any(|declaration| {
+                matches!(
+                    declaration_status(declaration).as_str(),
+                    "inferred" | "narrative"
+                )
+            });
+            if !commissions_work {
+                continue;
+            }
+            let shirked_text = "{}";
+            let outcome = grade(Some(contract), shirked_text, &[], None);
+            assert_eq!(
+                outcome.reliance.get("status").and_then(Value::as_str),
+                Some("incomplete"),
+                "{}: a response with every commissioned block absent must grade incomplete",
+                card.agent_id
+            );
+        }
+    }
 }

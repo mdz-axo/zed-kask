@@ -61,7 +61,7 @@ Do NOT use for:
 - Curator (Xaman Ek) session management (that is a per-dispatch parameter of
   the ACT phase, not a separate skill)
 
-## PDCA Loop
+## Instructions
 
 ```
 Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet
@@ -311,3 +311,11 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 | `swarm-patterns.yaml` | Reference: the swarm-algorithm tuning palette mapped onto ABW's hire/fire/delegate vocabulary (fire via `swarm_fire` — redundancy moves fire duplicates via `swarm_fire`, not flag-for-manual-pruning). PSO velocity terms (c1 cognitive, c2 social, omega inertia) → ABW composition moves. ACO pheromone deposition/evaporation → hire/fire-redundant. Reynolds separation/alignment/cohesion → diversity/coordination/coherence. Onto4MAT team properties as the measurable substrate. Includes the three deficit classes and their tuning responses, plus the canonical failure mode (premature convergence / diversity collapse) and its detection signal. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
+## Constraints
+
+- Every delegation carries an explicit credit budget (`credits_authorized`); no unbudgeted calls.
+- Task-success verdicts are deterministic (`swarm_evaluate_local` or a configured evaluator) or null — never LLM-judged; `llm_judged` provenance is downgraded by ORIENT.
+- Algedonic override: a 402 or un-acknowledged curator dispatch escalates regardless of the convergence distance `d` — a broken algedonic channel is never read as "no deviation".
+- Convergence requires |d_i − d_{i−1}| < 0.03 for 3 consecutive iterations; a healthy swarm that fails the task must NOT converge.
+- Open tasks with no oracle: `task_success` stays null and the human Go See loop (C2) covers the gap — never an LLM judge.

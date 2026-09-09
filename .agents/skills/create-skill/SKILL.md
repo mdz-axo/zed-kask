@@ -204,7 +204,7 @@ Generate the skill artifacts:
    - The prompt structure (what the agent should analyze/synthesize)
    - The expected JSON output shape (as a comment or schema description)
 
-### How to write SKILL.md instructions that use tools
+#### How to write SKILL.md instructions that use tools
 
 Each instruction step should be concrete and tool-oriented:
 
@@ -228,7 +228,7 @@ Each instruction step should be concrete and tool-oriented:
    Thread the relevant memories into your next analysis step.
 ```
 
-### Convergence pattern
+#### Convergence pattern
 
 The SKILL.md describes when to loop in natural language, backed by
 `lisp_eval` for deterministic checks:
@@ -246,7 +246,7 @@ to the report. If the signal decreased by less than 20% from the prior
 iteration, stop and report what you have (diminishing returns).
 ```
 
-### Composition pattern
+#### Composition pattern
 
 The SKILL.md instructs the agent to call the `skill` tool to compose
 with another skill:
@@ -259,7 +259,7 @@ Call the `skill` tool:
   task: "validate skill {{ skill_name }} against the SKILL.md quality checks"
 ```
 
-### Persistence-grounded learning pattern
+#### Persistence-grounded learning pattern
 
 The SKILL.md instructs the agent to call an MCP tool for prior context:
 
@@ -272,7 +272,7 @@ Before starting, call `curator_memory_recall`:
   findings into your initial analysis.
 ```
 
-### Failure surfacing pattern
+#### Failure surfacing pattern
 
 The SKILL.md instructs the agent to call `curator_report_skill_use_issue`
 on tool failures:

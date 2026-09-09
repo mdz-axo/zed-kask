@@ -16,7 +16,7 @@ share a single root cause: **adding elements without measuring**.
 4. No codebase pattern match (how do sibling cards handle this?).
 5. No overflow policy (wrap, truncate, PopoverMenu, hide-secondary).
 
-## The discipline
+## Instructions
 
 Before adding any element: **measure** the container, **count** the
 elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
@@ -32,14 +32,14 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 - `ContextMenu::build(window, cx, |menu, ...| menu.entry(label, None, handler))` for menu items.
 - `gap_1()`/`gap_2()` on the 4px/8px grid.
 
-## When to use
+## When to Use
 
 - Before adding elements to a card/panel renderer.
 - When a card has >2 action buttons or a text column next to actions.
 - When modifying a shared card container with multiple consumers.
 - When a layout looks jumbled or cramped.
 
-## When NOT to use
+## When NOT to Use
 
 - Pure logic changes with no layout impact.
 - Single-element cards. Test-only changes.

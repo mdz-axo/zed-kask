@@ -17,9 +17,26 @@
   "capabilities": {
     "model": "",
     "min_provider_class": "local",
-    "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), produce a concise narrative summary of 3–5 sentences. Stay faithful to the input — do not invent facts. If the input is empty or unintelligible, say so plainly. Keep the summary self-contained; do not reference this prompt.",
+    "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), respond with ONLY a JSON object of this shape: {\"narrative\": \"<3-5 concise sentences faithful to the input>\", \"input_assessment\": \"<one line: what the input was, or that it was empty or unintelligible>\"}. Do not invent facts. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
-    "skills": []
+    "skills": [],
+    "output_contract": {
+      "domain": "narrator",
+      "title": "local_narrator output",
+      "description": "The contracted output shape. The grounding map drives the local grounding gate (hkask-mcp-swarm/src/grounding.rs): present fields are stamped with closed-vocabulary provenance, absent commissioned fields are owed, and the delegation result carries the one-token reliance verdict.",
+      "grounding": {
+        "narrative": {
+          "status": "narrative",
+          "from": "the input",
+          "why": "The commissioned summary. Faithfulness to the input is the prompt's constraint; the provenance stamp records that this is the model's composition, not a retrieved artifact."
+        },
+        "input_assessment": {
+          "status": "inferred",
+          "from": "the input",
+          "why": "The model's reading of what it was given. Absent means the agent did not account for its input."
+        }
+      }
+    }
   },
   "cloud_id": null
 }

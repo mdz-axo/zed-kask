@@ -55,9 +55,11 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **S8**: SKILL.md has a "Constraints" section
    - **S9**: No `visibility` field in frontmatter
    - **S10**: SKILL.md does not use removed vocabulary (`compute_ref`,
-     `action:`, `template_ref`, `convergence_signal`, `input_mapping`,
-     `on_failure`, `ordinal:`) or vestigial `steps` frontmatter with
-     `id`/`tools` dispatch structure (manifest-executor remnant)
+     `action:`, `template_ref` as a manifest dispatch key, `convergence_signal`,
+     `input_mapping`, `on_failure`, `ordinal:`) or vestigial `steps` frontmatter with
+     `id`/`tools` dispatch structure (manifest-executor remnant). The
+     `render_template` tool's `template_ref` parameter, named in call
+     instructions, is the live contract — not a violation.
    - **S11**: If `core: true` is declared, the name must be in
      `CORE_SKILL_NAMES` (enforced by `agent_skills` at load time)
    - **S12**: Every `lisp_eval` form pinned in a SKILL.md's instructions
@@ -131,7 +133,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      removed agent tools)
    - SKILL.md instructions reference .j2 templates that are missing
    - SKILL.md uses removed vocabulary (`compute_ref`, `action:`,
-     `template_ref`, `convergence_signal`)
+     manifest-dispatch `template_ref`, `convergence_signal`)
    - SKILL.md has no "Constraints" section
    - SKILL.md instructions are vague ("the system will analyze...") instead
      of concrete ("call `lisp_eval` with form...")
@@ -167,6 +169,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
   notation. Use infix for simple scoring, prefix for complex nested logic.
 - No `visibility` field in frontmatter.
 - SKILL.md must not use removed vocabulary: `compute_ref`, `action:`,
-  `template_ref`, `convergence_signal`, `input_mapping`, `on_failure`,
-  `ordinal:`, `category:`.
+  `template_ref` as a manifest dispatch key (the `render_template` parameter
+  of the same name is the live contract), `convergence_signal`,
+  `input_mapping`, `on_failure`, `ordinal:`, `category:`.
 - Core skills (`core: true`) must have names in `CORE_SKILL_NAMES`.

@@ -1,6 +1,5 @@
 ---
 name: eqm
-visibility: public
 description: "Explanation Quality Markers measurement instrument. Scores forecast rationales against 60 EQMs via the market_score_rationale MCP tool, aggregates to composites, validates against realized outcomes (Brier), and emits an overconfidence_bias signal."
 ---
 
@@ -105,6 +104,8 @@ target composite), computed deterministically via lisp_eval.
 | `eqm-aggregate.j2` | Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. |
 | `eqm-validate.j2` | If realized_outcomes present: correlate EQM composite with accuracy (Brier), check directional-hypothesis match. If scores rose but accuracy didn't improve → gaming_suspected verdict. If outcomes absent → Undetermined (not Ready-with-empty). |
 | `eqm-catalog.yaml` | Reference: the full 60 EQM definitions from Karvetski et al. (2026), organized by category (good_habits / warning_signs). The 12 most predictive are marked predictive: true. Single source of truth for EQM definitions; the MCP tool's KEY_EQMS const carries the predictive 12. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
 
 ## Constraints
 

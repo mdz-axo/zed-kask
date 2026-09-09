@@ -25,7 +25,7 @@ kask-wiring changes without carrying forward accumulated cruft.
 
 **Decision rule:** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge.
 
-## The mapped re-application process (Steps 1–7) + post-rebase cleanup (Step 8)
+## Instructions
 
 **Scope:** Steps 1–7 apply to D-seam *files* — rows whose `DIVERGENCE.md` file
 column names an existing file. Deletion D-seams (file column `—` or

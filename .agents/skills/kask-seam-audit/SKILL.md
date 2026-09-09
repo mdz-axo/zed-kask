@@ -15,7 +15,7 @@ templates. Invoke the skill via the `skill` tool; the agent reads the SKILL.md
 and calls `lisp_eval`, `render_template`, and MCP tools directly as the
 methodology instructs.
 
-## When to use
+## When to Use
 
 - Reproducible security + architecture + UI audit of the Kask↔Zed seam
   (D1–D33 in `DIVERGENCE.md`; D17 and D19 are retired).
@@ -36,7 +36,7 @@ methodology instructs.
   stateless `lisp_eval` tool gates (count / completeness / exclusivity invariants).
 - **Ousterhout** — the deep-module deletion test (essentialist G1/G2/G3).
 
-## PDCA shape
+## Instructions
 
 ```
 Plan:  seam-map + prior verification  ->  Gate A (lisp: prior exclusivity)

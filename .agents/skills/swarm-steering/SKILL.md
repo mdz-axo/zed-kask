@@ -58,7 +58,7 @@ Do NOT use for:
 - Cloud (ABW) swarms (Xaman Ek has steering built in — delegate via
   `swarm_xaman`; this skill is local-mode only).
 
-## PDCA shape (emergent from the anchors)
+## Instructions
 
 ```
 Receive:  the swarm-intelligence plan (emitted_calls) + swarm state + credit budget
@@ -137,3 +137,10 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 | `swarm-steering-direct.j2` | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
+## Constraints
+
+- The directive is derived from the swarm-intelligence plan — steering sequences and collects, it never re-plans.
+- Stamp a deterministic `task_success` per `LocalDelegateResult` when an evaluator exists; leave it null for open tasks (the Go See loop covers them) — never LLM-judge.
+- `latency_ms` is collected on every delegation result (C4) and flows into ORIENT's `latency_outliers`.
+- In `steering` mode the manifest's step 8 calls `swarm_execute_plan_local` deterministically; in `advisory` mode the plan is the final output and the operator executes manually.

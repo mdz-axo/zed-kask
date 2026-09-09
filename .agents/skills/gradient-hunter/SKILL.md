@@ -32,7 +32,7 @@ Do NOT use for:
 - Reasoning-context ellipses (use `metacognition`)
 - Reproducing a known symptom (use `diagnose` — deserts are asymptomatic until you have a prior)
 
-## PDCA Loop
+## Instructions
 
 ```
 Plan:   Phase 1 — Prior       → Build expected-field model (sibling/convention/principle)

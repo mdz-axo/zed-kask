@@ -1,6 +1,6 @@
 ---
 name: grounding-verify
-description: "Verify that factual claims in a text are grounded in provided source data. Extracts claims, classifies provenance on a strength lattice (tool_verified > model_inference > unavailable), mechanically verifies citations and derived arithmetic via lisp_eval cross-checks, detects cross-source conflicts via congruence rules with a precedence hierarchy, grades finding severity, scans narrative fields for leak rules, computes a composite fact_score with nil-propagation, and emits a decoupling field so an in-thread self-check cannot masquerade as a decoupled audit. Usable standalone or as a composed component in analysis pipelines."
+description: "Verify that factual claims in a text are grounded in provided source data. Extracts claims, classifies provenance on a strength lattice (tool_verified > platform_derived > model_inference > unavailable), verifies citations and arithmetic via lisp_eval, scans narrative fields for leak rules, detects cross-source conflicts with a precedence hierarchy, grades severity, computes a composite fact_score with nil-propagation, and emits a decoupling field. Standalone or as a pipeline component."
 ---
 
 # Grounding Verify
