@@ -18,11 +18,11 @@ Count is pinned end-to-end by `tool_surface_is_exactly_85_registered_tools`
 (`build.rs:30-31`) and emits `TOOL_NAMES`, kept in agreement with the live router by
 `tool_names_const_matches_registered_surface`. The 85 fns split by file into 48 cloud
 (`cloud_swarm_tools.rs`), 27 local (`local_tools.rs`), 3 A2A (`a2a_tools.rs`),
-4 local knowledge (`knowledge_tools.rs`), and 3 ledger (`ledger_tools.rs`);
+4 local knowledge (`knowledge_tools.rs`);
 `swarm_update_agent` and `swarm_get_local_agent` were added 2026-09-03
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
-**Local auth:** none — the hkask-ledger balance check is the gate (no consent token)
+**Local auth:** none — local agents run on the operator's own substrate; there is no budget and no consent token
 
 The swarm server exposes two parallel substrates for agent catalogue, team
 composition, agent authoring, and governed spend:
@@ -32,8 +32,10 @@ composition, agent authoring, and governed spend:
   (`swarm_request_consent` mints single-use tokens; `swarm_hire`/`swarm_delegate`
   consume and re-verify them).
 - **Local** (v2 §15) — routes to zed-kask's local substrate: `hkask-inference`
-  (Ollama/cloud via the zed IPC bridge) and `hkask-ledger` (operator-funded SQLite
-  credits). No ABW calls, no consent token — the ledger balance check is the gate.
+  (Ollama/cloud via the zed IPC bridge). No ABW calls, no consent token, and
+  no budget: local agents run on the operator's own substrate (operator
+  ruling 2026-09-04 — the budget concept is deprecated; timeouts are the
+  enforcement/kill mechanism).
 
 Both substrates dispatch through the kask MCP runtime (per-agent call metering,
 `hkask.mcp.swarm` telemetry targets; tool reach itself is
@@ -50,7 +52,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | --------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Authoring**   | Create new agents          | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates`, `swarm_fork_agent`                                                                                                                                                                                                                      | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, `swarm_clone_to_local`, `swarm_ai_assist`                                                                   |
 | **Composition** | Group agents into teams    | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman`, `swarm_fanout`, `swarm_publish_agent`, `swarm_publish_checks`                                                                                                                                                                                                                        | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_list_local_agents`, `swarm_fanout_local`, `swarm_pipeline_local` |
-| **Operation**   | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`, `swarm_push_to_cloud`, `swarm_remove_local`                                |
+| **Operation**   | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_push_to_cloud`, `swarm_remove_local`                                |
 
 ## Tool reference — ABW (47 tools)
 
@@ -121,32 +123,24 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 ## Tool reference — Local (35 tools)
 
-> 25 `local_tools.rs` + 3 `a2a_tools.rs` + 4 `knowledge_tools.rs` + 3 `ledger_tools.rs`
+> 25 `local_tools.rs` + 3 `a2a_tools.rs` + 4 `knowledge_tools.rs`
 > (build.rs regex ground truth). The tables below document 27 of them; the 8
 > untabulated tools are `swarm_a2a_broadcast`, `swarm_task_board`,
 > `swarm_eval_suite_local`, `swarm_clone_local_swarm`, `swarm_update_local_swarm`,
 > `swarm_push_local_swarm`, `swarm_pull_swarm_to_local`, and `swarm_recall_local`.
 
-Local-mode tools route to zed-kask's local substrate (`hkask-inference`,
-`hkask-ledger`). They are **always exposed regardless of
-`kask.swarm.mode`** — an operator in `abw` mode can still fund the local
-ledger, browse local agents, or push a local agent to the cloud. The mode
-only changes which substrate the _composition_ cascade uses by default.
-
-### Funding and balance (ledger)
-
-| Tool                  | Purpose                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `swarm_fund_local`    | Add operator-funded credits to the local ledger (SQLite). Credits are the spend ceiling for `swarm_delegate_local`.      |
-| `swarm_balance_local` | Read the current ledger balance. Fails closed on a stale signal (no fabricated zero — the `.rules` `unwrap_or(0)` trap). |
-| `swarm_local_history` | Read the ledger's debit/credit history (audit trail for the algedonic channel).                                          |
+Local-mode tools route to zed-kask's local substrate (`hkask-inference`).
+They are **always exposed regardless of `kask.swarm.mode`** — an operator in
+`abw` mode can still browse local agents, or push a local agent to the
+cloud. The mode only changes which substrate the _composition_ cascade uses
+by default.
 
 ### Delegation (the local execution path)
 
 | Tool                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `swarm_delegate_local` | Run a local agent against a task. The execution path: **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task via upstream-Zed body injection (`SkillTool::run` → `render_skill_envelope`) before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
-| `swarm_fanout_local`   | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Runs sequentially to avoid ledger TOCTOU. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads.                                                                                                                                                                                                           |
+| `swarm_delegate_local` | Run a local agent against a task. The execution path: **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056). Declared `capabilities.skills` (capped at 3) execute against the task via upstream-Zed body injection (`SkillTool::run` → `render_skill_envelope`) before the LLM call. Returns a `LocalDelegateResult` (see shape below). No budget — local agents run on the operator's own substrate. |
+| `swarm_fanout_local`   | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads.                                                                                                                                                                                                           |
 | `swarm_pipeline_local` | Sequential local pipeline: run N agents in order with `{prev_output}` substitution (each step's task may reference the previous step's response). Capped at 10 steps.                                                                                                                                                                                                                                                                 |
 | `swarm_a2a_send`       | Send an A2A (Agent2Agent) protocol message to a local agent: wraps in A2A types (Message/Task/Artifact) and dispatches in-process. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in `mcp_tools` to communicate with each other.                                                                                                                                                                              |
 | `swarm_a2a_card`       | Get the A2A Agent Card for a local agent (or all local agents when `agent_name` is omitted): capabilities, skills, supported interface. A2A-compliant discovery.                                                                                                                                                                                                                                                                      |
@@ -196,7 +190,7 @@ registry is read by `swarm_list_local_agents` and
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `swarm_evaluate_local`     | Run a deterministic evaluator against a delegation response and return a `TaskSuccessVerdict` (pass/fail + detail). The evaluator name + spec are caller-supplied; the verdict feeds the swarm-intelligence ORIENT step. |
 | `swarm_execute_plan_local` | Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected `LocalDelegateResult` array with `task_success` verdicts stamped. Capped at 10 delegations. |
-| `swarm_eval_agent_local`   | Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator, and report per-task pass rates with standard error plus totals (cost, tokens, overall pass rate). Each rollout is recorded as `model_request` + `verdict` events in the event store (`mcp/swarm/events.db`, operator-configurable via `HKASK_SWARM_EVENTS_PATH`); a store failure is counted in `events_dropped`, never swallowed. Tasks capped at 10, repeats at 10, total rollouts at 50. |
+| `swarm_eval_agent_local`   | Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator, and report per-task pass rates with standard error plus totals (tokens, overall pass rate). Each rollout is recorded as `model_request` + `verdict` events in the event store (`mcp/swarm/events.db`, operator-configurable via `HKASK_SWARM_EVENTS_PATH`); a store failure is counted in `events_dropped`, never swallowed. Tasks capped at 10, repeats at 10, total rollouts at 50. |
 
 ### `LocalDelegateResult` shape
 
@@ -211,9 +205,6 @@ fabricated.
   "response": "string",
   "model": "string (e.g. ollama/qwen3:32b)",
   "tokens_used": 1234,
-  "cost": 2,
-  "cost_uncapped": 2,
-  "balance": 48,
   "latency_ms": 4200,
   "tool_calls": [{ "tool": "string", "ok": true, "error": null }],
   "executed_skills": [{ "skill": "string", "ok": true, "error": null }],
@@ -224,11 +215,6 @@ fabricated.
 - `latency_ms` is the C4 latency signal `T_q`.
 - `tool_calls[].ok` and `executed_skills[].ok` are the C5 fault-attribution
   inputs — `false` increments `fault_count` for the blamed agent.
-- `cost` is capped at `credits_authorized`; `cost_uncapped` is the real spend.
-  When `cost_uncapped > cost`, the ledger under-states real spend by the
-  difference (the cap's understatement is visible, not silent).
-- `balance` is the post-debit ledger balance (the local algedonic channel).
-  `null` means **not measured** (the balance read failed), never "zero".
 - `task_success` is absent when the executor has not stamped a verdict; present
   when `swarm_execute_plan_local` or the Curator has run a deterministic
   evaluator. `provenance` is `deterministic` (trusted) or `llm_judged`
@@ -239,8 +225,9 @@ fabricated.
 Every ABW credit spend flows through a single-use, action-scoped, target-scoped
 consent token. This is the enforcement point for the ABW cost/consent invariant —
 an ABW spend **refuses** without a valid in-scope token, not just warns.
-**Local mode does not use consent tokens** — the ledger balance check is the
-gate (a delegation refuses if `balance < cost`, with no token to mint).[^ocap-swarm-consent]
+**Local mode does not use consent tokens** — local agents run on the
+operator's own substrate, so there is nothing to gate (no token to mint, no
+budget to check).[^ocap-swarm-consent]
 
 ```mermaid
 sequenceDiagram
@@ -288,7 +275,7 @@ status: VERIFIED
 wraps upstream LLM failures into HTTP 200 envelopes (e.g. Anthropic credit
 exhaustion passed through verbatim in a Xaman Ek response), so status-code-only
 mapping is insufficient. Local-mode errors map to the same variants where the
-semantics match (e.g. `PaymentRequired` for an insufficient ledger balance).[^owasp-swarm-errors]
+semantics match where a local analog exists.[^owasp-swarm-errors]
 
 | Variant              | Trigger                                                                 | Surface                         |
 | -------------------- | ----------------------------------------------------------------------- | ------------------------------- |
@@ -305,10 +292,11 @@ semantics match (e.g. `PaymentRequired` for an insufficient ledger balance).[^ow
 ## The algedonic channel
 
 Every authenticated ABW tool response carries `wallet.balance` — the operator's
-live ABW credit balance. Every local delegation response carries `balance` —
-the post-debit local ledger balance. Both close the S1→S5 feedback loop: a
-spend is never out of sight. A failed balance query emits `tracing::warn!` and
-returns `None` (never a fabricated zero — the `.rules` `unwrap_or(0)` trap).[^beer-swarm-algedonic]
+live ABW credit balance, closing the S1→S5 feedback loop: a cloud spend is
+never out of sight. A failed balance query emits `tracing::warn!` and returns
+`None` (never a fabricated zero — the `.rules` `unwrap_or(0)` trap). Local
+delegation has no balance: local agents run on the operator's own substrate
+(operator ruling 2026-09-04 — no local budget).[^beer-swarm-algedonic]
 
 ## The swarm-intelligence skill ecosystem
 
@@ -467,7 +455,6 @@ injected by `mcp_env_with_credentials` — it never appears in the config env ma
 | —                                     | `HKASK_LOCAL_AGENTS_DIR`            | `mcp/swarm/agents/curated`       | Local agent cards directory (derived from global `data_dir`) |
 | —                                     | `HKASK_LOCAL_SWARMS_DIR`            | `mcp/swarm/swarms`               | Local swarms directory (derived from global `data_dir`)      |
 | —                                     | `HKASK_SWARM_MEMORY_DB`             | `mcp/swarm/memory.db`            | Local swarm semantic-memory DB path (derived from global `data_dir`) |
-| —                                     | `HKASK_SWARM_LEDGER_PATH`           | (data dir)                       | Local ledger SQLite path (operator env var only)              |
 | —                                     | `HKASK_SWARM_CONSENT_STORE`         | (data dir)                       | Consent store SQLite path (operator env var only)             |
 | —                                     | `HKASK_ABW_API_KEY`                 | —                                | ABW Pro API key (keychain credential, **never** in `mcp_env`) |
 

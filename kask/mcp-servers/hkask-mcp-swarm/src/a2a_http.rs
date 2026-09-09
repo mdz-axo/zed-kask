@@ -51,7 +51,6 @@ impl A2aHttpServer {
         runtime: Arc<LazyLocalSwarmRuntime>,
         registry: Arc<LocalAgentRegistry>,
         tokio_handle: tokio::runtime::Handle,
-        max_credits_per_dispatch: u32,
     ) -> Result<Self, LocalSwarmError> {
         let server = tiny_http::Server::http("127.0.0.1:0")
             .map_err(|e| LocalSwarmError::Io(format!("failed to bind A2A HTTP server: {e}")))?;
@@ -71,7 +70,6 @@ impl A2aHttpServer {
                 registry,
                 tokio_handle,
                 base_url,
-                max_credits_per_dispatch,
             )
         });
         tracing::info!(
@@ -93,7 +91,6 @@ fn run_server(
     registry: Arc<LocalAgentRegistry>,
     tokio_handle: tokio::runtime::Handle,
     base_url: String,
-    max_credits_per_dispatch: u32,
 ) {
     loop {
         match server.recv_timeout(Duration::from_secs(1)) {
@@ -104,7 +101,6 @@ fn run_server(
                     &registry,
                     &tokio_handle,
                     &base_url,
-                    max_credits_per_dispatch,
                 );
             }
             Ok(None) => {}
@@ -121,7 +117,6 @@ fn handle_request(
     registry: &Arc<LocalAgentRegistry>,
     tokio_handle: &tokio::runtime::Handle,
     base_url: &str,
-    max_credits_per_dispatch: u32,
 ) {
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
@@ -157,7 +152,6 @@ fn handle_request(
                 runtime,
                 registry,
                 tokio_handle,
-                max_credits_per_dispatch,
             );
             json_rpc_raw_response(resp)
         }
@@ -262,7 +256,6 @@ fn handle_jsonrpc(
     runtime: &Arc<LazyLocalSwarmRuntime>,
     registry: &Arc<LocalAgentRegistry>,
     tokio_handle: &tokio::runtime::Handle,
-    max_credits_per_dispatch: u32,
 ) -> JsonRpcResponse {
     let req: JsonRpcRequest = match serde_json::from_str(body) {
         Ok(r) => r,
@@ -341,12 +334,9 @@ fn handle_jsonrpc(
             let context_id = sm_req.message.context_id;
             let result = tokio_handle.block_on(async {
                 let runtime = runtime.get_or_init().await?;
-                // No funding gesture for external callers — local agents run
-                // on the operator's substrate; the per-dispatch ceiling
-                // alone bounds each dispatch.
-                runtime
-                    .delegate(&agent, &text, None, max_credits_per_dispatch)
-                    .await
+                // No budget for external callers — local agents run on
+                // the operator's substrate.
+                runtime.delegate(&agent, &text).await
             });
             match result {
                 Ok(delegate_result) => {
@@ -378,7 +368,6 @@ fn handle_jsonrpc(
                         context_id,
                         &delegate_result.model,
                         delegate_result.tokens_used,
-                        delegate_result.cost,
                     );
                     let resp = SendMessageResponse::Task(task);
                     let value = serde_json::to_value(&resp).unwrap_or_else(

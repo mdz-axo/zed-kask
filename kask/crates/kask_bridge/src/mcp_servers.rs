@@ -356,7 +356,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // a kask-settings-derived `local_swarms_dir` override is
             // silently dropped by `filter_config_env_for_server`.
             "HKASK_LOCAL_SWARMS_DIR",
-            "HKASK_SWARM_LEDGER_PATH",
             "HKASK_SWARM_CONSENT_STORE",
             // The governed server id set — the swarm server filters cloned
             // cards' declared mcp_tools to these servers (provenance boundary
@@ -388,7 +387,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // sweep). Carried by `emit_operator_override_env`; without these
             // entries an operator override is silently dropped under governed
             // launch (`cmd.env_clear()`).
-            "HKASK_SWARM_LEDGER_PATH",
             "HKASK_SWARM_EVENTS_PATH",
             "HKASK_SWARM_BODY_RETENTION_HOURS",
             "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
@@ -1160,7 +1158,6 @@ mod tests {
             "HKASK_SWARM_MODE",
             "HKASK_LOCAL_AGENTS_DIR",
             "HKASK_LOCAL_SWARMS_DIR",
-            "HKASK_SWARM_LEDGER_PATH",
             "HKASK_SWARM_CONSENT_STORE",
             "HKASK_MCP_SERVER_IDS",
             "HKASK_DATA_DIR",

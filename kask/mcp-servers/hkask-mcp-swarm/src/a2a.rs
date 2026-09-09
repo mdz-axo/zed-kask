@@ -164,7 +164,6 @@ pub fn task_from_response(
     context_id: Option<String>,
     model: &str,
     tokens_used: i64,
-    cost: i64,
 ) -> Task {
     let ctx = context_id.unwrap_or_else(new_context_id);
     Task {
@@ -178,10 +177,7 @@ pub fn task_from_response(
         artifacts: Some(vec![Artifact {
             artifact_id: new_artifact_id(),
             name: Some("response".to_string()),
-            description: Some(format!(
-                "model={}, tokens={}, cost={}",
-                model, tokens_used, cost
-            )),
+            description: Some(format!("model={}, tokens={}", model, tokens_used)),
             parts: vec![Part::text(response_text)],
             metadata: None,
             extensions: None,

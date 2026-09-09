@@ -559,7 +559,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RSS_DB` | research | Operator override for RSS DB path (default `mcp/research/rss.db`) |
 | `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
-| `HKASK_SWARM_LEDGER_PATH` | swarm | Operator override for swarm ledger path (default `mcp/swarm/ledger.db`) |
 | `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |
 | `HKASK_SKILLS_DIR` | swarm | `swarm.skills_dir` (default `{kask_data_dir}/skills/`) |
 

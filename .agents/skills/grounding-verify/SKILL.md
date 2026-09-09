@@ -154,8 +154,12 @@ cited.
      call from sourced values (or values already verified in this run).
      The assignment must carry the derivation as a value-returning
      `cross_check` form, plus `claimed_value` (the number the report
-     states) and `unit` (the unit of the claim's last decimal place) —
-     Step 3 evaluates the form and grades the difference.
+     states), `unit` (the unit of the claim's last decimal place), and
+     an `inputs` array naming each input's origin (a source output key,
+     or an earlier claim's id) — Step 3 evaluates the form, grades the
+     difference, and checks the origins. Prefer the canonical derivation
+     forms from the template's library over authoring your own —
+     selection over authoring shrinks the gaming surface.
    - `model_inference`: the LLM synthesized the claim from source outputs.
      This is the extraction ceiling — legitimate, but not a retrieval.
    - `unavailable`: no source the pipeline called can supply this claim.
@@ -195,6 +199,13 @@ cited.
 
 ### Step 3 — Mechanically verify citations
 
+Batch the checks: the `lisp_eval` calls in this step are independent of
+each other — emit them in parallel in a single turn (every claim's
+verification call, every empty-env check, every origins check, every
+consistency comparison). Do not serialize one claim's checks behind
+another claim's results. The only sequential rule is item 4's cascade,
+which applies after the batch returns.
+
 1. For each claim provisionally classified as `tool_verified` in Step 2,
    perform the mechanical verification:
    - **Cited quotes**: call `lisp_eval` for each cited quote:
@@ -216,15 +227,20 @@ cited.
 
 2. For each claim provisionally classified as `platform_derived`, verify
    the derivation — the deterministic arithmetic audit. The interpreter,
-   not an LLM, re-derives every computed number in the report:
-   - Call `lisp_eval` with the `cross_check` form from Step 2 and
-     env = the input values it derives from. The form returns the
-     computed value, not a boolean — e.g.
-     `"(let ((ev (+ market_cap net_debt))) (/ ev ebitda))"`.
-   - Grade the difference between computed and claimed values with one
-     `lisp_eval` call:
-     - form: `"(let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff unit) 'warn) (t 'fail)))"`
-     - env: `{ "computed": <form result>, "claimed": <the value the report states>, "unit": <from Step 2> }`
+   not an LLM, re-derives every computed number in the report. One
+   lightweight call per claim: wrap the claim's `cross_check` form as
+   the `computed` binding in the grading wrapper, which returns
+   `[computed_value, grade]`:
+   - form: `"(let ((computed <cross_check form>)) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))"`
+   - env: the input values the derivation names, plus `claimed` (the
+     value the report states) and `unit` (from Step 2)
+   - If the `cross_check` form already ships pre-wrapped (the library
+     median), call it as-is — do not wrap it again.
+   - The `1.001` slack on the warn boundary absorbs binary64
+     representation error: `(- 18.0 17.9)` computes to
+     `0.10000000000000142`, and without the slack the canonical
+     rounding case grades `fail` instead of `warn` (probed live
+     2026-09-08). A real 1.005-unit error still grades `fail`.
    - `pass`: the claim stays `platform_derived` (strength 2).
    - `warn`: the difference is at most one unit of the claim's last
      decimal — a rounding difference. The claim stays `platform_derived`;
@@ -244,12 +260,35 @@ cited.
      as a derivation. Reclassify the claim as `model_inference` and
      record the finding: the derivation is not falsifiable against the
      inputs.
+   - Run the check on the bare `cross_check` form, not the grading
+     wrapper — the wrapper's own `claimed`/`unit` bindings error
+     against an empty env and would mask a constant derivation.
    - This check is what decouples the arithmetic audit: the derivation
      is stated once, and the interpreter — which has no incentive to
      confirm the report — both evaluates it and proves it depends on
      the cited inputs.
 
-4. Run the cross-source consistency pass when `congruence_rules` were
+4. Run the origins check on every `platform_derived` claim — the
+   anchoring falsifier. Dependency is not anchoring: two forms can
+   reference each other's outputs and pass every check above while
+   grounded in no source at all (counterexample probed live
+   2026-09-08: `x = value_b + 1`, `y = value_a + 1`). Each claim's
+   `inputs` (from Step 2) name their origin — a source output key or
+   an earlier claim's id:
+   - Call `lisp_eval` once per claim:
+     - form: `"(let ((bad (lambda (lst) (cond ((is_null lst) 0) ((member (assoc "origin" (car lst)) allowed) (bad (cdr lst))) (t (+ 1 (bad (cdr lst)))))))) (bad inputs))"`
+     - env: `{ "inputs": <the claim's inputs with origins>, "allowed": <the origin strings of all source outputs, plus "claim:<id>" for earlier platform_derived claims> }`
+   - Count > 0: an input is anchored in neither a source nor an
+     earlier claim — a forward reference or an unanchored loop.
+     Reclassify as `model_inference` with a `why` naming the
+     unanchored input.
+   - No-forward-references makes the derivation graph acyclic by
+     construction — a cycle must cross the id order somewhere.
+   - Cascade rule: when a claim grades `fail`, every later claim whose
+     inputs reference it is demoted to `model_inference` (`why`: input
+     claim rejected). Apply after the batch returns.
+
+5. Run the cross-source consistency pass when `congruence_rules` were
    provided. For each rule `{ quantity, primary_source,
    cross_check_sources, tolerance, resolution }`:
    - Locate the primary value and each cross-check value in the source
@@ -271,7 +310,7 @@ cited.
      finding surfaces through the confidence band (Step 6) and the
      error log (Step 7) — never through the fact_score ratios.
 
-5. Claims classified as `model_inference`, `unavailable`, or
+6. Claims classified as `model_inference`, `unavailable`, or
    `tool_no_match` skip mechanical verification — they are not claiming
    direct citation or a falsifiable derivation.
 
@@ -315,6 +354,12 @@ cited.
    - **NLR** (Narrative-Leak Ratio) = clean_narrative_fields /
      total_narrative_fields. A field is clean if no leak rule fires, or
      if every fired rule is backed by a sourced block (strength >= 2).
+     When the target text contains no narrative fields, NLR is
+     vacuously clean (1.0) — not nil — and the report must disclose
+     `no narrative fields — NLR vacuous` in
+     `verification_scope_limitations`. The `claims_checked` gate still
+     protects the empty-everything case; a table-only report is not a
+     failed measurement.
 
    `source_conflicts` and `rounding_notes` do not enter these ratios —
    a conflict is a data note, not a hallucination, and a rounding note
@@ -454,7 +499,7 @@ this skill is the verifier, not the generator.
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value` and `unit` of its last decimal place. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, and origin-tagged `inputs`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
 | `compile-error-log.j2` | Compile the graduated-sanctions error log from all findings — `hallucination_findings` (class E), `rounding_notes` (class W), `source_conflicts` (class N) — into one append-only table with ID, class, claim, description, prior value, corrected value, severity, disposition, and a materiality `why`. |
 
@@ -577,7 +622,18 @@ single-pass by design and verifies against provided sources only.
   evaluated against env `{}` must fail with an unbound-symbol error. A
   form that returns a value without the input env embeds its answer as
   a literal — reclassify the claim as `model_inference` and record the
-  finding.
+  finding. Run it on the bare form, never the grading wrapper.
+- The warn boundary carries a `1.001`×unit slack: binary64
+  representation error at the boundary (`18.0 − 17.9` computes to
+  `0.10000000000000142`) must not turn a rounding difference into a
+  rejection.
+- Every `platform_derived` input names its origin — a source output
+  key or an earlier claim's id. Forward references and unanchored
+  loops reclassify as `model_inference`; a rejected claim cascades to
+  its dependents.
+- NLR is 1.0 (vacuously clean) when the text has no narrative fields,
+  disclosed in `verification_scope_limitations` — never nil. A
+  table-only report is not a failed measurement.
 - `source_conflicts` are findings, not provenance values. The closed
   vocabulary is unchanged; a conflict rejects neither claim. Conflicts
   cap the confidence band and enter the error log; they never enter

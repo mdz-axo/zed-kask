@@ -289,6 +289,17 @@ impl CompaniesServer {
                 .await?
             };
 
+            let total_matches = rows.len();
+            // Enforce the advertised `limit` — an upper bound on the returned
+            // row count, not a page size (the fetch exhausts the universe
+            // sorted by market cap, so truncation keeps the largest-cap
+            // matches). `total_matches` preserves the untruncated count.
+            let rows: Vec<_> = if (total_matches as u32) > req.limit {
+                rows.into_iter().take(req.limit as usize).collect()
+            } else {
+                rows
+            };
+
             let count = rows.len();
 
             let mut output = serde_json::json!({
@@ -297,6 +308,7 @@ impl CompaniesServer {
                 "screener_filters": screener_filters,
                 "post_screen_filters": post_screen_filters,
                 "count": count,
+                "total_matches": total_matches,
                 "results": rows,
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,

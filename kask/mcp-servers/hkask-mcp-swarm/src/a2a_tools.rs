@@ -49,9 +49,8 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
             let result = runtime
-                .delegate(&agent, &req.message, req.credits_authorized, ceiling)
+                .delegate(&agent, &req.message)
                 .await
                 .map_err(map_local_swarm_error)?;
             self.validate_produces(&req.agent_name, &agent.produces, &result.response);
@@ -60,7 +59,6 @@ impl SwarmServer {
                 req.context_id.clone(),
                 &result.model,
                 result.tokens_used,
-                result.cost,
             );
             // Record the inbound user message in the task history. This is the
             // consumer of `a2a::message_from_text` (the in-process counterpart
@@ -162,7 +160,6 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
             let context_id = req.context_id.clone().unwrap_or_else(new_context_id);
             let mut tasks = Vec::new();
             let mut failed = 0usize;
@@ -182,10 +179,7 @@ impl SwarmServer {
                         continue;
                     }
                 };
-                match runtime
-                    .delegate(&agent, &req.message, req.credits_authorized, ceiling)
-                    .await
-                {
+                match runtime.delegate(&agent, &req.message).await {
                     Ok(result) => {
                         self.validate_produces(member_id, &agent.produces, &result.response);
                         let task = a2a::task_from_response(
@@ -193,7 +187,6 @@ impl SwarmServer {
                             Some(context_id.clone()),
                             &result.model,
                             result.tokens_used,
-                            result.cost,
                         );
                         tasks.push(serde_json::to_value(&task).unwrap_or_else(
                             |_| serde_json::json!({ "error": "failed to serialize A2A task" }),

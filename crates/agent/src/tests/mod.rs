@@ -5201,6 +5201,17 @@ async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppCon
 /// separately by `test_curator_memory_edit_tools_available_to_non_curator_threads`.
 #[gpui::test]
 async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut TestAppContext) {
+    // Shared-slot hygiene: the process-global kask tool source leaks across
+    // tests. A stale source left by an earlier test is merged by the registry
+    // on the store event `setup_context_server` fires below — and the merge
+    // REPLACES same-id servers, clobbering this test's store-registered
+    // "curator" with whatever the stale source held. Install an empty source
+    // first so every merge in this test is a no-op; this test exercises the
+    // ContextServerStore path, not the kask-source path.
+    set_kask_tool_source(std::sync::Arc::new(MutableKaskToolSource(
+        std::sync::Mutex::new(Vec::new()),
+    )));
+
     let ThreadTest {
         model,
         thread,
@@ -5545,6 +5556,15 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
     );
 
     fake_model.end_last_completion_stream();
+
+    // Shared-slot hygiene: reset before exit — this test's source holds a
+    // "curator" server with a single tool, and the process-global slot leaks
+    // it into every later test. The registry merge REPLACES same-id servers,
+    // so a later test that store-registers its own "curator" server would be
+    // clobbered on its first store event (observed: the plain-threads variant
+    // surfacing only memory_insert). The empty reset matches the convention
+    // in `test_kask_tools_surface_...` and `test_system_prompt_names_...`.
+    source.set(Vec::new());
 }
 
 /// zed-kask: D44 discovery pin — the `list_mcp_tools` meta-tool. This is
@@ -5559,6 +5579,16 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
 /// the model would trade a false-absence belief for a false-index belief.
 #[gpui::test]
 async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
+    // Shared-slot hygiene: install the empty source BEFORE `setup` — the
+    // registry is created inside setup, and a stale source left by an
+    // earlier test merges on setup's store events. The merge replaces
+    // same-id servers but never removes absent ones, so a stale server would
+    // linger in every listing below (observed: total_tools 4 vs 3). The
+    // test's own source is installed after setup — too late to prevent that.
+    set_kask_tool_source(std::sync::Arc::new(MutableKaskToolSource(
+        std::sync::Mutex::new(Vec::new()),
+    )));
+
     let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
 
     // Wire the source empty first (shared-slot hazard, see the note on the

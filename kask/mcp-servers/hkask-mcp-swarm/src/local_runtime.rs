@@ -1,10 +1,13 @@
-//! Local swarm runtime — ledger + inference for `Local` mode (v2 §15).
+//! Local swarm runtime — inference for `Local` mode (v2 §15).
 //!
 //! Extracted from the swarm server root. `LazyLocalSwarmRuntime` defers
 //! construction to the first tool call (the `run_server` factory is sync).
-//! `LocalSwarmRuntime::delegate` runs a local agent: tool loop → cost → debit.
-//! The ledger is operator-funded; the inference/skill/tool ports are resolved
-//! once at construction.
+//! `LocalSwarmRuntime::delegate` runs a local agent: tool loop → measured
+//! result. The inference/skill/tool ports are resolved once at construction.
+//! There is no local budget: local agents run on the operator's own substrate
+//! (operator ruling 2026-09-04 — the budget concept is deprecated; timeouts
+//! are the enforcement/kill mechanism), so nothing is priced, gated, or
+//! reconciled here.
 
 use std::time::Instant;
 
@@ -42,10 +45,9 @@ use crate::sanitize::strip_leading_mentions;
 /// the socket-becoming-available case is covered by the launch ordering, not
 /// by the observer.
 pub struct LazyLocalSwarmRuntime {
-    ledger_path: String,
     /// The per-agent execution-stats store — shared with the server (reads:
     /// `swarm_get_local_agent` / `swarm_list_local_agents`; writes: the
-    /// runtime's debit path). Passed through to the runtime so recording
+    /// runtime's result path). Passed through to the runtime so recording
     /// and surfacing see one store.
     agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
@@ -120,132 +122,82 @@ impl LazyEventStore {
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub fn lazy(
-        ledger_path: String,
-        agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-    ) -> Self {
+    pub fn lazy(agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>) -> Self {
         Self {
-            ledger_path,
             agent_stats,
             inner: tokio::sync::OnceCell::new(),
         }
     }
 
     /// Get the runtime, initializing it on first call. Returns `Err` if
-    /// initialization fails (ledger open, inference port resolution).
-    /// Subsequent calls return the cached runtime.
+    /// initialization fails (inference port resolution). Subsequent calls
+    /// return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
-            .get_or_try_init(|| async {
-                LocalSwarmRuntime::new(&self.ledger_path, self.agent_stats.clone()).await
-            })
+            .get_or_try_init(|| async { LocalSwarmRuntime::new(self.agent_stats.clone()).await })
             .await
     }
 }
 
-/// The initialized local swarm runtime — ledger + agent executor.
+/// The initialized local swarm runtime — agent executor + measured stats.
 ///
-/// The runtime owns the *spending* policy (ceiling check, cost computation,
-/// spend recording — there is no balance gate). The *agent-run* policy (skill execution,
-/// tool-loop orchestration) lives in `AgentExecutor`.
+/// The *agent-run* policy (skill execution, tool-loop orchestration) lives in
+/// `AgentExecutor`; the runtime measures the run (tokens, latency) and
+/// records per-agent stats. There is no spending policy: local agents run on
+/// the operator's own substrate, so nothing is priced or gated.
 pub struct LocalSwarmRuntime {
-    ledger: std::sync::Arc<hkask_ledger::Ledger>,
     /// The agent-run policy (inference + tool dispatch + skill exec).
-    /// Constructed once from the resolved IPC-bridge ports; the runtime calls
-    /// `executor.run` then debits.
+    /// Constructed once from the resolved IPC-bridge ports; the runtime
+    /// calls `executor.run` and measures the result.
     executor: AgentExecutor,
-    /// The operator's account id in the ledger (funded via `swarm_fund_local`).
-    operator_account: String,
-    /// The asset name for local credits.
-    asset: String,
     /// Count of captures dropped because the capture channel was full or
-    /// the store append failed. Surfaced via `capture_drops()` — a drop is
-    /// never silent. Shared so the drainer task can increment it while the
+    /// the store append failed. Surfaced via `capture_drops()` in the eval
+    /// harness report — a drop is never silent (each drop site also warns
+    /// in real time). Shared so the drainer task can increment it while the
     /// runtime hands out `&self`.
     capture_drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Per-agent execution stats — the local analog of fermi's
-    /// `measured_exec_stats`. Recorded at the debit path (single-writer by
+    /// `measured_exec_stats`. Recorded at the result path (single-writer by
     /// construction) and surfaced by the local agent tools.
     stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
 }
 
 impl LocalSwarmRuntime {
-    /// Construct the runtime. Opens (or creates) the ledger at `db_path`,
-    /// resolves the inference port.
-    ///
-    /// The operator account is ensured in the ledger namespace "local_swarm".
-    /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
+    /// Construct the runtime. Resolves the inference and tool-dispatch
+    /// ports once at construction.
     pub(crate) async fn new(
-        db_path: &str,
         stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
     ) -> Result<Self, LocalSwarmError> {
-        // Open the ledger at the file path. Create the directory if needed.
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                LocalSwarmError::Io(format!(
-                    "failed to create ledger dir {}: {e}",
-                    parent.display()
-                ))
-            })?;
-        }
-        let manager = hkask_storage::SqliteConnectionManager::file(db_path)
-            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
-        let pool = r2d2::Pool::builder()
-            .max_size(4)
-            .build(manager)
-            .map_err(|e| LocalSwarmError::Database(format!("failed to create ledger pool: {e}")))?;
-        let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
-            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
-        let ledger = hkask_ledger::Ledger::from_driver(driver)
-            .map_err(|e| LocalSwarmError::Database(format!("failed to init ledger: {e}")))?;
-
         // Resolve the agent-run ports once at construction: inference and
         // tool dispatch both route through the zed IPC bridge (or fall back
         // to media/stub when the socket is absent). These compose into the
-        // `AgentExecutor`, which owns the agent-run policy (the runtime owns
-        // the spending policy). Resolving them here (rather than inside
-        // `AgentExecutor::new`) keeps the env-var reads at the runtime
-        // construction seam, mirroring the other kask MCP servers.
+        // `AgentExecutor`, which owns the agent-run policy. Resolving them
+        // here (rather than inside `AgentExecutor::new`) keeps the env-var
+        // reads at the runtime construction seam, mirroring the other kask
+        // MCP servers.
         let inference = hkask_inference::resolve_inference_port().await;
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
         let executor = AgentExecutor::new(inference, tool_dispatch);
 
-        // Ensure the operator account exists.
-        let operator_account = "operator".to_string();
-        let asset = "credits".to_string();
-        ledger
-            .ensure_account(&operator_account, "local_swarm")
-            .map_err(|e| {
-                LocalSwarmError::Ledger(format!("failed to ensure operator account: {e}"))
-            })?;
-
         Ok(Self {
-            ledger: std::sync::Arc::new(ledger),
             executor,
-            operator_account,
-            asset,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
         })
     }
 
     /// Test-only constructor with injected inference and tool-dispatch ports.
-    /// The production `new(db_path)` resolves ports from env (zed IPC bridge
-    /// or MediaRouter fallback), which is unsuitable for unit tests. This
-    /// constructor accepts a pre-built ledger + the two agent-run ports,
-    /// which it composes into an AgentExecutor, so tests can exercise the
-    /// delegate logic without a real backend. Used by the discriminative
-    /// power probe (event-substrate item 4).
+    /// The production `new` resolves ports from env (zed IPC bridge or
+    /// MediaRouter fallback), which is unsuitable for unit tests. This
+    /// constructor accepts the two agent-run ports, which it composes into
+    /// an AgentExecutor, so tests can exercise the delegate logic without a
+    /// real backend.
     #[cfg(test)]
     pub(crate) fn new_for_test(
-        ledger: std::sync::Arc<hkask_ledger::Ledger>,
         inference: std::sync::Arc<dyn hkask_types::InferencePort>,
         tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
     ) -> Self {
         let executor = AgentExecutor::new(inference, tool_dispatch);
-        let operator_account = "operator".to_string();
-        let asset = "credits".to_string();
-        let _ = ledger.ensure_account(&operator_account, "local_swarm");
         // A throwaway stats store — tests exercise the delegate logic, not
         // stats persistence (that is unit-tested on `AgentStatsStore`
         // directly).
@@ -255,10 +207,7 @@ impl LocalSwarmRuntime {
             &stats_dir.to_string_lossy(),
         ));
         Self {
-            ledger,
             executor,
-            operator_account,
-            asset,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
         }
@@ -267,8 +216,9 @@ impl LocalSwarmRuntime {
     /// Captures dropped due to channel backpressure (send side, counted in
     /// the executor) or store append failure (drainer side). A sensor
     /// signal, not an error: the delegation path must never fail because
-    /// capture is degraded — but the degradation must be visible.
-    #[allow(dead_code)] // sensor signal — awaiting a consumer
+    /// capture is degraded — but the degradation must be visible. Consumed
+    /// by `swarm_eval_agent_local`, which surfaces the count in the harness
+    /// result's `capture_drops` field.
     pub(crate) fn capture_drops(&self) -> usize {
         let send = self
             .executor
@@ -286,9 +236,10 @@ impl LocalSwarmRuntime {
     /// consumer) after the store opens; a second call replaces the channel
     /// (the old drainer exits when its sender is dropped).
     ///
-    /// A full channel drops the capture and a store failure increments the
-    /// drop counter — surfaced via `capture_drops()`, never silent, never
-    /// blocking generation.
+    /// A full channel drops the capture (warned + counted at the send site)
+    /// and a store failure warns here and increments the drop counter —
+    /// surfaced via `capture_drops()` in the harness report, never silent,
+    /// never blocking generation.
     pub(crate) fn wire_capture(&self, store: std::sync::Arc<hkask_event_store::EventStore>) {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::agent_executor::CapturedInference>(
             CAPTURE_CHANNEL_CAPACITY,
@@ -333,15 +284,6 @@ impl LocalSwarmRuntime {
     ///
     /// Ensures the operator account exists (same as `new`) so `balance`/
     /// `fund`/`debit` work out of the box.
-    /// The operator's current ledger balance. Returns `None` on query error
-    /// (the `.rules` trap — never fabricate a zero balance on a failed
-    /// measurement).
-    pub fn balance(&self) -> Option<i64> {
-        self.ledger
-            .balance(&self.operator_account, Some(&self.asset))
-            .ok()
-    }
-
     /// The resolved local inference port. Exposed so the local knowledge tools
     /// (`swarm_generate_prompt_local` / `swarm_generate_ontology_local`) can do a
     /// one-shot generate via the same inference port the delegate loop uses —
@@ -350,153 +292,17 @@ impl LocalSwarmRuntime {
         self.executor.inference()
     }
 
-    /// Recent ledger transactions for the operator account, newest first,
-    /// capped at `limit`. Each entry carries the operator-relevant signed
-    /// amount (fund = +, debit = −) and the metadata `action` ("fund" |
-    /// "debit"). Returns `Err` on a query failure — a failed query is not an
-    /// empty history (the `.rules` trap).
-    pub(crate) fn history(&self, limit: usize) -> Result<Vec<serde_json::Value>, LocalSwarmError> {
-        let range = hkask_ledger::DateRange {
-            start: "0000-01-01T00:00:00Z".to_string(),
-            end: "9999-12-31T23:59:59Z".to_string(),
-        };
-        let filter = hkask_ledger::QueryFilter {
-            account: Some(self.operator_account.clone()),
-            asset: Some(self.asset.clone()),
-            namespace: None,
-        };
-        let mut txs = self
-            .ledger
-            .query(&range, &filter)
-            .map_err(|e| LocalSwarmError::Ledger(format!("ledger query failed: {e}")))?;
-        // The ledger query returns oldest-first; the tool wants newest-first.
-        txs.reverse();
-        txs.truncate(limit);
-        Ok(txs
-            .into_iter()
-            .map(|tx| {
-                // The operator-relevant posting: fund = external→operator
-                // (+), debit = operator→external (−).
-                let amount = tx
-                    .postings
-                    .iter()
-                    .find_map(|p| {
-                        if p.destination == self.operator_account {
-                            Some(p.amount)
-                        } else if p.source == self.operator_account {
-                            Some(-p.amount)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                let kind = tx
-                    .metadata
-                    .get("action")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                serde_json::json!({
-                    "id": tx.id,
-                    "timestamp": tx.timestamp,
-                    "reference": tx.reference,
-                    "kind": kind,
-                    "amount": amount,
-                    "asset": self.asset,
-                })
-            })
-            .collect())
-    }
-
-    /// Deposit credits into the operator's account. Returns the new balance.
-    /// Used by `swarm_fund_local`.
-    pub(crate) fn fund(&self, amount: i64) -> Result<i64, LocalSwarmError> {
-        if amount <= 0 {
-            return Err(LocalSwarmError::InvalidInput(
-                "fund amount must be positive".to_string(),
-            ));
-        }
-        let tx_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let reference = format!("fund-{tx_id}");
-        let tx = hkask_ledger::LedgerTransaction {
-            id: tx_id,
-            timestamp: now,
-            reference,
-            postings: vec![hkask_ledger::Posting {
-                source: "external".to_string(),
-                destination: self.operator_account.clone(),
-                asset: self.asset.clone(),
-                amount,
-            }],
-            metadata: serde_json::json!({ "action": "fund" }),
-        };
-        self.ledger
-            .commit(&tx)
-            .map_err(|e| LocalSwarmError::Ledger(format!("ledger commit failed: {e}")))?;
-        self.balance().ok_or_else(|| {
-            LocalSwarmError::Ledger(
-                "balance query failed after fund — ledger may be in a bad state".to_string(),
-            )
-        })
-    }
-
-    /// Record local spend against the operator's account. Returns the new
-    /// balance, which **may be negative**.
-    ///
-    /// Accounting, not authorization. Local agents run on the operator's own
-    /// substrate, so there is no funding gate to enforce (see `delegate`); this
-    /// records what was consumed so `swarm_balance_local` and
-    /// `swarm_local_history` can reconcile it. A negative balance is the
-    /// operator's unreconciled local spend, not a fault.
-    ///
-    /// Posts the same double-entry transaction `fund` does, in the opposite
-    /// direction. Deliberately NOT `Ledger::debit_if_funds`: that refuses on an
-    /// insufficient balance, which is exactly the gate local mode must not have.
-    /// The TOCTOU concern `debit_if_funds` addressed does not apply — there is no
-    /// balance precondition left to race.
-    pub(crate) fn record_spend(
-        &self,
-        amount: i64,
-        reference: &str,
-    ) -> Result<i64, LocalSwarmError> {
-        if amount <= 0 {
-            return Err(LocalSwarmError::InvalidInput(
-                "spend amount must be positive".to_string(),
-            ));
-        }
-        let tx = hkask_ledger::LedgerTransaction {
-            id: uuid::Uuid::new_v4().to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            reference: reference.to_string(),
-            postings: vec![hkask_ledger::Posting {
-                source: self.operator_account.clone(),
-                destination: "external".to_string(),
-                asset: self.asset.clone(),
-                amount,
-            }],
-            metadata: serde_json::json!({ "action": "debit" }),
-        };
-        self.ledger
-            .commit(&tx)
-            .map_err(|e| LocalSwarmError::Ledger(format!("ledger commit failed: {e}")))?;
-        self.balance().ok_or_else(|| {
-            LocalSwarmError::Ledger(
-                "balance query failed after recording spend — the spend is committed but the \
-                 new balance could not be read"
-                    .to_string(),
-            )
-        })
-    }
-
     /// Execute a local agent: run the agent (skill execution + tool loop, via
-    /// `AgentExecutor::run`) → compute cost → debit ledger. Returns the
-    /// response text, model, token usage, cost, remaining balance, and a
-    /// tool-call summary.
+    /// `AgentExecutor::run`) and measure the result. Returns the response
+    /// text, model, token usage, latency, and a tool-call summary.
     ///
-    /// The agent-run policy (skill execution, tool-loop orchestration) lives in
-    /// `AgentExecutor::run`; the runtime owns the spending policy (ceiling,
-    /// balance, cost, debit).
+    /// The agent-run policy (skill execution, tool-loop orchestration) lives
+    /// in `AgentExecutor::run`; the runtime measures the run. There is no
+    /// budget: local agents run on the operator's own substrate (their
+    /// machine, their inference credentials), so there is nothing to price,
+    /// gate, or reconcile — funding gates belong on *cloud swarm* delegation,
+    /// where credits buy someone else's compute (`spend_gate.rs` + the ABW
+    /// consent token).
     ///
     /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
     /// the only tool set shown to the model AND the qualified list travels
@@ -507,49 +313,12 @@ impl LocalSwarmRuntime {
         &self,
         agent: &LocalAgentCard,
         task: &str,
-        credits_authorized: Option<u32>,
-        max_credits_per_dispatch: u32,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
 
-        // `credits_authorized` is an OPTIONAL per-call cost cap, not a
-        // funding gesture: local agents run on the operator's own substrate
-        // (their machine, their inference credentials), so there is nothing
-        // to fund — the cloud's credit authorization does not translate
-        // here. When supplied, it caps this dispatch's recorded cost and
-        // must sit under the runaway ceiling. When omitted, the ceiling
-        // alone bounds the dispatch.
-        if let Some(credits) = credits_authorized
-            && credits > max_credits_per_dispatch
-        {
-            return Err(LocalSwarmError::InvalidInput(format!(
-                "credits_authorized {credits} exceeds per-dispatch ceiling \
-                 {max_credits_per_dispatch} (raise HKASK_ABW_MAX_CREDITS to authorize)"
-            )));
-        }
-        let cost_cap = credits_authorized.unwrap_or(max_credits_per_dispatch);
-
-        // NO balance gate. Local agents run on the operator's own substrate
-        // (their machine, their inference credentials), so there is nothing for
-        // this server to withhold: refusing to run costs the operator the work
-        // while saving them nothing. Funding gates belong on *cloud swarm* delegation,
-        // where credits buy someone else's compute (`spend_gate.rs` + the ABW
-        // consent token).
-        //
-        // The local ledger is retained as **accounting, not authorization** —
-        // `swarm_balance_local` / `swarm_local_history` remain the reconciliation
-        // surface, and the debit below still records what was spent. A negative
-        // balance is therefore normal and meaningful: it is the operator's
-        // unreconciled local spend, not a fault.
-        //
-        // The per-dispatch ceiling above IS retained: it bounds a single runaway
-        // dispatch (a cost-amplification limit), which is a different concern
-        // from whether an account is funded.
-
-        // Run the agent (tool loop). The executor returns the RAW output —
-        // it does NOT debit the ledger. A failed run is a real execution
+        // Run the agent (tool loop). A failed run is a real execution
         // failure (fermi counts failed episodes the same way), so it is
         // recorded on the agent's stats before propagating.
         let raw: RawDelegateResult = match self.executor.run(agent, &task_clean).await {
@@ -560,10 +329,9 @@ impl LocalSwarmRuntime {
             }
         };
 
-        let mut result = self.debit_and_build(
+        let mut result = self.build_result(
             raw,
             &agent.agent_id,
-            cost_cap,
             started.elapsed().as_millis().min(u64::MAX as u128) as u64,
         );
         // Contract checks (the local analog of fermi's verification gates):
@@ -581,88 +349,29 @@ impl LocalSwarmRuntime {
         Ok(result)
     }
 
-    /// Compute cost, record the spend, and build a `LocalDelegateResult` from
-    /// a raw delegate result. Shared by `delegate` (sequential) and
-    /// `delegate_batch` (parallel) so the debit logic stays in one place.
-    ///
-    /// `cost_cap` is the effective per-dispatch cap — the caller's optional
-    /// `credits_authorized` when supplied, else the runaway ceiling. Local
-    /// delegation needs no funding gesture (the operator's own substrate), so
-    /// the cap is a cost-amplification bound, not an authorization. The cap
-    /// makes the recorded figure under-state real spend on overruns;
-    /// `cost_uncapped` is carried alongside so the gap is visible, and a
-    /// bounded overrun is warned about rather than swallowed.
-    /// than swallowed.
-    ///
-    /// `balance` stays `None` when it could not be measured. It must NOT fall
-    /// back to a number: SENSE reads this as the Onto4MAT `energy` property and
-    /// DECIDE branches on it, so a fabricated value would be read as a real
-    /// measurement (the `.rules` "unwrap_or(0) on regulation sense inputs is a
-    /// broken feedback loop" trap — a failed read is not a measured zero).
-    fn debit_and_build(
+    /// Build a `LocalDelegateResult` from a raw delegate result and record
+    /// the completed execution on the agent's stats. Shared by `delegate`
+    /// (sequential) and `delegate_batch` (parallel) so the measurement and
+    /// stats recording stay in one place.
+    fn build_result(
         &self,
         raw: RawDelegateResult,
         agent_id: &str,
-        credits_authorized: u32,
         latency_ms: u64,
     ) -> LocalDelegateResult {
         let tokens = raw.tokens_used;
-        let cost_uncapped = std::cmp::max(1, tokens / 1000);
-        let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
-        if cost_uncapped > cost {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                agent = %agent_id,
-                tokens,
-                recorded_cost = cost,
-                actual_cost = cost_uncapped,
-                credits_authorized,
-                "delegation exceeded its authorized budget - the ledger records the \
-                 capped cost, so it under-states real spend by {} credits",
-                cost_uncapped - cost
-            );
-        }
-
-        let reference = format!("delegate-{agent_id}-{}", uuid::Uuid::new_v4());
-        let new_balance: Option<i64> = match self.record_spend(cost, &reference) {
-            Ok(balance) => Some(balance),
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    agent = %agent_id,
-                    cost,
-                    %error,
-                    "local spend could not be recorded - the delegation succeeded but the \
-                     ledger is now behind by this amount (reconciliation gap)"
-                );
-                let fallback = self.balance();
-                if fallback.is_none() {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent = %agent_id,
-                        "balance is unmeasurable after a failed spend record - reporting \
-                         null rather than a fabricated value"
-                    );
-                }
-                fallback
-            }
-        };
 
         // Record the completed execution on the agent's stats — the one
-        // point where cost, tokens, and latency are all known (fermi's
+        // point where tokens and latency are both known (fermi's
         // `measured_exec_stats` analog). Non-fatal by contract: a failed
         // flush is warned inside the store and never fails the delegation.
-        self.stats
-            .record_success(agent_id, cost, tokens, latency_ms);
+        self.stats.record_success(agent_id, tokens, latency_ms);
 
         LocalDelegateResult {
             agent_id: agent_id.to_string(),
             response: raw.text,
             model: raw.model,
             tokens_used: tokens,
-            cost,
-            cost_uncapped,
-            balance: new_balance,
             latency_ms,
             tool_calls: raw.tool_calls,
             task_success: None,
@@ -674,46 +383,32 @@ impl LocalSwarmRuntime {
         }
     }
 
-    /// Run N delegations concurrently (inference calls in parallel), then
-    /// debit the ledger sequentially after all complete. This resolves the
-    /// TOCTOU concern that motivated the sequential fan-out: the inference
-    /// calls (the expensive part) run in parallel, but the ledger debits
-    /// are batched one-at-a-time after all delegations return, so the
-    /// balance read in each debit sees the prior debit's write.
-    ///
-    /// Each delegation's cost is computed from its token usage (same formula
-    /// as `delegate`), capped at the delegation's optional
-    /// `credits_authorized` — else the per-dispatch ceiling (no funding
-    /// gesture is required). The ceiling is enforced per delegation when a
-    /// cap is supplied.
+    /// Run N delegations concurrently (inference calls in parallel).
     pub async fn delegate_batch(
         &self,
-        delegations: Vec<(LocalAgentCard, String, Option<u32>)>,
-        max_credits_per_dispatch: u32,
+        delegations: Vec<(LocalAgentCard, String)>,
     ) -> Vec<Result<LocalDelegateResult, LocalSwarmError>> {
-        let ceiling = max_credits_per_dispatch;
-        // Extract the agent ids and credits for phase 2 (debit), since the
-        // spawned tasks consume the owned cards.
+        // Extract the agent ids for phase 2, since the spawned tasks
+        // consume the owned cards.
         let agent_ids: Vec<String> = delegations
             .iter()
-            .map(|(a, _, _)| a.agent_id.clone())
+            .map(|(agent, _)| agent.agent_id.clone())
             .collect();
-        let credits: Vec<Option<u32>> = delegations.iter().map(|(_, _, c)| *c).collect();
         // Contract snapshots and cleaned tasks, collected before the cards
         // are moved into the spawned tasks — phase 2 stamps the contract
         // checks with them, keeping batch parity with `delegate`'s checks.
         let contracts: Vec<(Option<serde_json::Value>, Option<serde_json::Value>)> = delegations
             .iter()
-            .map(|(a, _, _)| {
+            .map(|(agent, _)| {
                 (
-                    a.capabilities.input_contract.clone(),
-                    a.capabilities.output_contract.clone(),
+                    agent.capabilities.input_contract.clone(),
+                    agent.capabilities.output_contract.clone(),
                 )
             })
             .collect();
         let tasks: Vec<String> = delegations
             .iter()
-            .map(|(_, t, _)| strip_leading_mentions(t))
+            .map(|(_, task)| strip_leading_mentions(task))
             .collect();
         let total = delegations.len();
 
@@ -721,24 +416,7 @@ impl LocalSwarmRuntime {
         // Each task returns (index, result) so we can match results back to
         // delegations after join (JoinSet does not preserve submission order).
         let mut join_set = tokio::task::JoinSet::new();
-        for (index, (agent, task, credits_authorized)) in delegations.into_iter().enumerate() {
-            // Enforce the per-dispatch ceiling before running — only when
-            // the caller supplied an optional per-call cap (local delegation
-            // needs no funding gesture; see `delegate`).
-            if let Some(credits) = credits_authorized
-                && credits > ceiling
-            {
-                join_set.spawn(async move {
-                    (
-                        index,
-                        Err(LocalSwarmError::InvalidInput(format!(
-                            "credits_authorized {credits} exceeds per-dispatch \
-                             ceiling {ceiling} (raise HKASK_ABW_MAX_CREDITS to authorize)"
-                        ))),
-                    )
-                });
-                continue;
-            }
+        for (index, (agent, task)) in delegations.into_iter().enumerate() {
             let task_clean = strip_leading_mentions(&task);
             let executor = self.executor.clone();
             join_set.spawn(async move {
@@ -785,32 +463,23 @@ impl LocalSwarmRuntime {
         let raw_results: Vec<Result<RawDelegateResult, LocalSwarmError>> =
             raw_results.into_iter().map(|(_, r)| r).collect();
 
-        // Phase 2: debit the ledger sequentially (TOCTOU-safe).
+        // Phase 2: build the results.
         let mut results = Vec::with_capacity(total);
-        for (index, (raw_result, (agent_id, _credits_authorized))) in raw_results
-            .into_iter()
-            .zip(agent_ids.iter().zip(credits.iter()))
-            .enumerate()
+        for (index, (raw_result, agent_id)) in
+            raw_results.into_iter().zip(agent_ids.iter()).enumerate()
         {
             let raw = match raw_result {
-                Ok(r) => r,
-                Err(e) => {
+                Ok(raw) => raw,
+                Err(error) => {
                     // A failed batch entry is a real execution failure
-                    // (run error or panicked task) — EXCEPT the ceiling
-                    // refusal, which rejected the request before any
-                    // execution and is not a failed execution (fermi does
-                    // not count never-started requests as failed episodes).
-                    // An omitted cap (None) is never a refusal.
-                    let refused = matches!(credits[index], Some(v) if v > ceiling);
-                    if !refused {
-                        self.stats.record_failure(&agent_ids[index]);
-                    }
-                    results.push(Err(e));
+                    // (run error or panicked task) — recorded on the
+                    // agent's stats before propagating.
+                    self.stats.record_failure(&agent_ids[index]);
+                    results.push(Err(error));
                     continue;
                 }
             };
-            let cost_cap = credits[index].unwrap_or(ceiling);
-            let mut built = self.debit_and_build(raw, agent_id, cost_cap, 0);
+            let mut built = self.build_result(raw, agent_id, 0);
             // Contract checks — batch parity with `delegate` (see the note
             // there). `index` is the delegation's submission index: the
             // fill-missing pass guarantees one sorted entry per index, so
@@ -828,18 +497,7 @@ impl LocalSwarmRuntime {
         results
     }
 }
-/// Rung 4 (Binding): does the request match any declared `accepts` label?
-///
-/// Returns `None` when the agent declares no `accepts` (absence ≠
-/// contradiction, paper Rule 5.3). `text` is treated as a universal accept
-/// — an agent declaring `accepts: ["text"]` matches any request. For any
-/// other label, the bind check returns `None` (cannot determine): runtime
-/// classification of free-text requests is a heuristic with no correct
-/// setting (widen it and it swallows structured ports, narrow it and it
-/// misses real declarations), so it was deleted. The typing layer at
-/// admission (`validate_typing`) is the gate that enforces `accepts`
-/// labels resolve to registered types; runtime bind matching against
-/// those labels is the typing layer's unfinished transition, not this
+
 /// function's job.
 pub fn check_bind(card: &crate::local_registry::LocalAgentCard, _task: &str) -> Option<bool> {
     if card.accepts.is_empty() {
@@ -942,10 +600,8 @@ fn check_note(mut check: serde_json::Value, note: &str) -> serde_json::Value {
 }
 
 /// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
-/// Swarm Plan — bounds the cost amplification of one fan-out: N agents ×
-/// MAX_TOOL_ROUNDS × per-dispatch ceiling). Each delegation runs sequentially
-/// (the local ledger is single-writer; concurrent debits would race the
-/// balance read), so this is also the worst-case serial latency multiplier.
+/// Swarm Plan — bounds the work amplification of one fan-out: N agents ×
+/// MAX_TOOL_ROUNDS). Also the worst-case serial latency multiplier.
 pub const MAX_FANOUT: usize = 10;
 
 /// Result of a local delegation.
@@ -955,32 +611,6 @@ pub struct LocalDelegateResult {
     pub response: String,
     pub model: String,
     pub tokens_used: i64,
-    /// Credits recorded for this delegation.
-    ///
-    /// **Accounting note:** this is capped at the effective per-dispatch cap
-    /// (the optional `credits_authorized` when supplied, else the runaway
-    /// ceiling — local delegation needs no funding gesture), so when actual
-    /// token spend exceeds the authorized budget it UNDER-states real cost. See
-    /// `cost_uncapped` for the uncapped figure; the two differ exactly when the
-    /// cap bound the recording.
-    pub cost: i64,
-    /// What this delegation would have cost with no cap applied.
-    ///
-    /// Present so the ledger's understatement is visible rather than silent: when
-    /// `cost_uncapped > cost`, the ledger is behind real spend by the difference.
-    /// `credits_authorized` remains a genuine bound on what is *charged*, but a
-    /// reconciliation surface must not hide what was actually consumed.
-    pub cost_uncapped: i64,
-    /// The ledger balance after recording this delegation's spend.
-    ///
-    /// `None` means **not measured** (the balance read failed), never "zero".
-    /// SENSE consumes this as the Onto4MAT `energy` property and DECIDE branches
-    /// on it, so a fabricated number would enter the regulation loop as a real
-    /// measurement (the `.rules` broken-feedback-loop trap).
-    ///
-    /// May be negative in local mode: the local ledger records spend rather than
-    /// authorizing it, so a negative balance is accumulated unreconciled spend.
-    pub balance: Option<i64>,
     /// End-to-end delegation latency in milliseconds (Cybernetic Swarm Plan
     /// component C4 — HyEvo `T_q` measurement). Captured from the start of
     /// `delegate` to just before the result is returned. Pure measurement — no
@@ -1061,8 +691,6 @@ impl LocalDelegateResult {
             "response": self.response,
             "model": self.model,
             "tokens_used": self.tokens_used,
-            "cost": self.cost,
-            "cost_uncapped": self.cost_uncapped,
             "latency_ms": self.latency_ms,
         });
         if include_details {

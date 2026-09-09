@@ -419,9 +419,7 @@ pub(crate) fn emit_media_env(
 /// var is not a meaningful override.
 const OPERATOR_OVERRIDE_ENV_VARS: &[&str] = &[
     // swarm — event-store path + retention knobs (hkask_mcp_swarm.rs,
-    // local_tools.rs). Also read by kata-kanban's spawn path so both
-    // processes share one ledger.
-    "HKASK_SWARM_LEDGER_PATH",
+    // local_tools.rs).
     "HKASK_SWARM_EVENTS_PATH",
     "HKASK_SWARM_BODY_RETENTION_HOURS",
     "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",

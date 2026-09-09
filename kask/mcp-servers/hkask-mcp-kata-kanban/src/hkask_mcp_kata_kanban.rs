@@ -1290,25 +1290,13 @@ impl KanbanServer {
             Some(desc) if !desc.trim().is_empty() => format!("{}: {}", task.title, desc),
             _ => task.title.clone(),
         };
-        let ceiling = match std::env::var("HKASK_ABW_MAX_CREDITS") {
-            Ok(raw) => match raw.parse::<u32>() {
-                Ok(value) => value,
-                Err(_) => {
-                    tracing::warn!(
-                        "HKASK_ABW_MAX_CREDITS='{raw}' is not a valid u32; falling back to 50"
-                    );
-                    50
-                }
-            },
-            Err(_) => 50,
-        };
         let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
             McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
         })?;
-        // No funding gesture — local agents run on the operator's own
-        // substrate. The per-dispatch ceiling alone bounds the spawn.
+        // No budget — local agents run on the operator's own substrate
+        // (operator ruling 2026-09-04: the budget concept is deprecated).
         let result = runtime
-            .delegate(agent, &task_text, None, ceiling)
+            .delegate(agent, &task_text)
             .await
             .map_err(|e| {
                 hkask_mcp_server::server::McpToolError::unavailable(format!(
@@ -1360,27 +1348,9 @@ impl KanbanServer {
                 "could not record structured delegation result — falling back to comment-only"
             );
         }
-        // Render an unmeasured balance as "unknown", not as a number. The comment
-        // is the operator's reconciliation record, so a fabricated figure here
-        // would be indistinguishable from a real reading.
-        let balance_note = match result.balance {
-            Some(balance) => balance.to_string(),
-            None => "unknown (ledger read failed)".to_string(),
-        };
-        // Surface the cap's understatement where it is visible: when the
-        // delegation overran its authorized budget, the recorded cost is lower
-        // than what was actually consumed.
-        let cost_note = if result.cost_uncapped > result.cost {
-            format!(
-                "{} credits recorded ({} actual - capped at the authorized budget)",
-                result.cost, result.cost_uncapped
-            )
-        } else {
-            format!("{} credits", result.cost)
-        };
         let result_note = format!(
             "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
-             cost={cost_note}, balance={balance_note}, latency={latency_ms}ms\n\
+             latency={latency_ms}ms\n\
              Response:\n{response}",
             agent_id = result.agent_id,
             model = result.model,
@@ -1422,8 +1392,8 @@ impl KanbanServer {
         Ok(TaskSpawnResponse {
             task_id: tid.to_string(),
             message: format!(
-                "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
-                result.agent_id, task.title, result.cost, result.tokens_used
+                "Spawned agent '{}' for task '{}' ({} tokens). Response recorded.",
+                result.agent_id, task.title, result.tokens_used
             ),
             result_note_error,
             ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
@@ -1825,22 +1795,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
 
-                // Local swarm delegation surface (kanban_task_spawn). The ledger
-                // path resolution mirrors hkask-mcp-swarm's `run()` exactly so
-                // both processes share the same ledger file — operator funding
-                // via `swarm_fund_local` is reusable here. Keep these in sync.
-                let ledger_path = std::env::var("HKASK_SWARM_LEDGER_PATH")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        // D28 — Standardized Artifact Storage. Default
-                        // ledger path is `mcp/swarm/ledger.db`.
-                        hkask_types::agent_paths::resolve_under_data_dir(
-                            &hkask_types::agent_paths::mcp_server_db("swarm", "ledger"),
-                        )
-                        .to_string_lossy()
-                        .to_string()
-                    });
+                // Local swarm delegation surface (kanban_task_spawn). No
+                // ledger: local agents run on the operator's own substrate
+                // (operator ruling 2026-09-04 — no local budget).
                 // Local agent registry — same dir resolution as hkask-mcp-swarm
                 // (relative paths resolve under the hKask data dir, not CWD).
                 // The FALLBACK default must match the swarm server's
@@ -1865,10 +1822,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let agent_stats = Arc::new(hkask_mcp_swarm::agent_stats::AgentStatsStore::load(
                     &local_agents_dir,
                 ));
-                let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
-                    ledger_path,
-                    agent_stats,
-                ));
+                let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats));
 
                 let local_registry = Arc::new(LocalAgentRegistry::new(local_agents_dir));
                 if let Err(error) = local_registry.load() {

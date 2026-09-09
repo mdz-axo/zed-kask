@@ -140,7 +140,10 @@ pub struct AgentExecutor {
     capture: std::sync::Arc<std::sync::Mutex<Option<CaptureSender>>>,
     /// Count of captures dropped because the channel was full. The drainer
     /// cannot observe send-side backpressure, so the count lives HERE —
-    /// a drop is never silent (the harness report surfaces it).
+    /// consumed by `LocalSwarmRuntime::capture_drops()`, which surfaces it in
+    /// the eval harness report; each drop also warns in real time so a drop
+    /// during a non-eval delegation is visible immediately, not only in the
+    /// next harness run.
     capture_send_drops: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -175,15 +178,15 @@ impl AgentExecutor {
 
     /// Captures dropped on the send side (channel full). Shared with the
     /// runtime so `capture_drops()` reports both send-side and drainer-side
-    /// drops.
-    #[allow(dead_code)] // sensor signal — consumed by capture_drops when wired
+    /// drops in the eval harness result.
     pub(crate) fn capture_send_drops(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
         std::sync::Arc::clone(&self.capture_send_drops)
     }
 
     /// Fire-and-forget capture: try-send, never block, never fail the call.
-    /// A full channel drops the capture and increments the send-drop
-    /// counter — surfaced via the runtime's `capture_drops()`, never silent.
+    /// A full channel drops the capture, increments the send-drop counter
+    /// (surfaced in the eval harness report via `capture_drops()`), and
+    /// warns in real time — never silent.
     fn capture_inference(&self, captured: CapturedInference) {
         if let Ok(sender) = self.capture.lock()
             && let Some(sender) = sender.as_ref()
@@ -191,6 +194,10 @@ impl AgentExecutor {
         {
             self.capture_send_drops
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "capture channel full — model_request capture dropped (send-side backpressure)"
+            );
         }
     }
 

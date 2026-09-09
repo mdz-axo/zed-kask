@@ -1,7 +1,7 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
@@ -116,6 +116,13 @@ impl EventEmitter<ContextServerRegistryEvent> for ContextServerRegistry {}
 pub struct ContextServerRegistry {
     server_store: Entity<ContextServerStore>,
     registered_servers: HashMap<ContextServerId, RegisteredContextServer>,
+    /// Server ids currently sourced from the kask tool source. Tracked so a
+    /// reload can REMOVE entries for servers the source no longer lists:
+    /// an unloaded kask server (`McpRuntime::stop_server` drops it from the
+    /// registered set, D45) must leave the agent surface — before this
+    /// tracking, the merge only ever inserted, so ghost tools lingered
+    /// forever after an unload.
+    kask_server_ids: HashSet<ContextServerId>,
     _subscription: gpui::Subscription,
 }
 
@@ -139,6 +146,7 @@ impl ContextServerRegistry {
         let mut this = Self {
             server_store: server_store.clone(),
             registered_servers: HashMap::default(),
+            kask_server_ids: HashSet::default(),
             _subscription: cx.subscribe(&server_store, Self::handle_context_server_store_event),
         };
         for server in server_store.read(cx).running_servers() {
@@ -191,6 +199,40 @@ impl ContextServerRegistry {
             return;
         };
         note_kask_tool_source_wired();
+        if Self::merge_kask_tool_descriptors(
+            source,
+            &mut self.registered_servers,
+            &mut self.kask_server_ids,
+        ) {
+            cx.emit(ContextServerRegistryEvent::ToolsChanged);
+        }
+    }
+
+    /// Merge the kask source's current descriptor set into the registry.
+    /// Insert/replace per-server entries for every server the source lists,
+    /// and REMOVE previously-kask-sourced servers the source no longer lists
+    /// (an unloaded kask server — D45 load toggle → `stop_server` → dropped
+    /// from the runtime's registered set → absent from the source within one
+    /// poll — must leave the agent surface; before this tracking the merge
+    /// only ever inserted, so ghost tools lingered forever). Returns whether
+    /// the visible tool surface changed.
+    ///
+    /// Re-merges every listed entry so the wrapped descriptors stay fresh
+    /// across kask server restarts (the source's cache is rebuilt on
+    /// reconnect), but reports `true` only when the visible surface changed:
+    /// the poll re-runs this every tick and store events re-run it on every
+    /// server status change, and notifying subscribers for a no-op would
+    /// churn every thread's tool list. A kask entry removed by a store event
+    /// for a colliding raw settings id counts as changed here and is
+    /// re-inserted on the next pass while the source lists it (the
+    /// documented collision behavior). Only ids the PREVIOUS pass sourced
+    /// from kask are eligible for removal — store-registered servers are
+    /// untouched.
+    fn merge_kask_tool_descriptors(
+        source: Arc<dyn KaskToolSource>,
+        registered_servers: &mut HashMap<ContextServerId, RegisteredContextServer>,
+        kask_server_ids: &mut HashSet<ContextServerId>,
+    ) -> bool {
         let mut by_server: HashMap<String, BTreeMap<SharedString, Arc<dyn AnyAgentTool>>> =
             HashMap::default();
         for descriptor in source.tools() {
@@ -202,25 +244,18 @@ impl ContextServerRegistry {
             });
             by_server.entry(server_id).or_default().insert(name, tool);
         }
-        // Re-merge every entry so the wrapped descriptors stay fresh across
-        // kask server restarts (the source's cache is rebuilt on reconnect),
-        // but emit `ToolsChanged` only when the visible surface changed: the
-        // poll re-runs this every tick and store events re-run it on every
-        // server status change, and notifying subscribers for a no-op would
-        // churn every thread's tool list. A kask entry removed by a store
-        // event for a colliding raw settings id counts as changed here and
-        // is re-inserted on the next pass.
         let mut surface_changed = false;
+        let mut current_kask_ids: HashSet<ContextServerId> = HashSet::default();
         for (server_id, tools) in by_server {
             let server_id = ContextServerId(std::sync::Arc::from(server_id.as_str()));
-            let tool_names_unchanged = self
-                .registered_servers
+            let tool_names_unchanged = registered_servers
                 .get(&server_id)
                 .is_some_and(|registered| registered.tools.keys().eq(tools.keys()));
             if !tool_names_unchanged {
                 surface_changed = true;
             }
-            self.registered_servers.insert(
+            current_kask_ids.insert(server_id.clone());
+            registered_servers.insert(
                 server_id,
                 RegisteredContextServer {
                     tools,
@@ -231,9 +266,15 @@ impl ContextServerRegistry {
                 },
             );
         }
-        if surface_changed {
-            cx.emit(ContextServerRegistryEvent::ToolsChanged);
+        for stale_id in std::mem::take(kask_server_ids) {
+            if !current_kask_ids.contains(&stale_id)
+                && registered_servers.remove(&stale_id).is_some()
+            {
+                surface_changed = true;
+            }
         }
+        *kask_server_ids = current_kask_ids;
+        surface_changed
     }
 
     pub fn tools_for_server(
@@ -1369,6 +1410,83 @@ mod tests {
             kask_tool_source().is_none(),
             "unwired source must read None — kask tools do not surface"
         );
+    }
+
+    /// Pin: the kask merge REMOVES previously-kask-sourced servers the source
+    /// no longer lists. An unloaded kask server (D45 load toggle →
+    /// `McpRuntime::stop_server` → dropped from the runtime's registered set
+    /// → absent from the source within one poll) must leave the agent
+    /// surface — before the removal leg, the merge only ever inserted, so
+    /// ghost tools lingered forever. Also pins that store-registered servers
+    /// are untouched by a kask merge, and that a steady-state merge reports
+    /// no surface change (no subscriber churn).
+    #[test]
+    fn kask_merge_removes_servers_absent_from_the_source() {
+        let mut registered: HashMap<ContextServerId, RegisteredContextServer> = HashMap::default();
+        let mut kask_ids: HashSet<ContextServerId> = HashSet::default();
+
+        // A store-registered server that must survive every kask merge.
+        registered.insert(
+            ContextServerId(std::sync::Arc::from("store-server")),
+            RegisteredContextServer {
+                tools: BTreeMap::default(),
+                prompts: BTreeMap::default(),
+                load_tools: Task::ready(Ok(())),
+                load_prompts: Task::ready(Ok(())),
+                _tools_updated_subscription: None,
+            },
+        );
+
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let descriptor = KaskToolDescriptor {
+            server_id: "kask-a".to_string(),
+            name: "tool_a".to_string(),
+            description: "A governed kask tool".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        };
+
+        // Pass 1: kask-a merges in — surface changed.
+        let source: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: vec![descriptor],
+            invocations: invocations.clone(),
+        });
+        assert!(ContextServerRegistry::merge_kask_tool_descriptors(
+            source,
+            &mut registered,
+            &mut kask_ids
+        ));
+        assert!(registered.contains_key(&ContextServerId(std::sync::Arc::from("kask-a"))));
+        assert_eq!(registered.len(), 2, "store-server + kask-a");
+
+        // Pass 2: the source no longer lists kask-a (unloaded) — removed,
+        // surface changed, store-server untouched.
+        let empty: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: Vec::new(),
+            invocations: invocations.clone(),
+        });
+        assert!(ContextServerRegistry::merge_kask_tool_descriptors(
+            empty.clone(),
+            &mut registered,
+            &mut kask_ids
+        ));
+        assert!(
+            !registered.contains_key(&ContextServerId(std::sync::Arc::from("kask-a"))),
+            "an unloaded kask server's ghost tools must leave the registry"
+        );
+        assert_eq!(
+            registered.len(),
+            1,
+            "only the store-registered server remains"
+        );
+        assert!(registered.contains_key(&ContextServerId(std::sync::Arc::from("store-server"))));
+
+        // Pass 3: steady state — nothing to insert, nothing to remove, no
+        // surface change (no ToolsChanged churn on every poll tick).
+        assert!(!ContextServerRegistry::merge_kask_tool_descriptors(
+            empty,
+            &mut registered,
+            &mut kask_ids
+        ));
     }
 
     /// Pin: `KaskServerTool` — the agent-visible surface of a kask MCP

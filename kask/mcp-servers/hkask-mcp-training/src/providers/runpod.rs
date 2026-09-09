@@ -411,8 +411,6 @@ struct PodDeploySpec<'a> {
     container_disk_gb: u32,
     docker_image: &'a str,
     docker_args: &'a str,
-    #[allow(dead_code)]
-    template_id: &'a str,
 }
 
 // ── Install script generation ───────────────────────────────────────────────
@@ -1053,7 +1051,6 @@ impl TrainingHost for RunpodHost {
                 container_disk_gb: resolved_disk,
                 docker_image: &resolved_image,
                 docker_args: &docker_args,
-                template_id: &template_id,
             },
             &env_entries,
         );

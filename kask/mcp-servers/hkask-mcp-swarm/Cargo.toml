@@ -17,7 +17,6 @@ path = "src/main.rs"
 hkask-keystore.workspace = true
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-ledger.workspace = true
 hkask-event-store.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true

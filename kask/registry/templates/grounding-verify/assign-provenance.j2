@@ -17,6 +17,7 @@
 {#     cross_check: string | null,  # lisp_eval form for mechanical verification (string-contains for quotes; value-returning derivation forms for arithmetic) #}
 {#     claimed_value: number | null,  # platform_derived only — the value the report states #}
 {#     unit: number | null,  # platform_derived only — unit of the claim's last decimal place (0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer) #}
+{#     inputs: array | null,  # platform_derived only — [{name: string, origin: string}] where origin is "source:<tool>:<field>" or "claim:<claim_id>" of an EARLIER claim #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
@@ -39,6 +40,24 @@ You are a provenance analyst. Your job is to assign a provenance tier to each fa
 ## Congruence rules (optional — which source is authoritative for which quantity)
 
 {{ congruence_rules | default([]) | tojson }}
+
+When a claim cites a source that a rule marks non-authoritative for that quantity, note the rule and the authoritative source in the claim's `why` — Step 3's consistency pass surfaces the conflict; your note explains the citation choice.
+
+## Canonical derivation forms (prefer over authoring)
+
+Select and bind inputs — do not author your own form when one of these fits. Each references inputs by name; never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check.
+
+- Enterprise value: `"(+ market_cap net_debt)"`
+- EV/EBITDA: `"(/ (+ market_cap net_debt) ebitda)"`
+- P/E: `"(/ price eps_diluted)"`
+- P/S: `"(/ market_cap revenue)"`
+- Growth %: `"(* 100 (/ (- revenue_current revenue_prior) revenue_prior))"`
+- Discount %: `"(* 100 (/ (- price_a price_b) price_b))"`
+- Median (any n) — the one recursive library form. It ships pre-wrapped with the grading wrapper (its helper defines cannot sit inside a `let` binding): bind `values`, `claimed`, `unit` only, call it as-is, and pass `max_depth` >= 8 x list length:
+
+```
+(define insert-sorted (lambda (x lst) (cond ((is_null lst) (list x)) ((<= x (car lst)) (cons x lst)) (t (cons (car lst) (insert-sorted x (cdr lst))))))) (define isort (lambda (lst) (cond ((is_null lst) '()) (t (insert-sorted (car lst) (isort (cdr lst))))))) (define drop-last (lambda (lst) (cond ((is_null (cdr lst)) '()) (t (cons (car lst) (drop-last (cdr lst))))))) (define middle-of (lambda (s) (cond ((= (length s) 1) (car s)) ((= (length s) 2) (/ (+ (car s) (car (cdr s))) 2)) (t (middle-of (cdr (drop-last s))))))) (let ((computed (middle-of (isort values)))) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))
+```
 
 ## The provenance lattice
 
@@ -63,8 +82,7 @@ A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `
    - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
      - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
      - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
-     - For derived numbers (arithmetic on input values): a value-returning `lisp_eval` form that computes the claim from named input values — e.g. `"(let ((growth (/ (- revenue_current revenue_prior) revenue_prior))) growth)"`. The form MUST reference its inputs by name (source values, or values already verified in this run) and MUST return the computed value, not a boolean — Step 3 grades the difference between the computed value and `claimed_value`. Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check.
-   - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states) and `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer). Arithmetic without a falsifiable derivation is `model_inference`.
+   - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states), `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer), and `inputs` — each input value's name and origin (`source:<tool>:<field>`, or `claim:<claim_id>` for the output of an EARLIER claim in this run; forward references are rejected by Step 3's origins check). Prefer a canonical form from the library above when one fits — select and bind instead of authoring. Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check. Arithmetic without a falsifiable derivation is `model_inference`.
    - If the claim synthesizes or interprets source data (e.g., "the margin expansion was driven by mix shift"), classify as `model_inference`.
    - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
    - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
@@ -108,10 +126,14 @@ Produce a JSON object:
       "strength": 2,
       "source_reference": "stock_quote:marketCap + balance_sheet:netDebt",
       "response_field": null,
-      "cross_check": "(let ((ev (+ market_cap net_debt))) ev)",
+      "cross_check": "(+ market_cap net_debt)",
       "claimed_value": 49300000000.0,
       "unit": 100000000.0,
-      "why": "Enterprise value is market cap plus balance-sheet net debt; the form re-derives it so Step 3 can grade the difference."
+      "inputs": [
+        { "name": "market_cap", "origin": "source:stock_quote:marketCap" },
+        { "name": "net_debt", "origin": "source:balance_sheet:netDebt" }
+      ],
+      "why": "Enterprise value is market cap plus balance-sheet net debt; the canonical library form re-derives it so Step 3 can grade the difference."
     }
   ],
   "sourced_blocks": [

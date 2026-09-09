@@ -33,9 +33,6 @@ pub struct AgentExecutionStats {
     pub total_executions: u64,
     pub successful_executions: u64,
     pub failed_executions: u64,
-    /// Total credits recorded (the capped ledger cost — the same figure the
-    /// delegation result carries as `cost`).
-    pub total_cost_credits: i64,
     pub total_tokens_used: i64,
     /// Sum of end-to-end delegation latencies, for the average.
     pub total_latency_ms: u64,
@@ -53,7 +50,6 @@ impl AgentExecutionStats {
             "total_executions": self.total_executions,
             "successful_executions": self.successful_executions,
             "failed_executions": self.failed_executions,
-            "total_cost_credits": self.total_cost_credits,
             "tokens_used": self.total_tokens_used,
             "avg_execution_time_ms": self
                 .total_latency_ms
@@ -67,7 +63,7 @@ impl AgentExecutionStats {
 
 /// File-backed per-agent stats. One in-memory map, flushed to
 /// `<agents_dir>/<safe_id>/stats.json` after every update. The update points
-/// (`record_success` in the sequential debit path, `record_failure` on the
+/// (`record_success` in the sequential result path, `record_failure` on the
 /// error paths) are single-writer by construction, so the Mutex is held only
 /// briefly for map mutation + flush.
 pub struct AgentStatsStore {
@@ -128,19 +124,12 @@ impl AgentStatsStore {
         }
     }
 
-    /// Record a completed execution (the only path that knows cost, tokens,
-    /// and latency — `debit_and_build`).
-    pub fn record_success(
-        &self,
-        agent_id: &str,
-        cost_credits: i64,
-        tokens_used: i64,
-        latency_ms: u64,
-    ) {
+    /// Record a completed execution (the only path that knows tokens and
+    /// latency — `build_result`).
+    pub fn record_success(&self, agent_id: &str, tokens_used: i64, latency_ms: u64) {
         self.mutate(agent_id, |stats| {
             stats.total_executions += 1;
             stats.successful_executions += 1;
-            stats.total_cost_credits += cost_credits;
             stats.total_tokens_used += tokens_used;
             stats.total_latency_ms += latency_ms;
         });
@@ -243,13 +232,12 @@ mod tests {
         let dir = temp_dir();
         std::fs::create_dir_all(std::path::Path::new(&dir).join("my_agent")).expect("agent dir");
         let store = AgentStatsStore::load(&dir);
-        store.record_success("my_agent", 3, 2500, 400);
-        store.record_success("my_agent", 1, 500, 200);
+        store.record_success("my_agent", 2500, 400);
+        store.record_success("my_agent", 500, 200);
         let json = store.stats_json("my_agent");
         assert_eq!(json["total_executions"], 2);
         assert_eq!(json["successful_executions"], 2);
         assert_eq!(json["failed_executions"], 0);
-        assert_eq!(json["total_cost_credits"], 4);
         assert_eq!(json["tokens_used"], 3000);
         assert_eq!(json["avg_execution_time_ms"], 300);
         assert_eq!(json["source"], "local_stats_file");
@@ -257,7 +245,6 @@ mod tests {
         // The flush wrote the file — a fresh load sees the same counters.
         let reloaded = AgentStatsStore::load(&dir);
         assert_eq!(reloaded.stats("my_agent").total_executions, 2);
-        assert_eq!(reloaded.stats("my_agent").total_cost_credits, 4);
     }
 
     #[test]
@@ -269,7 +256,6 @@ mod tests {
         assert_eq!(stats.total_executions, 1);
         assert_eq!(stats.failed_executions, 1);
         assert_eq!(stats.successful_executions, 0);
-        assert_eq!(stats.total_cost_credits, 0);
     }
 
     #[test]
@@ -301,7 +287,7 @@ mod tests {
         let store = AgentStatsStore::load(&dir);
         // A path-traversal id is refused at the flush boundary — no file is
         // written outside the agents dir.
-        store.record_success("../../etc/passwd", 1, 1, 1);
+        store.record_success("../../etc/passwd", 1, 1);
         assert!(!std::path::Path::new(&dir).join("etc").exists());
     }
 }

@@ -65,17 +65,13 @@ fn make_server_with_shared_driver() -> (
     let idempotency_driver = driver.clone();
     let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
     let service = KanbanService::new(store);
-    let ledger_path = std::env::temp_dir()
-        .join(format!("kanban-idem-{}.db", std::process::id()))
-        .to_string_lossy()
-        .to_string();
     let idempotency =
         hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(idempotency_driver)
             .expect("idempotency schema");
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(idempotency),
@@ -388,13 +384,7 @@ async fn replay_is_absorbed_across_processes() {
     let process_b = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(
-            std::env::temp_dir()
-                .join(format!("kanban-idem-b-{}.db", std::process::id()))
-                .to_string_lossy()
-                .to_string(),
-            throwaway_stats(),
-        )),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(
@@ -426,16 +416,12 @@ async fn replay_is_absorbed_across_processes() {
 /// a restart, so a caller relying on that must be able to tell.
 #[tokio::test]
 async fn non_durable_protection_is_labelled_in_the_response() {
-    let ledger_path = std::env::temp_dir()
-        .join(format!("kanban-idem-mem-{}.db", std::process::id()))
-        .to_string_lossy()
-        .to_string();
     let store = HMemStore::from_driver(SqliteDriver::in_memory_driver()).expect("hmem store");
     // The in-memory (non-durable) replay-protection backend.
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
@@ -510,13 +496,7 @@ async fn goal_replay_protection_does_not_survive_a_restart() {
     let process_b = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(
-            std::env::temp_dir()
-                .join(format!("kanban-idem-goal-b-{}.db", std::process::id()))
-                .to_string_lossy()
-                .to_string(),
-            throwaway_stats(),
-        )),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(
@@ -800,10 +780,6 @@ fn make_spawn_server() -> (
     let idempotency_driver = driver.clone();
     let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
     let service = KanbanService::new(store);
-    let ledger_path = std::env::temp_dir()
-        .join(format!("kanban-t06-{}-{}.db", std::process::id(), line!()))
-        .to_string_lossy()
-        .to_string();
     let idempotency =
         hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(idempotency_driver)
             .expect("idempotency schema");
@@ -813,7 +789,7 @@ fn make_spawn_server() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
         Arc::new(idempotency),
@@ -955,13 +931,7 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     let restarted = KanbanServer::new(
         WebID::new(),
         KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
-        Arc::new(LazyLocalSwarmRuntime::lazy(
-            std::env::temp_dir()
-                .join(format!("kanban-t06-restart-{}.db", std::process::id()))
-                .to_string_lossy()
-                .to_string(),
-            throwaway_stats(),
-        )),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(CountingWorktreeSpawn {
             spawns: std::sync::atomic::AtomicUsize::new(0),

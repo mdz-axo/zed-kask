@@ -162,18 +162,12 @@ impl SwarmServer {
     /// `server/tool` names), those tools are declared to the model and model
     /// tool calls are dispatched through the zed IPC bridge's governed
     /// `McpRuntime` — the declared list is the allowlist.
-    /// Spend is recorded per token across all tool-loop rounds
-    /// (1 credit / 1000 tokens, capped at the optional `credits_authorized`
-    /// when supplied, else at the per-dispatch runaway ceiling).
     ///
-    /// **No funding gate, no consent token, and no funding gesture.** Local
-    /// agents run on the operator's own substrate (their machine, their
-    /// inference credentials), so there is nothing to authorize or fund —
-    /// omit `credits_authorized` entirely and the per-dispatch ceiling alone
-    /// bounds a single runaway dispatch. An unfunded ledger does not block
-    /// this call and the balance may go negative (accumulated local spend).
+    /// **No budget, no consent token.** Local agents run on the operator's
+    /// own substrate (their machine, their inference credentials), so there
+    /// is nothing to authorize, fund, or reconcile.
     #[tool(
-        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud) and records spend in the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). No ABW calls. NO funding gate and no consent token — an unfunded ledger does not block this call; the ledger records spend rather than authorizing it. Returns the response, model, token usage, cost, resulting balance (may be negative), and tool_calls summary."
+        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud). Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). No ABW calls. No budget and no consent token — local agents run on the operator's own substrate. Returns the response, model, token usage, latency, and tool_calls summary."
     )]
     pub(crate) async fn swarm_delegate_local(
         &self,
@@ -202,9 +196,8 @@ impl SwarmServer {
             // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Execute via the local runtime.
-            let ceiling = self.client.config().max_credits_per_dispatch;
             let mut result = runtime
-                .delegate(&agent, &req.task, req.credits_authorized, ceiling)
+                .delegate(&agent, &req.task)
                 .await
                 .map_err(map_local_swarm_error)?;
             // Evaluator contract (phase 4): a card-declared evaluator is the
@@ -286,13 +279,11 @@ impl SwarmServer {
 
     /// Parallel multi-agent fan-out: dispatch N local agents in one call and
     /// aggregate (Cybernetic Swarm Plan — PSO social term + C4 latency
-    /// measurement). Each delegation runs sequentially to avoid ledger TOCTOU
-    /// (the local ledger is single-writer; concurrent debits would race the
-    /// balance read). Capped at `MAX_FANOUT`. No consent token — local mode.
-    /// Returns per-agent results plus aggregates (total cost/tokens/latency,
-    /// balance, failed/succeeded counts).
+    /// measurement). Capped at `MAX_FANOUT`. No consent token — local mode.
+    /// Returns per-agent results plus aggregates (total tokens/latency,
+    /// failed/succeeded counts).
     #[tool(
-        description = "Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. By default runs sequentially to avoid ledger TOCTOU. Set parallel=true to run inference concurrently with batched ledger debit. Capped at MAX_FANOUT (10). No consent token — local mode."
+        description = "Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Set parallel=true to run inference concurrently. Capped at MAX_FANOUT (10). No consent token — local mode."
     )]
     pub(crate) async fn swarm_fanout_local(
         &self,
@@ -316,7 +307,6 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
 
             if req.parallel {
                 // Parallel mode: run inference concurrently, debit
@@ -328,24 +318,22 @@ impl SwarmServer {
                 // ingest_turn after delegate_batch returns — the batch
                 // consumes the owned cards.
                 let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
-                let mut delegations: Vec<(LocalAgentCard, String, Option<u32>)> = Vec::new();
+                let mut delegations: Vec<(LocalAgentCard, String)> = Vec::new();
                 let mut not_found: Vec<String> = Vec::new();
                 for entry in &req.delegations {
                     match self.local_registry.get(&entry.agent_name) {
                         Some(agent) => {
                             found_context.push((entry, agent.clone()));
-                            delegations.push((agent, entry.task.clone(), entry.credits_authorized));
+                            delegations.push((agent, entry.task.clone()));
                         }
                         None => {
                             not_found.push(entry.agent_name.clone());
                         }
                     }
                 }
-                let raw_results = runtime.delegate_batch(delegations, ceiling).await;
+                let raw_results = runtime.delegate_batch(delegations).await;
                 let mut results = Vec::new();
                 let mut failed = 0usize;
-                let mut total_cost = 0i64;
-                let mut total_cost_uncapped = 0i64;
                 let mut total_tokens = 0i64;
                 for name in &not_found {
                     failed += 1;
@@ -383,8 +371,6 @@ impl SwarmServer {
                                 hkask_inference::model_constants::embedding_model().as_deref(),
                             )
                             .await;
-                            total_cost += r.cost;
-                            total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
                             results.push(r.to_result_json(true));
                         }
@@ -397,14 +383,10 @@ impl SwarmServer {
                         }
                     }
                 }
-                let balance: Option<i64> = runtime.balance();
                 return Ok(serde_json::json!({
                     "results": results,
-                    "total_cost": total_cost,
-                    "total_cost_uncapped": total_cost_uncapped,
                     "total_tokens": total_tokens,
                     "total_latency_ms": 0u64,
-                    "balance": balance,
                     "failed": failed,
                     "succeeded": req.delegations.len() - failed,
                     "parallel": true,
@@ -414,11 +396,6 @@ impl SwarmServer {
             // Sequential mode (default).
             let mut results = Vec::new();
             let mut failed = 0usize;
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             let mut total_latency_ms = 0u64;
             for entry in &req.delegations {
@@ -431,10 +408,7 @@ impl SwarmServer {
                     ));
                     continue;
                 };
-                match runtime
-                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
-                    .await
-                {
+                match runtime.delegate(&agent, &entry.task).await {
                     Ok(r) => {
                         self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                         // Stigmergy (ACO pheromone trail) — mirrors
@@ -461,8 +435,6 @@ impl SwarmServer {
                             hkask_inference::model_constants::embedding_model().as_deref(),
                         )
                         .await;
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
                         results.push(r.to_result_json(true));
@@ -476,23 +448,10 @@ impl SwarmServer {
                     }
                 }
             }
-            // The aggregate balance is best-effort: each delegation already
-            // returned its own post-debit `balance` in `LocalDelegateResult`,
-            // so this field is a convenience read after the loop. A failed
-            // ledger query is surfaced as `null` — NOT fabricated as `0`
-            // (the `.rules` trap: a failed measurement must be distinguishable
-            // from a measured zero; `swarm_balance_local` already returns an
-            // error on `None`, and the fan-out cannot error without discarding
-            // the per-delegation results that succeeded). `Option<i64>`
-            // serializes to `null` on `None`.
-            let balance: Option<i64> = runtime.balance();
             Ok(serde_json::json!({
                 "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
                 "total_latency_ms": total_latency_ms,
-                "balance": balance,
                 "failed": failed,
                 "succeeded": req.delegations.len() - failed,
             }))
@@ -529,14 +488,8 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
             let mut results = Vec::new();
             let mut prev_output = String::new();
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             for (i, step) in req.steps.iter().enumerate() {
                 // Substitute {prev_output} with the previous step's response.
@@ -559,7 +512,7 @@ impl SwarmServer {
                     break; // pipeline stops on agent-not-found
                 };
                 match runtime
-                    .delegate(&agent, &task, step.credits_authorized, ceiling)
+                    .delegate(&agent, &task)
                     .await
                 {
                     Ok(r) => {
@@ -581,8 +534,6 @@ impl SwarmServer {
                         )
                         .await;
                         prev_output = r.response.clone();
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         let mut entry = r.to_result_json(false);
                         entry["step"] = serde_json::json!(i);
@@ -597,15 +548,11 @@ impl SwarmServer {
                     }
                 }
             }
-            let balance: Option<i64> = runtime.balance();
             Ok(serde_json::json!({
                 "steps_completed": results.len(),
                 "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
                 "final_output": prev_output,
-                "balance": balance,
             }))
         })
         .await
@@ -2240,7 +2187,6 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
             // Load the task board when a swarm_id is provided so task
             // progress persists across swarm-intelligence PDCA iterations.
             let swarm_id = req.swarm_id.clone();
@@ -2262,11 +2208,6 @@ impl SwarmServer {
             };
             let mut results = Vec::new();
             let mut failed = 0usize;
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             for entry in &req.delegations {
                 let agent = self.local_registry.get(&entry.agent_name);
@@ -2290,13 +2231,8 @@ impl SwarmServer {
                     }
                     continue;
                 };
-                match runtime
-                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
-                    .await
-                {
+                match runtime.delegate(&agent, &entry.task).await {
                     Ok(mut r) => {
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.
                         if let Some(ev) = &entry.evaluator {
@@ -2393,7 +2329,6 @@ impl SwarmServer {
                     }
                 }
             }
-            let balance: Option<i64> = runtime.balance();
             let task_summary = task_board.as_ref().map(|b| {
                 let c = b.counts();
                 serde_json::json!({
@@ -2408,10 +2343,7 @@ impl SwarmServer {
             });
             Ok(serde_json::json!({
                 "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
-                "balance": balance,
                 "failed": failed,
                 "succeeded": req.delegations.len() - failed,
                 "task_board": task_summary,
@@ -2488,7 +2420,6 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
 
             // Load the task board when a swarm_id is provided so eval
             // results persist across regression runs.
@@ -2513,13 +2444,11 @@ impl SwarmServer {
             let mut case_results = Vec::with_capacity(req.cases.len());
             let mut passed = 0usize;
             let mut failed = 0usize;
-            let mut total_cost = 0i64;
             let mut total_tokens = 0i64;
 
             for case in &req.cases {
                 let mut case_pass = true;
                 let mut delegation_results = Vec::new();
-                let mut case_cost = 0i64;
                 let mut case_tokens = 0i64;
 
                 for entry in &case.delegations {
@@ -2533,13 +2462,9 @@ impl SwarmServer {
                         }));
                         continue;
                     };
-                    match runtime
-                        .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
-                        .await
-                    {
+                    match runtime.delegate(&agent, &entry.task).await {
                         Ok(mut r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
-                            case_cost += r.cost;
                             case_tokens += r.tokens_used;
                             if let Some(ev) = &entry.evaluator {
                                 let pass =
@@ -2642,14 +2567,12 @@ impl SwarmServer {
                 } else {
                     failed += 1;
                 }
-                total_cost += case_cost;
                 total_tokens += case_tokens;
 
                 case_results.push(serde_json::json!({
                     "name": case.name,
                     "passed": case_pass,
                     "delegations": delegation_results,
-                    "cost": case_cost,
                     "tokens_used": case_tokens,
                 }));
             }
@@ -2680,7 +2603,6 @@ impl SwarmServer {
                 })
             });
 
-            let balance: Option<i64> = runtime.balance();
             let pass_rate = if req.cases.is_empty() {
                 0.0
             } else {
@@ -2693,9 +2615,7 @@ impl SwarmServer {
                 "failed": failed,
                 "total": req.cases.len(),
                 "pass_rate": pass_rate,
-                "total_cost": total_cost,
                 "total_tokens": total_tokens,
-                "balance": balance,
                 "status": if failed == 0 { "PASSED" } else { "FAILED" },
                 "task_board": task_summary,
             }))
@@ -2773,7 +2693,6 @@ impl SwarmServer {
                         req.agent_name
                     ))
                 })?;
-                let ceiling = self.client.config().max_credits_per_dispatch;
                 // The event store is the data plane. The harness wires the
                 // executor's capture path (phase 3) so every inference call
                 // emits a model_request event automatically, then stamps the
@@ -2803,21 +2722,14 @@ impl SwarmServer {
 
                 let mut task_reports = Vec::with_capacity(req.tasks.len());
                 let mut total_passes = 0usize;
-                let mut total_cost = 0i64;
-                let mut total_cost_uncapped = 0i64;
                 let mut total_tokens = 0i64;
                 for (task_index, task) in req.tasks.iter().enumerate() {
                     let mut passes = 0usize;
                     let mut errors = 0usize;
                     let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
                     for repeat_index in 0..repeats {
-                        match runtime
-                            .delegate(&agent, &task.task, task.credits_authorized, ceiling)
-                            .await
-                        {
+                        match runtime.delegate(&agent, &task.task).await {
                             Ok(result) => {
-                                total_cost += result.cost;
-                                total_cost_uncapped += result.cost_uncapped;
                                 total_tokens += result.tokens_used;
                                 latencies_ms.push(result.latency_ms);
                                 // The evaluator is deterministic, so a pass
@@ -2879,7 +2791,6 @@ impl SwarmServer {
                     task_reports.push(eval_task_report(task, passes, errors, &latencies_ms));
                 }
                 let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
-                let balance: Option<i64> = runtime.balance();
                 // Both drop counters, surfaced: verdict-append failures from
                 // this loop, capture drops (send-side backpressure +
                 // drainer-side append failures) from the runtime. A drop is
@@ -2975,10 +2886,7 @@ impl SwarmServer {
                     "total_rollouts": total_rollouts,
                     "total_passes": total_passes,
                     "overall_pass_rate": overall_pass_rate,
-                    "total_cost": total_cost,
-                    "total_cost_uncapped": total_cost_uncapped,
                     "total_tokens": total_tokens,
-                    "balance": balance,
                     "events_dropped": events_dropped,
                     "capture_drops": capture_drops,
                     "bodies_stripped": bodies_stripped,
@@ -3032,7 +2940,6 @@ mod tests {
     fn task(text: &str, evaluator: &str, spec: &str) -> EvalAgentTask {
         EvalAgentTask {
             task: text.to_string(),
-            credits_authorized: Some(10),
             evaluator: PlanEvaluator {
                 evaluator: evaluator.to_string(),
                 spec: spec.to_string(),
@@ -3116,7 +3023,6 @@ mod tests {
             "agent_name": "researcher",
             "tasks": [{
                 "task": "do the thing",
-                "credits_authorized": 5,
                 "evaluator": { "evaluator": "contains", "spec": "ok" }
             }]
         });
@@ -3127,7 +3033,7 @@ mod tests {
         // A task without an evaluator must fail to deserialize.
         let bad = serde_json::json!({
             "agent_name": "researcher",
-            "tasks": [{ "task": "t", "credits_authorized": 5 }]
+            "tasks": [{ "task": "t" }]
         });
         assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
     }
@@ -3343,14 +3249,12 @@ mod tests {
         // one — non-trivial, divergent pass rates confirm the harness
         // measures something.
         use crate::local_runtime::LocalSwarmRuntime;
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let ledger = Arc::new(hkask_ledger::Ledger::from_driver(driver).unwrap());
         let call_count = Arc::new(AtomicUsize::new(0));
         let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
             call_count: call_count.clone(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(ledger, inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
 
         let good_agent = mock_agent_card(
             "good",
@@ -3359,11 +3263,11 @@ mod tests {
         let bad_agent = mock_agent_card("bad", "You are a confused assistant.");
 
         let good_result = runtime
-            .delegate(&good_agent, "What is 6 times 7?", Some(10), 100)
+            .delegate(&good_agent, "What is 6 times 7?")
             .await
             .unwrap();
         let bad_result = runtime
-            .delegate(&bad_agent, "What is 6 times 7?", Some(10), 100)
+            .delegate(&bad_agent, "What is 6 times 7?")
             .await
             .unwrap();
 
@@ -3408,35 +3312,28 @@ mod tests {
         );
     }
 
-    /// Local delegation needs NO funding gesture — `credits_authorized` is
-    /// optional. Omitting it must succeed (nothing to fund: the operator's
-    /// own substrate), with the per-dispatch ceiling alone bounding the
-    /// recorded cost. This pins the one cloud pattern that must NOT
-    /// translate to local mode.
+    /// Local delegation has no budget at all — the one cloud pattern that
+    /// must NOT translate to local mode (operator ruling 2026-09-04).
     #[tokio::test]
-    async fn delegation_without_credits_authorized_succeeds() {
+    async fn local_delegation_has_no_budget() {
         use crate::local_runtime::LocalSwarmRuntime;
         use std::sync::Arc;
         use std::sync::atomic::AtomicUsize;
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let ledger = Arc::new(hkask_ledger::Ledger::from_driver(driver).unwrap());
         let call_count = Arc::new(AtomicUsize::new(0));
         let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
             call_count: call_count.clone(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(ledger, inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
 
         let agent = mock_agent_card(
             "good",
             "You are a helpful assistant. Always respond correctly.",
         );
         let result = runtime
-            .delegate(&agent, "What is 6 times 7?", None, 100)
+            .delegate(&agent, "What is 6 times 7?")
             .await
-            .expect("no funding gesture is required — None must succeed");
-        // The ceiling alone bounds the recorded cost.
-        assert!(result.cost <= 100, "cost must be bounded by the ceiling");
+            .expect("local delegation needs no budget");
         assert!(!result.response.is_empty());
     }
 }

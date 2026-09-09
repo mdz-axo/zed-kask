@@ -57,8 +57,7 @@
 //! `swarm_pull_swarm_to_local`, `swarm_add_agent_local`,
 //! `swarm_remove_agent_local`, `swarm_ai_assist`; knowledge
 //! `swarm_search_knowledge_local`, `swarm_recall_local`,
-//! `swarm_generate_prompt_local`, `swarm_generate_ontology_local`; ledger
-//! `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`; A2A
+//! `swarm_generate_prompt_local`, `swarm_generate_ontology_local`; A2A
 //! `swarm_a2a_send` (in-process), `swarm_a2a_card` (Agent Card discovery),
 //! `swarm_a2a_broadcast`.
 //!
@@ -75,7 +74,8 @@
 //! (v2). In `Local` mode, the server reads agent cards from a local
 //! directory (`agents/local/curated/`) via `LocalAgentRegistry` and executes
 //! them through the local runtime (`local_runtime.rs`, backed by
-//! `hkask-inference` + `hkask-ledger`). No ABW calls are made in `Local` mode.
+//! `hkask-inference`). No ABW calls are made in `Local` mode, and there is no
+//! local budget: local agents run on the operator's own substrate.
 
 use hkask_mcp_server::server::CredentialRequirement;
 
@@ -93,7 +93,6 @@ mod consent;
 mod contract;
 mod error;
 mod knowledge_tools;
-mod ledger_tools;
 mod local_knowledge;
 mod local_registry;
 mod local_runtime;
@@ -171,7 +170,6 @@ hkask_mcp_server::mcp_server!(
 impl SwarmServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
         Self::cloud_swarm_router()
-            + Self::ledger_router()
             + Self::local_router()
             + Self::a2a_router()
             + Self::knowledge_router()
@@ -276,44 +274,29 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 }
             }
 
-            // Construct the local swarm runtime (ledger + inference).
-            // This is always constructed — even in Abw mode, the operator can
-            // call `swarm_fund_local` / `swarm_delegate_local` to mix local
-            // execution. The ledger path defaults to
-            // `mcp/swarm/ledger.db` (operator-configurable via
-            // `HKASK_SWARM_LEDGER_PATH`).
+            // Construct the local swarm runtime (inference only — there is
+            // no local budget; operator ruling 2026-09-04). This is always
+            // constructed — even in Abw mode, the operator can call
+            // `swarm_delegate_local` to mix local execution.
             //
             // The runtime is constructed lazily on first tool call (the
             // `run_server` factory closure is sync — it cannot `.await` the
             // inference port resolution). `LocalSwarmRuntime::lazy` stores
             // the config; `LocalSwarmRuntime::get_or_init` does the async
             // init on first use.
-            let ledger_path = std::env::var("HKASK_SWARM_LEDGER_PATH")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    // D28 — Standardized Artifact Storage. Default ledger
-                    // path is `{kask_data_dir}/mcp/swarm/ledger.db`.
-                    hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("swarm", "ledger"),
-                    )
-                    .to_string_lossy()
-                    .to_string()
-                });
+            //
             // Per-agent execution stats — the local analog of fermi's
             // `measured_exec_stats`. One store, two handles: the runtime
-            // records at the debit path, the tools surface it on
+            // records at the result path, the tools surface it on
             // get/list. Loaded eagerly — a dir scan of tiny JSON files.
             let agent_stats = std::sync::Arc::new(agent_stats::AgentStatsStore::load(
                 &config.local_agents_dir,
             ));
-            let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
-                ledger_path,
-                agent_stats.clone(),
-            ));
+            let local_runtime =
+                std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
 
-            // The rollout event store (event-substrate data plane). Same D28
-            // layout as the ledger: `mcp/swarm/events.db` under the data dir,
+            // The rollout event store (event-substrate data plane). D28
+            // layout: `mcp/swarm/events.db` under the data dir,
             // operator-configurable via `HKASK_SWARM_EVENTS_PATH`. Lazy —
             // opened on first write, so a missing/unwritable path surfaces at
             // the first `swarm_eval_agent_local` call, not at startup.
@@ -367,7 +350,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         local_runtime.clone(),
                         local_registry.clone(),
                         handle,
-                        config.max_credits_per_dispatch,
                     ) {
                         Ok(server) => tracing::info!(
                             target: "hkask.mcp.swarm",
@@ -451,17 +433,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-// D28 — pins the default ledger + consent DB paths.
+// D28 — pins the default consent DB path.
 #[test]
 fn default_db_paths_follow_standardized_layout() {
-    let ledger = hkask_types::agent_paths::mcp_server_db("swarm", "ledger");
-    assert_eq!(
-        ledger,
-        std::path::PathBuf::from("mcp")
-            .join("swarm")
-            .join("ledger.db"),
-        "swarm ledger path must follow mcp/swarm/ledger.db"
-    );
     let consent = hkask_types::agent_paths::mcp_server_db("swarm", "consent");
     assert_eq!(
         consent,
@@ -477,7 +451,7 @@ fn default_db_paths_follow_standardized_layout() {
 // the in-memory consent store, then drive the simplest read-only tools
 // end-to-end through `execute_tool` to confirm the server wires up
 // and its tools return the canonical `{"content": …}` success envelope as
-// valid JSON. No ABW API key, no network, no on-disk ledger/events/memory —
+// valid JSON. No ABW API key, no network, no on-disk events/memory —
 // the lazy stores are never initialized by these read-only tools.
 #[cfg(test)]
 mod smoke_tests {
@@ -500,7 +474,7 @@ mod smoke_tests {
     /// Build a `SwarmServer` backed by throwaway paths under the test scratch
     /// dir and the session-local in-memory consent store. The registry dirs
     /// need not exist — a missing dir yields zero entries (not an error) — and
-    /// the ledger/events/memory stores are lazy, so they are never opened by
+    /// the events/memory stores are lazy, so they are never opened by
     /// the read-only tools exercised here. No ABW key, no network.
     fn make_server() -> SwarmServer {
         // `CARGO_TARGET_TMPDIR` is a per-test-binary scratch path cargo
@@ -511,7 +485,6 @@ mod smoke_tests {
         let scratch = std::path::Path::new(&base).join("hkask_mcp_swarm_smoke");
         let agents_dir = scratch.join("agents").to_string_lossy().to_string();
         let swarms_dir = scratch.join("swarms").to_string_lossy().to_string();
-        let ledger_path = scratch.join("ledger.db").to_string_lossy().to_string();
         let events_path = scratch.join("events.db").to_string_lossy().to_string();
         let memory_path = scratch.join("memory.db").to_string_lossy().to_string();
 
@@ -523,10 +496,7 @@ mod smoke_tests {
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
-            ledger_path,
-            agent_stats.clone(),
-        ));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
         let local_memory = Arc::new(LazyLocalMemory::lazy(
             memory_path,
@@ -549,7 +519,7 @@ mod smoke_tests {
     }
 
     /// `swarm_list_local_swarms` reads only the local swarms directory — no
-    /// ABW, no network, no ledger. With an empty (missing) dir it must return
+    /// ABW, no network. With an empty (missing) dir it must return
     /// the success envelope `{"content": {"count": 0, "swarms": []}}`.
     #[tokio::test]
     async fn list_local_swarms_returns_valid_json_envelope() {
@@ -596,7 +566,7 @@ mod smoke_tests {
             "agent_cards must be a JSON array"
         );
     }
-    // ── Local-substrate contract tests (evaluator, ledger, credentials) ────
+    // ── Local-substrate contract tests (evaluator, credentials) ────────────
 
     /// Extract the `{"content": …}` success envelope from a tool output.
     fn unwrap_content(output: &str) -> Value {
@@ -650,61 +620,6 @@ mod smoke_tests {
         );
     }
 
-    /// The local ledger round-trip through the tool seam: fund → balance
-    /// reflects the deposit → history lists it. The ledger records spend
-    /// rather than gating it, so an unfunded ledger reads 0 (never negative
-    /// before spend) and funding is always accepted.
-    #[tokio::test]
-    async fn fund_balance_history_round_trip() {
-        use crate::request_types::{BalanceLocalRequest, FundLocalRequest};
-
-        let server = make_server();
-
-        let before = server
-            .swarm_balance_local(Parameters(BalanceLocalRequest {}))
-            .await
-            .expect("balance ok");
-        let before_content = unwrap_content(&before);
-        let starting_balance = before_content["balance"].as_i64().unwrap_or(0);
-
-        let fund = server
-            .swarm_fund_local(Parameters(FundLocalRequest { credits: 250 }))
-            .await
-            .expect("fund ok");
-        let fund_content = unwrap_content(&fund);
-        assert_eq!(
-            fund_content["balance"].as_i64(),
-            Some(starting_balance + 250),
-            "fund must return the new balance, got: {fund_content}"
-        );
-
-        let after = server
-            .swarm_balance_local(Parameters(BalanceLocalRequest {}))
-            .await
-            .expect("balance ok");
-        assert_eq!(
-            unwrap_content(&after)["balance"].as_i64(),
-            Some(starting_balance + 250),
-            "balance must reflect the deposit"
-        );
-
-        let history = server
-            .swarm_local_history(Parameters(crate::request_types::LocalHistoryRequest {
-                limit: None,
-            }))
-            .await
-            .expect("history ok");
-        let history_content = unwrap_content(&history);
-        let entries = history_content["entries"]
-            .as_array()
-            .or_else(|| history_content["transactions"].as_array())
-            .unwrap_or_else(|| panic!("history must list entries, got: {history_content}"));
-        assert!(
-            entries.iter().any(|e| e["kind"].as_str() == Some("fund")),
-            "the fund entry must appear in history, got: {entries:?}"
-        );
-    }
-
     /// A cloud (ABW) tool without an API key must fail with
     /// permission_denied NAMING the env var — the broken-feedback-loop rule:
     /// the operator must be able to distinguish "not configured" from
@@ -749,10 +664,7 @@ mod smoke_tests {
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(
             &scratch.join("stats").to_string_lossy(),
         ));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
-            scratch.join("ledger.db").to_string_lossy().to_string(),
-            agent_stats.clone(),
-        ));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(
             scratch.join("swarms").to_string_lossy().to_string(),
         ));
