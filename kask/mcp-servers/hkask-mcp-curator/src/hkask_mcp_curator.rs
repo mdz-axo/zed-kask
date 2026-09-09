@@ -449,12 +449,18 @@ impl CuratorServer {
                 context["applied_at"] = json!(now);
                 context["review_due_at"] = json!(now + chrono::Duration::days(7));
                 context["action_note"] = json!(req.action_note);
+                // T15 (channel a): persist the skill whose recommendation the
+                // operator reacted to — the durable half of the operator-feedback
+                // record (the editor-side bridge fires the live ledger span).
+                if let Some(skill_id) = req.skill_id {
+                    context["skill_id"] = json!(skill_id);
+                }
                 context["advice_review"] = json!({"status":"observation_window", "finalized":false, "causal_attribution":"unverified"});
                 if !queue.update_advice_context(&req.id, &entry.error_context, &context.to_string()).map_err(|error| McpToolError::internal(error.to_string()))? {
                     return Err(McpToolError::unavailable("Escalation changed concurrently; retry confirmation"));
                 }
             }
-            Ok(json!({"id":req.id, "applied_at":context["applied_at"], "review_due_at":context["review_due_at"], "review":context["advice_review"]}))
+            Ok(json!({"id":req.id, "applied_at":context["applied_at"], "review_due_at":context["review_due_at"], "review":context["advice_review"], "skill_id":context.get("skill_id").cloned().unwrap_or(serde_json::Value::Null)}))
         }).await
     }
 

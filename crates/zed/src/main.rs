@@ -998,6 +998,42 @@ fn main() {
             ));
         }
 
+        // zed-kask: T15 — the operator-feedback recorder wiring. Both
+        // channels fire this hook: the explicit `record_skill_feedback`
+        // tool (channel b — the operator's direct rating) and the
+        // advice-apply bridge (channel a — the operator confirming
+        // application of a skill's recommendation, fired by the
+        // editor-side tool-call observer). The spans land in the shared
+        // RegulationLedger as `reg.skill.<id>.operator_feedback`, which
+        // the metacognition loop's drift sensing trends ("declining
+        // operator acceptance"). Until this wiring the operator_feedback
+        // reader shipped with no writer — that drift half was permanently
+        // empty (the T15 recovery finding).
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_operator_feedback = regulation_ledger.clone();
+            agent::set_operator_feedback_recorder(std::sync::Arc::new(
+                move |skill_id, accepted, note| {
+                    let skill_id = skill_id.to_string();
+                    let note = note.map(str::to_string);
+                    // Clone per call — the closure is `Fn` (invoked for every
+                    // feedback event), so it cannot move the captured ledger
+                    // into the spawned future.
+                    let ledger = ledger_for_operator_feedback.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        let mut payload = serde_json::json!({ "accepted": accepted });
+                        if let Some(note) = note {
+                            payload["note"] = serde_json::json!(note);
+                        }
+                        ledger
+                            .record_skill_span(&skill_id, "operator_feedback", payload)
+                            .await;
+                    });
+                },
+            ));
+        }
+
         // zed-kask: single spawn authority (I1, 2026-08-29). The governed
         // McpRuntime is the agent's kask tool source: kask servers are no
         // longer registered with the per-project ContextServerStore (that

@@ -12,6 +12,15 @@ pub struct AdviceAppliedRequest {
     /// Describe the action the operator confirms actually occurred.
     pub action_note: String,
     pub operator_confirmed: bool,
+    /// The skill whose recommendation this advice applies — set when the
+    /// operator is reacting to a skill's recommendation (T15 channel a:
+    /// lora-training's "the operator reacts to a recommendation"). The
+    /// apply is then operator feedback on that skill's output: the
+    /// editor-side bridge records an `operator_feedback` span for the
+    /// skill, and this field is persisted in the escalation context as
+    /// the durable record.
+    #[serde(default)]
+    pub skill_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

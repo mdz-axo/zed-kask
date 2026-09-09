@@ -1,7 +1,7 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-04
+last_updated: 2026-09-09
 version: "0.38.0"
 status: "Active"
 domain: "Composition"
@@ -11,15 +11,18 @@ mds_categories: [composition, trust, lifecycle, curation]
 # Swarm MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-swarm`
-**Tools:** 85 — 48 ABW cloud + 37 local-side, **both sets always exposed in either mode**.
-Count is pinned end-to-end by `tool_surface_is_exactly_85_registered_tools`
-(`src/hkask_mcp_swarm.rs:831`); the canonical list is build-script-generated:
+**Tools:** 87 — 48 ABW cloud + 39 local-side, **both sets always exposed in either mode**.
+Count is pinned end-to-end by `tool_surface_is_exactly_87_registered_tools`
+(`src/hkask_mcp_swarm.rs:751`); the canonical list is build-script-generated:
 `build.rs` scans `src/*.rs` with the regex `pub\(crate\) async fn (swarm_\w+)\s*\(`
-(`build.rs:30-31`) and emits `TOOL_NAMES`, kept in agreement with the live router by
-`tool_names_const_matches_registered_surface`. The 85 fns split by file into 48 cloud
-(`cloud_swarm_tools.rs`), 27 local (`local_tools.rs`), 3 A2A (`a2a_tools.rs`),
+(`build.rs:39`) and emits `TOOL_NAMES`, kept in agreement with the live router by
+`tool_names_const_matches_registered_surface`. The 87 fns split by file into 48 cloud
+(`cloud_swarm_tools.rs`), 32 local (`local_tools.rs`), 3 A2A (`a2a_tools.rs`),
 4 local knowledge (`knowledge_tools.rs`);
-`swarm_update_agent` and `swarm_get_local_agent` were added 2026-09-03
+`swarm_fleet_digest_local` and `swarm_select_agent_local` were added 2026-09-09
+with the fermi absorption (grounding gate, reliance verdict, fleet digest,
+agent selection; commit `256f87307c`); `swarm_update_agent` and
+`swarm_get_local_agent` were added 2026-09-03
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
 **Local auth:** none — local agents run on the operator's own substrate; there is no budget and no consent token

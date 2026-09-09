@@ -1,8 +1,8 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-08-28
-version: "1.2.0"
+last_updated: 2026-09-09
+version: "1.3.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition]
@@ -32,9 +32,16 @@ Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
 is this file, `kask/docs/reference/upstream-rebase-process.md`.
 
 **D-seam surface:** the `DIVERGENCE.md` table is the authority and currently
-runs **D1–D38, with D17 and D19 retired**. The file's own section header
-(`DIVERGENCE.md:13`, "D1–D37") and runbook line (`DIVERGENCE.md:111`,
-"D1–D33") lag the table — trust the table, not the range labels.
+runs **D1–D52, with D4, D10, D17, D19, and D30 retired** (numbers are never
+reused; the retired-seams list is at `DIVERGENCE.md:121` and the section
+header at `:62` states the D1–D52 range). Some range labels quoted inside
+`DIVERGENCE.md` itself lag the table — trust the table, not range labels.
+
+**Removal principles:** what may be removed from upstream Zed (and why) is
+governed by the principle set in §9 — folded here 2026-09-09 from the former
+sibling `upstream-removal-principles.md` (git history preserves the full
+original, including the MCDA sensitivity report and the metacognition
+coverage loop that derived the ranking).
 
 ---
 
@@ -118,7 +125,7 @@ insertion point, in topological order. For each insertion:
 ### Step 6 — Pin every deviation with a test
 
 Per the `.rules` trap "Every `// zed-kask:` comment disabling upstream behavior
-needs a test pinning the disabled behavior" (`.rules:69`): every `// zed-kask:`
+needs a test pinning the disabled behavior" (`.rules:81`): every `// zed-kask:`
 marker must have a corresponding test asserting the wired behavior. For
 `main.rs` wirings (which are process-global hooks, not unit-testable functions),
 the pinning test is typically:
@@ -377,3 +384,195 @@ It encodes this process plus:
 
 See the skill's SKILL.md for the full protocol; this document remains the
 process + case-study companion.
+
+---
+
+## 9. Removal principles — what to remove from upstream Zed and why
+
+> Folded 2026-09-09 from `upstream-removal-principles.md` (v1.2.0,
+> consolidated 2026-08-28). A testable principle set governing **what to
+> remove from upstream Zed** (everything outside `kask/` and outside the
+> named D-seams in `DIVERGENCE.md` — the table currently runs D1–D52, with
+> D4, D10, D17, D19, and D30 retired) and **why**.
+
+**Meta-constraint (inviolable):** the D-seam discipline is a *boundary on
+the mechanism*, not a removal *reason*. Never edit upstream files outside
+the named D-seams; push any fix into a `kask/` crate behind a D-seam and
+pin it with a test (`.rules:81`). No principle below authorizes forking
+upstream outside a D-seam. For upstream surface, "removal" means
+**disable-behind-a-D-seam + test-pin**, not **delete-the-file**. File
+deletion is reserved for `kask/`-side surface.
+
+Each category carries five fields: **Definition** (one sentence, IS not
+OUGHT), **Decision test** (a falsifiable predicate an agent evaluates
+against a diff), **Failure mode if mis-applied** (counterfactual stress),
+**Anchoring evidence** (`.rules` / `DIVERGENCE.md` file:line, or an
+explicit "no existing anchor — proposed" note), and **Scope boundary**
+(what the category does NOT authorize). The categories are **ranked** by
+MCDA and are **decision-test-disjoint**, not instance-disjoint: a single
+removal may satisfy multiple tests; classify by the one capturing the
+**load-bearing risk**.
+
+### Rank 1 — Category 1: Install/runtime collision
+
+- **Definition:** Removing upstream-declared install/runtime surface that,
+  if retained, would cause zed-kask to hijack or be hijacked by the user's
+  real Zed install (or vice versa).
+- **Decision test:** Does the retained upstream surface cause a
+  desktop-environment, file-association, URL-scheme, auto-update, or
+  install-path collision? **Mechanical check:**
+  `bash kask/scripts/build/check-desktop-no-collision.sh` and
+  `bash kask/scripts/build/check-zed-isolation.sh` both pass with the
+  surface removed and fail with it retained. Forbidden strings in any
+  `.desktop` template: `text/plain`, `application/x-zerosize`,
+  `x-scheme-handler/zed`, `Keywords=zed` (`.rules:143`).
+- **Failure mode:** zed-kask silently hijacks the user's real Zed (or vice
+  versa) — the "complements, not replaces" premise fails. Happened in
+  commit `dcc5aa6dd3` (Jul 26 2026): the URL scheme was fixed but
+  `text/plain`, `application/x-zerosize`, and `Keywords=zed` were left.
+- **Anchoring evidence:** `.rules:143`; `DIVERGENCE.md` D7 (Hard
+  Zed-isolation invariant, enforced by `check-zed-isolation.sh`); D16
+  (upstream update actions removed, replaced by the safe zed-kask
+  updater). Verified: both scripts exist at `kask/scripts/build/`.
+- **Scope boundary:** does NOT authorize removing upstream functionality
+  merely because kask has a parallel feature — only *collision surface*.
+
+### Rank 2 — Category 2: Platform scope
+
+- **Definition:** Removing upstream code paths that exist only to build,
+  package, or run for non-Linux targets that zed-kask does not ship.
+- **Decision test:** (a) Does the code path compile or execute only behind
+  a `#[cfg(target_os = "...")]` gate for a non-Linux OS, or is it a
+  non-Linux bundler/release workflow? AND (b) is it absent from the
+  zed-kask build matrix? **Negative test:** a *cross-platform library*
+  that Linux also benefits from is NOT platform-scope removal — leave it.
+- **Failure mode:** (a) removing a cross-platform library Linux uses →
+  silent loss of Linux functionality; (b) leaving a non-Linux bundler →
+  wasted build surface and re-introduced collision risk.
+- **Anchoring evidence:** `DIVERGENCE.md` D7 — legacy Zed bundlers for
+  Linux, macOS, Windows, and Snap are fail-closed; upstream release
+  workflows, the Zed desktop template, and Flatpak/Snap resources are
+  deleted; macOS `[package.metadata.bundle-*]` sections (including
+  `osx_url_schemes = ["zed"]`) are removed. Verified:
+  `script/bundle-mac`, `script/bundle-windows.ps1`, `script/snap-build`
+  exist (fail-closed); `script/bundle-linux` is the active bundler. D7
+  also records the 2026-08-27 removal of upstream's CLI `mod flatpak`
+  (sandbox escape via `flatpak-spawn --host` hard-coding upstream Zed's
+  `FLATPAK_ID`).
+- **Scope boundary:** does NOT authorize removing cross-platform shared
+  libraries or the Linux bundler/build matrix — only target-gated or
+  bundler-gated non-Linux surface.
+
+### Rank 3 — Category 4: Dead surface rendered unreachable (sharpened "elegance")
+
+- **Definition:** Removing upstream surface that kask has rendered
+  *unreachable* (no production caller in the zed-kask build), where removal
+  reduces upstream-merge friction without changing observed behavior. The
+  **only** acceptable form of "simplification": not "the code is inelegant"
+  but "the code is provably never reached."
+- **Decision test (essentialist G1 Exist + G2 Surface):** Delete the
+  candidate in your head. (G1) Does the complexity it was hiding reappear
+  at the call sites? (G2) Does any test or production path assert the
+  surface is reachable? **Removable iff** G1 = no AND G2 = no AND no
+  `.rules`/`DIVERGENCE.md` invariant depends on the surface. If G1 = yes →
+  NOT removable (load-bearing despite looking dead). If G2 = yes → NOT
+  removable (a test pins its reachability; update or remove the test
+  first).
+- **Failure mode:** (a) removing surface that *appears* dead but is reached
+  via a dynamic path (reflection, trait-object dispatch, URL scheme
+  handler, `observe_new`) the grep missed → silent breakage; (b) an agent
+  declares surface "dead" to reduce a merge-friction score without
+  genuinely verifying G1 (the LLM-improves-against-LLM-scored-target
+  gaming trap — `.rules` "Other traps").
+- **Anchoring evidence:** `.rules` "Dead code patterns" section. All
+  current instances are `kask/`-side (e.g. ocap/`OcapConfig`/
+  `required_capabilities`; `AdapterPort`/`AdapterRouter`). **No existing
+  *upstream* anchor — proposed.** Applying this to upstream is unproven;
+  it MUST be exercised as disable-behind-a-D-seam + test-pin, never as
+  file deletion.
+- **Scope boundary:** does NOT authorize deleting upstream files — only
+  disabling via a D-seam with a test pin. Does NOT authorize removing
+  surface that is merely "rarely used" or "inelegant" — it must be
+  *unreachable*, with reachability asserted by nothing (G2 guard).
+
+### Rank 4 — Category 3: Redundant surface superseded by kask
+
+- **Definition:** Removing upstream behavior/surface that kask has
+  deliberately replaced with an equivalent or better kask-side facility,
+  where retaining the upstream surface causes a *concrete defect*
+  (duplicate UI, wrong warning, conflicting updater, double-budgeting).
+- **Decision test (two-part):** (a) Does kask provide a replacement that is
+  **wired and load-bearing** — grep its enforcement point; it must be
+  *called in production*, not merely declared? AND (b) Does retaining the
+  upstream surface produce a **concrete defect**? **Removable iff both
+  (a) and (b).** If only (a) without (b) → NOT removable: a kask
+  preference is not a removal reason.
+- **Failure mode:** removing upstream surface that kask *appears* to
+  replace but the kask replacement is unwired (the
+  "advertised-invariants-need-enforcement-points" trap) → silent loss of
+  functionality with no error. Highest-risk mis-application because the
+  (a) check is easy to fake by pointing at a constructor that is never
+  read.
+- **Anchoring evidence:** `DIVERGENCE.md` D1 (catalog budget + description
+  length warnings disabled — "skills execute via body injection"; pinned
+  by `test_select_catalog_skills_*` in `crates/agent/src/agent.rs` and
+  `test_parse_description_too_long_loads_with_warning` in
+  `crates/agent_skills/agent_skills.rs`); D3 ("Daemon transport deleted;
+  identity from `ServerContext.webid`"); D16 (upstream update actions
+  removed). Historical: `crates/kask_extensions_ui/` removed 2026-08-20,
+  citation kept only as precedent; the former `crates/auto_update/`
+  citation is **deleted surface** — the auto-update removal is anchored
+  entirely in D7/D16.
+- **Scope boundary:** does NOT authorize removing upstream surface merely
+  because kask *also* does the same thing — the upstream surface must
+  produce a *concrete defect* when retained alongside the kask
+  replacement. Does NOT authorize fork-fixing a *real upstream bug* — file
+  an upstream issue (D31/D32 record two such fixes landed as D-seams *and*
+  flagged for upstream reporting).
+
+### Rejected: pure "elegance / simplification"
+
+Removing upstream code because it is "ugly," "could be cleaner," or "has a
+nicer alternative" is **rejected** as a removal reason. It would authorize
+forking upstream outside a D-seam (`.rules:81`). Only Category 4's
+*provably unreachable* test survives.
+
+### D-seam-compatibility audit (A1)
+
+| Category | Upstream edit authorized? | Mechanism | Verdict |
+| --- | --- | --- | --- |
+| C1 Collision | Only on a **D-seam file** (`crates/zed/resources/zed.desktop.in` is a D7 seam; menu files are D16 seams). New collision surface → new D-seam entry + test pin. | disable-behind-D-seam + `check-*-no-collision.sh` | compatible |
+| C2 Platform scope | Non-Linux bundlers are D7-seam files. New non-Linux surface → D7 seam or kask-side `kask/scripts/build/` installer. | disable/fail-closed-behind-D7 | compatible |
+| C4 Dead surface | For upstream: **disable-behind-a-D-seam + test-pin, never file deletion**. File deletion is `kask/`-side only. | disable-behind-D-seam + test pin | compatible (provisional) |
+| C3 Redundant | All current instances are D-seam files (D1, D3, D16). New redundant surface → new D-seam entry + test pin. | disable-behind-D-seam + test pin | compatible |
+
+No category authorizes editing upstream outside a D-seam. Any upstream
+edit demanded by a category must be expressible as (a) an edit to an
+existing D-seam file, or (b) a new D-seam entry in `DIVERGENCE.md` pinned
+by a test in the same PR.
+
+### Cross-category overlap resolution
+
+Categories are decision-test-disjoint (each test keys on a distinct
+observable: C1 → collision script output; C2 → `cfg` gate + build matrix;
+C3 → wired-replacement grep + concrete-defect; C4 → G1 call-site
+complexity + G2 reachability assertion). Co-occurrence resolution:
+
+- **C1 × C2** (e.g. D7 macOS `osx_url_schemes` removal): **C1** — collision
+  is safety-critical.
+- **C1 × C3** (e.g. D16 update actions): **C1** — the
+  installer-replaces-real-Zed risk is load-bearing.
+- **C2 × C3**: classify by whether the *non-Linux* gate or the
+  *kask-replacement* defect is the trigger; if both, **C2** (smaller blast
+  radius).
+- **C3 × C4**: mutually exclusive on the reachability axis (C3 = still
+  *reachable* but *wrong*; C4 = *unreachable*).
+- **C2 × C4**: either test suffices; prefer **C2** (sharper, mechanically
+  checkable).
+
+> **Provenance:** the ranking was derived by MCDA (direct weighting,
+  ±20% one-at-a-time sensitivity) with a metacognition coverage prediction
+> (p=0.70, Brier 0.09 against a retrospective proxy) and an essentialist
+> review that eliminated two candidate `.rules` additions as pass-through
+> restatements. The full derivation is in git history
+> (`upstream-removal-principles.md`, folded 2026-09-09).

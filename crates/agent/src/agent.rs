@@ -1008,6 +1008,10 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 self.fs.clone(),
             ));
+            // zed-kask: T15 (channel b) — the operator's direct skill-feedback
+            // control. Stateless (fires the process-global hook wired in
+            // `main.rs`), so one instance serves every thread.
+            thread.add_tool(RecordSkillFeedbackTool::new());
             // `lisp_eval` and `render_template` are already registered via
             // `add_default_tools` — they are stateless tools available to all
             // threads. Only `SkillTool` needs per-session registration because
@@ -4433,6 +4437,47 @@ pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) 
         Some(record) => record(skill_id, success, error),
         None => log::debug!(
             "record_skill_outcome: recorder not wired — outcome for \
+             {skill_id} not recorded"
+        ),
+    }
+}
+
+/// Records the operator's evaluative reaction to a skill's output — the
+/// e_t intrinsic feedback signal of the self-improvement loop (T15).
+/// Two channels fire it, both specified in the skill docs: the explicit
+/// `record_skill_feedback` tool (the operator's direct rating —
+/// task-breakdown: "overridden tasks, rejection reasons, corrected_fields")
+/// and the advice-apply bridge (the operator confirming application of a
+/// skill's recommendation — lora-training: "the operator reacts to a
+/// recommendation"). The spans land in the shared `RegulationLedger` as
+/// `reg.skill.<id>.operator_feedback`, which the metacognition loop's
+/// drift sensing trends ("declining operator acceptance" — outputs that
+/// are technically successful but increasingly useless).
+pub type OperatorFeedbackRecorder = Arc<dyn Fn(&str, bool, Option<&str>) + Send + Sync>;
+
+/// Global hook for operator skill feedback. Wired in `main.rs` to a closure
+/// that stores each reaction as a `reg.skill.<id>.operator_feedback` span
+/// payload in the shared `RegulationLedger`. Re-settable (`Mutex`, not
+/// `OnceLock`) so tests can replace it freely.
+static OPERATOR_FEEDBACK_RECORDER: ProcessGlobal<OperatorFeedbackRecorder> = ProcessGlobal::new();
+
+/// Set the global operator feedback recorder. Re-settable (replaces any
+/// previous recorder) — production wires once at startup.
+pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
+    OPERATOR_FEEDBACK_RECORDER.set(Some(recorder));
+}
+
+/// Record the operator's reaction to a skill's output. Best-effort by
+/// design: when no recorder is wired (tests, non-kask embedders) the
+/// feedback is dropped with a debug log — telemetry must never fail a
+/// tool call. The absent-input state stays explicitly unobserved: no
+/// recorder means no span, never a fabricated disposition.
+pub fn record_operator_feedback(skill_id: &str, accepted: bool, note: Option<&str>) {
+    let recorder = OPERATOR_FEEDBACK_RECORDER.get();
+    match recorder {
+        Some(record) => record(skill_id, accepted, note),
+        None => log::debug!(
+            "record_operator_feedback: recorder not wired — feedback for \
              {skill_id} not recorded"
         ),
     }

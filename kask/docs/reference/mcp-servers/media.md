@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-05
+last_updated: 2026-09-09
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # Media MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-media`
-**Tools:** 80 — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`src/hkask_mcp_media.rs:412-414`), which asserts `MediaServer::combined_router().list_all().len() == 80`. The count includes the 15 `educt_*` transcript-layer tools and the face-registry tools. The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80). The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`src/hkask_mcp_media.rs:388-398`).
+**Tools:** 80 — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`src/hkask_mcp_media.rs:435-437`), which asserts `MediaServer::combined_router().list_all().len() == 80`. The count includes the 15 `educt_*` transcript-layer tools and the face-registry tools. The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80). The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`src/hkask_mcp_media.rs:411-420`).
 **Registration:** built-in server `id: "media"`, `binary: "hkask-mcp-media"` in `BUILT_IN_MCP_SERVERS` (`kask/crates/kask_bridge/src/mcp_servers.rs:431`).
 
 Tool count and every tool name below were verified against `#[tool(...)]`-annotated
@@ -24,12 +24,12 @@ The server is a thin binary over a library: `src/main.rs:6-9` calls `hkask_mcp_m
 ```mermaid
 flowchart TD
     binary["main.rs binary<br/>#[tokio::main] → run()"]
-    run["run()<br/>hkask_mcp_media.rs:459"]
+    run["run()<br/>hkask_mcp_media.rs:526"]
     port["InferencePort: vision/chat/embed via IPC; media generation child-local"]
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
     server["MediaServer<br/>7 state fields"]
-    router["combined_router<br/>8 sub-routers, 79 tools"]
+    router["combined_router<br/>8 sub-routers, 80 tools"]
     semantic["execute_tool_semantic<br/>reg.tool.* span + OMC anchor"]
     sinks["Sinks: gallery.db rows,<br/>persisted assets, media_block hints"]
 
@@ -45,8 +45,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-08-28
-verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:112-129 (MediaServer fields), 356-364 (combined_router), 457-556 (run); kask/mcp-servers/hkask-mcp-media/src/tools.rs (7 tool modules)
+verified_date: 2026-09-09
+verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:144 (MediaServer struct), 411-420 (combined_router), 526 (run); kask/mcp-servers/hkask-mcp-media/src/tools.rs (8 tool modules)
 status: VERIFIED
 -->
 

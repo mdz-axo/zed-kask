@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-04
+last_updated: 2026-09-09
 version: "0.40.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -493,9 +493,9 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |
-| `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`, `SYSTEM_MAX_RECURSION`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053) |
+| `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053). The former `SYSTEM_MAX_RECURSION` cascade-depth bound was removed with the `hkask-templates` crate (2026-08-20, commit `80e466c1a5`) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `hkask-keystore/Cargo.toml:14`, `keychain.rs:104`) |
-| `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
+| `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into the MCP server child process (no keychain dependency; the child-local `MediaRouter` builds from `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY`, D35); chat/vision/embedding calls route over `InferenceIpcClient` to zed's `LanguageModelRegistry` via `kask_bridge` D4/D8 |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 11 MCP servers (no capability gating — RR-0056) |
 | `hkask-forecast` | Domain | Forecast domain logic |
@@ -529,7 +529,7 @@ graph TD
         REG[hkask-regulation]
         CAP[hkask-tool-port]
         KS[hkask-keystore]
-        LEDGER[hkask-ledger]
+        STEER[hkask-steer-core]
         INF[hkask-inference]
         SVCCORE[hkask-services-core]
     end
@@ -551,8 +551,8 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-09-04
-verified_against: kask/crates/ directory listing (18 crates, 2026-09-04); kask/crates/hkask-keystore/Cargo.toml:14 (oo7, no keyring dep); kask/crates/kask_bridge/src/mcp_servers.rs:55 (11 servers)
+verified_date: 2026-09-09
+verified_against: kask/crates/ directory listing (18 crates, 2026-09-09: 17 hkask-* + kask_bridge; hkask-ledger deleted 2026-09-08 with the local budget system, hkask-steer-core added 2026-09-07); kask/crates/hkask-keystore/Cargo.toml:14 (oo7, no keyring dep); kask/crates/kask_bridge/src/mcp_servers.rs:55 (11 servers)
 status: VERIFIED
 -->
 
@@ -575,7 +575,7 @@ other than the caller being checked; the rows below satisfy that.
 | Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038) | P1 |
 | Information flow | **None — absent by decision (RR-0053).** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
-| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057) and `SYSTEM_MAX_RECURSION` (7) on cascade depth. Breakers and meters, **not** authorization | P4 |
+| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
 | Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage via the `keyring` crate directly (D5 — not zed `CredentialsProvider`) | P1 |
 
 ### Bootstrap Sequence

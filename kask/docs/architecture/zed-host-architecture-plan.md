@@ -1,7 +1,7 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-09-04
+last_updated: 2026-09-09
 version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -20,7 +20,7 @@ mds_categories: [composition, trust, lifecycle]
   - [§2.1 — zed-kask owns (generic)](#21-zed-kask-owns-generic--inherited-from-upstream-not-modified-except-integration-seams)
   - [§2.2 — hKask keeps (unique: curator + sovereignty + tools)](#22-hkask-keeps-unique-curator--sovereignty--tools--compiled-into-zed-kask)
   - [§2.3 — MCP load set (11 on disk)](#23-mcp-load-set-11-on-disk)
-- [§3 — The Minimal Divergence Map (D1–D49)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
+- [§3 — The Minimal Divergence Map (D1–D52)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
 - [§4 — (removed)](#4-removed)
 - [§5 — (removed)](#5-removed)
 - [§6 — Migration Status](#6-migration-status)
@@ -34,13 +34,13 @@ mds_categories: [composition, trust, lifecycle]
   - [§13.1 — Governing invariant (dependency direction)](#131-governing-invariant-dependency-direction)
   - [§13.2 — The complete port set](#132-the-complete-port-set-ports-and-adapters)
   - [§13.3 — Composition root (startup — DI pattern)](#133-composition-root-startup--di-pattern)
-  - [§13.4 — Consolidated divergence map (D1–D49)](#134-consolidated-divergence-map-d1d49)
+  - [§13.4 — Consolidated divergence map (D1–D52)](#134-consolidated-divergence-map-d1d52)
 - [§14 — Repository Consolidation](#14-repository-consolidation--full-merge-into-zed-kask)
 - [References](#references)
 
 ---
 
-> **Current state (2026-09-04):** The kask workspace has **18 kask crates** under `kask/crates/` (17 `hkask-*` + `kask_bridge`) plus **11 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`crates/swarm_panel/`, `crates/kanban_panel/`, `crates/portfolio_panel/`, `crates/hkask-steer/`, `crates/hkask-viz-core/`, `crates/hkask-*-widget/`, `crates/hkask-tool-invoker/`, `crates/hkask-conversation-injector/`, `crates/marketplace_ui_common/`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). D1–D49 are wired at the composition root (`crates/zed/src/main.rs`); the authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root. The composition-root wiring is documented in [§13.3](#133-composition-root-startup--di-pattern).
+> **Current state (2026-09-04):** The kask workspace has **18 kask crates** under `kask/crates/` (17 `hkask-*` + `kask_bridge`) plus **11 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`crates/swarm_panel/`, `crates/kanban_panel/`, `crates/portfolio_panel/`, `crates/hkask-steer/`, `crates/hkask-viz-core/`, `crates/hkask-*-widget/`, `crates/hkask-tool-invoker/`, `crates/hkask-conversation-injector/`, `crates/marketplace_ui_common/`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). D1–D52 are wired at the composition root (`crates/zed/src/main.rs`); the authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root. The composition-root wiring is documented in [§13.3](#133-composition-root-startup--di-pattern).
 
 ---
 
@@ -82,10 +82,10 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-types`                                                                             | Foundation: IDs, `InferencePort` trait (incl. `generate_batch` D34, `media_generate` D35), `MemoryPort`, `RegulationSpan`, `CuratorDirective`, vocab. `VoiceDesign` and `ExpectProposal` live here (consolidated from removed crates).                                                                                                                                           |
 | `hkask-storage`                                                                           | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). SQLCipher-encrypted SQLite with sqlite-vec virtual tables for vectors (`kask/crates/hkask-storage/src/core/connection.rs:157`, `core/sql/schema.sql:7`). Hosts the media `GalleryStore` (D35).                                                                                                                                                       |
 | `hkask-memory`                                                                            | Unique memory + confidence-based consolidation.                                                                                                                                                                                                                                                                           |
-| `hkask-regulation`                                                                        | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). 15 source files / 6,870 lines (measured 2026-09-04).                      |
+| `hkask-regulation`                                                                        | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). 18 source files / 12,734 lines (measured 2026-09-09).                      |
 | `hkask-tool-port`                                                                        | **`ToolPort` dispatch seam** (`src/tool_port.rs:89`). Not an enforcement point: it holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053).                                                                                                                                                                                                                                                                       |
 | `hkask-keystore`                                                                          | **Sovereignty crypto only:** DB passphrase, internal-secret derivation w/ versioning. Uses `oo7` (async Secret Service API) directly for all keychain access (no `SecretsPort` trait; `hkask-keystore/Cargo.toml:14`). `DEFAULT_PASSPHRASE` ("allostery") is the single source of truth for first-run provisioning.                                                        |
-| `hkask-ledger`                                                                            | hMem accounting.                                                                                                                                                                                                                                                                                                           |
+| `hkask-steer-core`                                                                            | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES`. Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure. (Replaces `hkask-ledger`, deleted 2026-09-08 with the local budget system.)                                                                                                                                                           |
 | `hkask-event-store`                                                                       | Shared event store: harness-summary events feed the CyberneticsLoop's rollout-impact checks (`kask_bridge/src/rollout_event_bridge.rs`, `hkask-mcp-training` rollout bridge).                                                                                                                                              |
 | `hkask-inference`                                                                         | **Kept (revised):** MCP servers use it directly (`MediaRouter` D35, batch routing D34, `InferenceIpcClient`, `ProviderId`). Reads API keys from env vars injected into the MCP server child process (no keychain dependency). Embeddings are handled by `kask_bridge::LanguageModelEmbeddingPort` (resolves credentials from `INFERENCE_PROVIDERS` + env var, no `LanguageModelRegistry` lookup). |
 | `hkask-mcp-server` (framework)                                                            | MCP server framework with `reg.tool.*` span emission. Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous).        |
@@ -97,7 +97,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.3 MCP load set (11 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) — **11 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-431` enumerates them (media entry at `mcp_servers.rs:401-411`); `builtin_mcp_server_ids()` (`mcp_servers.rs:431-433`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) — **11 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-503` enumerates them (media entry at `mcp_servers.rs:466-502`); `builtin_mcp_server_ids()` (`mcp_servers.rs:507-509`) derives the ID list.[^anthropic-mcp]
 
 | On disk (11)                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------- |
@@ -109,7 +109,7 @@ The original 16 MCP servers were pruned to 10, then the **media** server was rec
 
 ## 3. The Minimal Divergence Map (exact zed-kask touch points)
 
-Every hKask integration maps to a **named, isolated** change in zed-kask. This is the entire divergence surface (D1–D49; D4 and D10 removed, D17 and D19 retired, D30 absent from the current `DIVERGENCE.md` table); everything else tracks upstream. The authoritative record is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root — this quick table summarizes the seams; see §13.4 for the grouped summary and `DIVERGENCE.md` for the full per-seam detail.[^fowler-strangler]
+Every hKask integration maps to a **named, isolated** change in zed-kask. This is the entire divergence surface (D1–D52; D4 and D10 removed, D17 and D19 retired, D30 absent from the current `DIVERGENCE.md` table); everything else tracks upstream. The authoritative record is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root — this quick table summarizes the seams; see §13.4 for the grouped summary and `DIVERGENCE.md` for the full per-seam detail.[^fowler-strangler]
 
 | #       | Divergence                                                 | zed-kask crate / file                                                                                                                                                               | Status     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -131,13 +131,13 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | D28     | Standardized Artifact Storage                             | `kask/crates/hkask-types/src/agent_paths.rs` + `kask/crates/kask_bridge/`                                                                                                          | ✅ DONE    | All persistent artifacts (memory DBs, curator DBs, MCP server DBs, skills registry, archived threads) resolve under a single data root via `hkask_types::agent_paths`. See `DIVERGENCE.md` D28 and [`standardized-artifact-storage.md`](standardized-artifact-storage.md).                                                                                                                                                  |
 | D29–D49 | (See §13.4 consolidated map)                               | —                                                                                                                                                                                   | ✅ DONE    | RunPod provider (D29), upstream bug fixes (D31, D32), swarm panel CRUD (D33), batch inference (D34), media server (D35), `finish_reason: "stop"` tool-call drain (D36), commit-message/thread-title reasoning guards (D37, D38), provider-named PaymentRequired copy (D39), directory-anchored config watchers (D41), uncapped thinking budgets (D42, D49), MaxTokens turn-end logging (D43), full MCP tool surface + `list_mcp_tools` (D44), kask managed servers in Settings (D45), build profile + install monitor (D46), tool-schema `description` collision fix (D47), discovery-failure source chains (D48). Enumerated authoritatively in §13.4 and `DIVERGENCE.md`.                                                                                                                                                                                                                   |
 
-**Discipline:** D1–D49 (D4 and D10 removed; D17 and D19 retired; D30 absent) are the _only_ edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
+**Discipline:** D1–D52 (D4 and D10 removed; D17 and D19 retired; D30 absent) are the _only_ edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 
 ---
 
 ## 4. (removed)
 
-> The phased migration-plan subsection that previously occupied §4–§5 has been removed. All phases are complete: D1–D49 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
+> The phased migration-plan subsection that previously occupied §4–§5 has been removed. All phases are complete: D1–D52 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
 
 ## 5. (removed)
 
@@ -145,7 +145,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 
 ## 6. Migration Status
 
-> The phased migration plan that previously occupied this section has been removed. All phases are complete: D1–D49 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
+> The phased migration plan that previously occupied this section has been removed. All phases are complete: D1–D52 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
 
 ---
 
@@ -309,7 +309,7 @@ zed-kask app startup constructs the individual hKask components directly (`KaskC
 
 Components construct at zed-kask startup with the memory port hook set to `None`; the agent is provisioned when `UserStore::current_user()` resolves (deferred task). The `agent::set_memory_port()` global uses `Mutex` (not `OnceLock`) so the port can be replaced after startup. Per-user/curator data directory storage opens at provisioning time, not at process start.
 
-### 13.4 Consolidated divergence map (D1–D49)
+### 13.4 Consolidated divergence map (D1–D52)
 
 The authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md) at the repo root — every D-seam, the exact files it touches, what's wired, and the tests that pin it. That file is the source of truth for upstream-sync conflict resolution; this section summarizes the groups so the composition-root wiring below is readable without a context switch.
 
@@ -348,15 +348,15 @@ zed-kask/
 ├── extensions/        # upstream
 └── kask/              # ── OURS (additive; upstream never touches here) ──
     ├── crates/        # hkask-types, hkask-storage, hkask-memory, hkask-regulation,
-    │                  # hkask-tool-port, hkask-keystore, hkask-ledger,
+    │                  # hkask-tool-port, hkask-keystore, hkask-steer-core,
     │                  # hkask-event-store, hkask-mcp, hkask-mcp-server,
     │                  # hkask-inference, hkask-condenser, hkask-forecast,
     │                  # hkask-bridge-ontology, hkask-services-core,
     │                  # hkask-email, hkask-lisp,
     │                  # kask_bridge (D8)
     ├── mcp-servers/   # the 11 on-disk servers (curator may be unloaded via override; hkask-mcp-*)
-    ├── skills/        # the skills registry (76 SKILL.md files in .agents/skills/;
-    │                  # 66 template directories under kask/registry/templates/)
+    ├── skills/        # the skills registry (77 SKILL.md files in .agents/skills/;
+    │                  # 67 template directories under kask/registry/templates/)
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts
     └── docs/          # ← documentation home (see 14.3)
 ```

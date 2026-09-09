@@ -769,6 +769,25 @@ impl AnyAgentTool for ContextServerTool {
                 success,
                 error_kind.as_deref(),
             );
+            // zed-kask: D-seam — T15 (channel a) advice-apply bridge. A
+            // successful advice-apply whose response names a skill IS the
+            // operator accepting that skill's recommendation (lora-training:
+            // "the operator reacts to a recommendation"). The editor-process
+            // observer — the same layer that records tool outcomes — fires
+            // the operator-feedback hook. The curator server persists the
+            // durable record in the escalation context; this fires the live
+            // `reg.skill.<id>.operator_feedback` span the metacognition
+            // drift consumer reads.
+            if success
+                && tool_name == "curator_advice_mark_applied"
+                && let Ok(output) = &result
+                && let Some(skill_id) = output
+                    .raw_output
+                    .get("skill_id")
+                    .and_then(|skill_id| skill_id.as_str())
+            {
+                crate::record_operator_feedback(skill_id, true, None);
+            }
             result
         })
     }

@@ -1,7 +1,7 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-04
+last_updated: 2026-09-09
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -24,33 +24,33 @@ mds_categories: [composition, domain]
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. The `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs:55-463` enumerates the 11 on-disk servers.
+> `kask/crates/kask_bridge/src/mcp_servers.rs:55-503` enumerates the 11 on-disk servers.
 
 ## Server Catalog
 
-11 on-disk MCP servers, **368 registered tools** fleet-wide (verified 2026-09-04; methods below).
+11 on-disk MCP servers, **377 registered tools** fleet-wide (verified 2026-09-09; methods below).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
 | [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server; companies delegates to it) | 43 |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 23 |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 17 |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 26 |
-| [Media](media.md) | `mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 79 |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 20 |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 |
+| [Media](media.md) | `mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 80 |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 13 |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 22 |
+| [Research](research.md) | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 85 |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 87 |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
 ### Count verification methods (per row)
 
-- **Media = 80** — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:412`). The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80).
+- **Media = 80** — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:435`). The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80).
 - **Companies = 43** — pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`). The pin also guards absence: the portfolio ledger tools (portfolio_delete, ledger_import, ledger_export, portfolio_comparison, portfolio_returns, transaction_note_append) were removed from companies when the portfolio server took ownership, and any re-introduction fails this test. `company_research_search` was registered after shipping un-routed while two skills called it; `stock_universe` was removed (a market-cap-only `company_screener` prompt covers it).
 - **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` asserting `ScenariosServer::scenario_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`). The 2026-09-03 consolidation folded `scenario_research` into `scenario_build`, `scenario_sensitivity` into `scenario_quantify`, and `scenario_from_markets` into `scenario_from_markets_set`.
-- **Swarm = 85** — pinned end-to-end by `tool_surface_is_exactly_85_registered_tools` asserting `SwarmServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:831`), with `tool_names_const_matches_registered_surface` keeping the build.rs-generated `TOOL_NAMES` const in agreement with the live router. Two tools were added 2026-09-03 after the previous count was taken (`swarm_update_agent` for fermi API alignment; `swarm_get_local_agent` for local parity with `swarm_get_agent`).
-- **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (verified 2026-08-28). This method reproduces the pinned counts exactly for media (80) and scenarios (19), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — media, scenarios, companies, corpus, and swarm have mechanical pins against that failure mode.
+- **Swarm = 87** — pinned end-to-end by `tool_surface_is_exactly_87_registered_tools` asserting `SwarmServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:751`), with `tool_names_const_matches_registered_surface` keeping the build.rs-generated `TOOL_NAMES` const in agreement with the live router. Router composition: `cloud_swarm_router + local_router + a2a_router + knowledge_router` (48 cloud + 32 local + 3 a2a + 4 knowledge; the former `ledger_router` was removed with `hkask-ledger` and the local budget system, 2026-09-08). Two tools were added 2026-09-09 with the fermi absorption (`swarm_fleet_digest_local`, `swarm_select_agent_local`, commit `256f87307c`; earlier additions 2026-09-03: `swarm_update_agent` for fermi API alignment, `swarm_get_local_agent` for local parity with `swarm_get_agent`).
+- **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (re-verified 2026-09-09). This method reproduces the pinned counts exactly for companies (43), corpus (23), media (80), scenarios (19), and swarm (87), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — media, scenarios, companies, corpus, and swarm have mechanical pins against that failure mode.
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
 > agent, D2). All 11 build clean.
