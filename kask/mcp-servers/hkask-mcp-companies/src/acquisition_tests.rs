@@ -1178,3 +1178,317 @@ async fn legacy_presanitizer_cache_is_not_returned_or_logged() {
         );
     }
 }
+
+// ── Screener fan-out contracts ────────────────────────────────────────────
+
+/// Decode the `exchange` filter value from a recorded EODHD screener request
+/// path (query string included), or None when the request carries no
+/// exchange filter.
+fn decode_screener_exchange(path: &str) -> Option<String> {
+    let query = path.split('?').nth(1)?;
+    let filters_parameter = query.split('&').find(|pair| pair.starts_with("filters="))?;
+    let encoded = filters_parameter.strip_prefix("filters=")?;
+    let decoded = encoded
+        .replace("%22", "\"")
+        .replace("%5B", "[")
+        .replace("%5D", "]")
+        .replace("%2C", ",")
+        .replace("%3D", "=")
+        .replace("%3A", ":")
+        .replace("%20", " ");
+    let filters: Value = serde_json::from_str(&decoded).ok()?;
+    filters.as_array()?.iter().find_map(|filter| {
+        let parts = filter.as_array()?;
+        if parts.first()?.as_str()? == "exchange" {
+            Some(parts.get(2)?.as_str()?.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// expect: [P5] A multi-geography prompt fans out one EODHD screener query
+/// per exchange, interleaves results round-robin, reports per-exchange match
+/// counts, and warns that market-cap bounds are local-currency.
+/// dcterms:identifier: CompaniesServer::company_screener / screener::parse_screening_prompt
+#[tokio::test]
+async fn screener_fans_out_per_exchange_and_interleaves() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            if let Some(exchange) = decode_screener_exchange(path) {
+                let rows: Vec<Value> = (0..2)
+                    .map(|index| {
+                        json!({
+                            "code": format!("{exchange}{index}"),
+                            "name": format!("Company {index} of {exchange}"),
+                            "exchange": exchange,
+                            "market_capitalization": 10_000_000_000.0
+                                - f64::from(index) * 1_000_000_000.0,
+                        })
+                    })
+                    .collect();
+                return (200, json!({ "data": rows }));
+            }
+            return (200, json!({ "data": [] }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US and Japan listed companies with market capitalization between 2 billion and 200 billion",
+                "limit": 10
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+
+            let codes = output["parsed_criteria"]["exchanges"]
+                .as_array()
+                .expect("parsed exchanges");
+            assert!(codes.iter().any(|code| code == "US"));
+            assert!(codes.iter().any(|code| code == "JP"));
+            assert_eq!(output["exchange_match_counts"]["US"], json!(2));
+            assert_eq!(output["exchange_match_counts"]["JP"], json!(2));
+            let results = output["results"].as_array().expect("results");
+            assert_eq!(results.len(), 4);
+            let exchanges: Vec<&str> = results
+                .iter()
+                .map(|row| row["exchange"].as_str().expect("exchange"))
+                .collect();
+            assert_eq!(exchanges, ["US", "JP", "US", "JP"]);
+            let filters_text = output["screener_filters"].to_string();
+            assert!(filters_text.contains("market_capitalization"));
+            assert!(!filters_text.contains("exchange"));
+            assert!(
+                output["warnings"]
+                    .as_array()
+                    .expect("warnings")
+                    .iter()
+                    .any(|warning| warning.as_str().unwrap_or("").contains("local currency"))
+            );
+            assert_eq!(fixture.count(), 2);
+        })
+        .await;
+}
+
+/// expect: [P9] A prompt that parses to zero criteria warns loudly instead
+/// of silently returning the full universe as if it were a match.
+#[tokio::test]
+async fn screener_empty_parse_warns_and_lists_universe() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({ "data": [{
+                    "code": "UNIVERSE",
+                    "name": "Universe Row",
+                    "exchange": "US",
+                    "market_capitalization": 5_000_000_000.0,
+                }] }),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "show me everything",
+                "limit": 20
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert!(
+                output["parsed_criteria"]
+                    .as_object()
+                    .expect("parsed criteria")
+                    .is_empty()
+            );
+            assert!(
+                output["warnings"]
+                    .as_array()
+                    .expect("warnings")
+                    .iter()
+                    .any(|warning| warning
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("No criteria parsed"))
+            );
+            assert_eq!(output["count"], json!(1));
+            assert_eq!(output["exchange_match_counts"], json!({}));
+        })
+        .await;
+}
+
+/// expect: [P9] One failed exchange keeps the surviving exchanges and names
+/// the failure; only a total failure propagates.
+#[tokio::test]
+async fn screener_partial_exchange_failure_is_surfaced() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("JP") => (500, json!({ "error": "fixture outage" })),
+                Some("US") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "USA1",
+                        "name": "US Company",
+                        "exchange": "US",
+                        "market_capitalization": 5_000_000_000.0,
+                    }] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US and Japan stocks",
+                "limit": 20
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["count"], json!(1));
+            assert_eq!(output["exchange_match_counts"]["US"], json!(1));
+            assert!(output["exchange_errors"]["JP"].is_string());
+            assert!(
+                output["warnings"]
+                    .as_array()
+                    .expect("warnings")
+                    .iter()
+                    .any(|warning| warning
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("Exchange fetch failed"))
+            );
+        })
+        .await;
+}
+
+/// expect: [P9] Zero matches on every exchange warns — a wrong exchange code
+/// must be visible, not silent.
+#[tokio::test]
+async fn screener_all_zero_matches_warns() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({ "data": [] }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US and Japan stocks",
+                "limit": 20
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["count"], json!(0));
+            assert_eq!(output["total_matches"], json!(0));
+            assert_eq!(output["exchange_match_counts"]["US"], json!(0));
+            assert_eq!(output["exchange_match_counts"]["JP"], json!(0));
+            assert!(
+                output["warnings"]
+                    .as_array()
+                    .expect("warnings")
+                    .iter()
+                    .any(|warning| warning.as_str().unwrap_or("").contains("zero matches"))
+            );
+        })
+        .await;
+}
+
+/// expect: [P5] criteria_overrides merge over parsed criteria — overrides
+/// suppress the empty-parse warning and drive the exchange fan-out.
+#[tokio::test]
+async fn screener_overrides_merge_over_parsed_criteria() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("VN") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "VNM1",
+                        "name": "Vietnam Company",
+                        "exchange": "VN",
+                        "market_capitalization": 5_000_000_000.0,
+                    }] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "large companies",
+                "limit": 20,
+                "criteria_overrides": {
+                    "exchanges": ["VN"],
+                    "market_capitalization_min": 1000000000
+                }
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["parsed_criteria"]["exchanges"], json!(["VN"]));
+            assert_eq!(
+                output["parsed_criteria"]["market_capitalization_min"],
+                json!(1_000_000_000)
+            );
+            assert_eq!(output["count"], json!(1));
+            assert!(
+                !output["warnings"]
+                    .as_array()
+                    .expect("warnings")
+                    .iter()
+                    .any(|warning| warning
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("No criteria parsed"))
+            );
+            assert_eq!(fixture.count(), 1);
+        })
+        .await;
+}

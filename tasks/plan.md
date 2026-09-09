@@ -292,7 +292,7 @@ Acceptance:
 
 **Refused shortcut:** classifying all errors as clean (the pre-fix behavior — the exact defect), or testing only an unavailable spawn port (the counting port makes a duplicate spawn observable as count > 1).
 
-**Checkpoint B:** cumulative memory, authorization, and spawn regression checks; scoped build/lint evidence; explicit resolution of T05's policy gate; operator review. Serial editing is a resource constraint, not a T04→T05→T06 technical dependency. **Status:** evidence complete 2026-09-08; the review opened but was superseded by the Phase E teardown ruling; re-presented 2026-09-09 with the teardown accounting (plan.md §Phase E) — operator review pending.
+**Checkpoint B:** cumulative memory, authorization, and spawn regression checks; scoped build/lint evidence; explicit resolution of T05's policy gate; operator review. Serial editing is a resource constraint, not a T04→T05→T06 technical dependency. **Status:** evidence complete 2026-09-08; the review opened but was superseded by the Phase E teardown ruling; re-presented 2026-09-09 with the teardown accounting (plan.md §Phase E) — **RATIFIED by the operator 2026-09-09** (all four decision items: the T04 pending-set bound of 128 with evict-oldest + warn; the C4 swarm-detail deletion as completing the compose replacement; the fire-from-panel capability placement — `swarm_fire` remains an MCP/Steer-path tool; the T06 `fail_next_comments` doc-hidden test seam). Phase C (T07 → T08) unblocked.
 
 ### Phase C — Make regulation acknowledgments truthful
 

@@ -123,7 +123,14 @@ with tempfile.TemporaryDirectory(prefix="kask-clippy-profile-") as directory:
         (["--release", "-p", "hkask-mcp"], []),
         (["--profile", "release-mcp", "--package", "hkask-mcp"], []),
         (["--profile=dev", "-p", "kask_bridge"], []),
-        ([], ["--workspace"]),
+        # The bare workspace case must carry --exclude remote_server: under
+        # --all-features its debug-embed feature request unifies into the
+        # host rust-embed-impl and breaks dev-profile derives elsewhere in
+        # the graph (E0599). script/clippy appends the exclusion itself;
+        # this expectation pins it so it cannot silently regress. The
+        # -p/--package cases above pin the inverse — the exclusion must
+        # stay workspace-only.
+        ([], ["--workspace", "--exclude", "remote_server"]),
     ]
     for arguments, scope in cases:
         result = subprocess.run(["bash", str(wrapper), *arguments], env=environment,

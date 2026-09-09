@@ -546,7 +546,7 @@ pub(crate) fn split_criteria(
 /// a singular `exchange` value (criteria_overrides may supply either form).
 pub(crate) fn extract_exchange_codes(criteria: &serde_json::Value) -> Vec<String> {
     let mut codes: Vec<String> = Vec::new();
-    let mut push = |code: String, codes: &mut Vec<String>| {
+    let push = |code: String, codes: &mut Vec<String>| {
         if !code.is_empty() && !codes.contains(&code) {
             codes.push(code);
         }
@@ -826,7 +826,8 @@ fn parse_exchange_criteria(prompt: &str, map: &mut serde_json::Map<String, serde
     // geography names the scan may miss and literal codes (e.g. "exchange
     // VN"). Prose values cannot become codes: a literal must be short and
     // uppercase as written, so "exchange rate" does not screen exchange=RATE.
-    let phrase = r"(?i)\bexchanges?\b\s*(?:(?:equals|is|of|in|on|at|the|for|listed|traded)\s+|=\s*)*([a-zA-Z][a-zA-Z\s&.,-]*?)(?:\s*$|\s*(?=[.;]|\b(?:and|with|where|that|having)\b))";
+    // The tail terminator consumes (no lookahead — the regex crate has none).
+    let phrase = r"(?i)\bexchanges?\b\s*(?:(?:equals|is|of|in|on|at|the|for|listed|traded)\s+|=\s*)*([a-zA-Z][a-zA-Z\s&.,-]*?)(?:\s*$|\s*[.;]|\s+(?:and|with|where|that|having)\b)";
     if let Some(captures) = Regex::new(phrase).ok().and_then(|re| re.captures(prompt)) {
         if let Some(tail) = captures.get(1).map(|m| m.as_str()) {
             for token in tail.split(',').flat_map(|part| part.split(" or ")) {
@@ -845,6 +846,7 @@ fn parse_exchange_criteria(prompt: &str, map: &mut serde_json::Map<String, serde
                     && token.chars().all(|character| {
                         character.is_ascii_uppercase() || character.is_ascii_digit()
                     })
+                    && !codes.contains(&token.to_string())
                 {
                     codes.push(token.to_string());
                 }
@@ -1003,7 +1005,7 @@ mod tests {
         for expected in ["US", "JP", "TO", "MX", "LSE", "XETRA", "PA", "WAR"] {
             assert!(
                 codes.iter().any(|code| code == expected),
-                "expected {expected} in {codes}"
+                "expected {expected} in {codes:?}"
             );
         }
     }
@@ -1145,7 +1147,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("no exchanges for {prompt}"));
             assert!(
                 codes.iter().any(|code| code == expected),
-                "expected {expected} for {prompt}, got {codes}"
+                "expected {expected} for {prompt}, got {codes:?}"
             );
         }
     }
