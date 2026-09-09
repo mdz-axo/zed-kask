@@ -1048,6 +1048,16 @@ fn currency_for_symbol(symbol: &str) -> Option<&'static str> {
 /// Symbols that map to several currencies, with their candidates.
 const AMBIGUOUS_SYMBOLS: &[(&str, &[&str])] = &[("kr", &["SEK", "NOK", "DKK"])];
 
+/// Exchanges whose screener rows are quoted in multiple currencies —
+/// London's International Order Book hosts Japanese ¥, Nordic kr, and
+/// Hungarian Ft lines alongside £ lines. Server-side cap bounds converted
+/// into the exchange's currency would numerically exclude every
+/// foreign-currency row (a ¥9.2T cap sits above any GBP ceiling), so these
+/// exchanges are queried unbounded and selection happens in the
+/// row-currency pass plus client-side band enforcement. Verified live
+/// 2026-09-09: the bounded LSE query returned zero ¥ rows.
+const MIXED_CURRENCY_EXCHANGES: &[&str] = &["LSE"];
+
 /// Row-currency pass counters, surfaced in the tool output.
 #[derive(Default)]
 struct RowFilterStats {
