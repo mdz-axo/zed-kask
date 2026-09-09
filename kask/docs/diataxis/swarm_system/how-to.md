@@ -28,7 +28,7 @@ and the feedback path that closes the loop. Read the
 | `create_swarm` / `ask_xaman`        | `crates/swarm_panel/src/swarm_panel.rs:1596` / `:1885`                 |
 | `fetch_all` (sequenced fetches)     | `crates/swarm_panel/src/fetch.rs:21-52`                                 |
 | `clone_to_local` / `push_to_cloud_swarm` | `crates/swarm_panel/src/fetch.rs:586` / `:629`                    |
-| `open_swarm_detail` / `fire_agent`  | `crates/swarm_panel/src/swarm_ops.rs:30` / `:502`                      |
+| `request_delete_swarm` / `confirm_destructive` | `crates/swarm_panel/src/swarm_ops.rs`                          |
 | 82-tool surface (generated)         | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:113`          |
 | Consent gate (mint/consume/refund)  | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs` (consume at `:462-470`) |
 | Spend gate (hire/delegate)          | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169` / `:377`      |

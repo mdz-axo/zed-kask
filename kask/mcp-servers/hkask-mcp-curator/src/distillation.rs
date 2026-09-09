@@ -29,11 +29,12 @@
 //! tracking no later pass would ever see them again. The set is bounded
 //! (`MAX_PENDING_THREADS`); overflow evicts the longest-pending thread
 //! with a warn naming it and its re-discovery paths (a new turn, or the
-//! restart lookback). A pass that cannot read the store does not advance
-//! the cursor, so turns stored during an outage stay visible to the
-//! healed pass. Pending state is in-memory only: a restart clears it,
-//! and the bounded first-pass lookback re-discovers recent undistilled
-//! work (the older-than-lookback miss boundary is unchanged).
+//! first-pass recovery scan). A pass that cannot read the store does not
+//! advance the cursor, so turns stored during an outage stay visible to
+//! the healed pass. Pending state is in-memory only: a restart clears
+//! it, and the first pass recovers from durable state — it scans from
+//! the oldest stored turn and the watermark check skips covered threads,
+//! so no thread is ever permanently missed.
 //!
 //! Observability: every pass emits a module-target `tracing::info!`
 //! summary plus a `RegulationSpan::Curation` "memory_distilled" span, and
@@ -60,12 +61,17 @@ pub(crate) const DEFAULT_DISTILLATION_CADENCE_SECS: u64 = 600;
 /// `kask.memory.distillation_idle_secs`).
 pub(crate) const DEFAULT_DISTILLATION_IDLE_SECS: u64 = 300;
 
-/// Turns newer than this are not examined yet — the thread may still be
-/// active. Bounded so a restart does not re-scan the whole store; turns
-/// older than the lookback that were never distilled are missed (raw
-/// transcript remains; therapy can still distill them).
-const FIRST_PASS_LOOKBACK_SECS: i64 = 6 * 3600;
-
+/// The non-thinking model the lesson-extraction `generate` calls route to
+/// (read from `HKASK_CLASSIFIER_MODEL`, injected from
+/// `kask.models.classifier_model`). Distillation needs output tokens, not
+/// reasoning tokens — the same workload shape as the turn-tagging
+/// classifier (operator ruling 2026-09-04). The port default model is
+/// reasoning-mandatory and rejects `thinking_allowed: false` ("Reasoning
+/// is mandatory for this endpoint and cannot be disabled" — observed live
+/// 2026-09-09: every distillation call failed for 5 days while the failure
+/// lived only in logs). `None` falls back to the port default via
+/// `generate_with_model`'s trait default; per-thread failure warns surface
+/// that misconfiguration.
 pub(crate) const WATERMARK_PREFIX: &str = "curator:distilled:";
 const MAX_TURNS_PER_PROMPT: usize = 12;
 const MAX_TURN_CHARS: usize = 3_000;
@@ -77,15 +83,18 @@ const MAX_EVIDENCE_IDS: usize = 8;
 /// turns that fell behind the scan cursor). Overflow evicts the
 /// longest-pending thread with a warn — bounded memory, non-silent loss
 /// of revisiting. An evicted thread is re-discovered by a new turn or
-/// the restart lookback: exactly the status quo for every skipped thread
-/// before pending tracking existed.
+/// the first-pass recovery scan: exactly the status quo for every
+/// skipped thread before pending tracking existed.
 const MAX_PENDING_THREADS: usize = 128;
 
-/// Distillation cadence and idle threshold.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Distillation cadence, idle threshold, and the non-thinking extraction
+/// model. Not `Copy`: `model` owns a `String`.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DistillationConfig {
     pub cadence_secs: u64,
     pub idle_secs: u64,
+    /// Non-thinking model for lesson extraction (`HKASK_CLASSIFIER_MODEL`).
+    pub model: Option<String>,
 }
 
 impl Default for DistillationConfig {
@@ -93,6 +102,7 @@ impl Default for DistillationConfig {
         Self {
             cadence_secs: DEFAULT_DISTILLATION_CADENCE_SECS,
             idle_secs: DEFAULT_DISTILLATION_IDLE_SECS,
+            model: None,
         }
     }
 }
@@ -110,6 +120,7 @@ impl DistillationConfig {
                 "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
                 DEFAULT_DISTILLATION_IDLE_SECS,
             ),
+            model: std::env::var("HKASK_CLASSIFIER_MODEL").ok(),
         }
     }
 }
@@ -165,6 +176,7 @@ pub(crate) fn spawn_distillation_timer(
     };
     let cadence = config.cadence_secs;
     let idle_secs = config.idle_secs;
+    let model = config.model;
     // Forgetting rides the distillation timer — it consumes what
     // distillation produces (the watermark is the extraction proof), so
     // cadence 0 disables both.
@@ -194,6 +206,7 @@ pub(crate) fn spawn_distillation_timer(
                 &mut cursor,
                 now,
                 idle_secs,
+                model.as_deref(),
             )
             .await;
             tracing::info!(
@@ -202,6 +215,7 @@ pub(crate) fn spawn_distillation_timer(
                 threads_distilled = outcome.threads_distilled,
                 lessons_inserted = outcome.lessons_inserted,
                 lessons_skipped = outcome.lessons_skipped,
+                extraction_failures = outcome.extraction_failures,
                 threads_pending = cursor.pending.len(),
                 "Memory distillation pass complete"
             );
@@ -233,8 +247,12 @@ pub(crate) fn spawn_distillation_timer(
 /// visible). Threads skipped as active, or failing before the watermark
 /// advanced, are carried in `pending` and re-examined explicitly — their
 /// turns are older than the cursor, so the scan alone would never see
-/// them again. Pending state is in-memory: a restart clears it and the
-/// bounded first-pass lookback re-discovers recent work.
+/// them again. Pending state is in-memory: a restart clears it, and the
+/// first pass recovers from durable state instead — it scans from the
+/// oldest stored turn and the per-thread watermark check skips every
+/// thread already proven distilled (the fixed 6h startup lookback it
+/// replaced permanently missed older threads, observed live 2026-09-09:
+/// watermarks stopped advancing for 5 days across restarts).
 pub(crate) struct DistillationCursor {
     last_pass: Option<chrono::DateTime<chrono::Utc>>,
     /// thread_id -> when the thread was first noticed pending (eviction
@@ -251,10 +269,15 @@ impl DistillationCursor {
     }
 
     /// The scan window start for a pass at `now`: the previous pass's
-    /// time, or the bounded startup lookback on the first pass.
-    fn scan_since(&self, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    /// time, or the Unix epoch on the first pass after a restart — the
+    /// durable recovery. The scan loads every stored turn, but the
+    /// per-thread watermark check skips covered threads in O(1), and the
+    /// forgetting pass (watermark-gated) bounds the turn store to the
+    /// forgetting horizon, so the recovery scan stays proportional to
+    /// live episodic memory, not history.
+    fn scan_since(&self, _now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
         self.last_pass
-            .unwrap_or_else(|| now - chrono::Duration::seconds(FIRST_PASS_LOOKBACK_SECS))
+            .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).expect("epoch is valid"))
     }
 
     /// Merge a pass outcome. A failed scan leaves the cursor untouched —
@@ -290,7 +313,7 @@ impl DistillationCursor {
                     pending_threads = MAX_PENDING_THREADS,
                     "Pending-distillation set full — longest-pending thread \
                      evicted; it is re-discovered by a new turn or the \
-                     restart lookback"
+                     first-pass recovery scan"
                 );
             }
             merged = by_age.into_iter().collect();
@@ -312,6 +335,7 @@ async fn run_pass(
     cursor: &mut DistillationCursor,
     now: chrono::DateTime<chrono::Utc>,
     idle_secs: u64,
+    model: Option<&str>,
 ) -> DistillationOutcome {
     let stores = db.get();
     let Some(memory) = stores.memory.as_ref() else {
@@ -333,6 +357,7 @@ async fn run_pass(
         idle_secs,
         since,
         &revisit,
+        model,
     )
     .await;
     cursor.merge(&outcome, now);
@@ -353,6 +378,13 @@ pub(crate) struct DistillationOutcome {
     /// the pass time. The caller's cursor merges these, preserving
     /// earlier first-seen times for eviction ordering.
     pub threads_pending: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Generate/parse failures this pass — threads that could not be
+    /// extracted (model rejection, unparseable output). The pass emits a
+    /// `memory_distillation_stalled` regulation span when this is
+    /// nonzero so a dead extraction loop is a sensed regulation event,
+    /// not log noise (observed live 2026-09-09: five days of failures
+    /// surfaced nowhere readable).
+    pub extraction_failures: usize,
 }
 
 /// The distillation core, directly testable against a `MemoryStore`.
@@ -367,6 +399,7 @@ pub(crate) async fn distill_store(
     idle_secs: u64,
     since: chrono::DateTime<chrono::Utc>,
     revisit: &[String],
+    model: Option<&str>,
 ) -> DistillationOutcome {
     let mut outcome = DistillationOutcome::default();
     // Turn discovery is the shared contract (`thread_turns`): the scan runs
@@ -438,8 +471,12 @@ pub(crate) async fn distill_store(
             continue;
         }
         let prompt = build_distillation_prompt(&thread_id, &pending);
+        // Route to the non-thinking model: the port default is
+        // reasoning-mandatory and rejects `thinking_allowed: false`.
+        // `generate_with_model` falls back to the port default when
+        // `model` is None (unset `HKASK_CLASSIFIER_MODEL`).
         let generated = match inference_port
-            .generate(&prompt, &LLMParameters::default(), None)
+            .generate_with_model(&prompt, &LLMParameters::default(), model, None)
             .await
         {
             Ok(result) => result,
@@ -450,6 +487,7 @@ pub(crate) async fn distill_store(
                     %error,
                     "Distillation inference failed — thread retried next pass (watermark not advanced)"
                 );
+                outcome.extraction_failures += 1;
                 outcome.threads_pending.insert(thread_id, now);
                 continue;
             }
@@ -463,6 +501,7 @@ pub(crate) async fn distill_store(
                     %error,
                     "Distillation output unparseable — thread retried next pass (watermark not advanced)"
                 );
+                outcome.extraction_failures += 1;
                 outcome.threads_pending.insert(thread_id, now);
                 continue;
             }
@@ -520,6 +559,9 @@ pub(crate) async fn distill_store(
     }
     if outcome.threads_distilled > 0 {
         RegulationSpan::Curation.emit("memory_distilled");
+    }
+    if outcome.extraction_failures > 0 {
+        RegulationSpan::Curation.emit("memory_distillation_stalled");
     }
     outcome
 }
@@ -797,6 +839,146 @@ mod tests {
         .to_string()
     }
 
+    /// Records the model override each `generate_with_model` call
+    /// receives, then answers with `response` — pins the distillation
+    /// pass's model routing (the port default is reasoning-mandatory and
+    /// rejects the pass's non-thinking parameters, the five-day total
+    /// failure the 2026-09-09 repair ends).
+    struct ModelRecordingPort {
+        response: String,
+        seen_model: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl hkask_types::InferencePort for ModelRecordingPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            // If distillation regresses to the model-less `generate`, the
+            // routing pin below fails with this visible error.
+            Box::pin(async move {
+                Err(InferenceError::Timeout(
+                    "distillation must call generate_with_model, not generate".to_string(),
+                ))
+            })
+        }
+
+        fn generate_with_model(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            model_override: Option<&str>,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            self.seen_model
+                .lock()
+                .expect("model recorder mutex")
+                .push(model_override.map(str::to_string));
+            let text = self.response.clone();
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text,
+                    model: "test-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// The 2026-09-09 wiring repair: distillation routes its extraction
+    /// call to the configured non-thinking model, never the port default.
+    #[tokio::test]
+    async fn distill_store_routes_extraction_to_the_configured_model() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-model",
+            "please proceed",
+            "done — all green",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ModelRecordingPort {
+            response: lesson_response(
+                "probe-entity",
+                "probe-attribute",
+                "probe lesson",
+                &[&turn_id.to_string()],
+            ),
+            seen_model: std::sync::Mutex::new(Vec::new()),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            Some("OpenRouter/z-ai/glm-5.2"),
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 1);
+        assert_eq!(
+            port.seen_model.lock().expect("recorder mutex").as_slice(),
+            &[Some("OpenRouter/z-ai/glm-5.2".to_string())],
+            "the extraction call must carry the configured model override"
+        );
+    }
+
+    /// A generate failure is counted as an extraction failure so the
+    /// stalled-pass regulation span has a real signal, and the thread
+    /// stays pending for retry (watermark not advanced).
+    #[tokio::test]
+    async fn extraction_failures_are_counted_and_the_thread_stays_pending() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        turn_h_mem(
+            &store,
+            "t-fail",
+            "please proceed",
+            "done — all green",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(1),
+            response: "[]".to_string(),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.extraction_failures, 1);
+        assert_eq!(outcome.threads_distilled, 0);
+        assert!(
+            outcome.threads_pending.contains_key("t-fail"),
+            "the failed thread must stay pending for the next pass"
+        );
+    }
+
     #[tokio::test]
     async fn distillation_pass_inserts_lessons_and_watermark() {
         let store = test_store();
@@ -827,6 +1009,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
+            None,
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -904,6 +1087,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
+            None,
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1);
@@ -955,6 +1139,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
+            None,
         )
         .await;
         assert_eq!(first.lessons_inserted, 1);
@@ -968,6 +1153,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
             &[],
+            None,
         )
         .await;
         assert_eq!(second.threads_distilled, 0);
@@ -1008,6 +1194,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
+            None,
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -1052,6 +1239,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
+            None,
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 0);
@@ -1155,6 +1343,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(first.threads_examined, 1);
@@ -1169,6 +1358,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(
@@ -1225,6 +1415,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(first.threads_distilled, 0);
@@ -1244,6 +1435,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(second.threads_distilled, 1, "failed thread must be retried");
@@ -1290,6 +1482,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(first.threads_distilled, 1);
@@ -1310,6 +1503,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         // Only the new thread is examined: t1 is behind the cursor and not
@@ -1374,6 +1568,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert!(first.scan_failed);
@@ -1387,6 +1582,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(
@@ -1429,6 +1625,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(first.threads_pending.len(), MAX_PENDING_THREADS);
@@ -1450,6 +1647,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         // All 129 examined threads are still active: the pass reports one
@@ -1474,6 +1672,7 @@ mod tests {
             &mut cursor,
             pass3_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
+            None,
         )
         .await;
         assert_eq!(third.threads_distilled, MAX_PENDING_THREADS);
@@ -1487,15 +1686,32 @@ mod tests {
         );
     }
 
-    /// T04 control: the first pass scans the bounded startup lookback —
-    /// never the whole store.
+    /// T04 control, post-2026-09-09 repair: the first pass scans from the
+    /// oldest stored turn (durable recovery) — never a bounded window —
+    /// so a restart cannot permanently miss undistilled threads. Covered
+    /// threads are skipped by the per-thread watermark check, and the
+    /// forgetting pass bounds the turn store to the forgetting horizon.
     #[test]
-    fn first_pass_scan_is_bounded_to_the_startup_lookback() {
+    fn first_pass_scan_recovers_from_durable_state() {
         let now = chrono::Utc::now();
         let cursor = DistillationCursor::new();
         assert_eq!(
             cursor.scan_since(now),
-            now - chrono::Duration::seconds(FIRST_PASS_LOOKBACK_SECS)
+            chrono::DateTime::from_timestamp(0, 0).expect("epoch is valid"),
+            "first pass must scan from the beginning — the watermark check skips covered threads"
+        );
+        let mut advanced = cursor;
+        advanced.merge(
+            &DistillationOutcome {
+                threads_examined: 1,
+                ..DistillationOutcome::default()
+            },
+            now,
+        );
+        assert_eq!(
+            advanced.scan_since(now),
+            now,
+            "subsequent passes scan from the previous pass time"
         );
     }
 
@@ -1530,6 +1746,7 @@ mod tests {
             DistillationConfig {
                 cadence_secs: 60,
                 idle_secs: 0,
+                model: None,
             },
         );
         // Before the first interval: nothing.
@@ -1598,6 +1815,7 @@ mod tests {
             DistillationConfig {
                 cadence_secs: 7200,
                 idle_secs: 0,
+                model: None,
             },
         );
         // One hour in: the old clamp would have fired a pass here.

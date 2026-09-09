@@ -1,8 +1,8 @@
 //! Hire/publish consent flows. Extracted from `swarm_panel.rs` — the flows
 //! stay methods on `SwarmPanel` (they mutate `pending_hire` /
-//! `pending_publish` / `spend_in_flight` and re-dispatch into `fetch_all` /
-//! `open_swarm_detail`); this module owns the cost-preflight, consent-token,
-//! and spend tool invocations. See `detail.rs` / `author.rs` for the same
+//! `pending_publish` / `spend_in_flight` and re-dispatch into `fetch_all`);
+//! this module owns the cost-preflight, consent-token,
+//! and spend tool invocations. See `author.rs` for the same
 //! extraction pattern.
 
 use gpui::Context;
@@ -211,28 +211,6 @@ impl SwarmPanel {
                         log::info!("swarm-panel: hired '{agent_name}' into {workspace_id}");
                         // Refresh so the new hire appears in the swarm roster.
                         this.fetch_all(cx);
-                        // If the roster drill-down is open for this workspace,
-                        // re-open it so the new member appears immediately
-                        // (fetch_all refreshes the card list, not the detail).
-                        // Guard against re-opening a detail for a *different*
-                        // workspace — a browse-card hire (which targets
-                        // `selected_workspace`, not necessarily the open detail)
-                        // must not refresh an unrelated roster.
-                        if let Some(detail) = this.detail.swarm_detail.clone() {
-                            if detail.workspace_id == workspace_id {
-                                this.open_swarm_detail(
-                                    detail.workspace_id.clone(),
-                                    detail.name,
-                                    detail.source,
-                                    detail.mission,
-                                    detail.agent_count,
-                                    detail.budget,
-                                    detail.remaining,
-                                    detail.cloud_workspace_id,
-                                    cx,
-                                );
-                            }
-                        }
                     }
                     Err(err) if err.is_outcome_unknown() => {
                         // The hire request reached the server and the connection

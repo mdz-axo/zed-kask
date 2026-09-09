@@ -334,8 +334,8 @@ impl SwarmPanel {
                                     )),
                                 )
                                 // Delete button — visible on the card for
-                                // both backends. Stages a confirmation in the
-                                // detail view.
+                                // both backends. Stages a confirmation banner
+                                // in the browse list.
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("card-delete-{swarm_id}")),
@@ -345,26 +345,15 @@ impl SwarmPanel {
                                     .label_size(LabelSize::XSmall)
                                     .disabled(self.spend.in_flight.is_some())
                                     .tooltip(Tooltip::text(
-                                        "Delete this swarm. Opens the detail view \
-                                         with a confirmation prompt.",
+                                        "Delete this swarm. Shows a confirmation \
+                                         prompt above the list.",
                                     ))
                                     .on_click(cx.listener({
                                         let name = swarm.name;
                                         move |this, _, _, cx| {
-                                            // Open the detail view so the
-                                            // confirmation banner is visible.
-                                            this.open_swarm_detail(
-                                                swarm_id.clone(),
-                                                name.clone(),
-                                                swarm_source.clone(),
-                                                String::new(),
-                                                None,
-                                                None,
-                                                None,
-                                                None,
-                                                cx,
-                                            );
-                                            // Stage the delete confirmation.
+                                            // Stage the delete confirmation —
+                                            // the browse list renders the
+                                            // confirmation banner.
                                             this.request_delete_swarm(
                                                 swarm_id.clone(),
                                                 swarm_source.clone(),

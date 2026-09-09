@@ -47,14 +47,8 @@ crates/project/src/debugger/dap_store.rs:1
 crates/project/src/lsp_store.rs:1
 crates/settings_ui/src/pages/external_agents_page.rs:3
 crates/sum_tree/src/sum_tree.rs:1
-crates/swarm_panel/src/parse.rs:9
-crates/swarm_panel/src/swarm_panel.rs:1
 crates/tabular_data_preview/src/settings.rs:1
 crates/title_bar/src/onboarding_banner.rs:1
 crates/title_bar/src/update_version.rs:1
 crates/zed/src/visual_test_runner.rs:1
-kask/crates/kask_bridge/src/memory.rs:1
-kask/mcp-servers/hkask-mcp-companies/src/transcript.rs:1
-kask/mcp-servers/hkask-mcp-prediction-markets/src/bin/fetch_contracts.rs:8
-kask/mcp-servers/hkask-mcp-prediction-markets/src/bin/semantic_map_catalogs.rs:2
 tooling/xtask/src/tasks/workflows/steps.rs:1

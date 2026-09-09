@@ -271,12 +271,7 @@ impl SwarmPanel {
                                                 agent_type: a.agent_type.unwrap_or_default(),
                                                 description: a.description.unwrap_or_default(),
                                                 author: a.author.unwrap_or_default(),
-                                                executions: a
-                                                    .execution_stats
-                                                    .and_then(|s| s.total_executions)
-                                                    .unwrap_or(0),
                                                 display_name: a.display_alias.unwrap_or_default(),
-                                                updated_at: a.updated_at,
                                                 source: AgentSource::Cloud,
                                             })
                                         })
@@ -384,11 +379,7 @@ impl SwarmPanel {
                                                 id: w.id.unwrap_or_default(),
                                                 name: w.name.unwrap_or_default(),
                                                 description: w.description.unwrap_or_default(),
-                                                agent_count: w.agent_count,
-                                                budget: w.workspace_budget,
-                                                remaining: w.workspace_remaining,
                                                 source: AgentSource::Cloud,
-                                                cloud_workspace_id: None,
                                             })
                                         })
                                         .collect::<Vec<_>>();
@@ -586,15 +577,11 @@ impl SwarmPanel {
                                             id: s.swarm_id.unwrap_or_default(),
                                             name: s.name.unwrap_or_default(),
                                             description: s.mission,
-                                            agent_count: Some(s.members.len() as u64),
-                                            budget: None,
-                                            remaining: None,
                                             source: if is_synced {
                                                 AgentSource::Synced
                                             } else {
                                                 AgentSource::Local
                                             },
-                                            cloud_workspace_id: s.cloud_workspace_id,
                                         })
                                     })
                                     .collect::<Vec<_>>();
@@ -956,16 +943,6 @@ pub(crate) fn merge_local_agents(entries: &mut Vec<SwarmEntry>, local_agents: Ve
             description: local.description,
             display_name: local.display_name,
             author: String::new(),
-            // fermi parity: the browse card shows the agent's measured run
-            // count for local agents too (cloud agents get theirs from the
-            // catalogue's execution_stats). Absent stats (older server) →
-            // 0, same as the cloud fallback.
-            executions: local
-                .execution_stats
-                .as_ref()
-                .map(|stats| stats.total_executions)
-                .unwrap_or(0),
-            updated_at: None,
             source: AgentSource::Local,
         }));
     }

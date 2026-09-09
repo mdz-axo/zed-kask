@@ -25,8 +25,6 @@ test-support = ["workspace/test-support", "remote_connection/test-support"]
 
 [dependencies]
 agent-client-protocol.workspace = true
-agent.workspace = true
-agent_ui.workspace = true
 editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
@@ -47,7 +45,6 @@ settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
 anyhow.workspace = true
-chrono.workspace = true
 
 [dev-dependencies]
 # Feature-propagation-only dev-dep: not `use`d in source, but its

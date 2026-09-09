@@ -234,7 +234,7 @@ fn classify_fmp_status(status: reqwest::StatusCode, body: &str) -> MissingReason
 
 /// Parse the FMP response body for one quarter. The requested `year`/`quarter`
 /// are authoritative for the temporal key (the FMP `date`/`year` labels are
-/// unreliable). `year` may be a string or number in the response; both coerce.
+/// unreliable).
 fn parse_fmp_body(
     body: &str,
     symbol: &str,
@@ -242,11 +242,9 @@ fn parse_fmp_body(
     quarter: u8,
 ) -> Result<Option<TranscriptRecord>, McpToolError> {
     #[derive(Deserialize)]
-    #[allow(dead_code)]
     struct FmpEntry {
         symbol: String,
         period: String,
-        year: serde_json::Value,
         date: String,
         content: String,
     }

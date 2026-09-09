@@ -10571,9 +10571,7 @@ dependencies = [
 name = "kanban_panel"
 version = "0.1.0"
 dependencies = [
- "agent",
  "agent-client-protocol",
- "agent_ui",
  "anyhow",
  "editor",
  "fs",
@@ -15186,21 +15184,14 @@ dependencies = [
 name = "portfolio_panel"
 version = "0.1.0"
 dependencies = [
- "agent",
  "agent-client-protocol",
- "agent_ui",
  "anyhow",
- "editor",
  "fs",
  "gpui",
  "hkask-mcp-portfolio",
  "hkask-steer",
- "hkask-tool-invoker",
  "marketplace_ui_common",
  "project",
- "remote_connection",
- "serde",
- "serde_json",
  "ui",
  "util",
  "workspace",
@@ -19517,11 +19508,8 @@ dependencies = [
 name = "swarm_panel"
 version = "0.1.0"
 dependencies = [
- "agent",
  "agent-client-protocol",
- "agent_ui",
  "anyhow",
- "chrono",
  "editor",
  "fs",
  "gpui",

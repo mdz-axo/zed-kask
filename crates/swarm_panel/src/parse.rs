@@ -11,12 +11,10 @@
 //! `{"content": ...}` envelope shape is one edit in one crate. `extract_wallet_balance`
 //! calls it; the other parsers here operate on the already-unwrapped content.
 
-use gpui::SharedString;
 use hkask_types::tool_response::parse_tool_response;
 use serde::Deserialize;
-use ui::Color;
 
-use crate::{PendingPublish, SwarmRosterAgent};
+use crate::PendingPublish;
 
 // ── View model ─────────────────────────────────────────────────────────────
 
@@ -32,36 +30,12 @@ pub(crate) enum AgentSource {
     Synced,
 }
 
-impl AgentSource {
-    pub(crate) fn badge(&self) -> &'static str {
-        match self {
-            Self::Cloud => "☁",
-            Self::Local => "■",
-            Self::Synced => "⇅",
-        }
-    }
-
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            Self::Cloud => "cloud",
-            Self::Local => "local",
-            Self::Synced => "synced",
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct AgentCard {
     pub(crate) id: String,
     pub(crate) agent_type: String,
     pub(crate) description: String,
     pub(crate) author: String,
-    #[allow(dead_code)] // retained for future detail-view enrichment
-    pub(crate) executions: u64,
-    /// ISO-8601 timestamp of the agent's last update (fermi v0.10.27
-    /// `agents.updated_at`). `None` for local cards (no ABW freshness signal).
-    #[allow(dead_code)] // retained for future detail-view enrichment
-    pub(crate) updated_at: Option<String>,
     /// Human-readable label for UI display. When empty, the panel falls back
     /// to `id`. Cloned cards carry a display name like "Xaman Ek (Clone)" so
     /// the operator can distinguish the local clone from the cloud original.
@@ -72,26 +46,15 @@ pub(crate) struct AgentCard {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct SwarmCard {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) description: String,
-    /// Number of hired agents. `None` when ABW's workspace payload omits the
-    /// field (the field name is NOT part of the verified API surface) — the
-    /// detail view renders "-" then, never a fabricated "0 agents".
-    pub(crate) agent_count: Option<u64>,
-    pub(crate) budget: Option<u64>,
-    pub(crate) remaining: Option<u64>,
     /// Where this swarm lives: `Cloud` (an ABW workspace), `Local` (a
     /// `LocalSwarmRegistry` entry), or `Synced` (a local swarm with a
     /// `cloud_workspace_id` link to an ABW workspace). The backend mode
     /// toggle filters the browse list by this field.
     pub(crate) source: AgentSource,
-    /// The ABW workspace id this local swarm is synced with. `None` for
-    /// cloud-only and local-only swarms. Shown as a "synced with" badge
-    /// in the detail view.
-    pub(crate) cloud_workspace_id: Option<String>,
 }
 
 // ── MCP response structs (minimal, mirror hkask-mcp-swarm's tool output) ────
@@ -114,11 +77,6 @@ pub(crate) struct AgentInfo {
     pub(crate) agent_type: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) author: Option<String>,
-    pub(crate) execution_stats: Option<ExecutionStats>,
-    /// fermi v0.10.27: agent last-update timestamp. Forwarded by
-    /// `swarm_list_agents`; absent on local cards and on ABW responses predating
-    /// the column (backfilled to `created_at` server-side).
-    pub(crate) updated_at: Option<String>,
     /// fermi v0.16.x: human-readable display name. Forwarded by
     /// `swarm_list_agents` from ABW's `build_agent_json`. The cloud fetch path
     /// populates `AgentCard.display_name` from this so the catalogue shows
@@ -129,11 +87,6 @@ pub(crate) struct AgentInfo {
     /// one, and the panel unifies them into `AgentCard.display_name`.
     #[serde(default)]
     pub(crate) display_alias: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ExecutionStats {
-    pub(crate) total_executions: Option<u64>,
 }
 
 // ── Local agent response (v2 §15 Slice 11) ──────────────────────────────────
@@ -156,37 +109,6 @@ pub(crate) struct LocalAgentInfo {
     /// The ABW agent id this local card is synced with. `None` = local-only.
     #[serde(default, rename = "cloud_id")]
     pub(crate) cloud_swarm_id: Option<String>,
-    /// Port labels this agent accepts (typed inputs). Carried by
-    /// `swarm_list_local_agents`; used to enrich the local swarm roster view.
-    #[serde(default)]
-    pub(crate) accepts: Vec<String>,
-    /// Port labels this agent produces (typed outputs).
-    #[serde(default)]
-    pub(crate) produces: Vec<String>,
-    /// Per-agent execution stats (the server's fermi-parity
-    /// `execution_stats` — `source: local_stats_file`). `None` when the
-    /// server omits it (older server builds); zeros are real (never ran).
-    #[serde(default)]
-    pub(crate) execution_stats: Option<LocalExecStats>,
-}
-
-/// The execution-stats object the swarm server attaches to every local
-/// agent (fermi's `build_agent_json` shape). The browse merge reads
-/// `total_executions`; the rest are retained for detail-view enrichment
-/// (the same pattern as `AgentCard.executions`/`updated_at`).
-#[derive(Debug, Deserialize)]
-pub(crate) struct LocalExecStats {
-    #[serde(default)]
-    pub(crate) total_executions: u64,
-    #[serde(default)]
-    #[allow(dead_code)] // retained for future detail-view enrichment
-    pub(crate) successful_executions: u64,
-    #[serde(default)]
-    #[allow(dead_code)] // retained for future detail-view enrichment
-    pub(crate) failed_executions: u64,
-    #[serde(default)]
-    #[allow(dead_code)] // retained for future detail-view enrichment
-    pub(crate) avg_execution_time_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,18 +121,15 @@ pub(crate) struct WorkspaceInfo {
     pub(crate) id: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) description: Option<String>,
-    pub(crate) agent_count: Option<u64>,
-    pub(crate) workspace_budget: Option<u64>,
-    pub(crate) workspace_remaining: Option<u64>,
 }
 
 // ── Local swarm response (v2 §15) ─────────────────────────────────────────
 //
 // `swarm_list_local_swarms` returns `{ count, swarms: [LocalSwarm] }` where each
-// `LocalSwarm` is `{ swarm_id, name, mission, members, created_at }`. Fields are
-// declared `Option` (with `members` defaulting to empty) so a malformed card
-// degrades to an empty row rather than failing the whole list parse — the same
-// defensive pattern as `WorkspaceInfo` above.
+// `LocalSwarm` is `{ swarm_id, name, mission, cloud_workspace_id }`. Fields are
+// declared `Option` so a malformed card degrades to an empty row rather than
+// failing the whole list parse — the same defensive pattern as
+// `WorkspaceInfo` above.
 #[derive(Debug, Deserialize)]
 pub(crate) struct LocalSwarmListResponse {
     pub(crate) swarms: Vec<LocalSwarmInfo>,
@@ -222,11 +141,9 @@ pub(crate) struct LocalSwarmInfo {
     pub(crate) name: Option<String>,
     #[serde(default)]
     pub(crate) mission: String,
-    #[serde(default)]
-    pub(crate) members: Vec<String>,
     /// The ABW workspace id this local swarm is synced with. `None` =
-    /// local-only. Used to show a "synced with" badge and determine the
-    /// `AgentSource::Synced` badge for swarms.
+    /// local-only. Used to determine the `AgentSource::Synced` source
+    /// for swarms.
     #[serde(default)]
     pub(crate) cloud_workspace_id: Option<String>,
 }
@@ -283,67 +200,6 @@ pub(crate) fn parse_app_list(content: serde_json::Value) -> Vec<AppInfo> {
     Vec::new()
 }
 
-// ── Workspace action protocol response (fermi v0.10.15+) ─────────────────────
-//
-// `swarm_workspace_pending_actions` returns the pending action log entries.
-// The response shape is not part of the verified ABW surface, so every field
-// is `Option`/defaulting — a malformed entry degrades to an empty row rather
-// than failing the whole list parse (same defensive pattern as `WorkspaceInfo`).
-
-/// A single pending workspace action (from `swarm_workspace_pending_actions`).
-#[derive(Debug, Deserialize, Clone)]
-pub(crate) struct PendingActionInfo {
-    /// The action id (UUID). Used for accept/reject calls.
-    #[serde(default)]
-    pub(crate) action_id: String,
-    /// Action type: "mutate_document", "fork_state", "compare",
-    /// "invoke_member", "annotate_schema", "annotate".
-    #[serde(default)]
-    pub(crate) action_type: String,
-    /// Document path (for mutate_document). Empty for non-file actions.
-    #[serde(default)]
-    pub(crate) path: String,
-    /// Human-readable rationale for the change.
-    #[serde(default)]
-    pub(crate) rationale: String,
-    /// The proposed new content (for mutate_document). Empty when content
-    /// is supplied at accept time. Retained for future diff-view rendering.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub(crate) content: String,
-    /// Who proposed the action ("user" or an agent id).
-    #[serde(default)]
-    pub(crate) proposed_by: String,
-    /// ISO-8601 timestamp of when the action was proposed. Retained for
-    /// future chronological sorting / display.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub(crate) created_at: String,
-}
-
-/// Parse the pending-actions response defensively across plausible envelope
-/// shapes (top-level array, `actions` key, or `data.actions`). Returns an
-/// empty vec when no array is found — never `None`, because an empty pending
-/// list is a valid state (no actions awaiting confirmation).
-pub(crate) fn parse_pending_actions(content: serde_json::Value) -> Vec<PendingActionInfo> {
-    let candidates = [Some(&content), content.get("data")];
-    for candidate in candidates.into_iter().flatten() {
-        if let Some(arr) = candidate.as_array() {
-            return arr
-                .iter()
-                .filter_map(|a| serde_json::from_value::<PendingActionInfo>(a.clone()).ok())
-                .collect();
-        }
-        if let Some(arr) = candidate.get("actions").and_then(|a| a.as_array()) {
-            return arr
-                .iter()
-                .filter_map(|a| serde_json::from_value::<PendingActionInfo>(a.clone()).ok())
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
 /// The canonical list of tool names exposed by the `swarm` MCP server —
 /// re-exported from `hkask_mcp_swarm::TOOL_NAMES`, the single source of truth.
 /// `panel_tool_names_match_server` asserts the panel's copy matches the
@@ -392,67 +248,6 @@ pub(crate) fn extract_unsupported_fields_note(output: &str) -> Option<String> {
     Some(format!(
         "Note: the ABW API cannot store these fields on a non-curated agent; they were dropped: {fields}."
     ))
-}
-
-/// Extract a swarm's hired agents from a `swarm_get_swarm` response.
-/// ABW's exact roster shape is not part of the verified surface, so this
-/// parses defensively across the plausible envelopes: an `agents` array at
-/// the top level, under `workspace`, or under `team`. Each agent's
-/// `description` is a plain sanitized string (the server's display-field
-/// sanitizer guarantees that). Returns `None` when no roster array is found
-/// (a malformed response is an error, never an empty roster).
-pub(crate) fn parse_swarm_roster(content: serde_json::Value) -> Option<Vec<SwarmRosterAgent>> {
-    let candidates = [
-        content.get("agents"),
-        content.get("workspace").and_then(|w| w.get("agents")),
-        content.get("team").and_then(|t| t.get("agents")),
-        content
-            .get("workspace")
-            .and_then(|w| w.get("team"))
-            .and_then(|t| t.get("agents")),
-    ];
-    let agents = candidates.into_iter().find_map(|c| c?.as_array())?;
-    Some(
-        agents
-            .iter()
-            .filter_map(|a| {
-                let agent_id = a
-                    .get("agent_id")
-                    .or_else(|| a.get("agent_name"))
-                    .and_then(|v| v.as_str())?;
-                Some(SwarmRosterAgent {
-                    agent_id: agent_id.to_string(),
-                    agent_type: a
-                        .get("agent_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    description: a
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    accepts: extract_port_labels(a, "accepts"),
-                    produces: extract_port_labels(a, "produces"),
-                })
-            })
-            .collect(),
-    )
-}
-
-/// Extract a port-label array (`accepts` or `produces`) from an agent object.
-/// Returns an empty vec when the field is absent or not an array — the ABW
-/// roster payload may omit ports, and local rosters carry ids only.
-fn extract_port_labels(agent: &serde_json::Value, field: &str) -> Vec<String> {
-    agent
-        .get(field)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Extract renderable message lines from a `swarm_run_status` response.
@@ -537,31 +332,6 @@ pub(crate) fn extract_agent_mentions(content: &serde_json::Value) -> Vec<String>
     found
 }
 
-/// Compute a freshness chip for a cloud agent from its `updated_at`
-/// timestamp (fermi v0.10.27). Returns `None` for local cards (no
-/// timestamp) or when the timestamp can't be parsed — never fabricates an
-/// age. Cloud agents render the age muted, switching to Warning past 30 days
-/// (the same heuristic window kask uses for chronic staleness).
-#[allow(dead_code)] // retained for future detail-view enrichment; tested
-pub(crate) fn staleness_chip(updated_at: &Option<String>) -> Option<(SharedString, Color)> {
-    let ts = updated_at.as_ref()?;
-    let dt = chrono::DateTime::parse_from_rfc3339(ts.trim()).ok()?;
-    let days = chrono::Utc::now()
-        .signed_duration_since(dt.with_timezone(&chrono::Utc))
-        .num_days();
-    let label = if days <= 0 {
-        "updated today".to_string()
-    } else {
-        format!("updated {days}d ago")
-    };
-    let color = if days >= 30 {
-        Color::Warning
-    } else {
-        Color::Muted
-    };
-    Some((SharedString::from(label), color))
-}
-
 /// Parse the unwrapped `swarm_publish_checks` response (fermi v0.10.15)
 /// into a `PendingPublish`. The contract key is `can_publish` (bool); a
 /// missing key is an `Err` rather than a silent false (guessing false would
@@ -608,7 +378,6 @@ pub(crate) fn parse_publish_checks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ui::Color;
 
     // The algedonic wallet signal must survive the content envelope and never
     // be fabricated. These pin the extraction against the server's actual
@@ -650,39 +419,6 @@ mod tests {
         assert_eq!(extract_wallet_balance("{}"), None);
     }
 
-    // Item 4: the roster drill-down parses ABW's workspace payload
-    // defensively across envelope shapes, and never fabricates an empty
-    // roster from a malformed response.
-    #[test]
-    fn parse_swarm_roster_reads_top_level_agents() {
-        let content = serde_json::json!({
-            "agents": [
-                { "agent_id": "market_analyst", "agent_type": "research", "description": "d" },
-                { "agent_id": "writer", "agent_type": "creative" }
-            ]
-        });
-        let roster = parse_swarm_roster(content).expect("roster");
-        assert_eq!(roster.len(), 2);
-        assert_eq!(roster[0].agent_id, "market_analyst");
-        assert_eq!(roster[0].description, "d");
-        assert_eq!(roster[1].description, ""); // missing description defaults empty
-    }
-
-    #[test]
-    fn parse_swarm_roster_reads_nested_workspace_agents() {
-        let content =
-            serde_json::json!({ "workspace": { "id": "ws", "agents": [{ "agent_id": "a1" }] } });
-        let roster = parse_swarm_roster(content).expect("roster");
-        assert_eq!(roster.len(), 1);
-        assert_eq!(roster[0].agent_id, "a1");
-    }
-
-    #[test]
-    fn parse_swarm_roster_none_without_agents_array() {
-        assert!(parse_swarm_roster(serde_json::json!({ "error": "x" })).is_none());
-        assert!(parse_swarm_roster(serde_json::json!({ "workspace": {} })).is_none());
-    }
-
     // Item 3: the run-status strip extracts message lines, unwrapping the
     // server's {content, source, trust} sanitize container.
     #[test]
@@ -722,37 +458,6 @@ mod tests {
         assert_eq!(lines, vec!["sensor_advisor: telemetry reported"]);
     }
 
-    #[test]
-    fn parse_swarm_roster_reads_verified_detail_shape() {
-        // The verified `/workspaces/{id}` detail shape (live, 2026-08-02):
-        // top-level `agents` whose entries carry agent_id/agent_type/
-        // description (plus more fields the panel ignores).
-        let content = serde_json::json!({
-            "id": "ws-1",
-            "name": "alpha",
-            "is_composition": false,
-            "members": [],
-            "agents": [{
-                "agent_id": "sensor_advisor",
-                "agent_name": "sensor_advisor",
-                "agent_type": "sensor",
-                "description": "reads telemetry",
-                "accepts": [],
-                "produces": [],
-                "total_executions": 12,
-                "tags": [],
-            }],
-            "workspace_budget": 500,
-            "workspace_remaining": 200,
-        });
-        let roster = parse_swarm_roster(content).expect("roster");
-        assert_eq!(roster.len(), 1);
-        assert_eq!(roster[0].agent_id, "sensor_advisor");
-        assert_eq!(roster[0].agent_type, "sensor");
-        assert_eq!(roster[0].description, "reads telemetry");
-    }
-
-    // Publish-checks parse (fermi v0.10.15). Pins the `can_publish` contract
     // key and the tolerant failing-checks extraction, so a server shape change
     // surfaces here rather than silently routing every publish through the
     // force path.
@@ -821,28 +526,5 @@ mod tests {
         let checks = serde_json::json!({ "checks": [] });
         let result = parse_publish_checks("alpha".to_string(), &checks);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn staleness_chip_none_without_timestamp() {
-        // Local cards carry no `updated_at` — never fabricate an age.
-        assert!(staleness_chip(&None).is_none());
-    }
-
-    #[test]
-    fn staleness_chip_none_on_unparseable_timestamp() {
-        assert!(staleness_chip(&Some("not-a-date".to_string())).is_none());
-    }
-
-    #[test]
-    fn staleness_chip_warns_past_30_days() {
-        // A timestamp 40 days in the past renders a Warning chip.
-        let old = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::days(40))
-            .expect("40 days ago")
-            .to_rfc3339();
-        let (label, color) = staleness_chip(&Some(old)).expect("chip");
-        assert_eq!(color, Color::Warning);
-        assert!(label.contains("40d ago"));
     }
 }

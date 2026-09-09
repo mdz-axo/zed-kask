@@ -1,6 +1,6 @@
 # Kask reliability checklist
 
-Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E teardown tranche COMPLETE 2026-09-09: C1 −1,421, C2 closed, C3 swept — cumulative net −1,595, negative claim recorded in plan.md §C3). Next: operator review of the re-presented Checkpoint B (T04–T06 + teardown accounting), then Phase C (T07 → T08) resumes under the net-simplification definition of done. [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
+Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E: C1–C4 COMPLETE 2026-09-09 — C1 budget deletion −1,421, C2 consolidation closed, C3 residue sweep, C4 dead-surface removal −2,143 incl. the unreachable swarm-detail view; cumulative net −3,738, negative claims recorded in plan.md §C3/§C4). Next: operator review of the re-presented Checkpoint B (T04–T06 + teardown accounting), then Phase C (T07 → T08) resumes under the net-simplification definition of done. [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
 
 Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 

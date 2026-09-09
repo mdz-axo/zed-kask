@@ -32,7 +32,6 @@ mod app_edit;
 mod author;
 mod card;
 mod compose;
-mod detail;
 mod fetch;
 mod hire;
 pub mod panel_button;
@@ -104,13 +103,6 @@ const SWARM_SERVER: &str = "swarm";
 /// trivially on an empty/trivial swarm-state. The operator must add agents and
 /// a mission in the compose form before the "Create" button is enabled.
 const MIN_AGENTS_TO_LAUNCH: usize = 3;
-
-/// The kanban MCP server id. References the canonical single source of truth
-/// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
-/// a rename in the server propagates here. The kanban board is the durable
-/// coordination source of truth; tasks link to swarms via `kanban_task_spawn`.
-#[allow(dead_code)] // Used in tests only after kanban coordination moved to kanban panel
-const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 
 /// The system prompt injected into the Steer mode `ConversationView`. Tells
 /// the curator it is scoped to the swarm MCP server and that the
@@ -510,42 +502,24 @@ struct SpendState {
     hire_error: Option<SharedString>,
 }
 
-/// R2: the browse-mode drill-down state — the swarm roster detail view, the
-/// run-status strip, the add-agent editor, the edit-metadata editors, and the
+/// R2: the browse-mode transient state — the run-status strip and the
 /// pending destructive-action confirmation. Only active in Browse mode.
 struct DetailState {
-    swarm_detail: Option<SwarmDetailView>,
     run_status: Option<RunStatusView>,
-    /// Pending workspace actions awaiting human confirmation (cloud swarms
-    /// only). Fetched when a cloud swarm detail is opened; rendered as a
-    /// review queue below the roster. `None` for local swarms and when no
-    /// detail is open.
-    pending_actions: Option<PendingActionsView>,
-    add_agent_editor: Entity<Editor>,
-    /// Editors for the edit-metadata form (local swarms only). Reused across
-    /// opens; populated from the loaded swarm when edit mode is entered.
-    edit_name_editor: Entity<Editor>,
-    edit_mission_editor: Entity<Editor>,
-    /// A destructive action awaiting explicit confirmation (delete swarm,
-    /// remove/fire agent). When `Some`, the detail view renders a
-    /// confirmation banner with Confirm / Cancel buttons instead of firing
-    /// immediately.
+    /// A destructive action awaiting explicit confirmation (delete swarm).
+    /// When `Some`, the browse list renders a confirmation banner with
+    /// Confirm / Cancel buttons instead of firing immediately.
     pending_destructive: Option<DestructiveAction>,
 }
 
 /// A destructive action pending operator confirmation. The two-step pattern
-/// prevents accidental irreversible ops (delete swarm, fire/remove agent).
+/// prevents accidental irreversible ops (delete swarm).
 #[derive(Clone, Debug)]
 enum DestructiveAction {
     DeleteSwarm {
         swarm_id: String,
         source: AgentSource,
         name: String,
-    },
-    RemoveAgent {
-        swarm_id: String,
-        agent_id: String,
-        source: AgentSource,
     },
 }
 
@@ -688,59 +662,6 @@ pub(crate) struct PendingPublish {
     failing_checks: Vec<String>,
 }
 
-/// One agent row in a swarm's roster (drill-down view, item 4).
-#[derive(Clone, Debug)]
-pub(crate) struct SwarmRosterAgent {
-    agent_id: String,
-    agent_type: String,
-    description: String,
-    /// Port labels this agent accepts (typed inputs). Empty when the backend
-    /// does not carry them (local rosters are ids-only until enriched;
-    /// ABW rosters may omit the field).
-    accepts: Vec<String>,
-    /// Port labels this agent produces (typed outputs).
-    produces: Vec<String>,
-}
-
-/// The swarm roster drill-down: replaces the browse list while open.
-#[derive(Clone, Debug)]
-struct SwarmDetailView {
-    workspace_id: String,
-    name: String,
-    /// The swarm's mission / description. Editable for local swarms via
-    /// `swarm_update_local_swarm`; read-only for ABW swarms (ABW has no
-    /// metadata-edit endpoint — PATCH /workspaces/{id} is 405).
-    mission: String,
-    /// Which substrate this swarm lives on. Drives the add/remove affordances:
-    /// `Local` uses `swarm_add_agent_local` / `swarm_remove_agent_local` /
-    /// `swarm_delete_local_swarm`; `Cloud` uses the consent-gated `swarm_hire`
-    /// and `swarm_fire`.
-    source: AgentSource,
-    /// Number of hired agents, copied from `SwarmCard.agent_count` when the
-    /// detail is opened. `None` for local swarms (no ABW budget signal) and
-    /// when the ABW workspace payload omits the field — rendered as "-",
-    /// never a fabricated "0 agents" (mirrors the `SwarmCard.agent_count`
-    /// contract at `parse.rs:75-77`).
-    agent_count: Option<u64>,
-    /// Total workspace budget (credits), copied from `SwarmCard.budget`.
-    /// `None` for local swarms and when ABW omits the field.
-    budget: Option<u64>,
-    /// Remaining workspace budget (credits), copied from `SwarmCard.remaining`.
-    /// `None` for local swarms and when ABW omits the field.
-    remaining: Option<u64>,
-    loading: bool,
-    error: Option<SharedString>,
-    agents: Vec<SwarmRosterAgent>,
-    /// Whether the metadata edit form (name + mission) is open. Local-only —
-    /// ABW has no metadata-edit endpoint. Toggled by the "Edit" button in
-    /// the detail header.
-    editing_metadata: bool,
-    /// The ABW workspace id this local swarm is synced with. `None` for
-    /// local-only and cloud-only swarms. Shown as a "synced with" badge in
-    /// the detail header.
-    cloud_workspace_id: Option<String>,
-}
-
 /// A swarm's recent run status (ABW workspace messages). Rendered as a
 /// dismissible strip above the browse list.
 #[derive(Clone, Debug)]
@@ -750,19 +671,6 @@ struct RunStatusView {
     error: Option<SharedString>,
     /// Rendered message lines (sender + content), newest first.
     messages: Vec<String>,
-}
-
-/// Pending workspace actions awaiting human confirmation (fermi v0.10.15+
-/// action protocol). Fetched when a cloud swarm detail is opened; rendered as
-/// a review queue with Accept / Reject buttons. Local swarms have no action
-/// protocol (no ABW backend), so this is `None` for local swarms.
-#[derive(Clone, Debug)]
-struct PendingActionsView {
-    workspace_id: String,
-    loading: bool,
-    error: Option<SharedString>,
-    /// Pending actions, newest first.
-    actions: Vec<crate::parse::PendingActionInfo>,
 }
 
 impl SwarmPanel {
@@ -850,21 +758,6 @@ impl SwarmPanel {
             // create target on first visit and the context is lost again.
             author.create_target = active_backend;
             compose.create_target = active_backend;
-            let swarm_add_agent_editor = cx.new(|cx| {
-                let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("Agent id to add to this swarm", window, cx);
-                e
-            });
-            let edit_name_editor = cx.new(|cx| {
-                let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("Swarm name", window, cx);
-                e
-            });
-            let edit_mission_editor = cx.new(|cx| {
-                let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("Mission", window, cx);
-                e
-            });
 
             let panel_handle: gpui::WeakEntity<SwarmPanel> = cx.weak_entity();
             let thread_picker = cx.new(|cx| {
@@ -918,12 +811,7 @@ impl SwarmPanel {
                     hire_error: None,
                 },
                 detail: DetailState {
-                    swarm_detail: None,
                     run_status: None,
-                    pending_actions: None,
-                    add_agent_editor: swarm_add_agent_editor,
-                    edit_name_editor,
-                    edit_mission_editor,
                     pending_destructive: None,
                 },
                 ai_assist: AiAssistState::default(),
@@ -1216,6 +1104,102 @@ impl SwarmPanel {
 
     /// The dismissible run-status strip (item 3): recent ABW workspace
     /// messages for the requested swarm.
+    /// Render the confirmation banner for a pending destructive action.
+    /// Shows the action description, any active-run warning (for ABW swarm
+    /// deletes), and Confirm / Cancel buttons. Confirm dispatches to
+    /// `confirm_destructive`; Cancel dispatches to `cancel_destructive`.
+    fn render_destructive_confirmation(
+        &self,
+        action: &DestructiveAction,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let in_flight = self.spend.in_flight.is_some();
+        let (warning_text, confirm_label, key) = match action {
+            DestructiveAction::DeleteSwarm { swarm_id, name, .. } => {
+                let run_warning = self
+                    .detail
+                    .run_status
+                    .as_ref()
+                    .filter(|rs| !rs.messages.is_empty() && rs.error.is_none())
+                    .map(|rs| {
+                        format!(
+                            " ⚠ {} active run message(s) — deleting will lose this history.",
+                            rs.messages.len()
+                        )
+                    })
+                    .unwrap_or_default();
+                (
+                    format!(
+                        "Delete swarm '{name}'? This is irreversible — the swarm and its roster will be removed.{run_warning}"
+                    ),
+                    "Confirm Delete",
+                    swarm_id.clone(),
+                )
+            }
+        };
+        v_flex()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_sm()
+            .child(
+                Label::new(warning_text)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Warning),
+            )
+            // Active-run messages (ABW swarm delete only). Surface the
+            // recent messages so the operator can see what will be lost.
+            .when_some(
+                self.detail.run_status.as_ref().and_then(|rs| {
+                    if rs.messages.is_empty() || rs.error.is_some() {
+                        None
+                    } else {
+                        Some(rs.messages.clone())
+                    }
+                }),
+                |this, messages| {
+                    this.child(
+                        v_flex()
+                            .gap_0p5()
+                            .children(messages.iter().take(3).map(|msg| {
+                                Label::new(msg.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .truncate()
+                            })),
+                    )
+                },
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(
+                            SharedString::from(format!("confirm-destructive-{key}")),
+                            confirm_label,
+                        )
+                        .style(ButtonStyle::Filled)
+                        .label_size(LabelSize::XSmall)
+                        .disabled(in_flight)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_destructive(cx);
+                        })),
+                    )
+                    .child(
+                        Button::new(
+                            SharedString::from(format!("cancel-destructive-{key}")),
+                            "Cancel",
+                        )
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::XSmall)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.cancel_destructive(cx);
+                        })),
+                    ),
+            )
+    }
+
     fn render_run_status_strip(
         &self,
         status: &RunStatusView,
@@ -2006,17 +1990,21 @@ impl Render for SwarmPanel {
                             }
                         }
                         PanelMode::Browse => {
-                            // Run-status strip (dismissible) above the list.
+                            // Run-status strip (dismissible) and the destructive
+                            // confirmation banner, above the list.
                             let content = this
                                 .when_some(self.detail.run_status.clone(), |this, status| {
                                     this.child(self.render_run_status_strip(&status, cx))
                                 })
-                                .when_some(self.detail.swarm_detail.clone(), |this, detail| {
-                                    this.child(self.render_swarm_detail(&detail, cx))
-                                });
-                            if self.detail.swarm_detail.is_some() {
-                                content.into_any_element()
-                            } else {
+                                .when_some(
+                                    self.detail.pending_destructive.clone(),
+                                    |this, action| {
+                                        this.child(
+                                            self.render_destructive_confirmation(&action, cx),
+                                        )
+                                    },
+                                );
+                            {
                                 let count = self.filtered_entry_indices.len();
                                 if count == 0 {
                                     content.child(self.render_empty_state(cx)).into_any_element()
@@ -2335,8 +2323,8 @@ mod tests {
         );
     }
 
-    // The pure parsing helpers (extract_wallet_balance, parse_swarm_roster,
-    // parse_run_status_messages, extract_agent_mentions, staleness_chip,
+    // The pure parsing helpers (extract_wallet_balance,
+    // parse_run_status_messages, extract_agent_mentions,
     // parse_publish_checks) and their unit tests live in `parse::tests` —
     // extracted for cohesion. The tests below cover the panel-level wiring
     // (envelope + typed-deserialize paths, the steer system prompt, and the
@@ -2345,9 +2333,9 @@ mod tests {
 
     #[test]
     fn workspace_list_parses_verified_field_names() {
-        // The verified `/workspaces` shape (live, 2026-08-02) carries
-        // agent_count / workspace_budget / workspace_remaining under exactly
-        // these names — pin the parse contract so a future rename is caught.
+        // The verified `/workspaces` shape (live, 2026-08-02) carries id /
+        // name / description under exactly these names — pin the parse
+        // contract so a future rename is caught.
         let json = serde_json::json!({
             "workspaces": [{
                 "id": "ws-1",
@@ -2356,18 +2344,13 @@ mod tests {
                 "slug": "alpha",
                 "origin": "create",
                 "owner_id": "o1",
-                "agent_count": 3,
-                "workspace_budget": 500,
-                "workspace_remaining": 200,
             }]
         });
         let parsed: WorkspaceListResponse = serde_json::from_value(json).expect("parse");
         assert_eq!(parsed.workspaces.len(), 1);
         let w = &parsed.workspaces[0];
         assert_eq!(w.id.as_deref(), Some("ws-1"));
-        assert_eq!(w.agent_count, Some(3));
-        assert_eq!(w.workspace_budget, Some(500));
-        assert_eq!(w.workspace_remaining, Some(200));
+        assert_eq!(w.name.as_deref(), Some("alpha"));
     }
 
     // The `fetch_all` parse path was broken before the `parse_tool_response`
@@ -2378,7 +2361,7 @@ mod tests {
     // envelope, then deserialize the inner content into the typed response.
     #[test]
     fn fetch_all_parse_path_unwraps_envelope_before_typed_deserialize() {
-        let out = r#"{"content":{"count":1,"agents":[{"agent_id":"sensor_advisor","agent_type":"research","description":"d","author":"a","execution_stats":{"total_executions":5}}]}}"#;
+        let out = r#"{"content":{"count":1,"agents":[{"agent_id":"sensor_advisor","agent_type":"research","description":"d","author":"a"}]}}"#;
         let parsed = parse_tool_response(out).expect("envelope");
         let response: AgentListResponse =
             serde_json::from_value(parsed).expect("inner content deserializes");
@@ -2386,13 +2369,6 @@ mod tests {
         assert_eq!(
             response.agents[0].agent_id.as_deref(),
             Some("sensor_advisor")
-        );
-        assert_eq!(
-            response.agents[0]
-                .execution_stats
-                .as_ref()
-                .and_then(|s| s.total_executions),
-            Some(5)
         );
     }
 
@@ -2437,13 +2413,12 @@ mod tests {
     // The workspace parse path mirrors the agents path.
     #[test]
     fn fetch_all_parse_path_unwraps_envelope_for_workspaces() {
-        let out = r#"{"content":{"workspaces":[{"id":"ws1","name":"Team","agent_count":3,"workspace_budget":100,"workspace_remaining":40}]}}"#;
+        let out = r#"{"content":{"workspaces":[{"id":"ws1","name":"Team"}]}}"#;
         let parsed = parse_tool_response(out).expect("envelope");
         let response: WorkspaceListResponse =
             serde_json::from_value(parsed).expect("inner content deserializes");
         assert_eq!(response.workspaces.len(), 1);
         assert_eq!(response.workspaces[0].id.as_deref(), Some("ws1"));
-        assert_eq!(response.workspaces[0].agent_count, Some(3));
     }
 
     // The swarm server returns tool errors as an Ok string carrying the
@@ -2872,7 +2847,7 @@ mod tests {
         // `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
         // adding/removing a server tool — a rename in the kanban server must be
         // reflected here so the steer prompt never advertises a stale name.
-        assert_eq!(KANBAN_SERVER, "kata-kanban");
+        assert_eq!(hkask_types::kanban_wire::KANBAN_SERVER_NAME, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
         // the const is caught. 25 after the rJoule budget removal
@@ -3058,8 +3033,6 @@ mod tests {
             agent_type: "worker".into(),
             description: "desc".into(),
             author: String::new(),
-            executions: 0,
-            updated_at: None,
             display_name: String::new(),
             source: AgentSource::Cloud,
         });
@@ -3069,9 +3042,6 @@ mod tests {
             description: "desc".into(),
             display_name: String::new(),
             cloud_swarm_id: Some("efra_communication".into()),
-            accepts: vec![],
-            produces: vec![],
-            execution_stats: None,
         };
 
         let mut entries = vec![cloud];
@@ -3102,39 +3072,14 @@ mod tests {
             source: AgentSource::Local,
             name: "Team Alpha".into(),
         };
-        match &action {
-            DestructiveAction::DeleteSwarm {
-                swarm_id,
-                source,
-                name,
-            } => {
-                assert_eq!(swarm_id, "team_alpha");
-                assert_eq!(*source, AgentSource::Local);
-                assert_eq!(name, "Team Alpha");
-            }
-            _ => panic!("expected DeleteSwarm"),
-        }
-    }
-
-    #[test]
-    fn destructive_action_remove_agent_carries_source() {
-        let action = DestructiveAction::RemoveAgent {
-            swarm_id: "ws_123".into(),
-            agent_id: "analyst".into(),
-            source: AgentSource::Cloud,
-        };
-        match &action {
-            DestructiveAction::RemoveAgent {
-                swarm_id,
-                agent_id,
-                source,
-            } => {
-                assert_eq!(swarm_id, "ws_123");
-                assert_eq!(agent_id, "analyst");
-                assert_eq!(*source, AgentSource::Cloud);
-            }
-            _ => panic!("expected RemoveAgent"),
-        }
+        let DestructiveAction::DeleteSwarm {
+            swarm_id,
+            source,
+            name,
+        } = &action;
+        assert_eq!(swarm_id, "team_alpha");
+        assert_eq!(*source, AgentSource::Local);
+        assert_eq!(name, "Team Alpha");
     }
 
     #[test]
@@ -3175,17 +3120,12 @@ mod tests {
             id: "synced_swarm".into(),
             name: "Synced".into(),
             description: "mission".into(),
-            agent_count: Some(3),
-            budget: None,
-            remaining: None,
             source: AgentSource::Synced,
-            cloud_workspace_id: Some("ws_abcd".into()),
         });
 
-        // Verify the source is Synced and the cloud link is present.
+        // Verify the source is Synced.
         if let SwarmEntry::Swarm(card) = &synced {
             assert_eq!(card.source, AgentSource::Synced);
-            assert_eq!(card.cloud_workspace_id.as_deref(), Some("ws_abcd"));
         } else {
             panic!("expected a swarm entry");
         }

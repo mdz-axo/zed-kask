@@ -27,16 +27,12 @@ struct KalshiEvent {
     event_ticker: String,
     series_ticker: String,
     title: String,
-    #[allow(dead_code)]
-    sub_title: String,
     category: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct GammaTag {
     label: String,
-    #[allow(dead_code)]
-    slug: String,
 }
 
 #[derive(Debug, Deserialize, Default)]

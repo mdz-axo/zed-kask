@@ -1,7 +1,7 @@
 //! The swarm-composition surface: form state, editor construction, the
 //! `render_compose` renderer (including the Xaman Ek composition
 //! consultant), the compose-form entry points (`load_swarm_into_compose`,
-//! `clone_swarm_to_compose`, `reset_compose_form_for_create`), and the
+//! `reset_compose_form_for_create`), and the
 //! `create_swarm` submit flow. Extracted from `swarm_panel.rs` — the
 //! renderer and the flows stay methods on `SwarmPanel` (they mutate panel
 //! state via `cx.spawn` + `this.update`); this module owns the form struct,
@@ -429,8 +429,6 @@ impl SwarmPanel {
             .agents
             .update(cx, |e, cx| e.set_text(String::new(), window, cx));
 
-        // Close any open detail view and switch to Compose mode.
-        self.close_swarm_detail(cx);
         self.set_mode(crate::PanelMode::Compose, window, cx);
 
         // Fetch the swarm's roster to populate the agents field.
@@ -519,40 +517,6 @@ impl SwarmPanel {
             }
         })
         .detach();
-    }
-
-    /// Copy an ABW swarm by pre-filling the Compose form with the source
-    /// swarm's name, mission, and roster, then navigating to Compose mode.
-    /// The operator reviews and completes the create (which handles consent
-    /// and credit cost). This avoids inventing an ABW clone endpoint — clone
-    /// = read + create, using existing tools. Missing agents surface as hire
-    /// failures during the create flow.
-    pub(crate) fn clone_swarm_to_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(detail) = self.detail.swarm_detail.as_ref() else {
-            return;
-        };
-        let name = format!("{} (copy)", detail.name);
-        let mission = detail.mission.clone();
-        let agents = detail
-            .agents
-            .iter()
-            .map(|a| a.agent_id.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.compose
-            .name
-            .update(cx, |e, cx| e.set_text(name, window, cx));
-        self.compose
-            .mission
-            .update(cx, |e, cx| e.set_text(mission, window, cx));
-        self.compose
-            .agents
-            .update(cx, |e, cx| e.set_text(agents, window, cx));
-        self.compose.create_target = crate::CreateTarget::Cloud;
-        self.compose.status = Some("Review and create to copy this ABW swarm.".into());
-        self.close_swarm_detail(cx);
-        self.set_mode(crate::PanelMode::Compose, window, cx);
-        cx.notify();
     }
 
     /// Reset the compose form to a fresh create state (clear

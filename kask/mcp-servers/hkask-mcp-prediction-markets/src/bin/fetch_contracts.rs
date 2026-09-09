@@ -17,16 +17,12 @@ struct KalshiEvent {
     event_ticker: String,
     series_ticker: String,
     title: String,
-    #[allow(dead_code)]
-    sub_title: String,
     category: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct GammaTag {
     label: String,
-    #[allow(dead_code)]
-    slug: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -46,27 +42,15 @@ struct GammaMarketEmbedded {
     id: String,
     question: String,
     condition_id: String,
-    #[allow(dead_code)]
-    slug: String,
-    #[allow(dead_code)]
-    description: String,
     end_date: String,
-    #[allow(dead_code)]
-    outcomes: String,
-    #[allow(dead_code)]
-    outcome_prices: String,
     active: bool,
     closed: bool,
-    #[allow(dead_code)]
-    volume: String,
     volume_num: f64,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
     last_trade_price: Option<f64>,
     spread: Option<f64>,
     uma_resolution_status: String,
-    #[allow(dead_code)]
-    updated_at: String,
 }
 
 #[tokio::main]

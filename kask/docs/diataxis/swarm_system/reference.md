@@ -529,7 +529,7 @@ no budget fields (removed with the local budget system).
 | `create_agent` / `create_swarm` / `ask_xaman` | `crates/swarm_panel/src/swarm_panel.rs:1398` / `:1596` / `:1885` |
 | `fetch_all`        | `crates/swarm_panel/src/fetch.rs:21`           |
 | `clone_to_local` / `push_to_cloud_swarm` | `crates/swarm_panel/src/fetch.rs:586` / `:629` |
-| `open_swarm_detail` / `fire_agent` | `crates/swarm_panel/src/swarm_ops.rs:30` / `:502` |
+| `request_delete_swarm` / `confirm_destructive` | `crates/swarm_panel/src/swarm_ops.rs` |
 | `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/hire.rs:21` / `:123` |
 | `begin_publish` / `confirm_publish` | `crates/swarm_panel/src/hire.rs:290` / `:343` |
 | `parse::SWARM_TOOLS` (re-export of `TOOL_NAMES`) | `crates/swarm_panel/src/parse.rs:324-331` |

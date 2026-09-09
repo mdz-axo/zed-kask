@@ -218,6 +218,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
             "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
             "HKASK_MEMORY_FORGETTING_DAYS",
+            // Non-thinking model for the distillation pass's lesson
+            // extraction — read by DistillationConfig::from_env in
+            // distillation.rs. The port default model is
+            // reasoning-mandatory and rejects the pass's non-thinking
+            // parameters; without this entry the pass fails per-thread
+            // on every generate (observed live 2026-09-09).
+            "HKASK_CLASSIFIER_MODEL",
             // Decay constant S (spec §7) — emitted by `mcp_env()` from
             // `kask.memory.memory_life_days` when it differs from the default.
             // Read by `memory_life_days_from_env` at `open_curator_stores`,

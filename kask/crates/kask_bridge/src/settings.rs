@@ -603,8 +603,12 @@ pub struct KaskModelsSettings {
     /// `embedding_model` setting, then to the kask default.
     pub embedding_model: String,
 
-    /// Classifier model for guard/regulation classification tasks
-    /// (provider-prefixed). When empty, falls back to the kask default.
+    /// Classifier model for guard/regulation classification tasks and
+    /// the curator's memory-distillation lesson extraction
+    /// (provider-prefixed). Both are non-thinking workloads — output
+    /// tokens, not reasoning tokens — so the model must accept
+    /// `reasoning_effort: "none"`. When empty, falls back to the kask
+    /// default.
     pub classifier_model: String,
 
     /// OCR vision model for scanned document OCR (provider-prefixed).
