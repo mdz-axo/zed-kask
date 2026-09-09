@@ -6,7 +6,7 @@ description: "Convergent code review of a change against its stated spec. Multi-
 
 # Code Review
 
-Convergent code review of a change against its stated spec. Grounded in Fagan formal inspection (Planning → defect detection → defect collection → follow-up), modern code review (Bacchelli & Bird 2013; Sadowski & Stolee 2015), the PERFECT framework (Bastrich), and Ousterhout's "A Philosophy of Software Design". Decomposed into phased templates: Scope (real diff + Fagan sizing + critical-path identification + change model via Good Regulator + prior-review feedback) → Perspectives (multi-axis DETECTION across PERFECT-ordered axes intersected with the addyosmani five-axis, with optional delegation to kali-audit / bug-hunt / refactor-architecture / deep-module / essentialist) → Adjudicate (defect COLLECTION with pragmatic-semantics IS/OUGHT + epistemic mode + provenance + constraint-force severity + falsifier + grill-me self-challenge + file:line no-fiction citation) → Report (verdict + named structural remedies + coverage honesty + lessons_learned / next_review_focus loop closure) → Implement (optional, caller-gated Act phase via fix_mode). Reasoning patterns from pragmatic-semantics, pragmatic-cybernetics, falsifiability, hypothesis-framer, grill-me, and essentialist are embedded as inline prompt instructions in the adjudicate and perspectives phases. Comprehensive-by-default; variety via delegation, not toggleable modes (essentialist deletion test). Emits Regulation spans (`reg.codereview.*`) for observability. Capability-gated.
+Convergent code review of a change against its stated spec. Grounded in Fagan formal inspection (Planning → defect detection → defect collection → follow-up), modern code review (Bacchelli & Bird 2013; Sadowski & Stolee 2015), the PERFECT framework (Bastrich), and Ousterhout's "A Philosophy of Software Design". Decomposed into phased templates: Scope (real diff + Fagan sizing + critical-path identification + change model via Good Regulator + prior-review feedback) → Perspectives (multi-axis DETECTION across PERFECT-ordered axes intersected with the addyosmani five-axis, with optional delegation to bug-hunt / refactor-architecture / deep-module / essentialist) → Adjudicate (defect COLLECTION with pragmatic-semantics IS/OUGHT + epistemic mode + provenance + constraint-force severity + falsifier + grill-me self-challenge + file:line no-fiction citation) → Report (verdict + named structural remedies + coverage honesty + lessons_learned / next_review_focus loop closure) → Implement (optional, caller-gated Act phase via fix_mode). Reasoning patterns from pragmatic-semantics, pragmatic-cybernetics, falsifiability, hypothesis-framer, grill-me, and essentialist are embedded as inline prompt instructions in the adjudicate and perspectives phases. Comprehensive-by-default; variety via delegation, not toggleable modes (essentialist deletion test). Emits Regulation spans (`reg.codereview.*`) for observability. Capability-gated.
 
 ## When to Use
 
@@ -15,9 +15,16 @@ Convergent code review of a change against its stated spec. Grounded in Fagan fo
 - When evaluating self-authored, AI-generated, or another agent's code (AI code needs more scrutiny, not less).
 - When you need severity grounded in constraint force (Prohibition / Guideline / Preference / Informational), not ad-hoc importance.
 - When you need every finding falsifiable and cited with file:line + verbatim evidence (no-fiction; anti-hallucination for AI review).
-- When you want optional delegation to kali-audit (security), bug-hunt (deep defects), or refactor-architecture / deep-module / essentialist (architecture) instead of reimplementing those lenses.
+- When you want optional delegation to bug-hunt (deep defects) or refactor-architecture / deep-module / essentialist (architecture) instead of reimplementing those lenses.
 - When you want an optional, consent-gated implement phase (`fix_mode`) that applies the reviewed fixes.
 - When iterating a review to convergence (blocker_delta stabilization) with `next_review_focus` feedback-loop closure across passes.
+
+## When NOT to Use
+
+- A change with no stated spec — `change_spec` is required and enforced at the boundary; without it there is nothing to judge the change against.
+- Security-only deep audits — the inline pass covers the security basics; there is no dedicated security delegate (the retired kali-audit's surface is inline now).
+- Style-only preference feedback — severity derives from constraint force; taste findings never reach Blocker.
+- Verifying that the code runs — this is static review of a diff; it does not execute the change.
 
 ## Context parameters (skill-tool `context`)
 
@@ -28,7 +35,6 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 | `change_spec` | string | (required) | The stated spec/intent the change implements; the review judges the change against this. |
 | `diff_base` | string | (required) | Git ref to diff against (`main`, `origin/main`, a SHA). Scope computes `git diff <diff_base>...HEAD` from real output. |
 | `focus` | array | `[]` (comprehensive) | Axes to restrict the review to (empty = all). Security always gets a basic pass. |
-| `delegate_security` | bool | `false` | Emit a delegation instruction for kali-audit (security depth). |
 | `delegate_bug_hunt` | bool | `false` | Emit a delegation instruction for bug-hunt (deep defects). |
 | `delegate_architecture` | bool | `false` | Emit a delegation instruction for refactor-architecture / deep-module / essentialist (architecture). |
 | `fix_mode` | string | `"none"` | `none` = review-only. `blockers` / `should_fix` / `all` enable the implement phase (Act); a non-`none` value is consent to modify code. |
@@ -56,7 +62,7 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 2. Walk the diff top-to-bottom across the PERFECT-ordered axes (Purpose → Edge cases → Reliability → Form → Evidence → Clarity → Taste) intersected with the addyosmani five-axis (correctness, readability, architecture, security, performance). If `focus` is non-empty, run only those (plus a basic security pass); if empty, comprehensive.
 3. DETECTION ONLY — do NOT assign verdicts, severity, confidence, or falsifiers (that is the adjudicate phase; Sauer detection/collection separation).
 4. For each raw finding, record `axis`, `location.file`, `location.line_approx`, a verbatim `evidence` snippet (≤5 lines) read from the cited location, a one-line `observation` (no verdict), and `source`. Uncited observations are DROPPED, not recorded (no-fiction).
-5. For each enabled delegate flag, emit a delegation instruction (kali-audit / bug-hunt / refactor-architecture / deep-module / essentialist) for the agent to run between this step and adjudicate; the inline pass always covers the basics, delegation adds depth. When `probe_findings` is present, fold those returned findings into `raw_findings` with `source` set (do not double-count or re-verdict them).
+5. For each enabled delegate flag, emit a delegation instruction (bug-hunt / refactor-architecture / deep-module / essentialist) for the agent to run between this step and adjudicate; the inline pass always covers the basics, delegation adds depth. When `probe_findings` is present, fold those returned findings into `raw_findings` with `source` set (do not double-count or re-verdict them).
 6. Lead with leverage (purpose/security/structural before cosmetic nits). Respond with `raw_findings`, `delegated_axes`, `delegate_instructions`.
 
 ### code-review-adjudicate

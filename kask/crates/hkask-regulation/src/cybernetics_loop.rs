@@ -761,11 +761,9 @@ impl CyberneticsLoop {
         if let Some(sink) = &self.alert_escalation_sink {
             sink.reconcile_conditions(&signals);
         }
-        // Emit a runtime-posture signal span so the runtime-posture-monitor
-        // skill (and any downstream observer) has a production telemetry
-        // substrate even when the skill cascade is not explicitly invoked.
-        // The namespace `reg.runtime.select` is registered in
-        // CANONICAL_NAMESPACES; without this emitter it would be skill-only.
+        // Emit a runtime-posture signal span so any downstream observer has a
+        // production telemetry substrate. The namespace `reg.runtime.select`
+        // is registered in CANONICAL_NAMESPACES; this emitter keeps it live.
         tracing::info!(
             target: "reg.runtime.select",
             signal_count = signals.len(),

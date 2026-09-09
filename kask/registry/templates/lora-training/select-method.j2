@@ -41,7 +41,7 @@ thinking_budget = "full"
 {# Applies deterministic 8-gate refinement — NOT a search #}
 {# Emits `reg.lora.select` Regulation span (P9) — namespace registered in CANONICAL_NAMESPACES #}
 {# Every recommendation includes a citation (arXiv paper section or PEFT docs section) #}
-{# Relationships: complements kali-audit (security surface) and tdd (training-loop code) — zero overlap #}
+{# Relationships: complements tdd (training-loop code) — zero overlap; security review is out of scope #}
 
 INPUT: training_config_path = {{ training_config_path | default("REQUIRED") }}
 INPUT: dataset_path = {{ dataset_path | default("undetermined") }} (path to the actual dataset file for profiling — optional)
@@ -596,7 +596,7 @@ CONSTRAINTS (P1-P12, P5 minimalism, P8 evidence integrity, P12 host):
   explicitly requests dynamic rank allocation (arXiv:2303.10512).
 - Do NOT recommend Prefix Tuning for production by default; preserve it when
   explicitly required and report its inference trade-off.
-- `kali-audit` owns security findings; this skill owns training-config
+- Security findings are out of scope; this skill owns training-config
   recommendation and contract evidence.
 - `tdd` owns training-loop code correctness; this skill governs the config
   consumed by that loop.

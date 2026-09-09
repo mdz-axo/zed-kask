@@ -6,7 +6,7 @@ description: "Exploratory bug hunting: explores a target crate for threats to us
 
 # Bug Hunt
 
-Bug hunting: explores a target crate for threats to user-defined quality. Applies Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters. Decomposed into phased templates: Charter (with Good Regulator crate modeling + prior-expedition feedback) → Probe (with dynamic pattern expansion + missing-tests detection + algedonic escalation) → Oracle (with reproducibility separated from confidence + file:line citation enforcement) → Taxonomize → Report (with lessons_learned + pattern_signatures for loop closure) → Convergence (with honest process_stabilization + coverage_estimate sub-metrics + next_charter_focus). Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic classification + provenance), pragmatic-cybernetics (feedback loop analysis + Good Regulator checks + variety engineering), diagnose, grill-me, and adversarial-red-team are embedded as inline prompt instructions in the oracle phase. Emits Regulation spans (reg.bughunt.*) for observability (P12).
+Bug hunting: explores a target crate for threats to user-defined quality. Applies Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters. Decomposed into phased templates: Charter (with Good Regulator crate modeling + prior-expedition feedback) → Probe (with dynamic pattern expansion + missing-tests detection + algedonic escalation) → Oracle (with reproducibility separated from confidence + file:line citation enforcement) → Taxonomize → Report (with lessons_learned + pattern_signatures for loop closure) → Convergence (with honest process_stabilization + coverage_estimate sub-metrics + next_charter_focus). Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic classification + provenance), pragmatic-cybernetics (feedback loop analysis + Good Regulator checks + variety engineering), diagnose, and grill-me are embedded as inline prompt instructions in the oracle phase. Emits Regulation spans (reg.bughunt.*) for observability (P12).
 
 
 ## When to Use
@@ -20,7 +20,12 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 - When needing missing-tests detection (Weinberg: absent tests = quality threat) and algedonic escalation for critical findings.
 - When needing oracle verdicts that separate reproducibility from confidence and enforce file:line citation (no-fiction).
 - When needing honest convergence metrics: process_stabilization + coverage_estimate, with next_charter_focus emission.
-- When needing to run a legacy monolithic expedition template (v0.30.0 backward compatibility).
+
+## When NOT to Use
+
+- Verifying a specific known bug — use `diagnose` (reproduce → hypothesize → instrument → fix); bug-hunt is exploratory and charter-driven.
+- Reviewing a change against its stated spec — use `code-review`.
+- Proving the absence of bugs — an expedition reports what it found with honest coverage estimates; a clean expedition is a coverage statement, not a proof.
 
 ## Instructions
 
@@ -81,14 +86,6 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 7. Write the expedition report to the trace filesystem as `bug-hunt-report.json` in the run trace dir. The report is the durable record of the expedition — later expeditions consume it via `prior_expedition`, and an operator (or a future suite-level proposer) can read it to target test gaps.
 8. Respond with the complete expedition report as JSON.
 
-### bug-hunt-expedition (legacy)
-
-1. Legacy monolithic expedition template (v0.30.0). Retained for backward compatibility — prefer the decomposed pipeline via the bug-hunt manifest.
-2. Divergence from the decomposed pipeline (documented in-place): no `crate_model` (Good Regulator missing), no `prior_expedition` consumption (feedback loop not closed), no dynamic pattern expansion (Ashby deficit), no missing-tests detection, no algedonic escalation, no reproducibility axis (confidence conflated with reproducibility), no file:line citation enforcement (no-fiction is voluntary), no `lessons_learned`/`pattern_signatures` outputs, no composite convergence metric (saturation-only).
-3. Use only when a single-call monolithic expedition is explicitly required.
-4. Phases: Charter (Hendrickson + Bach HTSM) → Probe (file:read, code:search, terminal) → Oracle (Weinberg + pragmatic-semantics + grill-me) → Taxonomize (Beizer + severity + pattern signature) → Report (JSON schema).
-5. Do not fabricate bugs; read real code and run real commands.
-
 ## Relationship to Other Skills
 
 - **tdd**: systematically verifies known properties of a single function (property/contract tests). Bug-hunt explores for unknown bugs across a crate. Bug-hunt's `pattern_signatures` and confirmed findings are natural inputs to tdd's gap-check phase — a found bug becomes a regression test.
@@ -103,7 +100,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 | `bug-hunt-oracle.j2` | Apply Weinberg oracle (bug = threat to user-defined quality), pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to raw probe findings. v0.31.0: reproducibility is a separate axis from confidence (a high-confidence low-reproducibility finding stays POTENTIAL_BUG, not OBSERVATION), and findings without file:line citation are rejected (no-fiction enforcement). Produces tiered verdicts (BUG / POTENTIAL_BUG / OBSERVATION) with confidence and reproducibility scores. |
 | `bug-hunt-taxonomize.j2` | Classify evaluated findings into Beizer taxonomy (requirements, structural, data, coding, interface, integration, timing, configuration) and assign severity ratings (CRITICAL, HIGH, MEDIUM, LOW). Produces pattern signatures for detecting similar bugs elsewhere. |
 | `bug-hunt-report.j2` | Compile charter, oracle, and taxonomy results into a structured JSON bug report. Consolidates findings, computes summary statistics, and produces the final expedition report. v0.31.0: emits lessons_learned and pattern_signatures fields that the next expedition's charter consumes to close the feedback loop. |
-| `bug-hunt-expedition.j2` | Legacy monolithic expedition template (v0.30.0). Retained for backward compatibility. Prefer the decomposed pipeline: charter → probe → oracle → taxonomize → report → convergence-check. v0.31.0: divergence from the decomposed pipeline is now documented in the template header — missing crate_model, prior_expedition consumption, dynamic pattern expansion, missing-tests detection, algedonic escalation, reproducibility axis, citation enforcement, lessons_learned/pattern_signatures outputs, and composite convergence metric. |
+
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
@@ -114,6 +111,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `bug-hunt-oracle.j2`: Public. Every finding must carry IS/OUGHT, epistemic mode, provenance, AND reproducibility labels. Every finding must cite a concrete file:line and include a verbatim code snippet (≤5 lines); uncited findings are rejected, not silently dropped. Reproducibility does NOT downgrade confidence. If confidence < 0.60, the finding is an OBSERVATION.
 - `bug-hunt-taxonomize.j2`: Public. Every finding has exactly one Beizer category. Severity must be justified by evidence. Pattern signatures must be concrete (grep-able or structural), not vague. The `reproducibility` field must be preserved from the oracle.
 - `bug-hunt-report.j2`: Public. Each finding must include all required fields. Summary counts must be accurate, including `rejected_findings`. `lessons_learned` must be concrete and actionable; `pattern_signatures` must be derived from actual findings, not fabricated.
-- `bug-hunt-expedition.j2`: Public. Legacy v0.30.0 — divergence from the decomposed pipeline is documented in-place. Use only when a single-call monolithic expedition is explicitly required.
 - **Convergence:** Evaluate whether the iterates have stopped moving after each full iteration. Converged when the signal is stable across 3 iterations. Maximum 10 iterations; escalate if not converged by then. Minimum 2 iterations before declaring convergence.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

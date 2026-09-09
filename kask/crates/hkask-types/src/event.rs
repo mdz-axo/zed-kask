@@ -164,7 +164,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Kata / Skill / Keystore ──
     "reg.kata",
     "reg.keystore",
-    // ── Ledger (governance/rollback failure signals — runtime-posture-monitor visible) ──
+    // ── Ledger (governance/rollback failure signals) ──
     "reg.ledger",
     // ── MCP ──
     "reg.mcp",
@@ -287,14 +287,14 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.supply_chain.probe",
     "reg.supply_chain.report",
     "reg.supply_chain.convergence",
-    // ── Runtime posture (security audit — runtime-posture-monitor skill) ──
+    // ── Runtime posture (cybernetics-loop signal spans) ──
     "reg.runtime",
     "reg.runtime.select",
     "reg.runtime.classify",
     "reg.runtime.regulate",
     "reg.runtime.convergence",
     "reg.runtime.policy",
-    // ── Attack taxonomy (folded into kali-audit as taxonomy_map phase) ──
+    // ── Attack taxonomy (from the retired kali-audit skill's taxonomy_map phase) ──
     "reg.taxonomy",
     "reg.taxonomy.select",
     "reg.taxonomy.map",

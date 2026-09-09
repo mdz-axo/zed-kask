@@ -11,14 +11,20 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis
-: You need to anchor a bug to the code structure before debugging (Phase 0)
+- You need to anchor a bug to the code structure before debugging (Phase 0)
 - You need to build a fast, deterministic feedback loop to reproduce the bug
 - You need to generate multiple falsifiable hypotheses rather than anchoring on the first plausible idea
 - You need to instrument code with targeted probes mapped to specific hypotheses
 - You need to apply a fix with a regression test written *before* the fix, then clean up instrumentation
 - You need to measure whether diagnosis convergence is sufficient to exit the loop
-: The bug spans multiple Dublin Core entity types or PKO procedure paths and needs ontological classification
+- The bug spans multiple Dublin Core entity types or PKO procedure paths and needs ontological classification
 - A code structure gap may be the real finding — the affected entity has no callers or is orphaned
+
+## When NOT to Use
+
+- Simple, obvious bugs — if the fix is a one-liner you already understand, the loop's overhead exceeds its value.
+- Exploratory hunting for unknown bugs — use `bug-hunt`; diagnose starts from a specific symptom.
+- Spec-conformance review of a change — use `code-review`.
 
 ## Instructions
 
@@ -29,6 +35,42 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 3. **Generate falsifiable root-cause hypotheses (delegate to falsifiability).** Avoid single-hypothesis anchoring by delegating this step to the `falsifiability` skill's hypothesize stage — the shared Chamberlin/Platt method diagnose would otherwise reimplement. Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the symptom/bug description, `domain` = "bug diagnosis", `context` = code_context. falsifiability-hypothesize generates 3–7 ranked candidate root causes with forced diversity (≥1 unlikely, ≥1 challenging the obvious explanation, ≥1 embarrassing-if-true), each carrying a Platt-form prediction ("if X is the case, then observation Y under condition Z") and a falsifier; it discards any candidate that cannot be made falsifiable (a vibe) at generation, recording why. Map each returned hypothesis's `prediction` into the bug-debugging form ("if X is the cause, then changing Y will make the bug disappear") and treat its `falsifier` as the falsification condition that step 5's probes must be able to trigger. Rank by likelihood, not by ease of testing. Present the ranked list for user review before testing any hypothesis — the user often has domain knowledge that re-ranks instantly. Set `user_review_requested` to true and do not proceed to instrumenting until the user has reviewed.
 
 4. **Hypothesis invariant check (step 4, call `lisp_eval` — no template, deterministic).** Before instrumenting, call `lisp_eval` to deterministically evaluate four structural invariants on the root-cause hypothesis set: count (3–7), completeness (every hypothesis has `prediction` + `falsifier` keys), diversity (≥2 distinct likelihoods), and mutual exclusivity (no duplicate hypothesis text). Returns a list of defect strings — no LLM round-trip. Step 5 (instrument) is gated on this check: if the check returns defects, re-enter the cycle at step 3 (hypothesize) to repair them before any instrumentation runs.
+
+   Pinned form (live-validated 2026-09-09):
+
+   ```lisp
+   (let ((hyps hypotheses))
+     (begin
+       (define walk-check (lambda (hs defects)
+         (if (is_null hs)
+           defects
+           (walk-check (cdr hs)
+             (append defects
+               (if (is_null (assoc "prediction" (car hs))) (list "missing_prediction") nil)
+               (if (is_null (assoc "falsifier" (car hs))) (list "missing_falsifier") nil))))))
+       (define get-texts (lambda (hs acc)
+         (if (is_null hs) acc (get-texts (cdr hs) (append acc (list (assoc "hypothesis" (car hs))))))))
+       (define get-likes (lambda (hs acc)
+         (if (is_null hs) acc (get-likes (cdr hs) (append acc (list (assoc "likelihood" (car hs))))))))
+       (define has-dupes (lambda (ts)
+         (if (is_null ts) nil
+           (if (member (car ts) (cdr ts)) (list "duplicate_hypothesis_text") (has-dupes (cdr ts))))))
+       (define diff-exists (lambda (ls first)
+         (if (is_null ls) nil
+           (if (string= (car ls) first) (diff-exists (cdr ls) first) (list "diverse")))))
+       (define texts (get-texts hyps nil))
+       (define likes (get-likes hyps nil))
+       (define defects
+         (append
+           (if (or (< (length hyps) 3) (> (length hyps) 7)) (list "count_out_of_range_3_to_7") nil)
+           (walk-check hyps nil)
+           (has-dupes texts)
+           (if (is_null likes) nil
+             (if (is_null (diff-exists (cdr likes) (car likes))) (list "no_likelihood_diversity") nil))))
+       (if (> (length defects) 0) defects 'ok)))
+   ```
+
+   env: `{ "hypotheses": <the ranked candidate root causes from step 3> }`.
 
 5. **Instrument with targeted probes mapped to hypotheses.** Design probes where each probe maps to exactly one hypothesis — no scattergun logging. Change one variable at a time; never test multiple hypotheses simultaneously. Tool preference order: `rust-lldb`/`rust-gdb` breakpoint (one breakpoint beats ten logs) → targeted `tracing::debug!` with unique `[DIAG-xxxx]` prefix → `RUST_LOG` per-module tracing. Never "log everything and grep." Tag every diagnostic log with a unique `[DIAG-xxxx]` prefix so cleanup is a single grep. For performance bugs, use `cargo bench`, `criterion`, or `flamegraph` — measure first, fix second.
 

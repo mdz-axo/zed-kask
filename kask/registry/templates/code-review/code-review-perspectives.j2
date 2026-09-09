@@ -6,7 +6,6 @@ contract:
     focus: array
     focus_axes: array
     critical_paths: array
-    delegate_security: boolean
     delegate_bug_hunt: boolean
     delegate_architecture: boolean
     probe_findings: string
@@ -51,7 +50,6 @@ the adjudicate phase (detection/collection separation, Sauer).
 {{ critical_paths | default([]) | tojson }}
 
 ## Delegate Flags
-- delegate_security: {{ delegate_security | default(false) }}
 - delegate_bug_hunt: {{ delegate_bug_hunt | default(false) }}
 - delegate_architecture: {{ delegate_architecture | default(false) }}
 
@@ -91,8 +89,8 @@ intersect with the addyosmani five-axis where relevant.
 ### R — Reliability (security + performance axes)
 - Security: input validation at boundaries, injection (SQL/XSS/command/path),
   auth/authz gaps, secret leakage in logs/env, weak crypto, unsafe
-  deserialization, treating external data as trusted. (Basics always; full
-  depth via kali-audit when delegate_security.)
+  deserialization, treating external data as trusted. (Basics always; the
+  inline pass is the security surface.)
 - Performance: N+1, unbounded loops/queries, missing pagination, sync ops that
   should be async, unnecessary allocations in hot paths, re-renders.
 - Integration: missing timeouts/retries, fragile external dependencies,
@@ -147,12 +145,6 @@ between this step and adjudicate. The inline pass always covers the basics;
 delegation adds depth. Each instruction names the delegate skill, the inputs
 it needs, and the axes it deepens:
 
-{% if delegate_security %}
-- **kali-audit** (delegate_security): surface=code, target_path=changed files.
-  Deepens the R-axis security lens (OWASP, CWE, ANSSI, RustSec). Inputs the
-  agent passes: `target_surface: "code"`, `target_path: <repo or changed
-  files>`. Fold the returned findings into raw_findings with source="kali-audit".
-{% endif %}
 {% if delegate_bug_hunt %}
 - **bug-hunt** (delegate_bug_hunt): quality_criteria from the change_spec.
   Deepens the P/E-axis correctness lens (Weinberg, Beizer, Bach). Inputs the
@@ -180,12 +172,12 @@ Respond with a JSON object:
       "location": {"file": "...", "line_approx": "..."},
       "evidence": "verbatim ≤5 lines from the cited location",
       "observation": "one line — what was observed (no verdict)",
-      "source": "inline | kali-audit | bug-hunt | refactor-architecture"
+      "source": "inline | bug-hunt | refactor-architecture"
     }
   ],
-  "delegated_axes": ["security", "bug-hunt", "architecture"],
+  "delegated_axes": ["bug-hunt", "architecture"],
   "delegate_instructions": [
-    {"delegate": "kali-audit", "inputs": {"target_surface": "code", "target_path": "..."}, "axes": ["R/security"]}
+    {"delegate": "bug-hunt", "inputs": {"target": "...", "quality_criteria": "..."}, "axes": ["P/E-correctness"]}
   ]
 }
 ```

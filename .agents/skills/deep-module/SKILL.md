@@ -18,6 +18,12 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 - You suspect a module is a pass-through, data bag, or abstraction-for-one
 - You want to enforce the ≤7 public function target and unified error/config design
 
+## When NOT to Use
+
+- Evaluating non-code artifacts (skills, docs, processes) — the deletion test and surface count are defined over code modules with public items.
+- Designing a module from scratch — the gates interrogate an existing artifact; for greenfield interface design, use the design step with the ≤7 target as input.
+- A module already known shallow — skip the assessment and deepen directly.
+
 ## Instructions
 
 ### 1. Assess Module Depth

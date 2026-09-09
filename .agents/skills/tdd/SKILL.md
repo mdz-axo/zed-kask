@@ -17,11 +17,17 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 - Strengthening a GREEN tracer bullet — writing the universal test that verifies a contract's `post:`/`inv:` across the full input space with the proptest crate directly (a property-test fail is a second source of RED routing back to the tracer or plan).
 - Exploring for code blind spots — dispatching to the `bug-hunt` skill with a charter scoped to the slice's code, finding bugs the code structure never surfaced and routing them back as new entities needing tests.
 
+## When NOT to Use
+
+- Exploratory spikes where the design is unknown — the contract-first loop presupposes a behavior you can name; spike first, then contract.
+- Pure refactoring with no behavior change — existing green tests govern; there is no new RED to write.
+- When tests cannot run — the loop's signal is the red→green transition; without a runnable suite there is no loop.
+
 ## Instructions
 
 ### tdd-plan
 
-: Read `docs/architecture/core/MDS.md` for the relevant domain before planning any test.
+1. Read `docs/architecture/core/MDS.md` for the relevant domain before planning any test.
 2. Use `grep` to find the entities (functions, structs, traits) in scope. Classify each using Dublin Core: `dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category DERIVED from the entity's code position (what crate/module it's in), not looked up from a spec. Use `grep` to find callers (search for the function/type name across the codebase) to understand what depends on each entity.
 3. Author the `expect:` + `[P{N}]` contract annotation manually for each requirement (the contract-generator is not yet implemented; follow the contract structure in MDS.md §7).
 4. Review each contract — the `expect:` field is the ground truth for what the test verifies.
@@ -76,7 +82,7 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 1. Verify each test describes behavior, not implementation, and uses the public interface (seam) only.
 2. Confirm each test would survive an internal refactor and that no horizontal slicing occurred.
 3. Classify implementation-coupled tests carrying `// TEST-DEBT:` comments as medium-severity test-debt, not violations.
-: Verify each test carries a contract annotation (`expect:` + `[P{N}]`) anchored to a valid code entity (`dcterms:identifier`).
+4. Verify each test carries a contract annotation (`expect:` + `[P{N}]`) anchored to a valid code entity (`dcterms:identifier`).
 5. Confirm no code entity in scope is missing a tracer bullet.
 6. Verify every contract carries the full structure: `expect:` field present, `[P{N}] Motivating:` present (exactly one), `[P{N}] Constraining:` annotations present (minimum P1–P4 where applicable), `pre:`/`post:` present.
 7. Reject vacuous `expect:` fields that restate the function name or the postcondition verbatim — the `expect:` must express what the user needs.
@@ -88,18 +94,18 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 
 ### tdd-gap-check
 
-: Match each tested behavior to a code entity via its contract annotation (`expect:` + `[P{N}]` anchored to `dcterms:identifier`); flag behaviors without annotations as unanchored.
+1. Match each tested behavior to a code entity via its contract annotation (`expect:` + `[P{N}]` anchored to `dcterms:identifier`); flag behaviors without annotations as unanchored.
 2. Identify gaps: code entities with no matching tested behavior.
 3. Derive priority from MDS category: P0 = Trust, P1 = Domain/Composition, P2 = Lifecycle/Curation.
-: For code entities with no callers (found via `grep`), flag as additional gaps — orphaned code is untested code.
+4. For code entities with no callers (found via `grep`), flag as additional gaps — orphaned code is untested code.
 5. Verify probabilistic contracts governing non-deterministic behavior include a `prob:` field; absence is a coverage gap.
 6. Score each contract's `expect:` field on a 0–3 scale: 0 = empty/missing, 1 = vacuous, 2 = functional, 3 = anchored with principle rationale. Contracts scoring 0 or 1 must appear as gaps.
-: Verify the `[P{N}]` goal principle matches the entity's MDS category (`dcterms:subject` derived from graph position); correct mismatches.
+7. Verify the `[P{N}]` goal principle matches the entity's MDS category (`dcterms:subject` derived from graph position); correct mismatches.
 8. Check constraining principle completeness: for each of P1–P12, ask whether implementing the contract without that principle would violate it; if yes and it is missing, flag as a gap.
 9. Verify each `[P{N}]` Constraining annotation has an enforcement test; declarative-only constraints are coverage gaps.
-: Cross-reference MDS category alignment: confirm the contract's goal principle matches the MDS category derived from the code entity's position; flag deviations with rationale.
+10. Cross-reference MDS category alignment: confirm the contract's goal principle matches the MDS category derived from the code entity's position; flag deviations with rationale.
 11. Check Magna Carta completeness: list which of P1–P4 are missing from constraining annotations per covered requirement.
-: Ensure every code entity appears in exactly one of: `covered_entities`, `gaps`, or `deferrals`.
+12. Ensure every code entity appears in exactly one of: `covered_entities`, `gaps`, or `deferrals`.
 13. P0 gaps MUST recommend `tracer-bullet`; P1 gaps SHOULD recommend `tracer-bullet` (deferrals require explicit rationale); P2+ gaps MAY defer to `OPEN_QUESTIONS.md`.
 14. If `bug_hunt_findings` is provided, each Tier-1 BUG not covered by a tested behavior is a code blind spot — a new gap whose `requirement` is the finding's `summary`.
 15. If `surviving_mutants` is provided, each mutant on a tested function is a gap — the universal test is missing or weak; recommend a universal property test (step 3 strengthen).

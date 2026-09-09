@@ -46,8 +46,8 @@ for external capabilities. Convergence is the model's judgment, optionally check
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **77** | Every directory contains a `SKILL.md` |
-| Template crates (`kask/registry/templates/*/`) | **67** (324 `.j2` templates) | Companion Jinja2 resources for `render_template` |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **75** | Every directory contains a `SKILL.md` |
+| Template crates (`kask/registry/templates/*/`) | **65** (323 `.j2` templates) | Companion Jinja2 resources for `render_template` |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -62,7 +62,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Core Development (13 skills)
+## Core Development (12 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -77,7 +77,6 @@ read-only resources the skill body may reference via `render_template`.
 | `idiomatic-lisp` | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle |
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
-| `lisp-scaffold-reasoning` | Reference skill demonstrating deterministic Lisp scaffolding of LLM probabilistic reasoning |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
 
 ---
@@ -126,7 +125,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Specialized (25 skills)
+## Specialized (24 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -139,7 +138,6 @@ read-only resources the skill body may reference via `render_template`.
 | `hypothesis-framer` | Research question framing via FINER + PICO |
 | `goal-analysis` | Goal specification and completion verification |
 | `structured-extraction` | Extract structured data from unstructured text |
-| `caveman` | Multi-mode text compression (TTbS stage in stt-tts pipeline) |
 | `logo-builder` | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement) |
 | `wardley-mapper` | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy |
 | `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit |
@@ -154,7 +152,7 @@ read-only resources the skill body may reference via `render_template`.
 | `calibration-stewardship` | Prediction-market calibration loop maintenance: two-phase resolution scans, snapshot pairing, per-bucket Brier, reliability-tier demotion verification |
 | `transcript-reel` | Recording → highlight reel over the educt layer system: transcribe, correct, highlight, EDL, render, export |
 | `adapter-lifecycle` | Verifier-gated fine-tuning loop: rollout harness, verdict-bridged datasets, gated submit, A/B evaluation, feedback retrain |
-| `adhd-mode` | Session-scoped output mode shaping responses for a reader with ADHD: next-action-first, numbered steps, state restated across turns, capped lists, deterministic pre-send gate (render_template + lisp_eval) |
+| `adhd-mode` | Session-scoped output mode shaping responses for a reader with ADHD: next-action-first, numbered steps, state restated across turns, capped lists, deterministic pre-send gate (render_template + lisp_eval), optional caveman compression variant (absorbed 2026-09-09) |
 
 ---
 

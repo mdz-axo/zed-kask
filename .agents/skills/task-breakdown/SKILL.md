@@ -19,6 +19,12 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-router consumption.
 - When you need to distinguish this skill from kanban-task-management (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
 
+## When NOT to Use
+
+- Work that is already one verifiable task — decomposition overhead buys nothing; execute directly.
+- Requirements gathering — the spec is an input; the product-manager owns intake and spec authority.
+- Executing the tasks — this skill produces the plan; tdd consumes it one vertical slice at a time, kanban-task-management populates the board.
+
 ## Instructions
 
 ### task-breakdown-plan

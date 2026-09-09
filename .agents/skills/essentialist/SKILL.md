@@ -17,6 +17,12 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 - You need to enforce "always take away, never add" — every artifact is assumed guilty until proven necessary.
 - A codebase has accumulated cruft, thin wrappers, single-use traits, or public-surface bloat that should be challenged before commit.
 
+## When NOT to Use
+
+- Additive work — the 3 gates assume an artifact to reduce; there is nothing to interrogate before it exists.
+- Code modules specifically — the specialized delegates (deep-module for G1/G2) go deeper on module work; essentialist is the general interrogator.
+- Autonomous reduction without explicit user intent — the default mode is advisory; autonomous mode requires the operator's words.
+
 ## Instructions
 
 1. Assume every artifact is guilty until proven necessary. Your job is to enforce "always take away, never add" through a 3-gate recursive challenge loop. You orchestrate the gates, delegate evaluations to specialized templates, branch on pass/fail, and escalate when retries are exhausted.

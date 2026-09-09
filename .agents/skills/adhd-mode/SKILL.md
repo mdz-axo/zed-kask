@@ -1,6 +1,6 @@
 ---
 name: adhd-mode
-description: "Shape output for a reader with ADHD: lead with the next action, number multi-step work, restate state across turns, suppress tangents, cap lists at five, no preamble or closers. Session-scoped output mode with a deterministic pre-send gate (render_template + lisp_eval). Activate with 'adhd mode on'; deactivate with 'adhd mode off'."
+description: "Shape output for a reader with ADHD: lead with the next action, number multi-step work, restate state across turns, suppress tangents, cap lists at five, no preamble or closers. Session-scoped output mode with a deterministic pre-send gate (render_template + lisp_eval) and an optional caveman compression variant for connective prose. Activate with 'adhd mode on'; add compression with 'compressed'; deactivate with 'adhd mode off'."
 ---
 
 # ADHD Mode
@@ -28,19 +28,32 @@ compose passes the per-turn gate below before sending.
 The mode is session-scoped. It turns on when the reader says "adhd mode on"
 and off when they say "adhd mode off" or "stop adhd mode". Confirm either
 transition in one line, then apply or release the rules. If unsure whether the
-mode still applies, it does.
+mode still applies, it does. The compression variant is a modifier: "adhd mode
+on, compressed" activates it; "compression off" releases it while the mode
+stays on.
 
-### Interaction with caveman
+### Compression variant (absorbed from caveman)
 
-Caveman (compression mode) and this mode compose; they do not merge. When both
-are active: this skill's structural elements — the leading action, numbered
-steps, restated state, time-estimate conditionals, the visible win, the one
-next action — are clarity-critical and survive compression unchanged. This is
-caveman's own auto-clarity exception (its rule 9: suspend compression for
-multi-step sequences where fragment order risks misread) applied to structure.
-Compression applies to the connective prose between structural elements only.
-Real-uncertainty hedges ("if tests already cover this") are structural:
-caveman's drop-hedging rule does not delete them.
+The mode has two levels. "adhd mode on" applies the standard shape.
+"adhd mode on, compressed" (or an explicit request for caveman compression)
+additionally compresses the connective prose between structural elements:
+drop articles, filler, pleasantries, and empty hedging; use fragments and
+short synonyms; abbreviate common terms (DB, auth, config, req, res, fn,
+impl). The structural elements — the leading action, numbered steps,
+restated state, time-estimate conditionals, the visible win, the one next
+action — are clarity-critical and survive compression unchanged.
+Real-uncertainty hedges ("if tests already cover this") are structural and
+are never dropped.
+
+Sacred text passes through unchanged: code blocks, error messages quoted
+exact, and URLs.
+
+Auto-clarity exceptions suspend compression (not the structural shape):
+security warnings, irreversible-action confirmations, and any multi-step
+sequence where fragment order risks misread. Resume compression after the
+clarity-requiring part. When a process skill is active, its content
+obligations ship in full — compression arranges prose, never deletes
+content.
 
 ### Per-turn gate
 
@@ -121,6 +134,7 @@ env: `required` (the active process skill's content obligations), `sections`
 |----------|---------|
 | `pre-send-gate.j2` | Extraction checklist for the per-turn gate: gate fields extracted as evidence (not verdicts) from the composed draft, feeding lisp_eval Forms G and C. |
 | `turn-shape.j2` | Per-turn-type shape spec (assess, directives, verify, code-answer), generic over the active process skill's content obligations. |
+| `caveman-compress.j2` | Compression pass for the compressed variant: drop articles, filler, pleasantries, and hedging from connective prose while preserving technical substance, sacred text (code, errors, URLs), and clarity exceptions. Absorbed from the caveman skill 2026-09-09. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `adhd-mode/pre-send-gate`) and a context object with the required variables.
 
