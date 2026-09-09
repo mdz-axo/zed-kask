@@ -3,8 +3,8 @@
 //! A local swarm is a named grouping of local agent ids: `{swarm_id, name,
 //! mission, members}`. It mirrors an ABW workspace (created via
 //! `swarm_create_swarm`'s `POST /teams`) but lives on disk, costs nothing, and
-//! has no consent gate. Local delegation has no funding gate either — the
-//! ledger records spend rather than authorizing it. Membership is just roster edits; agents themselves stay in
+//! has no consent gate. Local delegation has no budget gate either — no
+//! local budget exists. Membership is just roster edits; agents themselves stay in
 //! `LocalAgentRegistry`.
 //!
 //! Persistence mirrors `LocalAgentRegistry`: one JSON file per swarm under
@@ -313,7 +313,7 @@ impl LocalSwarmRegistry {
 
     /// Update a local swarm's display name and mission in place. The
     /// `swarm_id` (on-disk directory name) is **not** changed — it is the
-    /// stable identity other systems (Steer conversation, ledger) reference,
+    /// stable identity other systems (Steer conversation) reference,
     /// and renaming the directory would orphan those references. Only the
     /// human-readable `name` and `mission` fields are updated. Errors if the
     /// swarm does not exist or `name` is empty. The local counterpart of an

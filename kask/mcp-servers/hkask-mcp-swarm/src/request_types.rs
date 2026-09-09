@@ -409,17 +409,6 @@ pub struct CreateAppRequest {
 // ── Local mode request types (v2 §15 Slice 9) ──────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FundLocalRequest {
-    /// Number of local credits to deposit into the operator's ledger
-    /// account. Must be positive.
-    pub credits: i64,
-}
-
-/// Read-only balance query — no fields.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BalanceLocalRequest {}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DelegateLocalRequest {
     /// The agent id to delegate to. Must exist in the local agent registry
     /// (`agents/local/curated/<id>/agent_card.json`).
@@ -478,13 +467,6 @@ pub struct WorkflowCheckLocalRequest {
     pub agent_name: String,
 }
 
-/// Read-only local ledger history query.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LocalHistoryRequest {
-    /// Max transactions to return (default 50, capped at 500).
-    pub limit: Option<u32>,
-}
-
 /// Remove a local agent card.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RemoveLocalRequest {
@@ -498,8 +480,8 @@ pub struct RemoveLocalRequest {
 /// `reconfigure_agent` / fan-out composition needs a programmatic create
 /// path; `swarm_clone_to_local` only copies from ABW). Writes
 /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. No
-/// consent token — local mode has no consent gate and no funding gate (the
-/// ledger records spend rather than authorizing it; card creation is free).
+/// consent token — local mode has no consent gate and no budget gate (no
+/// local budget exists; card creation is free).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateLocalAgentRequest {
     pub agent_id: String,
@@ -554,19 +536,17 @@ pub struct CreateLocalAgentRequest {
 
 /// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).
 /// Dispatch N local agents in one call and aggregate. By default each
-/// delegation runs sequentially to avoid ledger TOCTOU (the local ledger is
-/// single-writer; concurrent debits would race the balance read). When
-/// `parallel` is true, the inference calls run concurrently via
-/// `tokio::join_all` for speed, and the ledger debits are batched
-/// sequentially after all delegations complete — the TOCTOU concern is
-/// resolved by deferring the debit, not by serializing the inference.
+/// delegation runs sequentially; when `parallel` is true, the inference
+/// calls run concurrently via `tokio::join_all` for speed, and the
+/// per-delegation side effects (validate_produces + ingest_turn) run
+/// sequentially after all delegations complete.
 /// Capped at `MAX_FANOUT`. No consent token — local mode.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FanoutLocalRequest {
     pub delegations: Vec<FanoutEntry>,
-    /// When true, run the inference calls concurrently and batch the ledger
-    /// debits after all complete. When false (default), run sequentially as
-    /// before. Parallel mode is faster for independent, read-heavy
+    /// When true, run the inference calls concurrently and process the
+    /// per-delegation side effects after all complete. When false (default),
+    /// run sequentially. Parallel mode is faster for independent, read-heavy
     /// delegations but uses more concurrent inference resources.
     #[serde(default)]
     pub parallel: bool,
@@ -602,8 +582,8 @@ pub struct ReconfigureLocalAgentRequest {
 // ── Local swarm membership (local replica of an ABW workspace) ───────────────
 
 /// Create a local swarm — the local replica of an ABW workspace/team. A named
-/// grouping of local agent ids with a mission. No cost, no consent token (the
-/// local ledger records spend; it gates neither delegation nor roster edits). Optionally seed members.
+/// grouping of local agent ids with a mission. No cost, no consent token (no
+/// local budget exists; nothing gates delegation or roster edits). Optionally seed members.
 /// Returns the new swarm with its generated `swarm_id`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateLocalSwarmRequest {

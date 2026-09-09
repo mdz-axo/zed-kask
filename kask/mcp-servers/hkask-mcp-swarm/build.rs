@@ -39,7 +39,7 @@ fn main() {
         regex::Regex::new(r"pub\(crate\) async fn (swarm_\w+)\s*\(").expect("valid regex");
     // The router a file's tools belong to: `#[tool_router(router = <name>`.
     // One router per tool file (cloud_swarm_tools.rs, local_tools.rs,
-    // ledger_tools.rs, a2a_tools.rs, knowledge_tools.rs).
+    // a2a_tools.rs, knowledge_tools.rs).
     let router_pattern =
         regex::Regex::new(r"#\[tool_router\(router\s*=\s*(\w+)").expect("valid regex");
 

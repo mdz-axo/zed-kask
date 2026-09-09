@@ -9,10 +9,10 @@
 //! `LocalAgentRegistry` on every request, so agents created at runtime appear
 //! without a server restart.
 //!
-//! There is NO funding gate on this path: the local ledger records spend rather
-//! than authorizing it, so the per-dispatch ceiling is the only bound. Note this
-//! gateway is externally reachable (loopback JSON-RPC), so the ceiling and the
-//! agent-card allowlist are the whole defence — no consent tokens, consistent with the local
+//! There is no budget gate on this path (no local budget exists — operator
+//! ruling 2026-09-04). Note this
+//! gateway is externally reachable (loopback JSON-RPC), so the agent-card
+//! allowlist is the whole defence — no consent tokens, consistent with the local
 //! model. Streaming, push notifications, and task cancellation are not supported
 //! in v1 (the card declares `streaming=false`, `push_notifications=false`);
 //! `delegate` is synchronous and returns a completed `Task` inline, so there is

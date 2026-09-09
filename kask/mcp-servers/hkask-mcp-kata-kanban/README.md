@@ -19,7 +19,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_move` | Move a task to a new column (status transition) |
 | `kanban_task_assign` | Assign a task to an agent with consent proof (P1 compliance) |
 | `kanban_task_verify` | Verify a task against its acceptance criteria |
-| `kanban_task_reopen` | Reopen a completed task (Done → InProgress) with optional new budgets |
+| `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
 
 ### Goals (functional target conditions)
 
@@ -61,7 +61,7 @@ h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 ### Agent spawning
 | Tool | Description |
 |------|-------------|
-| `kanban_task_spawn` | Spawn a subagent for task execution with delegated skills and budgets |
+| `kanban_task_spawn` | Spawn a subagent for task execution with delegated skills |
 
 ### Contract management
 | Tool | Description |

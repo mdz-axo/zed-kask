@@ -112,9 +112,9 @@ impl SwarmError {
 /// of [`SwarmError`] (which maps ABW HTTP errors).
 ///
 /// `SwarmError` is ABW-specific (auth, payment, upstream model errors); the
-/// local-runtime layer (local ledger, local agent/swarm registries, local
+/// local-runtime layer (local agent/swarm registries, local
 /// knowledge tools, consent store, A2A HTTP gateway) has a different failure
-/// surface — filesystem I/O, SQLite/ledger ops, input validation, path
+/// surface — filesystem I/O, SQLite ops, input validation, path
 /// sanitization. Carrying these as `String` (the prior `Result<_, String>`
 /// signatures) erased the error kind, forcing the tool-method boundary to
 /// blanket-map everything to `McpToolError::internal` — the `.rules`
@@ -135,11 +135,6 @@ pub enum LocalSwarmError {
     /// memory open/query). Infrastructure-class → `Internal`.
     #[error("database error: {0}")]
     Database(String),
-    /// Ledger operation failure (commit, query, `ensure_account`, balance,
-    /// debit). Infrastructure-class → `Internal`. Distinguished from
-    /// `Database` because the ledger is the local spend surface.
-    #[error("ledger error: {0}")]
-    Ledger(String),
     /// Caller-supplied input failed validation (empty name, bad slug charset,
     /// JSON parse failure, non-positive amount, wrong socket family). Maps to
     /// `InvalidArgument` — caller-fixable.
@@ -176,13 +171,13 @@ impl From<SwarmError> for LocalSwarmError {
 
 /// Classify a [`LocalSwarmError`] into the MCP wire-level [`McpToolError`]
 /// kind, per variant (not a blanket `Internal`) — the `.rules` "MCP tool error
-/// classification" trap. `Io`/`Database`/`Ledger` are infrastructure failures
+/// classification" trap. `Io`/`Database` are infrastructure failures
 /// (`Internal`); `InvalidInput`/`Sanitize` are caller-fixable
 /// (`InvalidArgument`); `NotFound` → `NotFound`; `Unavailable` →
 /// `Unavailable`.
 pub fn map_local_swarm_error(e: LocalSwarmError) -> McpToolError {
     match e {
-        LocalSwarmError::Io(m) | LocalSwarmError::Database(m) | LocalSwarmError::Ledger(m) => {
+        LocalSwarmError::Io(m) | LocalSwarmError::Database(m) => {
             McpToolError::internal(m) // rr0044-ok: mapper-internal-arm
         }
         LocalSwarmError::InvalidInput(m) | LocalSwarmError::Sanitize(m) => {

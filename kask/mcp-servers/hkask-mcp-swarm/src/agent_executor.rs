@@ -6,10 +6,9 @@
 //! `RawDelegateResult` carrying the raw output text, model, token usage, and
 //! tool call summary.
 //!
-//! **The executor does NOT debit the ledger.** The caller
-//! (`LocalSwarmRuntime::delegate`) is responsible for debit: it computes the
-//! cost and debits the ledger. See ADR: "AgentExecutor returns raw output;
-//! LocalSwarmRuntime owns debit".
+//! **The executor returns raw output only.** The caller
+//! (`LocalSwarmRuntime::delegate`) builds the measured `LocalDelegateResult`
+//! from it.
 
 use std::sync::Arc;
 
@@ -59,8 +58,8 @@ pub struct ReasoningStep {
 }
 
 /// The raw result of running an agent — text, model, token usage, and the
-/// tool execution summary. NOT debited. The caller
-/// (`LocalSwarmRuntime::delegate`) debits the ledger.
+/// tool execution summary. The caller (`LocalSwarmRuntime::delegate`) builds
+/// the `LocalDelegateResult` from it.
 pub struct RawDelegateResult {
     pub text: String,
     pub model: String,
@@ -128,7 +127,7 @@ pub type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
 
 /// The agent-run policy: how a local agent executes (tool-loop
 /// orchestration). Owns the inference and tool-dispatch ports.
-/// Ledger-unaware — the runtime owns spending.
+/// Measurement-only — the runtime owns result construction.
 #[derive(Clone)]
 pub struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
@@ -204,7 +203,7 @@ impl AgentExecutor {
     /// The resolved local inference port. Exposed so the local knowledge tools
     /// (`swarm_generate_prompt_local` / `swarm_generate_ontology_local`) can do a
     /// one-shot generate without going through the full agent-run loop (they
-    /// are authoring aids — no ledger debit, no tool loop).
+    /// are authoring aids — no tool loop).
     pub(crate) fn inference(&self) -> Arc<dyn hkask_types::InferencePort> {
         Arc::clone(&self.inference)
     }

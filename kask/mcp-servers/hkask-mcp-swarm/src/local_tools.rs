@@ -309,9 +309,9 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
 
             if req.parallel {
-                // Parallel mode: run inference concurrently, debit
-                // sequentially. Resolves the TOCTOU concern by deferring
-                // the debit, not by serializing the inference.
+                // Parallel mode: run inference concurrently, then process
+                // the per-delegation side effects sequentially after the
+                // batch returns.
                 //
                 // Save the side-effect context (agent_name, task, produces)
                 // for each found delegation so we can run validate_produces +
@@ -1273,8 +1273,8 @@ impl SwarmServer {
     /// counterpart of `swarm_remove_local`: remove deletes a card, create
     /// writes one. No ABW round-trip (unlike `swarm_clone_to_local`, which
     /// copies from ABW). No consent token — local mode has no consent gate;
-    /// card creation is free, and local execution is not gated on funds either (the
-    /// ledger records spend rather than authorizing it).
+    /// card creation is free, and local execution is not gated on funds either (no
+    /// local budget exists).
     #[tool(
         description = "Create a new local agent card programmatically. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
     )]
@@ -1444,8 +1444,8 @@ impl SwarmServer {
 
     /// Create a local swarm - the local replica of an ABW workspace/team. A
     /// named, mission-bearing grouping of local agent ids. No cost and no
-    /// consent token. The local ledger records spend; it gates neither
-    /// delegation nor roster edits.
+    /// consent token (no local budget exists; nothing gates delegation or
+    /// roster edits).
     /// Optionally seeds the roster with `agents`. Returns the new swarm with
     /// its generated `swarm_id`. The counterpart of `swarm_create_swarm` for
     /// the local backend.
@@ -2116,10 +2116,10 @@ impl SwarmServer {
     /// enforcement point for the C5/C6 fault-attribution loop: ORIENT's
     /// highest-fidelity fault signal (rule 1: per-delegation task failure)
     /// requires a deterministic `task_success` verdict — an LLM-judged verdict
-    /// is downgraded by ORIENT (Gap S3). No ABW calls, no ledger spend —
+    /// is downgraded by ORIENT (Gap S3). No ABW calls —
     /// evaluation is free.
     #[tool(
-        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
+        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls — evaluation is free."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,
@@ -2158,9 +2158,9 @@ impl SwarmServer {
     /// tool executes it and stamps verdicts, the caller passes the results
     /// back to swarm-intelligence. Works in any context: chat, autonomous
     /// pipeline, or API. Capped at 10 delegations (same as fanout). Each
-    /// delegation runs sequentially to avoid ledger TOCTOU.
+    /// delegation runs sequentially.
     #[tool(
-        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially to avoid ledger TOCTOU. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
     )]
     pub(crate) async fn swarm_execute_plan_local(
         &self,
@@ -2626,8 +2626,7 @@ impl SwarmServer {
     /// `model_request` event and a `verdict` event to the event store —
     /// the harness is the store's first writer.
     ///
-    /// Rollouts run sequentially (the local ledger is single-writer, same
-    /// constraint as fanout/plan). A delegation error counts as a failed
+    /// Rollouts run sequentially (same dispatch discipline as fanout/plan). A delegation error counts as a failed
     /// rollout for that task — the harness measures end-to-end pass rate,
     /// which includes crashes, not just wrong answers.
     #[tool(

@@ -1,6 +1,6 @@
 # Kask reliability checklist
 
-Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E: C1 done, C2 core done, C2 leftovers + C3 next, then Checkpoint B re-presentation and Phase C resumption). [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
+Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E teardown tranche COMPLETE 2026-09-09: C1 −1,421, C2 closed, C3 swept — cumulative net −1,595, negative claim recorded in plan.md §C3). Next: operator review of the re-presented Checkpoint B (T04–T06 + teardown accounting), then Phase C (T07 → T08) resumes under the net-simplification definition of done. [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
 
 Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
@@ -79,7 +79,7 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Post-spawn failure plus retry produces one agent and an explicit replay/pending/partial outcome. (One-shot `task_comment` fault after a counting worktree spawn; partial response recorded and REPLAYED on retry; RED pre-fix observed. `result_note_error` field carries the partial outcome.)
   - [x] Concurrent same-key attempts and reopened durable claims remain protected within the existing TTL. (tokio::join! admits exactly one spawn; a reserved-never-recorded claim survives a restart and refuses the retry.)
   - [x] Clean pre-effect rejection remains retryable; ephemeral-goal controls pass. (Invalid-input retry runs fresh; goal replay tests unchanged. Suite 46+21+1, clippy/rustfmt clean. Evidence in plan.md T06.)
-- [ ] **Checkpoint B:** cumulative memory/budget/spawn checks, scoped builds/lints, policy-gate review, operator review.
+- [ ] **Checkpoint B:** cumulative memory/spawn checks, scoped builds/lints, policy-gate review, operator review. (Evidence complete 2026-09-08; re-presented 2026-09-09 with the Phase E teardown accounting — C1 −1,421, C2 closed, C3 swept, cumulative net −1,595 — awaiting operator review. The teardown deleted the budget surface this checkpoint originally covered; the T05 settlement policy gate was ratified at task start.)
 
 ## Phase C — Make regulation acknowledgments truthful
 

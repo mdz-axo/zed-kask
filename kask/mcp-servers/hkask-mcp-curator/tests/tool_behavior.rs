@@ -917,6 +917,107 @@ async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
     assert!((stored[0].confidence.value() - 0.5).abs() < 1e-9);
 }
 
+/// The citation round-trip must complete from the tool surface: an agent
+/// reads a fragment via `curator_memory_recall`, extracts the `id` the
+/// tool surfaced, and cites it as `memory_insert` evidence. The ID used
+/// to live only in the store — every read surface dropped it at
+/// serialization — so the evidence requirement was unsatisfiable from
+/// the agent side (it was designed against the store API, not the tool
+/// surface). Pins the id on all three read surfaces and the round-trip.
+#[tokio::test]
+async fn memory_citation_round_trip_from_tool_surface() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "chat:thread:evidence-source";
+    let seed = hkask_storage::HMem::new(
+        entity,
+        "chatted",
+        serde_json::Value::String("the source turn".to_string()),
+        WebID::new(),
+    );
+    let seed_id = seed.id.to_string();
+    memory.store(seed).expect("seed evidence h_mem");
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(entity, &vector, "test-model", None)
+        .expect("seed embedding");
+
+    // Recall via the tool — the cited ID must come from the tool output,
+    // not from the store.
+    let recall = parse(
+        &server
+            .curator_memory_recall(Parameters(MemoryRecallRequest {
+                entity: entity.to_string(),
+                recall_shape: MemoryRecallType::EntityWide,
+                ontology_axis: None,
+                ontology_value: None,
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        recall["entity_wide"]["h_mems"][0]["id"]
+            .as_str()
+            .is_some_and(|id| id == seed_id),
+        "recall must surface the seeded h_mem id — got: {recall}",
+    );
+    let recalled_id = recall["entity_wide"]["h_mems"][0]["id"]
+        .as_str()
+        .expect("id asserted above")
+        .to_string();
+
+    // Consult and semantic search surface the id too.
+    let consult = parse(
+        &server
+            .curator_consult(Parameters(CuratorConsultRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("consult ok"),
+    );
+    assert!(
+        consult["entity_wide_fragments"]["h_mems"][0]["id"]
+            .as_str()
+            .is_some_and(|id| id == seed_id),
+        "consult must surface the h_mem id — got: {consult}",
+    );
+    let search = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("search ok"),
+    );
+    assert!(
+        search["results"][0]["id"]
+            .as_str()
+            .is_some_and(|id| id == seed_id),
+        "semantic search must surface the h_mem id — got: {search}",
+    );
+
+    // The round-trip: cite the tool-surfaced ID as insert evidence.
+    let response = parse(
+        &server
+            .memory_insert(Parameters(MemoryInsertRequest {
+                entity: "zed-kask".to_string(),
+                attribute: "citation_round_trip".to_string(),
+                value: serde_json::json!("pinned"),
+                evidence_h_mem_id: recalled_id,
+                note: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "an ID obtained from a tool output must be accepted as evidence — got: {response}",
+    );
+}
+
 /// Evidence citations that name no existing h_mem must be rejected as
 /// `invalid_argument` with the reason surfaced — both a well-formed UUID
 /// that matches no row and a malformed ID that cannot parse.

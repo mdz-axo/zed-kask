@@ -120,10 +120,9 @@ impl SwarmServer {
     /// shared-channel analog of fermi's workspace-message broadcast — agents
     /// that declare `swarm/swarm_a2a_broadcast` in their `mcp_tools` can
     /// address their entire swarm in one call. Sequential dispatch (mirrors
-    /// `swarm_fanout_local` — the local ledger is single-writer; concurrent
-    /// debits would race the balance read). Capped at `MAX_FANOUT` members.
+    /// `swarm_fanout_local`'s default — one delegation at a time). Capped at `MAX_FANOUT` members.
     #[tool(
-        description = "Broadcast an A2A (Agent2Agent) protocol message to all members of a local swarm. Each member receives the message via in-process dispatch; responses are collected as an array of A2A Tasks. Sequential dispatch (ledger TOCTOU). Capped at MAX_FANOUT (10) members. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to address their entire swarm."
+        description = "Broadcast an A2A (Agent2Agent) protocol message to all members of a local swarm. Each member receives the message via in-process dispatch; responses are collected as an array of A2A Tasks. Sequential dispatch. Capped at MAX_FANOUT (10) members. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to address their entire swarm."
     )]
     pub(crate) async fn swarm_a2a_broadcast(
         &self,

@@ -21,7 +21,7 @@ use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
-/// The local swarm runtime — ledger + inference.
+/// The local swarm runtime — lazily constructed inference.
 ///
 /// Constructed lazily on first tool call (the `run_server` factory closure
 /// is sync — it cannot `.await` the inference port resolution). `lazy()`
@@ -54,8 +54,8 @@ pub struct LazyLocalSwarmRuntime {
 }
 
 /// The rollout event store, constructed lazily on first write. The store
-/// lives beside the ledger (`mcp/swarm/events.db` under the data dir,
-/// operator-configurable via `HKASK_SWARM_EVENTS_PATH`) and is the data
+/// lives at `mcp/swarm/events.db` under the data dir
+/// (operator-configurable via `HKASK_SWARM_EVENTS_PATH`) and is the data
 /// plane of the event-substrate proposal: `model_request` and `verdict`
 /// events for rollout trajectories, opaque pass-through for everything
 /// else. Position in the log is identity.
@@ -277,10 +277,10 @@ impl LocalSwarmRuntime {
     /// `StubInferencePort` pattern: the production
     /// `new(db_path)` resolves the inference port from env (zed IPC bridge or
     /// MediaRouter fallback), which is unsuitable for unit tests. This
-    /// constructor accepts a pre-built ledger + the three agent-run ports
+    /// constructor accepts the three agent-run ports
     /// (inference, tool dispatch, skill exec) which it composes into an
-    /// `AgentExecutor`, so tests can exercise the `fund`/`debit`/`delegate`
-    /// logic without a real backend.
+    /// `AgentExecutor`, so tests can exercise the `delegate` logic without a
+    /// real backend.
     ///
     /// Ensures the operator account exists (same as `new`) so `balance`/
     /// `fund`/`debit` work out of the box.

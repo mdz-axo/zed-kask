@@ -580,9 +580,15 @@ pub struct LoopFailureDistinctions {
     pub declared_not_dispatched: DistinctionState,
 
     /// 2. **Written ≠ readable.** A loop writes to one store but the
-    /// display surface reads from another. Enforcement: `memory_insert`
-    /// requires `evidence_h_mem_id`; `curator_memory_recall` reads back
-    /// from the same store.
+    /// display surface reads from another — including the finer grain:
+    /// a record is readable but its identifier is not, so a write tool
+    /// requiring the identifier cannot be satisfied from the read
+    /// surface. Enforcement: `memory_insert` requires
+    /// `evidence_h_mem_id`; every read surface (`curator_memory_recall`,
+    /// `curator_consult`, `curator_semantic_search`) serializes the
+    /// h_mem `id` alongside the fragment, pinned by
+    /// `memory_citation_round_trip_from_tool_surface` (an ID obtained
+    /// from a tool output is accepted as insert evidence).
     pub written_not_readable: DistinctionState,
 
     /// 3. **Closed ≠ turning.** Every hop has a call site but the loop has
@@ -666,8 +672,9 @@ impl LoopFailureDistinctions {
         Self {
             // 1. D-seam + pinning tests (DIVERGENCE.md D1-D36)
             declared_not_dispatched: DistinctionState::Enforced,
-            // 2. memory_insert requires evidence_h_mem_id; recall reads
-            //    from the same store
+            // 2. memory_insert requires evidence_h_mem_id; every read
+            //    surface serializes the h_mem id — the citation
+            //    round-trip from the tool surface is pinned by test
             written_not_readable: DistinctionState::Enforced,
             // 3. LoopView.reading == WiringClosed when NeverRun
             closed_not_turning: DistinctionState::Enforced,

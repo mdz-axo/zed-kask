@@ -3,7 +3,7 @@
 //! knowledge search, publish, fork. Split from `hkask_mcp_swarm.rs` (M2).
 //!
 //! All 27 tools here talk to the ABW REST API (`agent-bestiary.world`); none
-//! touch the local registry or local ledger.
+//! touch the local registry.
 use crate::SwarmServer;
 use crate::abw_util::{
     effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
@@ -749,8 +749,6 @@ impl SwarmServer {
             // `credits_authorized` field is the operator's declared budget,
             // not a hard limit on ABW's spend. This is inherent to the ABW
             // architecture: zed-kask posts a message; ABW executes and charges.
-            // // Local mode has no equivalent gate at all: its ledger records spend
-            // rather than authorizing it, so neither path hard-caps ABW's charge.
             let auth = spend_gate::authorize_delegate(
                 &self.client,
                 &self.consent,

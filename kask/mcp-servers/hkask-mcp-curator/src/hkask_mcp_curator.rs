@@ -664,6 +664,7 @@ impl CuratorServer {
                         .take(limit)
                         .map(|(t, distance)| {
                             json!({
+                                "id": t.id.to_string(),
                                 "entity": t.entity, "attribute": t.attribute,
                                 "value": t.value, "confidence": t.confidence,
                                 "distance": distance,
@@ -694,6 +695,7 @@ impl CuratorServer {
                         .take(limit)
                         .map(|t| {
                             json!({
+                                "id": t.id.to_string(),
                                 "entity": t.entity, "attribute": t.attribute,
                                 "value": t.value, "confidence": t.confidence,
                             })
@@ -756,6 +758,7 @@ impl CuratorServer {
                     .iter()
                     .map(|t| {
                         json!({
+                            "id": t.id.to_string(),
                             "entity": t.entity, "attribute": t.attribute,
                             "value": t.value, "confidence": t.confidence,
                             "ontology": t.ontology,
@@ -782,6 +785,7 @@ impl CuratorServer {
                                 .iter()
                                 .map(|t| {
                                     json!({
+                                        "id": t.id.to_string(),
                                         "entity": t.entity, "attribute": t.attribute,
                                         "value": t.value, "confidence": t.confidence,
                                         "valid_from": t.observed_at.to_rfc3339(),
@@ -809,6 +813,7 @@ impl CuratorServer {
                                 .iter()
                                 .map(|t| {
                                     json!({
+                                        "id": t.id.to_string(),
                                         "entity": t.entity, "attribute": t.attribute,
                                         "value": t.value, "confidence": t.confidence,
                                     })
@@ -879,6 +884,7 @@ impl CuratorServer {
                         .take(limit)
                         .map(|(t, distance)| {
                             json!({
+                                "id": t.id.to_string(),
                                 "entity": t.entity,
                                 "attribute": t.attribute,
                                 "value": t.value,
@@ -900,6 +906,7 @@ impl CuratorServer {
                         .take(limit)
                         .map(|(t, distance)| {
                             json!({
+                                "id": t.id.to_string(),
                                 "entity": t.entity,
                                 "attribute": t.attribute,
                                 "value": t.value,
@@ -932,6 +939,7 @@ impl CuratorServer {
                                     .take(limit)
                                     .map(|t| {
                                         json!({
+                                            "id": t.id.to_string(),
                                             "entity": t.entity,
                                             "attribute": t.attribute,
                                             "value": t.value,
@@ -964,6 +972,7 @@ impl CuratorServer {
                                     .take(limit)
                                     .map(|t| {
                                         json!({
+                                            "id": t.id.to_string(),
                                             "entity": t.entity,
                                             "attribute": t.attribute,
                                             "value": t.value,
