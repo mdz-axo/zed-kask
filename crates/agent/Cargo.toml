@@ -114,6 +114,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 proptest.workspace = true
 reqwest_client.workspace = true
+serde_json_lenient.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 
 # Feature-propagation-only dev-dep: not `use`d in source. `project`'s

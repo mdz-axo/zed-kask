@@ -721,43 +721,6 @@ impl HMemStore {
         )
     }
 
-    /// Distinct entities under a literal, case-sensitive entity prefix
-    /// whose newest row predates `before`, oldest entities first, bounded
-    /// by `limit`. The distillation backfill's candidate query: these are
-    /// the threads a time-bounded window scan can never see again
-    /// (their newest turn is older than the scan boundary), so without
-    /// this query their un-distilled turns would be skipped forever
-    /// (the pre-2026-09-09 first-pass-lookback miss boundary).
-    pub fn stale_entities_by_prefix(
-        &self,
-        prefix: &str,
-        before: &chrono::DateTime<chrono::Utc>,
-        limit: usize,
-    ) -> Result<Vec<String>, HMemError> {
-        let rows = self
-            .driver()
-            .query(
-                "SELECT entity FROM hmems \
-                 WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY \
-                 GROUP BY entity \
-                 HAVING MAX(valid_from) < ?2 \
-                 ORDER BY MIN(valid_from) ASC \
-                 LIMIT ?3",
-                &[
-                    DbValue::Text(prefix.to_string()),
-                    DbValue::Text(before.to_rfc3339()),
-                    DbValue::Integer(limit as i64),
-                ],
-            )
-            .map_err(HMemError::from)?;
-        rows.iter()
-            .map(|row| {
-                row.get_str(0)
-                    .map(|entity| entity.to_string())
-                    .map_err(HMemError::from)
-            })
-            .collect()
-    }
     /// Hard-delete a h_mem row entirely.
     /// Hard-delete a h_mem by ID.
     ///

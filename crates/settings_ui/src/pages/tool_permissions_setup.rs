@@ -1441,6 +1441,10 @@ mod tests {
             // Reads a template file and renders it with Jinja2 — no side effects
             // beyond reading a file the agent already has read access to.
             "render_template",
+            // Records the operator's skill-feedback rating — fires a
+            // process-global telemetry hook (a regulation-ledger span);
+            // no permission-relevant side effects.
+            "record_skill_feedback",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

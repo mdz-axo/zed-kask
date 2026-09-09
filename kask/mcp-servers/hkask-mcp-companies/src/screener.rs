@@ -122,19 +122,22 @@ const POST_SCREEN_FIELDS: &[&str] = &[
 ];
 
 /// EODHD exchange codes for "Europe" (major Western, Nordic, and Central
-/// European venues, London included).
+/// European venues, London included). No Italian or Japanese code exists in
+/// EODHD's exchange list.
 const EUROPE_CODES: &[&str] = &[
-    "LSE", "IL", "F", "XETRA", "PA", "AS", "BR", "LS", "MI", "MC", "SW", "ST", "OL", "HE", "CO",
-    "VI", "IR", "LU", "WAR", "PR", "AT",
+    "LSE", "F", "XETRA", "PA", "AS", "BR", "LS", "MC", "SW", "ST", "OL", "HE", "CO", "VI", "IR",
+    "LU", "WAR", "PR", "AT", "BUD", "RO", "ZSE",
 ];
 
 /// Geographic entity → EODHD exchange codes.
 ///
-/// Verification tiers (2026-09-09): US, LSE, XETRA, TO, WAR verified against
-/// EODHD's Exchanges API documentation; NEO, IL, F, PR observed in live
-/// screener output; the remaining codes follow EODHD symbol-suffix
-/// conventions and are unverified — a wrong code surfaces as a zero-match
-/// exchange in the tool's `exchange_match_counts`.
+/// Verification (2026-09-09, live): US, TO, V, NEO, MX, LSE, F, XETRA, PA,
+/// AS, BR, LS, MC, SW, ST, OL, HE, CO, VI, IR, LU, WAR, PR, AT confirmed
+/// against the live Exchanges API list; JP, T, CNQ, IL, MI are ABSENT from
+/// it. EODHD has no Japanese exchange — Japanese companies enter the
+/// screener only as ¥-denominated London IOB lines (kept and JPY-converted
+/// by the handler's row-currency rules). Italy has no EODHD exchange code.
+/// A wrong code surfaces as a zero-match exchange in `exchange_match_counts`.
 ///
 /// "US" is matched case-sensitively so the pronoun "us" cannot select US
 /// listings; every other pattern matches case-insensitively.
@@ -152,14 +155,9 @@ const GEOGRAPHY: &[(&str, bool, &[&str])] = &[
     ("nyse", false, &["US"]),
     ("nasdaq", false, &["US"]),
     ("amex", false, &["US"]),
-    // Japan
-    ("japan", false, &["JP"]),
-    ("japanese", false, &["JP"]),
-    ("tokyo", false, &["JP"]),
-    ("jp", false, &["JP"]),
     // Canada
-    ("canada", false, &["TO", "V", "NEO", "CNQ"]),
-    ("canadian", false, &["TO", "V", "NEO", "CNQ"]),
+    ("canada", false, &["TO", "V", "NEO"]),
+    ("canadian", false, &["TO", "V", "NEO"]),
     ("toronto", false, &["TO"]),
     ("tsx", false, &["TO"]),
     ("vancouver", false, &["V"]),
@@ -169,11 +167,11 @@ const GEOGRAPHY: &[(&str, bool, &[&str])] = &[
     ("bmv", false, &["MX"]),
     ("mx", false, &["MX"]),
     // United Kingdom
-    ("uk", false, &["LSE", "IL"]),
-    ("united kingdom", false, &["LSE", "IL"]),
-    ("britain", false, &["LSE", "IL"]),
-    ("british", false, &["LSE", "IL"]),
-    ("england", false, &["LSE", "IL"]),
+    ("uk", false, &["LSE"]),
+    ("united kingdom", false, &["LSE"]),
+    ("britain", false, &["LSE"]),
+    ("british", false, &["LSE"]),
+    ("england", false, &["LSE"]),
     ("london", false, &["LSE"]),
     ("lse", false, &["LSE"]),
     // Germany
@@ -195,10 +193,6 @@ const GEOGRAPHY: &[(&str, bool, &[&str])] = &[
     // Portugal
     ("portugal", false, &["LS"]),
     ("lisbon", false, &["LS"]),
-    // Italy
-    ("italy", false, &["MI"]),
-    ("italian", false, &["MI"]),
-    ("milan", false, &["MI"]),
     // Spain
     ("spain", false, &["MC"]),
     ("spanish", false, &["MC"]),
@@ -234,6 +228,15 @@ const GEOGRAPHY: &[(&str, bool, &[&str])] = &[
     ("prague", false, &["PR"]),
     ("greece", false, &["AT"]),
     ("athens", false, &["AT"]),
+    ("hungary", false, &["BUD"]),
+    ("hungarian", false, &["BUD"]),
+    ("budapest", false, &["BUD"]),
+    ("romania", false, &["RO"]),
+    ("romanian", false, &["RO"]),
+    ("bucharest", false, &["RO"]),
+    ("croatia", false, &["ZSE"]),
+    ("croatian", false, &["ZSE"]),
+    ("zagreb", false, &["ZSE"]),
 ];
 
 /// Parse a natural language screening prompt into criteria.
@@ -1002,12 +1005,18 @@ mod tests {
             json!(200_000_000_000.0)
         );
         let codes = criteria["exchanges"].as_array().expect("exchanges array");
-        for expected in ["US", "JP", "TO", "MX", "LSE", "XETRA", "PA", "WAR"] {
+        for expected in ["US", "TO", "MX", "LSE", "XETRA", "PA", "WAR", "BUD"] {
             assert!(
                 codes.iter().any(|code| code == expected),
                 "expected {expected} in {codes:?}"
             );
         }
+        // Japan has no EODHD exchange code — it must map to nothing (Japanese
+        // companies enter via LSE ¥ lines, converted by the handler).
+        assert!(
+            !codes.iter().any(|code| code == "JP"),
+            "JP is not an EODHD exchange code"
+        );
     }
 
     /// expect: the field-name syntax the tool's own framework string
@@ -1102,8 +1111,9 @@ mod tests {
         let criteria = parse_screening_prompt("exchanges US, Japan, or Europe");
         let codes = criteria["exchanges"].as_array().expect("exchanges array");
         assert!(codes.iter().any(|code| code == "US"));
-        assert!(codes.iter().any(|code| code == "JP"));
         assert!(codes.iter().any(|code| code == "LSE"));
+        // Japan maps to nothing — no EODHD exchange code exists for it.
+        assert!(!codes.iter().any(|code| code == "JP"));
     }
 
     /// expect: an unmapped short uppercase token passes through as a literal
@@ -1136,10 +1146,10 @@ mod tests {
     fn geography_nouns_and_adjectives_parse() {
         for (prompt, expected) in [
             ("US stocks", "US"),
-            ("Japanese stocks", "JP"),
             ("NYSE listed companies", "US"),
             ("Canadian equities", "TO"),
             ("European stocks", "LSE"),
+            ("Hungarian stocks", "BUD"),
         ] {
             let criteria = parse_screening_prompt(prompt);
             let codes = criteria["exchanges"]

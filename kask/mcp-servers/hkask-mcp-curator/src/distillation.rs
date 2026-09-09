@@ -475,92 +475,106 @@ pub(crate) async fn distill_store(
         if pending.is_empty() {
             continue;
         }
-        let prompt = build_distillation_prompt(&thread_id, &pending);
-        // Route to the non-thinking model: the port default is
-        // reasoning-mandatory and rejects `thinking_allowed: false`.
-        // `generate_with_model` falls back to the port default when
-        // `model` is None (unset `HKASK_CLASSIFIER_MODEL`).
-        let generated = match inference_port
-            .generate_with_model(&prompt, &LLMParameters::default(), model, None)
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.curator.distillation",
-                    thread_id = %thread_id,
-                    %error,
-                    "Distillation inference failed — thread retried next pass (watermark not advanced)"
-                );
-                outcome.extraction_failures += 1;
-                outcome.threads_pending.insert(thread_id, now);
-                continue;
-            }
-        };
-        let candidates = match parse_lessons(&generated.text) {
-            Ok(candidates) => candidates,
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.curator.distillation",
-                    thread_id = %thread_id,
-                    %error,
-                    "Distillation output unparseable — thread retried next pass (watermark not advanced)"
-                );
-                outcome.extraction_failures += 1;
-                outcome.threads_pending.insert(thread_id, now);
-                continue;
-            }
-        };
-        // Advance the watermark BEFORE inserting lessons: a failure after
-        // lessons are stored would re-distill the same turns next pass and
-        // duplicate them — the exact redundancy this pass exists to end.
-        // A failure before lessons loses them once, loudly, with the raw
-        // turns still in memory for therapy.
-        let through_newest = pending.last().map(|turn| turn.observed_at);
-        let Some(through_newest) = through_newest else {
-            continue;
-        };
-        let watermark = HMem::new(
-            &watermark_entity,
-            "distilled_through",
-            serde_json::json!({
-                "through": through_newest.to_rfc3339(),
-                "turns": pending.len(),
-            }),
-            webid,
-        )
-        .with_confidence(hkask_types::Confidence::new(0.5))
-        .with_visibility(hkask_types::Visibility::Private);
-        if let Err(error) = memory.store(watermark) {
-            tracing::warn!(
-                target: "hkask.mcp.curator.distillation",
-                thread_id = %thread_id,
-                %error,
-                "Failed to store distillation watermark — thread retried next pass"
-            );
-            outcome.threads_pending.insert(thread_id, now);
-            continue;
-        }
-        let mut inserted = 0usize;
-        let mut skipped = 0usize;
-        for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
-            match insert_lesson(memory, inference_port, &candidate, &thread_id, webid).await {
-                Ok(true) => inserted += 1,
-                Ok(false) => skipped += 1,
+        // Batch oldest-first so every pending turn is shown to the model
+        // exactly once before the watermark covering it advances. The
+        // single-prompt form showed only the last MAX_TURNS_PER_PROMPT
+        // turns while the watermark covered ALL of them — early turns of
+        // long threads were marked extracted without ever being seen,
+        // then forgotten as covered (22 threads affected at the
+        // 2026-09-09 audit). A batch failure stops the thread there:
+        // earlier batches are already covered by their own watermarks,
+        // and the failed batch's turns stay pending for the next pass.
+        let mut thread_distilled = true;
+        for batch in pending.chunks(MAX_TURNS_PER_PROMPT) {
+            let prompt = build_distillation_prompt(&thread_id, batch);
+            // Route to the non-thinking model: the port default is
+            // reasoning-mandatory and rejects `thinking_allowed: false`.
+            // `generate_with_model` falls back to the port default when
+            // `model` is None (unset `HKASK_CLASSIFIER_MODEL`).
+            let generated = match inference_port
+                .generate_with_model(&prompt, &LLMParameters::default(), model, None)
+                .await
+            {
+                Ok(result) => result,
                 Err(error) => {
                     tracing::warn!(
                         target: "hkask.mcp.curator.distillation",
                         thread_id = %thread_id,
                         %error,
-                        "Failed to store distilled lesson"
+                        "Distillation inference failed — batch retried next pass (watermark not advanced)"
                     );
-                    skipped += 1;
+                    outcome.extraction_failures += 1;
+                    outcome.threads_pending.insert(thread_id.clone(), now);
+                    thread_distilled = false;
+                    break;
+                }
+            };
+            let candidates = match parse_lessons(&generated.text) {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator.distillation",
+                        thread_id = %thread_id,
+                        %error,
+                        "Distillation output unparseable — batch retried next pass (watermark not advanced)"
+                    );
+                    outcome.extraction_failures += 1;
+                    outcome.threads_pending.insert(thread_id.clone(), now);
+                    thread_distilled = false;
+                    break;
+                }
+            };
+            // Advance the watermark BEFORE inserting lessons: a failure
+            // after lessons are stored would re-distill the same turns
+            // next pass and duplicate them — the exact redundancy this
+            // pass exists to end. A failure before lessons loses them
+            // once, loudly, with the raw turns still in memory for
+            // therapy.
+            let through_newest = batch
+                .last()
+                .expect("chunks yields non-empty slices")
+                .observed_at;
+            let watermark = HMem::new(
+                &watermark_entity,
+                "distilled_through",
+                serde_json::json!({
+                    "through": through_newest.to_rfc3339(),
+                    "turns": batch.len(),
+                }),
+                webid,
+            )
+            .with_confidence(hkask_types::Confidence::new(0.5))
+            .with_visibility(hkask_types::Visibility::Private);
+            if let Err(error) = memory.store(watermark) {
+                tracing::warn!(
+                    target: "hkask.mcp.curator.distillation",
+                    thread_id = %thread_id,
+                    %error,
+                    "Failed to store distillation watermark — batch retried next pass"
+                );
+                outcome.threads_pending.insert(thread_id.clone(), now);
+                thread_distilled = false;
+                break;
+            }
+            for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
+                match insert_lesson(memory, inference_port, &candidate, &thread_id, webid).await {
+                    Ok(true) => outcome.lessons_inserted += 1,
+                    Ok(false) => outcome.lessons_skipped += 1,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.curator.distillation",
+                            thread_id = %thread_id,
+                            %error,
+                            "Failed to store distilled lesson"
+                        );
+                        outcome.lessons_skipped += 1;
+                    }
                 }
             }
         }
-        outcome.threads_distilled += 1;
-        outcome.lessons_inserted += inserted;
-        outcome.lessons_skipped += skipped;
+        if thread_distilled {
+            outcome.threads_distilled += 1;
+        }
     }
     if outcome.threads_distilled > 0 {
         RegulationSpan::Curation.emit("memory_distilled");
@@ -981,6 +995,260 @@ mod tests {
         assert!(
             outcome.threads_pending.contains_key("t-fail"),
             "the failed thread must stay pending for the next pass"
+        );
+    }
+
+    /// Fails on the Nth `generate` call (1-based), succeeds otherwise —
+    /// pins the batch loop's partial-failure semantics: a mid-thread
+    /// batch failure must leave earlier batches covered and later turns
+    /// pending.
+    struct CallCountingPort {
+        response: String,
+        fail_on_call: usize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl hkask_types::InferencePort for CallCountingPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if call == self.fail_on_call {
+                return Box::pin(async move {
+                    Err(InferenceError::Timeout(
+                        "scripted batch failure".to_string(),
+                    ))
+                });
+            }
+            let text = self.response.clone();
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text,
+                    model: "test-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// Store `count` turns for one thread, one per second, and return
+    /// their ids oldest-first.
+    fn seed_turns(
+        store: &hkask_memory::MemoryStore,
+        thread_id: &str,
+        count: usize,
+        webid: WebID,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<hkask_storage::HMemId> {
+        (0..count)
+            .map(|offset| {
+                turn_h_mem(
+                    store,
+                    thread_id,
+                    &format!("user: turn {offset}"),
+                    &format!("assistant: response {offset}"),
+                    now - chrono::Duration::seconds(600) + chrono::Duration::seconds(offset as i64),
+                    webid,
+                )
+            })
+            .collect()
+    }
+
+    /// The 2026-09-09 coverage repair: a thread with more pending turns
+    /// than one prompt holds is distilled in oldest-first batches, each
+    /// batch advancing its own watermark — every turn is shown to the
+    /// model exactly once before the watermark covering it advances
+    /// (the single-prompt form marked early turns extracted without ever
+    /// showing them, then the forgetting pass deleted them as covered).
+    #[tokio::test]
+    async fn long_threads_distill_in_batches_with_per_batch_watermarks() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turns = seed_turns(&store, "t-batch", 15, webid, now);
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: lesson_response(
+                "batch-entity",
+                "batch-attribute",
+                "batch lesson",
+                &[&turns[14].to_string()],
+            ),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.threads_examined, 1);
+        assert_eq!(outcome.threads_distilled, 1);
+        assert_eq!(
+            outcome.lessons_inserted, 2,
+            "both batches (12 turns + 3 turns) must extract"
+        );
+        assert_eq!(outcome.extraction_failures, 0);
+        let watermarks = store
+            .h_mems_by_entity_prefix("curator:distilled:t-batch")
+            .expect("watermarks");
+        assert_eq!(watermarks.len(), 2, "each batch advances its own watermark");
+        let throughs: Vec<chrono::DateTime<chrono::Utc>> = watermarks
+            .iter()
+            .filter_map(parse_watermark_through)
+            .collect();
+        let turn12 = store
+            .h_mems_by_entity_prefix("curator:thread:t-batch")
+            .expect("turns")
+            .into_iter()
+            .find(|h| {
+                h.observed_at
+                    == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(11)
+            })
+            .expect("turn 12");
+        assert!(
+            throughs
+                .iter()
+                .any(|through| *through == turn12.observed_at),
+            "the first batch's watermark must cover exactly its 12 turns"
+        );
+        let turn15 = store
+            .h_mems_by_entity_prefix("curator:thread:t-batch")
+            .expect("turns")
+            .into_iter()
+            .find(|h| {
+                h.observed_at
+                    == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(14)
+            })
+            .expect("turn 15");
+        assert!(
+            throughs
+                .iter()
+                .any(|through| *through == turn15.observed_at),
+            "the second batch's watermark must cover the thread's newest turn"
+        );
+    }
+
+    /// A mid-thread batch failure leaves earlier batches covered (their
+    /// watermarks stand) and the failed batch's turns pending — the next
+    /// pass re-covers exactly the remainder, not the whole thread.
+    #[tokio::test]
+    async fn batch_failure_keeps_earlier_batches_covered_and_remaining_pending() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turns = seed_turns(&store, "t-partial", 15, webid, now);
+        let failing = CallCountingPort {
+            response: lesson_response(
+                "partial-entity",
+                "partial-attribute",
+                "partial lesson",
+                &[&turns[0].to_string()],
+            ),
+            fail_on_call: 2,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let outcome = distill_store(
+            &store,
+            &failing,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.extraction_failures, 1);
+        assert_eq!(
+            outcome.threads_distilled, 0,
+            "a partial thread is not distilled"
+        );
+        assert!(outcome.threads_pending.contains_key("t-partial"));
+        let watermarks = store
+            .h_mems_by_entity_prefix("curator:distilled:t-partial")
+            .expect("watermarks");
+        assert_eq!(
+            watermarks.len(),
+            1,
+            "only the succeeded batch advanced a watermark"
+        );
+        let covered = parse_watermark_through(&watermarks[0]).expect("through");
+        let turn12 = store
+            .h_mems_by_entity_prefix("curator:thread:t-partial")
+            .expect("turns")
+            .into_iter()
+            .find(|h| {
+                h.observed_at
+                    == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(11)
+            })
+            .expect("turn 12");
+        assert_eq!(covered, turn12.observed_at);
+
+        // Second pass with a working port: only the 3 remaining turns are
+        // pending — one batch, covering the thread's newest turn.
+        let working = CallCountingPort {
+            response: lesson_response(
+                "partial-entity",
+                "partial-attribute",
+                "partial lesson two",
+                &[&turns[14].to_string()],
+            ),
+            fail_on_call: 0,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let second = distill_store(
+            &store,
+            &working,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(second.threads_distilled, 1);
+        assert_eq!(second.lessons_inserted, 1);
+        assert_eq!(
+            working.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the retry must process only the 3 remaining turns, not the whole thread"
+        );
+        let turn15 = store
+            .h_mems_by_entity_prefix("curator:thread:t-partial")
+            .expect("turns")
+            .into_iter()
+            .find(|h| {
+                h.observed_at
+                    == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(14)
+            })
+            .expect("turn 15");
+        let watermarks_after = store
+            .h_mems_by_entity_prefix("curator:distilled:t-partial")
+            .expect("watermarks");
+        assert!(
+            watermarks_after
+                .iter()
+                .filter_map(parse_watermark_through)
+                .any(|through| through == turn15.observed_at),
+            "the retry's watermark must cover the thread's newest turn"
         );
     }
 

@@ -278,6 +278,7 @@ tools! {
     LispEvalTool,
     MovePathTool,
     ReadFileTool,
+    RecordSkillFeedbackTool,
     RenameTool,
     SkillTool,
     SpawnAgentTool,
@@ -327,6 +328,40 @@ mod tests {
             );
         }
         assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
+    }
+
+    /// Gate 1 of the three silent-drop gates (see the comment above the
+    /// `tools!` invocation): the shipped `write` profile — the default
+    /// profile — carries an explicit `tools` allowlist, and
+    /// `Thread::enabled_tools` drops any tool absent from it. A registered
+    /// tool missing from the list never reaches the model, with no compile
+    /// error (the T15 defect: `record_skill_feedback` shipped registered
+    /// but unlisted, so the operator's direct rating channel was invisible
+    /// in every profile). Presence is the invariant — a deliberate disable
+    /// must be listed as `false` (the `ask_user` pattern), never omitted.
+    #[test]
+    fn every_built_in_tool_is_listed_in_the_default_write_profile() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json must parse");
+        let write_tools = value
+            .get("agent")
+            .expect("default.json should have 'agent' key")
+            .get("profiles")
+            .expect("agent should have 'profiles'")
+            .get("write")
+            .expect("profiles should have 'write'")
+            .get("tools")
+            .expect("the write profile should have 'tools'");
+        for name in ALL_TOOL_NAMES {
+            assert!(
+                write_tools.get(*name).is_some(),
+                "built-in tool `{name}` is missing from the `write` profile's tools \
+                 allowlist in assets/settings/default.json — `Thread::enabled_tools` \
+                 silently drops it, so the model never sees it. Add it (true, or \
+                 false for a deliberate disable)."
+            );
+        }
     }
 
     #[test]

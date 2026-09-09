@@ -245,7 +245,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. USD-stated market-cap bounds are converted into each exchange's listing currency using EODHD FOREX daily closes (cached 24h): rows carry market_capitalization_usd and results rank by USD cap; exchanges without a currency mapping or FX rate are dropped and named in exchange_errors. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
+        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. USD-stated market-cap bounds are converted into each exchange's listing currency using EODHD FOREX daily closes (cached 24h): rows carry market_capitalization_usd and results rank by USD cap, with the band enforced client-side; lines quoted in a foreign currency are dropped when their home market is also screened, otherwise kept and converted at their own rate (Japanese companies enter via London ¥ lines — EODHD has no Japanese exchange). Exchanges without a currency mapping or FX rate are dropped and named in exchange_errors. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
     )]
     pub async fn company_screener(
         &self,
@@ -288,9 +288,13 @@ impl CompaniesServer {
             // USD conversion: EODHD reports market caps in each listing's
             // currency, so USD-stated bounds must be converted per exchange
             // (FOREX daily closes, cached 24h) to select the intended band.
-            let cap_bounds_present = ["market_capitalization_min", "market_capitalization_max"]
-                .iter()
-                .any(|key| criteria.get(*key).is_some());
+            let cap_min = criteria
+                .get("market_capitalization_min")
+                .and_then(|value| value.as_f64());
+            let cap_max = criteria
+                .get("market_capitalization_max")
+                .and_then(|value| value.as_f64());
+            let cap_bounds_present = cap_min.is_some() || cap_max.is_some();
             let conversion_active =
                 cap_bounds_present && exchange_codes.iter().any(|code| code != "US");
             let fx = if conversion_active {
@@ -328,6 +332,8 @@ impl CompaniesServer {
             }
 
             let mut exchange_errors = serde_json::Map::new();
+            let mut row_stats = RowFilterStats::default();
+            let mut extra_rates = serde_json::Map::new();
             let (merged_rows, exchange_counts) = if exchange_codes.is_empty() {
                 let rows = providers::fetch_eodhd_screener(
                     &self.client,
@@ -421,26 +427,32 @@ impl CompaniesServer {
                     }
                 }
 
-                // Annotate rows with a USD market cap so cross-exchange
-                // comparison and ranking are currency-consistent.
+                // Row-currency pass: classify each row by its
+                // currency_symbol against the exchange's currency, annotate
+                // a USD market cap where resolvable, drop foreign lines whose
+                // home market this screen also covers, and enforce the
+                // requested USD band client-side.
                 let annotate = matches!(&fx, Some(Ok(_)));
-                if annotate {
-                    for (_, rate, rows) in &mut buckets {
-                        for row in rows.iter_mut() {
-                            if let Some(cap) = row
-                                .get("market_capitalization")
-                                .and_then(|value| value.as_f64())
-                                && let Some(usd) = serde_json::Number::from_f64(cap / *rate)
-                                && let Some(object) = row.as_object_mut()
-                            {
-                                object.insert(
-                                    "market_capitalization_usd".to_string(),
-                                    serde_json::Value::Number(usd),
-                                );
-                            }
-                        }
-                    }
-                }
+                let buckets: Vec<(String, Vec<serde_json::Value>)> =
+                    if let Some(Ok(context)) = &fx {
+                        let (kept, stats, rates) = self
+                            .screener_row_currency_pass(
+                                buckets,
+                                context,
+                                &exchange_codes,
+                                cap_min,
+                                cap_max,
+                            )
+                            .await;
+                        row_stats = stats;
+                        extra_rates = rates;
+                        kept
+                    } else {
+                        buckets
+                            .into_iter()
+                            .map(|(code, _, rows)| (code, rows))
+                            .collect()
+                    };
 
                 // Merge: with USD conversion, rank by market_capitalization_usd
                 // (the cap-comparable order the truncation contract
@@ -449,7 +461,7 @@ impl CompaniesServer {
                 let mut merged: Vec<serde_json::Value> = if annotate {
                     let mut all: Vec<serde_json::Value> = buckets
                         .iter()
-                        .flat_map(|(_, _, rows)| rows.iter().cloned())
+                        .flat_map(|(_, rows)| rows.iter().cloned())
                         .collect();
                     all.sort_by(|a, b| {
                         let a_usd = a
@@ -472,11 +484,11 @@ impl CompaniesServer {
                     let mut interleaved: Vec<serde_json::Value> = Vec::new();
                     let longest = buckets
                         .iter()
-                        .map(|(_, _, rows)| rows.len())
+                        .map(|(_, rows)| rows.len())
                         .max()
                         .unwrap_or(0);
                     for index in 0..longest {
-                        for (_, _, rows) in &buckets {
+                        for (_, rows) in &buckets {
                             if let Some(row) = rows.get(index) {
                                 interleaved.push(row.clone());
                             }
@@ -503,7 +515,7 @@ impl CompaniesServer {
 
                 let exchange_counts: serde_json::Map<String, serde_json::Value> = buckets
                     .iter()
-                    .map(|(code, _, rows)| {
+                    .map(|(code, rows)| {
                         (code.clone(), serde_json::Value::from(rows.len() as u64))
                     })
                     .collect();
@@ -552,6 +564,9 @@ impl CompaniesServer {
                 "screener_filters": screener_filters,
                 "exchange_match_counts": serde_json::Value::Object(exchange_counts),
                 "exchange_errors": serde_json::Value::Object(exchange_errors),
+                "foreign_lines_dropped": row_stats.foreign_lines_dropped,
+                "out_of_band_dropped": row_stats.out_of_band_dropped,
+                "unconverted_rows": row_stats.unconverted_rows,
                 "post_screen_filters": post_screen_filters,
                 "warnings": warnings,
                 "count": count,
@@ -560,7 +575,7 @@ impl CompaniesServer {
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                 },
-                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap; without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
+                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap. Row currency follows the row's currency_symbol: lines quoted in another currency are dropped when that currency's home market is also screened (the company appears via its home exchange) and otherwise kept and converted at their own currency's rate — Japanese companies enter this way (EODHD has no Japanese exchange; their London ¥ lines are the surface). The requested band is enforced client-side (out_of_band_dropped counts rows EODHD returned outside it; foreign_lines_dropped counts dropped foreign lines; unconverted_rows counts rows without a USD conversion, sorted last). Without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
                 "source": "EODHD Screener API"
             });
 
@@ -575,6 +590,9 @@ impl CompaniesServer {
                         if let Some(rate) = context.rate_by_currency.get(currency) {
                             usd_rates.insert(currency.clone(), serde_json::json!(rate));
                         }
+                    }
+                    for (currency, rate) in &extra_rates {
+                        usd_rates.insert(currency.clone(), rate.clone());
                     }
                 }
                 if !usd_rates.is_empty()
@@ -694,6 +712,168 @@ impl CompaniesServer {
         Ok((date, rate))
     }
 
+    /// Row-level currency handling for the screener fan-out.
+    ///
+    /// EODHD rows carry a per-row `currency_symbol` that can differ from the
+    /// exchange's default currency (London IOB lines quote Japanese stocks in
+    /// ¥, Nordic stocks in kr). Classification per row:
+    /// - symbol matches the exchange currency → convert at the exchange rate;
+    /// - symbol maps to another currency this screen also covers → drop (the
+    ///   company's home-exchange line is in another bucket of this very
+    ///   screen, correctly converted);
+    /// - symbol maps to a currency the screen does not cover → keep and
+    ///   convert at that currency's USD rate (how Japanese companies enter:
+    ///   EODHD has no Japanese exchange, so their London ¥ lines are the only
+    ///   surface);
+    /// - ambiguous symbol ("kr" = SEK/NOK/DKK) → drop when any candidate
+    ///   currency is covered by the screen, else keep unconverted;
+    /// - unknown symbol or missing cap → keep unconverted (no USD field).
+    ///
+    /// Rows with a resolved USD cap are enforced against the requested band
+    /// client-side — EODHD's server-side filter application is inconsistent
+    /// for some exchanges (verified live 2026-09-09: MX ignores the upper
+    /// bound), so the band is guaranteed here.
+    ///
+    /// Returns the kept rows per exchange, drop/keep counters, and any extra
+    /// USD rates fetched for foreign-currency rows (for the fx object).
+    async fn screener_row_currency_pass(
+        &self,
+        buckets: Vec<(String, f64, Vec<serde_json::Value>)>,
+        context: &ScreenerFx,
+        exchange_codes: &[String],
+        cap_min: Option<f64>,
+        cap_max: Option<f64>,
+    ) -> (
+        Vec<(String, Vec<serde_json::Value>)>,
+        RowFilterStats,
+        serde_json::Map<String, serde_json::Value>,
+    ) {
+        let screen_currencies: std::collections::HashSet<&str> = exchange_codes
+            .iter()
+            .filter_map(|code| context.currency_by_exchange.get(code).map(String::as_str))
+            .collect();
+
+        // Classify every row; collect currencies whose rates are needed for
+        // foreign-currency keeps.
+        enum RowClass {
+            SameCurrency(f64),
+            Foreign(String),
+            Unconverted,
+        }
+        let mut classified: Vec<(String, Vec<(serde_json::Value, RowClass)>)> = Vec::new();
+        let mut needed_currencies: Vec<String> = Vec::new();
+        let mut stats = RowFilterStats::default();
+        for (code, rate, rows) in buckets {
+            let exchange_currency = context
+                .currency_by_exchange
+                .get(&code)
+                .map(String::as_str)
+                .unwrap_or("");
+            let mut rows_out: Vec<(serde_json::Value, RowClass)> = Vec::new();
+            for row in rows {
+                let symbol = row
+                    .get("currency_symbol")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let class = if symbols_for(exchange_currency).contains(&symbol) {
+                    RowClass::SameCurrency(rate)
+                } else if let Some(currency) = currency_for_symbol(symbol) {
+                    if screen_currencies.contains(currency) {
+                        stats.foreign_lines_dropped += 1;
+                        continue;
+                    }
+                    needed_currencies.push(currency.to_string());
+                    RowClass::Foreign(currency.to_string())
+                } else if let Some((_, candidates)) = AMBIGUOUS_SYMBOLS
+                    .iter()
+                    .find(|(ambiguous, _)| *ambiguous == symbol)
+                    && candidates
+                        .iter()
+                        .any(|currency| screen_currencies.contains(currency))
+                {
+                    stats.foreign_lines_dropped += 1;
+                    continue;
+                } else {
+                    RowClass::Unconverted
+                };
+                rows_out.push((row, class));
+            }
+            classified.push((code, rows_out));
+        }
+
+        // Fetch the extra currency rates (concurrent, cached 24h).
+        let mut distinct = needed_currencies;
+        distinct.sort();
+        distinct.dedup();
+        let fetches = distinct
+            .iter()
+            .map(|currency| self.cached_forex_rate(currency));
+        let mut extra_rates: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        for (currency, outcome) in distinct
+            .iter()
+            .zip(futures::future::join_all(fetches).await)
+        {
+            if let Ok((_, rate)) = outcome {
+                extra_rates.insert(currency.clone(), rate);
+            }
+        }
+
+        // Annotate, enforce the band client-side, and rebuild the buckets.
+        let mut kept_buckets: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+        for (code, rows) in classified {
+            let mut kept: Vec<serde_json::Value> = Vec::new();
+            for (mut row, class) in rows {
+                let cap = row
+                    .get("market_capitalization")
+                    .and_then(|value| value.as_f64());
+                let usd = match class {
+                    RowClass::SameCurrency(rate) => cap.map(|cap| cap / rate),
+                    RowClass::Foreign(ref currency) => extra_rates
+                        .get(currency)
+                        .and_then(|rate| cap.map(|cap| cap / rate)),
+                    RowClass::Unconverted => None,
+                };
+                match usd {
+                    Some(usd) => {
+                        if let Some(min) = cap_min
+                            && usd < min
+                        {
+                            stats.out_of_band_dropped += 1;
+                            continue;
+                        }
+                        if let Some(max) = cap_max
+                            && usd > max
+                        {
+                            stats.out_of_band_dropped += 1;
+                            continue;
+                        }
+                        if let Some(number) = serde_json::Number::from_f64(usd)
+                            && let Some(object) = row.as_object_mut()
+                        {
+                            object.insert(
+                                "market_capitalization_usd".to_string(),
+                                serde_json::Value::Number(number),
+                            );
+                        }
+                        kept.push(row);
+                    }
+                    None => {
+                        stats.unconverted_rows += 1;
+                        kept.push(row);
+                    }
+                }
+            }
+            kept_buckets.push((code, kept));
+        }
+
+        let extra_rates_json: serde_json::Map<String, serde_json::Value> = extra_rates
+            .iter()
+            .map(|(currency, rate)| (currency.clone(), serde_json::json!(rate)))
+            .collect();
+        (kept_buckets, stats, extra_rates_json)
+    }
+
     #[tool(
         description = "Multi-provider fundamental research search for a company (Exa, Tavily, Brave). Returns research claims classified by category (guidance, competitive, macro, financial, risk) with numeric values, mentioned tickers, and dates extracted — the claim feed for expectations_gap's management-guidance estimate and for research notes. Coverage-honest: per-provider status is surfaced; a provider without a configured key is named in the status, never silently skipped."
     )]
@@ -804,4 +984,61 @@ fn convert_cap_filters(filters: &[serde_json::Value], rate: f64) -> Vec<serde_js
             serde_json::Value::Array(converted)
         })
         .collect()
+}
+
+/// Currency → the row `currency_symbol` values EODHD uses for it.
+const CURRENCY_SYMBOLS: &[(&str, &[&str])] = &[
+    ("USD", &["$"]),
+    ("CAD", &["C$"]),
+    ("MXN", &["₱"]),
+    ("GBP", &["£", "p"]),
+    ("EUR", &["€"]),
+    ("JPY", &["¥"]),
+    ("CHF", &["CHF"]),
+    ("SEK", &["kr"]),
+    ("NOK", &["kr"]),
+    ("DKK", &["kr"]),
+    ("PLN", &["zł"]),
+    ("CZK", &["Kč"]),
+    ("HUF", &["Ft"]),
+    ("VND", &["₫"]),
+];
+
+/// The row symbols of a currency (empty for unknown currencies).
+fn symbols_for(currency: &str) -> &'static [&'static str] {
+    CURRENCY_SYMBOLS
+        .iter()
+        .find(|(known, _)| *known == currency)
+        .map(|(_, symbols)| *symbols)
+        .unwrap_or(&[])
+}
+
+/// Row `currency_symbol` → currency code, for symbols that map to exactly
+/// one currency. "kr" is deliberately absent (SEK/NOK/DKK).
+fn currency_for_symbol(symbol: &str) -> Option<&'static str> {
+    match symbol {
+        "$" => Some("USD"),
+        "C$" => Some("CAD"),
+        "₱" => Some("MXN"),
+        "£" | "p" => Some("GBP"),
+        "€" => Some("EUR"),
+        "¥" => Some("JPY"),
+        "CHF" => Some("CHF"),
+        "zł" => Some("PLN"),
+        "Kč" => Some("CZK"),
+        "Ft" => Some("HUF"),
+        "₫" => Some("VND"),
+        _ => None,
+    }
+}
+
+/// Symbols that map to several currencies, with their candidates.
+const AMBIGUOUS_SYMBOLS: &[(&str, &[&str])] = &[("kr", &["SEK", "NOK", "DKK"])];
+
+/// Row-currency pass counters, surfaced in the tool output.
+#[derive(Default)]
+struct RowFilterStats {
+    foreign_lines_dropped: u64,
+    out_of_band_dropped: u64,
+    unconverted_rows: u64,
 }

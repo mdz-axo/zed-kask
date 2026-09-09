@@ -1589,7 +1589,22 @@ async fn fetch_screener_with_bands(
             continue;
         }
 
-        let mut band_filters: Vec<serde_json::Value> = base_filters.to_vec();
+        // The band query REPLACES the user's cap triples with the band's own
+        // bounds (already clamped into the user's range, so nothing is lost).
+        // Live EODHD (verified 2026-09-09) mishandles queries that stack four
+        // cap conditions — returning unbounded results — while the two-
+        // condition shape matches the direct query, which applies correctly.
+        let mut band_filters: Vec<serde_json::Value> = base_filters
+            .iter()
+            .filter(|filter| {
+                filter
+                    .as_array()
+                    .and_then(|parts| parts.first())
+                    .and_then(|field| field.as_str())
+                    != Some("market_capitalization")
+            })
+            .cloned()
+            .collect();
         band_filters.push(serde_json::json!([
             "market_capitalization",
             ">=",
