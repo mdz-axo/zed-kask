@@ -1,6 +1,6 @@
 # Kask reliability checklist
 
-Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E: C1–C5 COMPLETE 2026-09-09 — C1 budget deletion −1,421, C2 consolidation closed, C3 residue sweep, C4 dead-surface removal −2,143, C5 the two deferred machete flags fixed + swarm_panel's pre-existing `--all-features` landmine repaired; cumulative net ≈ −3,760, evidence in plan.md §C2–§C5). Next: operator review of the re-presented Checkpoint B (T04–T06 + teardown accounting), then Phase C (T07 → T08) resumes under the net-simplification definition of done. [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
+Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E C1–C5 COMPLETE 2026-09-09, cumulative net ≈ −3,754; **Phase C T07+T08 COMPLETE 2026-09-09** — truthful directive outcomes + explicit escalation delivery, commit `7ff4ffca3d` + worktree, 71+185 tests green, clippy/fmt/zed-check clean). Next: **Checkpoint C operator review** (cumulative directive/memory regressions + build/lints), then the follow-up queue T09–T15 requires task elaboration + operator scheduling. [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints C/D remain pending. The whole reliability program is not complete.
 
 Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
@@ -87,24 +87,23 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Applied acknowledgments correspond to supported effects; failed/unsupported variants are distinct.
   - [x] Dampening does not imply application; existing cap/threshold behavior remains intact.
   - [x] No autonomous actuator or new authority; acknowledgment compatibility reviewed; inbox-to-event tests pass.
-- [ ] **T08 — Deliver explicit domain escalations** (depends on T07)
-  - [ ] Domain/severity/evidence reaches the existing human-review queue/channel; both paths tested.
-  - [ ] Missing/broken sinks are visible; queued/attempted/confirmed persistence is distinguished despite the current best-effort sink.
-  - [ ] Dampening/general alerts remain correct; explicit concerns are not fabricated sensor readings; routing gate resolved.
+- [x] **T08 — Deliver explicit domain escalations** (depends on T07) — **verified 2026-09-09** (RED pre-fix: EscalateDomain silently swallowed + falsely acknowledged; fix: `try_persist_alert` reporting contract on `AlertEscalationSink` (Confirmed/Attempted distinct), `BridgeAlertEscalationSink` reporting core, `apply_escalate_domain` delivery retaining domain/severity/evidence with no fabricated deficit/threshold, ack reports queued/attempted/missing_sink with the real queue id; end-to-end bridge→inbox→real-queue test; 71+185 tests green, clippy/fmt clean; live-channel routing decision returned to operator — evidence in plan.md T08)
+  - [x] Domain/severity/evidence reaches the existing human-review queue/channel; both paths tested independently.
+  - [x] Missing/broken sinks are visible; queued/attempted/confirmed persistence is distinguished despite the current best-effort sink.
+  - [x] Dampening/general alerts remain correct; explicit concerns are not fabricated sensor readings; routing gate resolved (queue is the path of record; live-channel variant is an operator decision, documented).
 - [ ] **Checkpoint C:** cumulative regressions, affected integration build/lints, operator review before follow-up scheduling.
 
-## Follow-up queue — elaborate before execution
+## Follow-up queue — elaborated 2026-09-09 (Checkpoint C ratified); awaiting operator scheduling
 
-Each item is owned by the coding agent for task elaboration. Completion requires a full scoped regression-first task, controls, actual validation evidence, and operator scheduling; these are not implementation-ready tickets.
+Each item elaborated in plan.md §Follow-up queue (defect verified against current code, fix approach, acceptance, verification, refused shortcut). Proposed groups: G1 T09+T10 (evidence fidelity), G2 T11+T12 (measurement integrity), G3 T13+T14+T15 (lifecycle/infra; T15 gated on spec recovery).
 
-- [ ] **T09 — Passage deletion ownership:** own passage text/vector removed, siblings retained, valid semantic neighbor recovered; reconcile T03 identity choices.
-- [ ] **T10 — Exact harness comparison:** exact detected pair and metric retained; trailing/interleaved events do not suppress verification.
-- [ ] **T11 — Market-identity calibration:** distinct markets count independently, rescans do not; legacy identity/migration gate resolved.
-- [ ] **T12 — Cap-reset evidence:** exhausted-agent evidence preserved; replenishment alone earns no advice progress; dispatch bounds intact.
-- [ ] **T13 — Retrain finalization:** existing placeholder gains verified durable metadata/comparison; repeated polling idempotent; failure control.
-- [ ] **T14 — IPC discovery convention:** publish/discover works across XDG/UID cases with env precedence/private-directory protections.
-- [ ] **T15 — Skill-feedback sensing:** recover intended production writer/spec; actual feedback reaches drift consumer with provenance; absence stays unobserved.
-- [ ] Expand follow-up tasks and place cumulative review checkpoints after each group of two or three.
+- [x] **T09 — Passage deletion ownership** — **verified 2026-09-09 (Group 1)**: machinery was already correct (landed with the orphan-cleanup ruling); the missing evidence captured — one-passage deletion with sibling survival + KNN retrieval + orphan-sweep control + NULL-passage legacy control; the prefix-collision observation pinned at the distillation watermark read. hkask-memory 37 green.
+- [x] **T10 — Exact harness comparison** — **verified 2026-09-09 (Group 1)**: RED observed (the pair came back `None`); both defects fixed — `before` now takes the LATEST metric value at-or-before the detection point (was the FIRST — the verdict could invert), `after` takes the latest METRIC-VALUED event (trailing verdicts no longer suppress the comparison to None). kask_bridge 187 green.
+- [ ] **T11 — Market-identity calibration** (defect CONFIRMED: dedup keys on probability+outcome only — five distinct 0.9/no markets yield ONE sample; legacy-migration operator gate, additive-only default) — **Group 2, next**
+- [ ] **T12 — Cap-reset evidence** (defect CONFIRMED: act() resets caps BEFORE the exhaustion check — remaining==0 is never observable, the E04 alert is dead in practice) — **Group 2, next**
+- [ ] **T13 — Retrain finalization** (defects found: nil-UUID silent fallback on malformed job id, placeholder adapter fields, unproven poll idempotence; recover the completion-manifest test seam first)
+- [ ] **T14 — IPC discovery convention** (defect CONFIRMED: hardcoded /run/user/1000 fallback — wrong path on any other UID; fix per-UID resolution on both publish and discover)
+- [ ] **T15 — Skill-feedback sensing** (spec recovery REQUIRED first: the read side exists, the intended completion/operator-feedback writer is unrecovered — "unwired" is not "unwanted")
 
 ## Operator decision — D01
 

@@ -128,6 +128,7 @@ pub(crate) fn resolved_observations_from_snapshots(
                 crate::calibration::ResolvedObservation {
                     probability: snapshot.probability,
                     outcome,
+                    market_key: Some(market.ticker.clone()),
                 },
             )),
             None => *resolved_without_snapshot += 1,

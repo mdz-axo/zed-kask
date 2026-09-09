@@ -14,10 +14,18 @@ use hkask_forecast::brier_score_multi;
 
 /// One resolved observation: the market-implied probability at observation
 /// time and the realized outcome.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedObservation {
     pub probability: f64,
     pub outcome: bool,
+    /// Provider-stable market identity (Kalshi `ticker`, Polymarket Gamma
+    /// `id`) — the dedup key for the rescan guard. `None` on legacy journal
+    /// rows predating identity and on manual `market_record_resolution`
+    /// calls (which carry no market id); identity-less observations are
+    /// never treated as duplicates — that would fabricate an identity the
+    /// row does not carry.
+    #[serde(default)]
+    pub market_key: Option<String>,
 }
 
 /// A pre-resolution price snapshot: the market-implied probability at the
@@ -38,6 +46,10 @@ struct JournalRow {
     bucket: String,
     probability: f64,
     outcome: bool,
+    /// Absent on legacy lines (serde default) — loaded as `None`, never
+    /// deduplicated against identity-bearing observations.
+    #[serde(default)]
+    market_key: Option<String>,
 }
 
 /// Pending-journal row (market key + pre-resolution snapshot per line).
@@ -99,14 +111,23 @@ impl CalibrationStore {
     }
 
     /// Whether an identical observation already exists in the bucket —
-    /// idempotent ingest guard for the resolution scanner.
+    /// idempotent ingest guard for the resolution scanner. The dedup key
+    /// is the MARKET IDENTITY, not (probability, outcome): distinct
+    /// markets with identical prices count independently (five distinct
+    /// 0.9/no markets are five samples), while a rescan of the same
+    /// market is always a duplicate — a market resolves once, so identity
+    /// matches even if the re-scanned price differs. Identity-less
+    /// observations (legacy journal rows, manual records) are NEVER
+    /// duplicates — treating them as such would fabricate an identity the
+    /// row does not carry.
     pub fn contains(&self, bucket: &str, observation: &ResolvedObservation) -> bool {
-        self.buckets.get(bucket).is_some_and(|v| {
-            v.iter().any(|o| {
-                (o.probability - observation.probability).abs() < 1e-9
-                    && o.outcome == observation.outcome
-            })
-        })
+        match &observation.market_key {
+            Some(market_key) => self.buckets.get(bucket).is_some_and(|v| {
+                v.iter()
+                    .any(|o| o.market_key.as_deref() == Some(market_key.as_str()))
+            }),
+            None => false,
+        }
     }
 
     pub fn sample_size(&self, bucket: &str) -> u64 {
@@ -157,6 +178,7 @@ impl CalibrationStore {
                     ResolvedObservation {
                         probability: row.probability,
                         outcome: row.outcome,
+                        market_key: row.market_key,
                     },
                 ),
                 Err(e) => {
@@ -214,6 +236,7 @@ impl CalibrationStore {
                     bucket: bucket.clone(),
                     probability: o.probability,
                     outcome: o.outcome,
+                    market_key: o.market_key.clone(),
                 };
                 out.push_str(
                     &serde_json::to_string(&row)
@@ -282,6 +305,80 @@ pub fn read_calibration(store: &CalibrationStore, bucket: &str) -> CalibrationRe
 mod tests {
     use super::*;
 
+    /// T11: five DISTINCT markets with identical probability and outcome
+    /// count as five samples — market identity, not (probability, outcome),
+    /// is the dedup key. Rescans of the same markets add zero.
+    #[test]
+    fn distinct_markets_with_identical_prices_count_independently() {
+        let mut store = CalibrationStore::new();
+        for key in ["m1", "m2", "m3", "m4", "m5"] {
+            let observation = ResolvedObservation {
+                probability: 0.9,
+                outcome: false,
+                market_key: Some(key.to_string()),
+            };
+            assert!(
+                !store.contains("politics", &observation),
+                "a distinct market is never a duplicate of another"
+            );
+            store.record("politics", observation);
+        }
+        assert_eq!(store.sample_size("politics"), 5);
+        let brier = store.brier("politics").expect("brier");
+        assert!(
+            (brier - 0.81).abs() < 1e-9,
+            "five 0.9/no samples → Brier 0.81"
+        );
+
+        // Rescans add zero: the same market keys are duplicates now.
+        for key in ["m1", "m2", "m3", "m4", "m5"] {
+            let observation = ResolvedObservation {
+                probability: 0.9,
+                outcome: false,
+                market_key: Some(key.to_string()),
+            };
+            assert!(
+                store.contains("politics", &observation),
+                "a rescan of the same market is a duplicate"
+            );
+        }
+    }
+
+    /// T11: legacy observations without identity are never deduplicated —
+    /// treating them as duplicates would fabricate an identity the row
+    /// does not carry. And an identity-bearing observation never collides
+    /// with an identity-less one.
+    #[test]
+    fn legacy_observations_without_identity_never_dedup() {
+        let mut store = CalibrationStore::new();
+        store.record(
+            "politics",
+            ResolvedObservation {
+                probability: 0.9,
+                outcome: false,
+                market_key: None,
+            },
+        );
+        let same_legacy = ResolvedObservation {
+            probability: 0.9,
+            outcome: false,
+            market_key: None,
+        };
+        assert!(
+            !store.contains("politics", &same_legacy),
+            "no identity — never a duplicate"
+        );
+        let identified = ResolvedObservation {
+            probability: 0.9,
+            outcome: false,
+            market_key: Some("m1".to_string()),
+        };
+        assert!(
+            !store.contains("politics", &identified),
+            "an identity-bearing observation never collides with a legacy row"
+        );
+    }
+
     #[test]
     fn missing_bucket_reads_stale_never_zero() {
         // The module's cybernetic invariant: no data ⇒ stale, not brier: 0 —
@@ -297,12 +394,13 @@ mod tests {
     #[test]
     fn perfect_predictions_score_zero_brier() {
         let mut store = CalibrationStore::new();
-        for _ in 0..4 {
+        for index in 0..4 {
             store.record(
                 "test",
                 ResolvedObservation {
                     probability: 1.0,
                     outcome: true,
+                    market_key: Some(format!("m{index}")),
                 },
             );
         }
@@ -313,12 +411,13 @@ mod tests {
     #[test]
     fn coin_flip_predictions_score_quarter_brier() {
         let mut store = CalibrationStore::new();
-        for outcome in [true, false] {
+        for (index, outcome) in [true, false].into_iter().enumerate() {
             store.record(
                 "test",
                 ResolvedObservation {
                     probability: 0.5,
                     outcome,
+                    market_key: Some(format!("m{index}")),
                 },
             );
         }
@@ -332,15 +431,28 @@ mod tests {
         let observation = ResolvedObservation {
             probability: 0.7,
             outcome: true,
+            market_key: Some("KX-MARKET".to_string()),
         };
         assert!(!store.contains("test", &observation));
-        store.record("test", observation);
+        store.record("test", observation.clone());
         assert!(store.contains("test", &observation));
+        // The same market re-recorded with a different probability is still
+        // a duplicate — a market resolves once; identity, not the price,
+        // is the dedup key.
+        assert!(store.contains(
+            "test",
+            &ResolvedObservation {
+                probability: 0.9,
+                outcome: false,
+                market_key: Some("KX-MARKET".to_string()),
+            }
+        ));
         assert!(!store.contains(
             "test",
             &ResolvedObservation {
                 probability: 0.7,
-                outcome: false
+                outcome: true,
+                market_key: Some("KX-OTHER".to_string()),
             }
         ));
         assert_eq!(store.sample_size("test"), 1);
@@ -356,6 +468,7 @@ mod tests {
             ResolvedObservation {
                 probability: 0.8,
                 outcome: true,
+                market_key: None,
             },
         );
         store.record(
@@ -363,6 +476,7 @@ mod tests {
             ResolvedObservation {
                 probability: 0.4,
                 outcome: false,
+                market_key: None,
             },
         );
         store.save(&path).expect("save");
@@ -417,6 +531,7 @@ mod tests {
             ResolvedObservation {
                 probability: 0.8,
                 outcome: true,
+                market_key: None,
             },
         );
         store.record_pending(

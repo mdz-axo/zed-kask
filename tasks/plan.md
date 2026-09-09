@@ -319,22 +319,29 @@ Acceptance:
 **Refused shortcut:** rename a log message while continuing to persist false completion.
 **Skill match query:** typed command outcomes and production dispatch contract tests.
 
-### T08 — Deliver explicit domain escalations
+### T08 — Deliver explicit domain escalations — VERIFIED 2026-09-09
 
-**Scope:** M; curation; regulation/bridge seam. **Depends on:** T07.
-**Likely files:** `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs`, `src/cybernetics_loop/cycle.rs`, `src/algedonic.rs`, `kask/crates/kask_bridge/src/directive_bridge.rs`, existing bridge alert tests.
+**Scope:** M; curation; regulation/bridge seam. **Depends on:** T07 (done).
 **Anchor:** `EscalateDomain` → inbox → existing `AlertEscalationSink` / `BridgeAlertEscalationSink` durable queue and existing alert channel.
 
+**Defect found (pre-fix):** `EscalateDomain` was silently swallowed by the `_ => {}` catch-all AND acknowledged "applied" (the T07 finding). The delivery infrastructure existed — `alert_escalation_sink` on the loop, `BridgeAlertEscalationSink` forwarding to the reviewable `EscalationQueue` (`curator_escalations` MCP tool) — but nothing wired the directive to it, and the sink contract (`persist_alert` → `()`) could not prove persistence.
+
+**Fix:**
+- **Narrowly adapted the sink contract** (the spec's instruction): `AlertEscalationSink` gains `try_persist_alert → Result<AlertQueueOutcome, String>` with a default that falls back to best-effort `persist_alert` and returns `Attempted` — existing sinks keep their contract. `AlertQueueOutcome::Confirmed(Option<id>)` / `Attempted` keep confirmed, attempted, and failed distinct. `BridgeAlertEscalationSink` refactors its supersede+insert body into a reporting core; both the legacy and reporting methods delegate to it.
+- **Wired `EscalateDomain`** (`apply_escalate_domain` in directive.rs): delivers to the escalation queue via `try_persist_alert`, retaining domain/severity/evidence. The queue entry is marked `explicit: true` and carries NO deficit/threshold fields — an explicit concern is a request for review, not a fabricated measured threshold breach. The message's condition key ("Explicit escalation ({domain}, {severity})") is stable per concern: a re-raised concern supersedes the pending row (latest evidence, retry_count+1) instead of duplicating; different concerns get their own rows; rapid repeats are handled by the directive dampener. Severity→confidence: info 0.25, warning 0.5, critical 1.0.
+- **The acknowledgment reports the delivery truth**: `queued` (+ the queue-assigned escalation id) / `attempted` (best-effort sink or failed write — surfaced via warn) / `missing_sink` (no sink wired — surfaced via warn), with the domain/severity/evidence payload merged into the ack record (the archive copy). The dead `Unsupported` outcome variant was deleted (T08 wired its only user).
+- **Routing decision returned to the operator** (per the spec: "If the existing sinks cannot faithfully carry an explicit concern, return the routing decision to the operator rather than invent policy"): the live `CurationInput` channel only carries `RuntimeAlert` (measured deficit/threshold); dressing an explicit concern as one would fabricate a sensor reading. The queue is the human-review path of record; the ack record is the archive copy. If you want live-channel notification for explicit escalations too, that needs a new `CurationInput` variant — your call, not invented here.
+
+**Verification (executed 2026-09-09):** RED observed pre-fix — the five new directive-level escalation tests failed against the "unsupported" state. GREEN post-fix: directive level (hkask-regulation, 71 passed) — confirmed-in-queue (payload identity, no fabricated deficit/threshold, confidence mapping, ack carries id+identity), supersede-reports-queued-without-id, missing-sink surfaced, failed-write → attempted, best-effort-sink → attempted; bridge level (kask_bridge, 185 passed) — `try_persist_alert` against a REAL in-memory `EscalationQueue` (insert → Confirmed with a readable id; supersede → Confirmed(None), exactly one pending row), legacy `persist_alert` still writes through the core, and the **end-to-end**: `EscalateDomain` → inbox → real `BridgeAlertEscalationSink` → real queue, asserting the queue row's identity fields AND the ack's `escalation_id` matches the real row's id. Existing dampening/general-alert tests unchanged and green (the algedonic path is untouched — `persist_alert_to_queue` still calls the legacy method). `./script/clippy -p hkask-regulation -p kask_bridge` exit 0, zero warnings; rustfmt clean. One unreproduced flake: a single kask_bridge test failed once in an early run and passed in 9 consecutive reruns plus the final captured run (185/185, exit 0) — not attributable to this change (the kask_bridge delta is confined to alert_escalation.rs, whose tests were stable in every run).
+
+**Net-LOC (T07+T08 combined, commit `7ff4ffca3d` + worktree):** 4 files, +989/−49 — directive.rs +743 (≈+180 production: the outcome enum, the escalation delivery, the payload merge; ≈+560 tests: the T07 variant table + the five T08 delivery tests), alert_escalation.rs +342 (≈+70 production: the reporting core + trait override; the rest tests incl. the end-to-end), algedonic.rs +43 (the `AlertQueueOutcome` enum + `try_persist_alert` default), hkask_regulation.rs +2 (re-export). The false-acknowledgment paths are deleted; the additions are the delivery wiring and its evidence.
+
 Acceptance:
-- An undampened explicit escalation retains domain, severity, and evidence in the human-review path; test queue persistence and alert delivery independently.
-- Missing/broken sinks are surfaced; queued, attempted, and confirmed durable delivery are not conflated. The existing void/best-effort sink does not prove persistence success—recover or narrowly adapt its contract before claiming durable acknowledgment.
-- Existing dampening/general alerts remain functional, without treating a requested escalation as a fabricated measured threshold breach.
+- An undampened explicit escalation retains domain, severity, and evidence in the human-review path; queue persistence and alert delivery tested independently. ✓ (queue row + ack asserted separately; the end-to-end composes them)
+- Missing/broken sinks are surfaced; queued, attempted, and confirmed durable delivery are not conflated. ✓ (`AlertQueueOutcome` makes the three states structurally distinct; the best-effort default returns `Attempted`, never `Confirmed`)
+- Existing dampening/general alerts remain functional, without treating a requested escalation as a fabricated measured threshold breach. ✓ (all 63 pre-existing regulation tests green; the explicit queue entry carries no deficit/threshold fields)
 
-**Verification:** bridge→inbox→real temporary escalation store plus channel receiver, missing-sink control and write-failure variant. If the existing sinks cannot faithfully carry an explicit concern, return the routing decision to the operator rather than invent policy.
-**Refused shortcut:** record only the directive type as applied or invent autonomous remediation.
-**Skill match query:** human escalation delivery with truthful persistence and channel outcomes.
-
-**Checkpoint C:** cumulative directive and memory/budget regressions, build/lint evidence, and operator review before scheduling the follow-up queue.
+**Checkpoint C:** cumulative directive and memory/budget regressions, build/lint evidence, and operator review before scheduling the follow-up queue. **RATIFIED by the operator 2026-09-09 "as is"** — Phase C evidence accepted; the queue-only routing for explicit escalations stands (no live-channel `CurationInput` variant); the follow-up queue (T09–T15) opens for elaboration + scheduling.
 
 ## Phase E — Complexity teardown (operator ruling 2026-09-08)
 
@@ -501,21 +508,80 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 
 **Checkpoint D:** T16–T19 regressions, affected crate suites/checks/lints, residue review, operator review of the retraction record.
 
-## Follow-up queue: tracked, not execution-ready
+## Follow-up queue: elaborated at Checkpoint C (2026-09-09, ratified) — awaiting operator scheduling
 
-These are not accepted deferrals or implementation authorization. Each remains owned by the coding agent for elaboration at Checkpoint C (or earlier if the operator reprioritizes). Before scheduling, expand each into the same three-criterion/failure-control format as T01–T08; re-slice anything larger than M. Source anchors and minimum completion evidence follow.
+Each entry below is the recovered-spec elaboration (defect verified against current code 2026-09-09, fix approach, acceptance, verification, refused shortcut). Execution still requires operator scheduling; the three-criterion expansion happens in the task section when executed.
 
-| ID | Target / source anchor | Required evidence before completion | Dependency / gate | Skill match query |
-|---|---|---|---|---|
-| T09 | Passage deletion ownership — `kask/crates/hkask-memory/src/memory_store.rs:596` | Delete/prune one passage; its stored text/embedding disappears, sibling chunks survive, and the next valid semantic match remains retrievable. | Reconcile with T03's actual deletion identity; no mandatory architectural dependency on T03. | Memory identity and relational/vector lifecycle consistency |
-| T10 | Exact harness comparison — `kask/crates/kask_bridge/src/rollout_event_bridge.rs:132` | Production detector→verification preserves the exact 0.9→0.6 pair in a 0.4→0.9→0.6 history; interleaved verdicts do not suppress evidence; metric identity is retained. | None; recover both summary identities, not merely reverse an iterator. | Event history selection and regression feedback fidelity |
-| T11 | Market-identity calibration — `kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs:103` | Five distinct 0.9/no markets yield five samples and Brier 0.81; rescans add zero; old stored observations are handled without fabricated identities. | Operator gate if legacy-data migration changes retained evidence; re-slice migration separately. | Calibration identity, deduplication and compatible persistence |
-| T12 | Cap-reset evidence — `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:420` | Exhaustion is observed before replenishment; reset alone earns no advice-progress credit; dispatch limits still hold. | Reconcile T07/T08 edits to shared regulation code; no semantic dependency assumed. | Feedback measurement isolation across resource replenishment |
-| T13 | Retrain finalization — `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:134` | Real pre-registration followed by fixture-backed successful manifest updates durable metrics/artifact information and comparison; repeated poll is idempotent; failure does not finalize. | Recover completion-manifest test seam first. | Adapter lifecycle finalization and external completion fixtures |
-| T14 | IPC discovery convention — `kask/crates/kask_bridge/src/inference_socket.rs:49` | Publication→discovery works for absent/empty/populated XDG and non-1000 UID; env precedence/private directory protections remain intact. | No new upstream edits without a D-seam decision. | Secure runtime path publication and discovery round trips |
-| T15 | Skill-feedback sensing — `kask/crates/hkask-regulation/src/runtime.rs:776` | Actual skill completion/operator feedback reaches the shared ledger and drift consumer with provenance; absent input remains explicitly unobserved. | Spec/writer ownership recovery before implementation; no deleting intended capability, invented skill identity, or substitute LLM success labels. | Spec-preserving feedback producer integration |
+### T09 — Passage deletion ownership — VERIFIED 2026-09-09 (Group 1)
 
-After elaboration, schedule follow-up checkpoints in groups of two or three tasks, each with cumulative tests/builds and human review. Do not treat this table as sufficient implementation design.
+**Outcome:** the deletion machinery was already correct (landed with the 2026-09-09 orphan-cleanup ruling — passage-scoped deletion is transactional across the vector and metadata rows); the missing piece was the evidence, now captured. No defect — this is evidence-capture, honestly recorded as such (no RED to observe).
+
+**Evidence:** `passage_deletion_removes_only_the_named_passage` — seeds one entity with three passages (distinct one-hot vectors), deletes the middle passage, asserts: exactly 1 row deleted, count 3→2, the deleted passage is not retrievable via KNN, both siblings are the nearest match for their own vectors, the entity's h_mems survive, and the orphan sweep removes nothing (survivors with a live entity are not orphans). Control: `passage_deletion_spares_null_passage_and_unlisted_entities` — a NULL-passage legacy row survives a passage-listed deletion, and a passage listed under a different entity deletes nothing. The T09-class prefix-collision observation is pinned at the distillation watermark read site (`distillation.rs:452`): the read is entity-PREFIX, safe only because production thread ids are UUIDs; a future non-UUID id source must switch to exact-match first.
+
+**Verification (2026-09-09):** hkask-memory 37 passed (35 + 2 new), 0 failed; curator suite green (comment-only edit); clippy exit 0, zero warnings; rustfmt clean.
+
+### T10 — Exact harness comparison — VERIFIED 2026-09-09 (Group 1)
+
+**Defect (confirmed, RED observed):** both extraction sides failed. `before` took the FIRST metric value at-or-before the detection position — in a 0.4→0.9→0.6 history with the detector at 0.9, before=0.4, and the impact verdict could INVERT (0.4→0.6 reads "improved" where the real detection pair 0.9→0.6 degraded). `after` used `rfind` over ALL events — a trailing non-metric event (a verdict) made after=None, suppressing the comparison entirely. RED: `metric_before_and_after_preserves_the_detection_pair` failed with `None` where `Some((0.9, 0.6))` belongs.
+
+**Fix:** both sides now extract from METRIC-VALUED events only, taking the LATEST on each side of the detection point — `before` is the value the detector saw (latest at-or-before), `after` is the latest measurement since (trailing verdicts cannot suppress it). The spec's "recover both summary identities" note was considered: the event model carries identity as (position, kind, metric-valued payload) — the metric filter IS the identity filter for metric events; a tag-based detector/verification identity redesign would add machinery without changing any acceptance outcome, so it was rejected under the teardown discipline.
+
+**Evidence:** `metric_before_and_after_preserves_the_detection_pair` (0.4→0.9→verdict→0.6→verdict → exactly (0.9, 0.6)); `metric_before_and_after_skips_other_metric_events` (a latency event between is never picked up as the pass_rate pair); the two pre-existing tests unchanged and green (the two-event case and the no-after absence case).
+
+**Verification (2026-09-09):** kask_bridge 187 passed (185 + 2 new), 0 failed; hkask-memory 37; curator green; clippy exit 0, zero warnings; rustfmt clean.
+
+### T11 — Market-identity calibration — defect CONFIRMED
+
+**Anchor:** `kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs:103` (`contains`). **Scope: M.**
+**Defect (verified):** the idempotent-ingest guard dedups on `(probability, outcome)` within a bucket — NO market identity. Five DISTINCT markets all resolving 0.9/no yield ONE sample (the 2nd–5th are treated as duplicates); the Brier loop under-counts exactly where the operator needs discrimination. Rescan idempotence works today only coincidentally (same market → same prob+outcome).
+**Fix:** carry market identity through resolution ingest: `ResolvedObservation` gains the market key; `contains` dedups on `(market_key, probability, outcome)`. The journal line gains an optional market field; legacy lines ({bucket, probability, outcome}) load with absent identity and are never treated as duplicates of new observations (no fabricated identities). **Operator gate:** if legacy retained evidence must change (re-keying/dedup of legacy rows), that migration is re-sliced and gated separately — the default is additive-only.
+**Acceptance:** five distinct 0.9/no markets → five samples, Brier 0.81, sample_size 5; rescanning all five adds zero; a legacy journal loads without error and its observations are preserved as-is.
+**Verification:** RED-first: five distinct market keys at 0.9/no → assert sample_size 5 (fails today at 1); rescan control; legacy-journal load control.
+**Refused shortcut:** widening the probability epsilon; dropping the rescan guard entirely (rescans would duplicate).
+
+### T12 — Cap-reset evidence — defect CONFIRMED
+
+**Anchor:** `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:420` (`act`). **Scope: S/M.**
+**Defect (verified):** `act()` calls `reset_all_caps()` FIRST, then reads statuses and filters `remaining == 0` — post-reset, remaining==ceiling, so cap exhaustion is NEVER detected (the E04 alert path is dead code in practice; only a ceiling-0 agent would fire). The reset destroys the evidence before the detection reads it.
+**Fix:** capture exhaustion BEFORE the reset — read the statuses first (or record an `exhausted_this_tick` flag when `charge` fails, which survives the reset). Control: the automatic per-tick reset alone must not earn advice-progress credit (the verify_impact pass must not read "exhaustion resolved" as advice-driven improvement when the reset — not the advice — replenished).
+**Acceptance:** an agent that exhausts its cap during a tick produces the exhaustion alert on the next act(); reset alone earns no advice credit; dispatch limits still hold (charging still refuses at 0).
+**Verification:** RED-first: register a cap, charge to exhaustion, run act(), assert the exhaustion alert fired (fails today); control: replenished-not-exhausted agent alerts nothing; advice-credit control.
+**Refused shortcut:** alerting on `remaining == ceiling` post-reset (fabricates exhaustion for fresh caps).
+
+### T13 — Retrain finalization — defect partially confirmed; seam recovery first
+
+**Anchor:** `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:134`. **Scope: M. Depends: recover the completion-manifest test seam first.**
+**Defects found (verified):** (1) `uuid::Uuid::parse_str(&job_id).unwrap_or_default()` — a malformed job id silently becomes the nil UUID (the .rules silent-fallback trap; the lookup then misses or hits an unrelated row). (2) The adapter built from the completion manifest carries placeholder fields (`String::new()` for two, `0`, `1`) — durable metrics/artifact information may be incomplete. (3) Idempotence of the repeated poll on the register path is unproven (the pre-registered path reports "Already registered"; the fresh-register path calls `adapter_store.store` every poll until the store dedups — verify). (4) Failure does not finalize — verify a failed manifest read leaves no adapter.
+**Fix:** nil-UUID fallback → typed error; complete the manifest→adapter field mapping; prove poll idempotence; failure control.
+**Acceptance:** real pre-registration + fixture-backed successful manifest updates durable metrics/artifact info and the A/B comparison; repeated poll is idempotent (no duplicate adapters, no metric churn); failure does not finalize.
+**Verification:** recover the completion-manifest test seam (a fixture manifest the status tool can read) first; then RED-first per defect.
+**Refused shortcut:** asserting only the happy path; leaving the nil-UUID fallback in place.
+
+### T14 — IPC discovery convention — defect CONFIRMED
+
+**Anchor:** `kask/crates/kask_bridge/src/inference_socket.rs:49`. **Scope: S.**
+**Defect (verified):** the socket-path publication resolves the runtime dir as `XDG_RUNTIME_DIR` with the fallback `"/run/user/1000"` HARDCODED — on any other UID (or absent XDG), publication writes to the wrong path (or another user's directory), and discovery (which reads the same file) fails or worse. The `.rules` numeric-env-var trap class, but for a path.
+**Fix:** resolve per-UID: `XDG_RUNTIME_DIR` → `/run/user/$UID` (from the actual uid, e.g. `id -u`/`libc`) → explicit warn + no publication if neither resolves (never a silent wrong path). The discovery side (`InferenceIpcClient::from_env`) must use the SAME resolution. Env precedence (HKASK_INFERENCE_SOCKET) unchanged; the private-directory protections (0700 XDG dir) must not be weakened by any fallback.
+**Acceptance:** publication→discovery round-trips for absent/empty/populated XDG_RUNTIME_DIR and for a non-1000 UID; env precedence holds; no world-readable fallback location.
+**Verification:** RED-first with a fixture resolution table (unset XDG + uid 1001 → /run/user/1001/kask/...); discovery round-trip per case; the no-resolution case warns and skips publication.
+**Refused shortcut:** keeping the hardcoded 1000 and only fixing the discovery side.
+
+### T15 — Skill-feedback sensing — spec recovery required before implementation
+
+**Anchor:** `kask/crates/hkask-regulation/src/runtime.rs:730` (`record_skill_span`) / `:747` (`query_skill_feedback`). **Scope: M. Gate: spec/writer ownership recovery BEFORE implementation.**
+**Current state (verified):** the READ side exists — `query_skill_feedback`, `skill_ids_with_feedback`, the drift consumer in metacognition. The WRITE side has one generic producer (`record_skill_span`, called from the bridge for skill spans) but the intended production writer for SKILL COMPLETION / OPERATOR FEEDBACK is unrecovered — the requirement ("actual skill completion/operator feedback reaches the shared ledger and drift consumer with provenance; absent input remains explicitly unobserved") names a producer that may not be wired.
+**Recovery work (first):** find the spec — `git log -S` on `record_skill_span`/`skill_ids_with_feedback`, the skill-maintenance/adapter-lifecycle skills' declared feedback paths, and the curator's skill-outcome recording — to determine the intended writer and whether it was deleted, never wired, or lives behind a setting. Per the spec-loss trap: "unwired" is not "unwanted" — if the writer was deliberately designed but orphaned, flag it; if it never existed, the task is to surface "unobserved" honestly, not to invent a producer.
+**Acceptance (post-recovery):** actual skill completion/operator feedback reaches the ledger + drift consumer with provenance; absent input is explicitly unobserved (the drift consumer distinguishes no-data from bad-data); no invented skill identity or substitute LLM success labels.
+**Verification:** per the recovered spec; minimum: a provenance round-trip test and an absent-input control.
+**Refused shortcut:** fabricating feedback events from skill spans alone (spans are activity, not outcomes).
+
+### Scheduling proposal (groups of 2–3 with cumulative checkpoints, per the plan)
+
+- **Group 1 — evidence fidelity (memory/event substrate):** T09 + T10. Both S; both are "the recorded evidence must survive to the reader" defects in the memory/event layer. Cumulative: hkask-memory + kask_bridge suites.
+- **Group 2 — measurement integrity (calibration/regulation):** T11 + T12. Both S/M; both are "evidence destroyed or deduped before observation" defects. Cumulative: prediction-markets + hkask-regulation suites. T11 carries the legacy-migration operator gate (additive-only default).
+- **Group 3 — lifecycle/infra:** T13 + T14 + T15. T13 and T14 have confirmed defects (S/M); T15 is gated on spec recovery — schedule it last in the group so the recovery work (read-only) can start anytime without blocking T13/T14.
+
+Each group ends with a checkpoint: cumulative regressions, build/lints, operator review before the next group.
 
 ## D01 — Shared-database retention decision
 

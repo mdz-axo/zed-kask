@@ -246,6 +246,11 @@ impl PredictionMarketsServer {
                         calibration::ResolvedObservation {
                             probability: req.probability,
                             outcome: req.outcome,
+                            // The manual tool carries no market id — the
+                            // observation records without identity and is
+                            // never deduplicated (the scanner's rescan
+                            // guard only matches identity-bearing rows).
+                            market_key: None,
                         },
                     );
                     let reading = calibration::read_calibration(&store, &bucket);

@@ -424,6 +424,92 @@ mod tests {
         assert_eq!(pending[0].confidence, 1.0);
     }
 
+    /// Capturing `RegulationSink` — records every persisted span's path and
+    /// observation so the directive acknowledgment can be asserted.
+    struct CapturingAckSink(std::sync::Mutex<Vec<(String, serde_json::Value)>>);
+
+    impl hkask_types::RegulationSink for CapturingAckSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((event.span.path.clone(), event.observation.clone()));
+            Ok(())
+        }
+    }
+
+    /// T08 end-to-end: an `EscalateDomain` directive through the inbox, with
+    /// the real `BridgeAlertEscalationSink` and a real in-memory escalation
+    /// store — the full bridge→inbox→queue chain. The queue row retains the
+    /// concern's identity, and the acknowledgment reports "queued" with the
+    /// escalation id matching the real queue row.
+    #[tokio::test]
+    async fn escalate_domain_directive_lands_in_real_queue_end_to_end() {
+        let queue = in_memory_queue();
+        let acks = Arc::new(CapturingAckSink(std::sync::Mutex::new(Vec::new())));
+        let ledger = Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::RegulationLedger::default(),
+        ));
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut regulation_loop = hkask_regulation::CyberneticsLoop::new(ledger)
+            .with_event_sink(Arc::clone(&acks) as Arc<dyn hkask_types::RegulationSink>)
+            .with_curator_directive_channel(rx);
+        regulation_loop.set_alert_escalation_sink(Some(Arc::new(BridgeAlertEscalationSink::new(
+            queue.clone(),
+        ))));
+
+        tx.send(hkask_types::CuratorDirective::EscalateDomain {
+            domain: "storage".to_string(),
+            severity: hkask_types::curator::EscalationSeverity::Warning,
+            evidence: "variety deficit".to_string(),
+        })
+        .expect("send escalation");
+        regulation_loop.process_inbox().await;
+
+        // The real queue holds the concern with its identity — no fabricated
+        // deficit/threshold fields.
+        let pending = queue.list_pending().expect("pending");
+        assert_eq!(pending.len(), 1, "exactly one queue row");
+        let entry = &pending[0];
+        assert!(
+            entry.output.contains("storage") && entry.output.contains("warning"),
+            "the queue output must name the domain and severity: {}",
+            entry.output
+        );
+        let context: serde_json::Value =
+            serde_json::from_str(&entry.error_context).expect("context");
+        assert_eq!(context["domain"], "storage");
+        assert_eq!(context["severity"], "warning");
+        assert_eq!(context["evidence"], "variety deficit");
+        assert_eq!(context["explicit"], true);
+        assert!(context.get("deficit").is_none() && context.get("threshold").is_none());
+
+        // The acknowledgment reports the confirmed queue outcome with the
+        // real row's id and the concern's identity.
+        let records = acks
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(path, _)| path.contains("directive_acknowledged"))
+            .map(|(_, observation)| observation.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 1, "one acknowledgment: {records:#?}");
+        let ack = &records[0];
+        assert_eq!(ack["outcome"], "queued");
+        assert_eq!(
+            ack["escalation_id"],
+            serde_json::Value::String(entry.id.to_string()),
+            "the ack's escalation id must match the real queue row"
+        );
+        assert_eq!(ack["domain"], "storage");
+        assert_eq!(ack["severity"], "warning");
+        assert_eq!(ack["evidence"], "variety deficit");
+    }
+
     fn reliability(
         value: f64,
         timestamp: chrono::DateTime<chrono::Utc>,

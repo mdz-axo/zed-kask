@@ -450,6 +450,11 @@ pub(crate) async fn distill_store(
             continue;
         }
         let watermark_entity = format!("{WATERMARK_PREFIX}{thread_id}");
+        // PREFIX read, not exact-match: safe only because production thread
+        // ids are UUIDs (no UUID is a prefix of another). A future non-UUID
+        // thread-id source would read a sibling thread's watermark here —
+        // switch to an exact-match read before introducing one (the T09
+        // prefix-collision observation, recorded 2026-09-07).
         let through = match memory.h_mems_by_entity_prefix(&watermark_entity) {
             Ok(watermarks) => watermarks.iter().filter_map(parse_watermark_through).max(),
             Err(error) => {

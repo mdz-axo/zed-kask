@@ -1507,8 +1507,9 @@ pub async fn eodhd_search_get(
 /// the company — symbol, name, exchange, market cap, sector, industry,
 /// price, volume, EPS, dividend yield, etc.).
 ///
-/// Paginates with offset (max 999). When a screen exceeds 1,000 results,
-/// automatically splits by market cap bands to exhaust the full universe.
+/// Paginates with offset (max 999). When a screen exceeds the 1,000-result
+/// offset cap, re-queries in market cap bands — clamped to any market-cap
+/// bounds already in the filters — to exhaust the full universe.
 ///
 /// EODHD Screener API:
 /// `https://eodhd.com/api/screener?api_token={token}&filters=[...]&sort=market_capitalization.desc&limit=500`
@@ -1522,26 +1523,25 @@ pub async fn fetch_eodhd_screener(
         McpToolError::internal(format!("failed to serialize screener filters: {e}"))
     })?;
 
-    // First pass: try direct pagination with the given filters.
-    let mut all_rows = fetch_screener_page(client, eodhd_api_key, &filters_json, 0).await?;
-
-    // If we hit the offset cap (1,000 results), split by market cap bands.
-    // This only applies when the filters don't already include a market cap
-    // range narrow enough to stay under 1,000.
-    if all_rows.len() >= 1000 {
-        // Check if market_capitalization is already in the filters
-        let has_market_cap_filter = filters.iter().any(|f| {
-            f.as_array()
-                .and_then(|a| a.first())
-                .and_then(|f| f.as_str())
-                .map(|s| s == "market_capitalization")
-                .unwrap_or(false)
-        });
-
-        if !has_market_cap_filter {
-            // Split by market cap bands to exhaust the universe
-            all_rows = fetch_screener_with_bands(client, eodhd_api_key, filters).await?;
+    // Direct pass: paginate to the offset cap (a page holds at most 500
+    // rows and the offset stops at 999, so at most two pages).
+    let mut all_rows = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let page_rows = fetch_screener_page(client, eodhd_api_key, &filters_json, offset).await?;
+        let row_count = page_rows.len();
+        all_rows.extend(page_rows);
+        if row_count < 500 || offset + 500 > 999 {
+            break;
         }
+        offset += 500;
+    }
+
+    // At the offset cap (1,000 rows) the screen may have more matches than
+    // one paged query can reach — re-query in market cap bands (clamped to
+    // any market-cap bounds already in the filters) to exhaust the universe.
+    if all_rows.len() >= 1000 {
+        all_rows = fetch_screener_with_bands(client, eodhd_api_key, filters).await?;
     }
 
     // Deduplicate by code (band overlaps create dupes)
@@ -1555,8 +1555,9 @@ pub async fn fetch_eodhd_screener(
 }
 
 /// Fetch the EODHD screener with market cap band splitting to exhaust
-/// the 1,000-result offset limit. Adds market_capitalization band filters
-/// to the existing filter set.
+/// the 1,000-result offset limit. Bands are clamped into any
+/// market_capitalization bounds already present in the filters, so a wide
+/// user-specified cap range is subdivided rather than skipped.
 async fn fetch_screener_with_bands(
     client: &reqwest::Client,
     eodhd_api_key: &str,
@@ -1576,14 +1577,30 @@ async fn fetch_screener_with_bands(
         (2_000_000_000_000.0, 10_000_000_000_000.0),
         (10_000_000_000_000.0, f64::MAX),
     ];
+    let (user_min, user_max) = market_cap_bounds(base_filters);
 
     let mut all_rows = Vec::new();
 
     for (lower, upper) in &bands {
+        // Clamp the band into the user's bounds; skip empty intersections.
+        let effective_lower = user_min.map_or(*lower, |bound| bound.max(*lower));
+        let effective_upper = user_max.map_or(*upper, |bound| bound.min(*upper));
+        if effective_lower >= effective_upper {
+            continue;
+        }
+
         let mut band_filters: Vec<serde_json::Value> = base_filters.to_vec();
-        band_filters.push(serde_json::json!(["market_capitalization", ">=", lower]));
-        if *upper != f64::MAX {
-            band_filters.push(serde_json::json!(["market_capitalization", "<", upper]));
+        band_filters.push(serde_json::json!([
+            "market_capitalization",
+            ">=",
+            effective_lower
+        ]));
+        if effective_upper != f64::MAX {
+            band_filters.push(serde_json::json!([
+                "market_capitalization",
+                "<",
+                effective_upper
+            ]));
         }
 
         let filters_json = serde_json::to_string(&band_filters).map_err(|e| {
@@ -1598,6 +1615,15 @@ async fn fetch_screener_with_bands(
             all_rows.extend(band_rows);
 
             if row_count < 500 || offset + 500 > 999 {
+                if row_count == 500 && offset + 500 > 999 {
+                    tracing::warn!(
+                        target: "hkask.mcp.companies.screener",
+                        lower = effective_lower,
+                        upper = effective_upper,
+                        "screener band hit the 1,000-result offset cap with a full page — \
+                         results may be truncated"
+                    );
+                }
                 break;
             }
             offset += 500;
@@ -1605,6 +1631,30 @@ async fn fetch_screener_with_bands(
     }
 
     Ok(all_rows)
+}
+
+/// Extract the tightest market_capitalization bounds from a filter list.
+fn market_cap_bounds(filters: &[serde_json::Value]) -> (Option<f64>, Option<f64>) {
+    let mut min: Option<f64> = None;
+    let mut max: Option<f64> = None;
+    for filter in filters {
+        let Some(parts) = filter.as_array() else {
+            continue;
+        };
+        if parts.first().and_then(|field| field.as_str()) != Some("market_capitalization") {
+            continue;
+        }
+        let operation = parts.get(1).and_then(|op| op.as_str()).unwrap_or("");
+        let Some(value) = parts.get(2).and_then(|value| value.as_f64()) else {
+            continue;
+        };
+        match operation {
+            ">=" | ">" => min = Some(min.map_or(value, |bound| bound.max(value))),
+            "<=" | "<" => max = Some(max.map_or(value, |bound| bound.min(value))),
+            _ => {}
+        }
+    }
+    (min, max)
 }
 
 /// Fetch a single page from the EODHD screener (up to 500 rows at the

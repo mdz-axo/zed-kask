@@ -72,6 +72,10 @@ impl FixtureHttp {
     fn count(&self) -> usize {
         self.requests.lock().expect("requests lock").len()
     }
+
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().expect("requests lock").clone()
+    }
 }
 
 impl Drop for FixtureHttp {
@@ -1181,10 +1185,9 @@ async fn legacy_presanitizer_cache_is_not_returned_or_logged() {
 
 // ── Screener fan-out contracts ────────────────────────────────────────────
 
-/// Decode the `exchange` filter value from a recorded EODHD screener request
-/// path (query string included), or None when the request carries no
-/// exchange filter.
-fn decode_screener_exchange(path: &str) -> Option<String> {
+/// Decode the filters JSON array from a recorded EODHD screener request path
+/// (query string included).
+fn decode_screener_filters(path: &str) -> Option<Vec<Value>> {
     let query = path.split('?').nth(1)?;
     let filters_parameter = query.split('&').find(|pair| pair.starts_with("filters="))?;
     let encoded = filters_parameter.strip_prefix("filters=")?;
@@ -1196,8 +1199,16 @@ fn decode_screener_exchange(path: &str) -> Option<String> {
         .replace("%3D", "=")
         .replace("%3A", ":")
         .replace("%20", " ");
-    let filters: Value = serde_json::from_str(&decoded).ok()?;
-    filters.as_array()?.iter().find_map(|filter| {
+    serde_json::from_str::<Value>(&decoded)
+        .ok()?
+        .as_array()
+        .cloned()
+}
+
+/// Decode the `exchange` filter value from a recorded EODHD screener request
+/// path, or None when the request carries no exchange filter.
+fn decode_screener_exchange(path: &str) -> Option<String> {
+    decode_screener_filters(path)?.iter().find_map(|filter| {
         let parts = filter.as_array()?;
         if parts.first()?.as_str()? == "exchange" {
             Some(parts.get(2)?.as_str()?.to_string())
@@ -1275,6 +1286,141 @@ async fn screener_fans_out_per_exchange_and_interleaves() {
                     .any(|warning| warning.as_str().unwrap_or("").contains("local currency"))
             );
             assert_eq!(fixture.count(), 2);
+        })
+        .await;
+}
+
+/// expect: [P5] The screener provider paginates past the first 500-row page
+/// to the offset cap instead of silently truncating at one page.
+/// dcterms:identifier: providers::fetch_eodhd_screener
+#[tokio::test]
+async fn screener_provider_paginates_past_the_first_page() {
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            let offset = path
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("offset="))
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0);
+            let count = if offset == 0 { 500 } else { 137 };
+            let rows: Vec<Value> = (0..count)
+                .map(|index| {
+                    json!({
+                        "code": format!("C{}", offset as usize + index),
+                        "exchange": "US",
+                        "market_capitalization": 1_000_000_000.0,
+                    })
+                })
+                .collect();
+            return (200, json!({ "data": rows }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+                .expect("HTTP client");
+            let rows = providers::fetch_eodhd_screener(&client, "fixture-eodhd", &[])
+                .await
+                .expect("screener rows");
+            assert_eq!(rows.len(), 637);
+            assert_eq!(fixture.count(), 2);
+        })
+        .await;
+}
+
+/// expect: [P5] A screen that reaches the 1,000-result offset cap re-queries
+/// in market cap bands even when the filters already carry market-cap
+/// bounds — the bands subdivide the user's range (clamped into it) instead
+/// of silently truncating at the cap.
+/// dcterms:identifier: providers::fetch_eodhd_screener / fetch_screener_with_bands
+#[tokio::test]
+async fn screener_band_split_subdivides_user_cap_range() {
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            // Band queries carry the user's two cap triples plus two band
+            // triples; direct pages carry only the user's two.
+            let cap_triples = decode_screener_filters(path)
+                .unwrap_or_default()
+                .iter()
+                .filter(|filter| {
+                    filter
+                        .as_array()
+                        .and_then(|parts| parts.first())
+                        .and_then(|field| field.as_str())
+                        == Some("market_capitalization")
+                })
+                .count();
+            if cap_triples >= 4 {
+                return (200, json!({ "data": [] }));
+            }
+            let rows: Vec<Value> = (0..500)
+                .map(|index| {
+                    json!({
+                        "code": format!("C{index}"),
+                        "exchange": "US",
+                        "market_capitalization": 1_000_000_000.0,
+                    })
+                })
+                .collect();
+            return (200, json!({ "data": rows }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+                .expect("HTTP client");
+            let filters = vec![
+                json!(["market_capitalization", ">=", 2_000_000_000.0]),
+                json!(["market_capitalization", "<", 200_000_000_000.0]),
+            ];
+            let rows = providers::fetch_eodhd_screener(&client, "fixture-eodhd", &filters)
+                .await
+                .expect("screener rows");
+            // Band results replace the capped direct pass (band queries are
+            // empty here), proving the split fired.
+            assert_eq!(rows.len(), 0);
+            // Two direct pages (1,000 rows → cap hit) + six clamped band
+            // queries: [2e9,5e9), [5e9,1e10), [1e10,2.5e10), [2.5e10,5e10),
+            // [5e10,1e11), [1e11,2e11).
+            assert_eq!(fixture.count(), 8);
+            // Every band bound stayed inside the user's range.
+            for request in fixture.requests() {
+                for filter in decode_screener_filters(&request).unwrap_or_default() {
+                    let Some(parts) = filter.as_array() else {
+                        continue;
+                    };
+                    if parts.first().and_then(|field| field.as_str())
+                        != Some("market_capitalization")
+                    {
+                        continue;
+                    }
+                    let operation = parts.get(1).and_then(|op| op.as_str()).unwrap_or("");
+                    let Some(value) = parts.get(2).and_then(|value| value.as_f64()) else {
+                        continue;
+                    };
+                    match operation {
+                        ">=" => assert!(
+                            value >= 2_000_000_000.0,
+                            "band lower bound {value} escaped the user range"
+                        ),
+                        "<" => assert!(
+                            value <= 200_000_000_000.0,
+                            "band upper bound {value} escaped the user range"
+                        ),
+                        _ => {}
+                    }
+                }
+            }
         })
         .await;
 }

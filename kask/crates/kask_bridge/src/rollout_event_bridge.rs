@@ -129,14 +129,24 @@ impl RolloutEventSource for BridgeRolloutEventSource {
                 _ => None,
             }
         };
+        // Both sides extract from METRIC-VALUED events only, taking the
+        // LATEST on each side of the detection point: "before" is the value
+        // the detector saw (the latest at-or-before — taking the FIRST
+        // would read an earlier baseline and could invert the verdict:
+        // 0.4→0.6 "improved" where the real detection pair 0.9→0.6
+        // degraded), and "after" is the latest measurement since (a
+        // trailing non-metric event — e.g. a verdict — must not suppress
+        // the comparison to None).
         let before = events
             .iter()
             .filter(|event| event.position <= before_position)
-            .find_map(|event| value_of(&event.payload));
+            .filter_map(|event| value_of(&event.payload))
+            .next_back();
         let after = events
             .iter()
-            .rfind(|event| event.position > before_position)
-            .and_then(|event| value_of(&event.payload));
+            .filter(|event| event.position > before_position)
+            .filter_map(|event| value_of(&event.payload))
+            .next_back();
         match (before, after) {
             (Some(before), Some(after)) => Ok(Some((before, after))),
             _ => Ok(None),
@@ -326,6 +336,77 @@ mod tests {
             .metric_before_and_after("alpha", "pass_rate", second)
             .unwrap();
         assert_eq!(result, None, "no event after the last — absence, not zero");
+    }
+
+    /// T10: the before/after extraction preserves the EXACT detector→
+    /// verification pair. In a 0.4→0.9→0.6 history with the detector firing
+    /// at the 0.9 event, the pair is (0.9, 0.6) — "before" is the value at
+    /// the detection point (the LATEST metric-valued event at-or-before),
+    /// not the earliest. Interleaved and trailing verdict events (no metric
+    /// value) must not suppress the comparison — "after" is the latest
+    /// METRIC-VALUED event after the detection point. Pre-fix, "before"
+    /// took the first value (0.4 — the verdict could INVERT: 0.4→0.6 reads
+    /// improved where the real 0.9→0.6 pair degraded) and a trailing
+    /// verdict made "after" None, suppressing the evidence entirely.
+    #[test]
+    fn metric_before_and_after_preserves_the_detection_pair() {
+        let store = memory_store();
+        // History: 0.4 → 0.9 (detector fires here) → verdict → 0.6 → verdict.
+        write_summary(&store, "alpha", 0.4);
+        let detection = write_summary(&store, "alpha", 0.9);
+        store
+            .append(
+                "alpha",
+                "verdict",
+                &serde_json::json!({"pass": true, "source": "deterministic"}),
+            )
+            .unwrap();
+        write_summary(&store, "alpha", 0.6);
+        store
+            .append(
+                "alpha",
+                "verdict",
+                &serde_json::json!({"pass": false, "source": "regulation_impact"}),
+            )
+            .unwrap();
+        let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
+
+        let result = bridge
+            .metric_before_and_after("alpha", "pass_rate", detection)
+            .unwrap();
+        assert_eq!(
+            result,
+            Some((0.9, 0.6)),
+            "the exact detection→verification pair, unsuppressed by verdict events"
+        );
+    }
+
+    /// T10 control: metric identity is retained — an event carrying a
+    /// DIFFERENT metric's value is never picked up as this metric's
+    /// before/after.
+    #[test]
+    fn metric_before_and_after_skips_other_metric_events() {
+        let store = memory_store();
+        let detection = write_summary(&store, "alpha", 0.9);
+        // A latency event after the detection — no pass_rate value.
+        store
+            .append(
+                "alpha",
+                "model_request",
+                &serde_json::json!({"latency_ms": 1200}),
+            )
+            .unwrap();
+        write_summary(&store, "alpha", 0.6);
+        let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
+
+        let result = bridge
+            .metric_before_and_after("alpha", "pass_rate", detection)
+            .unwrap();
+        assert_eq!(
+            result,
+            Some((0.9, 0.6)),
+            "the latency event must not be picked up as (or suppress) the pass_rate pair"
+        );
     }
 
     #[test]

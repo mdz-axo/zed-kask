@@ -1519,4 +1519,122 @@ mod tests {
         );
         assert_eq!(store.connectedness("goal:ghost").expect("links swept"), 0);
     }
+
+    /// T09: passage-scoped deletion removes exactly the named passage's
+    /// text and vector; sibling passages of the same entity survive and
+    /// remain semantically retrievable; the entity's h_mems are untouched.
+    #[test]
+    fn passage_deletion_removes_only_the_named_passage() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"tester");
+        store_h_mem(&store, "thread:t09", "turn", "turn content", webid);
+        let dim = hkask_storage::embedding_dim();
+        let one_hot = |index: usize| {
+            let mut vector = vec![0.0; dim];
+            vector[index % dim] = 1.0;
+            vector
+        };
+        let alpha = one_hot(0);
+        let beta = one_hot(1);
+        let gamma = one_hot(2);
+
+        store
+            .store_embedding("thread:t09", &alpha, "test-model", Some("alpha passage"))
+            .expect("seed alpha");
+        store
+            .store_embedding("thread:t09", &beta, "test-model", Some("beta passage"))
+            .expect("seed beta");
+        store
+            .store_embedding("thread:t09", &gamma, "test-model", Some("gamma passage"))
+            .expect("seed gamma");
+        assert_eq!(store.embedding_count().expect("count"), 3);
+
+        // Delete only the middle passage.
+        let deleted = store
+            .delete_embeddings_by_entity_passages("thread:t09", &["beta passage".to_string()])
+            .expect("delete passage");
+        assert_eq!(deleted, 1, "exactly the named passage's row is deleted");
+        assert_eq!(store.embedding_count().expect("count"), 2);
+
+        // The deleted passage is no longer retrievable.
+        let hits = store.search_similar(&beta, 3).expect("search");
+        assert!(
+            hits.iter()
+                .all(|hit| hit.embedding.passage_text.as_deref() != Some("beta passage")),
+            "the deleted passage must not be retrievable"
+        );
+
+        // The siblings are the nearest matches for their own vectors.
+        for (vector, name) in [(&alpha, "alpha passage"), (&gamma, "gamma passage")] {
+            let hits = store.search_similar(vector, 1).expect("search");
+            assert_eq!(
+                hits[0].embedding.passage_text.as_deref(),
+                Some(name),
+                "the surviving sibling must remain semantically retrievable"
+            );
+        }
+
+        // The entity's h_mems survive — passage deletion is not entity
+        // deletion, and the surviving embeddings are not orphans.
+        let h_mems = store.query_deduped("thread:t09").expect("query");
+        assert!(!h_mems.is_empty(), "the entity's h_mems must survive");
+        assert_eq!(
+            store.delete_orphaned_embeddings().expect("orphan sweep"),
+            0,
+            "surviving passages with a live entity are not orphans"
+        );
+    }
+
+    /// T09 control: a NULL-passage legacy row survives a passage-listed
+    /// deletion (the caller decides what is covered — a NULL passage is
+    /// never in the list), and deleting an unlisted passage's text deletes
+    /// nothing.
+    #[test]
+    fn passage_deletion_spares_null_passage_and_unlisted_entities() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"tester");
+        store_h_mem(&store, "thread:t09b", "turn", "turn content", webid);
+        let dim = hkask_storage::embedding_dim();
+        let vector = vec![0.5; dim];
+
+        store
+            .store_embedding(
+                "thread:t09b",
+                &vector,
+                "test-model",
+                Some("covered passage"),
+            )
+            .expect("seed covered");
+        store
+            .store_embedding("thread:t09b", &vector, "test-model", None)
+            .expect("seed legacy NULL-passage row");
+        assert_eq!(store.embedding_count().expect("count"), 2);
+
+        // Deleting a passage from a DIFFERENT entity removes nothing here.
+        assert_eq!(
+            store
+                .delete_embeddings_by_entity_passages(
+                    "thread:other",
+                    &["covered passage".to_string()]
+                )
+                .expect("delete other entity"),
+            0
+        );
+        // Deleting the named passage spares the NULL-passage legacy row.
+        assert_eq!(
+            store
+                .delete_embeddings_by_entity_passages(
+                    "thread:t09b",
+                    &["covered passage".to_string()]
+                )
+                .expect("delete covered"),
+            1
+        );
+        assert_eq!(store.embedding_count().expect("count"), 1);
+        let hits = store.search_similar(&vector, 1).expect("search");
+        assert_eq!(
+            hits[0].embedding.passage_text, None,
+            "the NULL-passage legacy row must survive"
+        );
+    }
 }
