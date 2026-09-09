@@ -138,7 +138,7 @@ verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:153-17
 status: VERIFIED
 -->
 
-## Tool surface (84)
+## Tool surface (87)
 
 ### Cloud tools (48) — ABW, defined in `cloud_swarm_tools.rs` (router at `:149`)
 
@@ -222,7 +222,7 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_workspace_read_file`        | read a workspace file         | `:2894` |
 | `swarm_workspace_write_file`      | write a workspace file        | `:2941` |
 
-### Local tools (37)
+### Local tools (40)
 
 **Delegation execution — `local_tools.rs` (router at `:156`)**
 
@@ -233,6 +233,9 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_pipeline_local`        | sequential pipeline (`{{prev_output}}` substitution; cap `MAX_PIPELINE_STEPS = 10`); records observed delegation edges when the placeholder carries the upstream output | `:519` |
 | `swarm_run_workflow_local`    | run a declared `workflow_template` end-to-end (artifact flows verbatim between stages; stops at open slot / missing agent / failure; cap `MAX_WORKFLOW_STAGES = 10`; records observed edges) | `:797` |
 | `swarm_observed_seams_local`  | report the observed delegation topology (edges from the event store, `kind = delegation_edge`) with per-edge agreement vs declared ports (`workflow::observed_seam_agreement`) — a note, never a block | `:909` |
+| `swarm_fleet_digest_local`    | the fleet's shape as a fixed-size digest (type counts + accepts cohorts with bespoke/cohort/universal readings; never names individual agents; carries the staleness anchor + what-you-do-not-know) | `local_tools.rs` |
+| `swarm_who_answers_local`     | which local agents accept a given label, with the cohort reading — names agents (a tool-tier answer, unlike the digest) | `local_tools.rs` |
+| `swarm_select_agent_local`    | rank candidates for a slot by measured stats (success rate → evidence volume → latency; port/type match is the narrowing gate; flags sub-3-execution rankings as not earned) | `local_tools.rs` |
 | `swarm_execute_plan_local`    | execute a plan with per-step evaluators (cap `MAX_FANOUT`, `:1966`); writes the task board | `:1954` |
 | `swarm_evaluate_local`        | deterministic task-success evaluator (contains / not_contains / regex / exit_code / file_exists, `run_evaluator` `:43-81`) | `:1907` |
 | `swarm_eval_suite_local`      | eval suite over a case dataset (cap `MAX_SUITE_CASES = 10`, `:2230`) | `:2218` |

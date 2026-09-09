@@ -530,23 +530,27 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 
 **Verification (2026-09-09):** kask_bridge 187 passed (185 + 2 new), 0 failed; hkask-memory 37; curator green; clippy exit 0, zero warnings; rustfmt clean.
 
-### T11 — Market-identity calibration — defect CONFIRMED
+### T11 — Market-identity calibration — VERIFIED 2026-09-09 (Group 2)
 
-**Anchor:** `kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs:103` (`contains`). **Scope: M.**
-**Defect (verified):** the idempotent-ingest guard dedups on `(probability, outcome)` within a bucket — NO market identity. Five DISTINCT markets all resolving 0.9/no yield ONE sample (the 2nd–5th are treated as duplicates); the Brier loop under-counts exactly where the operator needs discrimination. Rescan idempotence works today only coincidentally (same market → same prob+outcome).
-**Fix:** carry market identity through resolution ingest: `ResolvedObservation` gains the market key; `contains` dedups on `(market_key, probability, outcome)`. The journal line gains an optional market field; legacy lines ({bucket, probability, outcome}) load with absent identity and are never treated as duplicates of new observations (no fabricated identities). **Operator gate:** if legacy retained evidence must change (re-keying/dedup of legacy rows), that migration is re-sliced and gated separately — the default is additive-only.
-**Acceptance:** five distinct 0.9/no markets → five samples, Brier 0.81, sample_size 5; rescanning all five adds zero; a legacy journal loads without error and its observations are preserved as-is.
-**Verification:** RED-first: five distinct market keys at 0.9/no → assert sample_size 5 (fails today at 1); rescan control; legacy-journal load control.
-**Refused shortcut:** widening the probability epsilon; dropping the rescan guard entirely (rescans would duplicate).
+**Defect (confirmed, RED observed):** the rescan guard `contains` deduped on `(probability, outcome)` — no market identity. Five DISTINCT markets at 0.9/no yielded ONE sample (RED: `distinct_markets_with_identical_prices_count_independently` failed — m2 was a "duplicate" of m1); the Brier loop under-counted exactly where discrimination matters.
 
-### T12 — Cap-reset evidence — defect CONFIRMED
+**Fix:** `ResolvedObservation` gains `market_key: Option<String>` (serde-defaulted — legacy journal lines load as `None`); `contains` dedups on MARKET IDENTITY — same key → duplicate (a market resolves once; identity matches even if the re-scanned price differs), different keys → never duplicates, `None` → never a duplicate (fabricating an identity the row does not carry is the refused shortcut). The journal row carries the field (additive — legacy lines load unchanged and are preserved as-is; the operator's legacy-migration gate was not triggered). Both providers thread the key at the observation construction site (Kalshi `ticker`, Polymarket Gamma `id`); the manual `market_record_resolution` tool records identity-less (unchanged — it never went through the guard).
 
-**Anchor:** `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:420` (`act`). **Scope: S/M.**
-**Defect (verified):** `act()` calls `reset_all_caps()` FIRST, then reads statuses and filters `remaining == 0` — post-reset, remaining==ceiling, so cap exhaustion is NEVER detected (the E04 alert path is dead code in practice; only a ceiling-0 agent would fire). The reset destroys the evidence before the detection reads it.
-**Fix:** capture exhaustion BEFORE the reset — read the statuses first (or record an `exhausted_this_tick` flag when `charge` fails, which survives the reset). Control: the automatic per-tick reset alone must not earn advice-progress credit (the verify_impact pass must not read "exhaustion resolved" as advice-driven improvement when the reset — not the advice — replenished).
-**Acceptance:** an agent that exhausts its cap during a tick produces the exhaustion alert on the next act(); reset alone earns no advice credit; dispatch limits still hold (charging still refuses at 0).
-**Verification:** RED-first: register a cap, charge to exhaustion, run act(), assert the exhaustion alert fired (fails today); control: replenished-not-exhausted agent alerts nothing; advice-credit control.
-**Refused shortcut:** alerting on `remaining == ceiling` post-reset (fabricates exhaustion for fresh caps).
+**Evidence:** five distinct 0.9/no markets → five samples, Brier 0.81, sample_size 5; rescans of all five → zero new; legacy identity-less rows never dedup; the updated `contains_guards_idempotent_ingest` pins the identity contract (same key + different price is still a duplicate; different key + same price is not).
+
+**Verification (2026-09-09):** RED observed (3 tests failed against the old logic); GREEN: prediction-markets **50 passed** (47 + 3 new/updated), 0 failed; clippy exit 0; rustfmt clean.
+
+### T12 — Cap-reset evidence — VERIFIED 2026-09-09 (Group 2)
+
+**Defect (confirmed, RED observed):** `act()` called `reset_all_caps()` BEFORE the exhaustion check — post-reset, remaining==ceiling, so `remaining == 0` was never observable and the E04 exhaustion alert was dead code (RED: zero alerts for a fully-exhausted agent).
+
+**Fix:** the exhaustion snapshot is captured BEFORE the reset (charges land between ticks via metered dispatches, so the pre-reset read is the only moment exhaustion is observable); the reset then replenishes; the alert block consumes the captured set. Design note (pinned by the test): the exhaustion alert is transient — `escalated: false`, no recovery signal — so it never enters the reviewable queue and the auto-resolve machinery has nothing to credit the automatic reset with ("reset alone earns no advice-progress credit" is structural, not just tested).
+
+**Evidence:** `cap_exhaustion_is_detected_before_the_reset_replenishes` — an agent charged to zero produces exactly one alert naming it; the reset still replenishes (cap back at ceiling); a second `act()` with no new charges does not re-alert; the escalation queue receives nothing (transient routing pinned) and nothing auto-resolves (no advice credit).
+
+**Verification (2026-09-09):** RED observed (0 alerts); GREEN: hkask-regulation **72 passed** (71 + 1 new), 0 failed; clippy exit 0 (one `await_holding_lock` false-positive on an explicit `drop()` resolved by block scoping — the lint's analysis does not track the drop call); rustfmt clean.
+
+**Group 2 net-LOC:** +26/−25 in cycle.rs (the reorder) + the calibration identity threading (~+60 across calibration.rs/providers) + tests.
 
 ### T13 — Retrain finalization — defect partially confirmed; seam recovery first
 

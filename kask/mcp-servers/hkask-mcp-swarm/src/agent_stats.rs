@@ -19,6 +19,14 @@
 //! - A failed stats flush is `tracing::warn!`-ed, never silently dropped —
 //!   but never fails the delegation (stats are an enhancement, not a
 //!   dependency — same contract as the stigmergy writes).
+//!
+//! Selection (`rank_for_slot`) lives here too: it ranks candidates BY the
+//! measured stats, so the ranking and the measurement it reads cannot
+//! drift apart. fermi's `select_agent` lesson (§4.4 of
+//! WHAT_THE_PLATFORM_CAN_REFUSE): measure before promoting — a ranking
+//! over thin measurement is noise dressed as a verdict, so the ranking
+//! carries each candidate's execution count and says when it is too thin
+//! to mean anything.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -216,6 +224,96 @@ impl AgentStatsStore {
     }
 }
 
+/// One ranked candidate for a slot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankedCandidate {
+    pub agent_id: String,
+    pub agent_type: String,
+    /// The measured stats the ranking read — carried on the row so a
+    /// caller sees the n behind every rate (a 100% success rate over 1
+    /// execution is not a measurement).
+    pub measured: AgentExecutionStats,
+    /// The rank position, 1-based.
+    pub rank: usize,
+}
+
+/// Below this many recorded executions, a candidate's success rate is not
+/// a measurement — the ranking still orders it, but the report says the
+/// order is not earned. fermi's §4.4: the number that justifies trusting a
+/// signal is the signal's own volume.
+pub const MIN_MEASURED_EXECUTIONS: u64 = 3;
+
+/// Rank candidate agents for a slot by measured performance: success rate
+/// over recorded executions, then execution volume (more evidence outranks
+/// less), then average latency (faster outranks slower at equal evidence).
+/// Candidates with zero recorded executions sort last, alphabetically —
+/// they have earned no position.
+///
+/// Pure over its inputs — the tool layer passes the registry's cards and a
+/// stats lookup, tests pass fixtures. Returns the candidates and whether
+/// the ranking is meaningful (`max_executions >= MIN_MEASURED_EXECUTIONS`).
+pub fn rank_for_slot(
+    candidates: &[crate::local_registry::LocalAgentCard],
+    stats: impl Fn(&str) -> AgentExecutionStats,
+) -> (Vec<RankedCandidate>, bool) {
+    let mut rows: Vec<RankedCandidate> = candidates
+        .iter()
+        .map(|card| {
+            let measured = stats(&card.agent_id);
+            RankedCandidate {
+                agent_id: card.agent_id.clone(),
+                agent_type: card.agent_type.clone(),
+                measured,
+                rank: 0,
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        let a_rate = success_rate(&a.measured);
+        let b_rate = success_rate(&b.measured);
+        // Unmeasured (None) sorts below every measured rate — including a
+        // measured 0%: a failure that happened is evidence; nothing
+        // happening is not.
+        b_rate
+            .partial_cmp(&a_rate)
+            .map_or(std::cmp::Ordering::Less, |order| order)
+            .then(
+                b.measured
+                    .total_executions
+                    .cmp(&a.measured.total_executions),
+            )
+            .then(avg_latency(&a.measured).cmp(&avg_latency(&b.measured)))
+            .then(a.agent_id.cmp(&b.agent_id))
+    });
+    let max_executions = rows
+        .iter()
+        .map(|row| row.measured.total_executions)
+        .max()
+        .unwrap_or(0);
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.rank = index + 1;
+    }
+    (rows, max_executions >= MIN_MEASURED_EXECUTIONS)
+}
+
+/// The success rate when there is measurement, `None` when there is not —
+/// absent must look different from a measured zero.
+fn success_rate(stats: &AgentExecutionStats) -> Option<f64> {
+    if stats.total_executions == 0 {
+        return None;
+    }
+    Some(stats.successful_executions as f64 / stats.total_executions as f64)
+}
+
+/// Average latency in ms; `u64::MAX` sorts an unmeasured agent last on the
+/// latency tiebreak.
+fn avg_latency(stats: &AgentExecutionStats) -> u64 {
+    if stats.total_executions == 0 {
+        return u64::MAX;
+    }
+    stats.total_latency_ms / stats.total_executions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +323,119 @@ mod tests {
             std::env::temp_dir().join(format!("hkask-swarm-stats-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
         dir.to_string_lossy().to_string()
+    }
+
+    // ── rank_for_slot ─────────────────────────────────────────────────────
+
+    fn candidate(agent_id: &str) -> crate::local_registry::LocalAgentCard {
+        crate::local_registry::LocalAgentCard {
+            agent_id: agent_id.to_string(),
+            agent_type: "analyst".to_string(),
+            description: String::new(),
+            display_name: String::new(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: Default::default(),
+            capabilities: Default::default(),
+            cloud_swarm_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+            version: String::new(),
+            workflow_template: None,
+        }
+    }
+
+    fn stats_of(total: u64, successful: u64, latency: u64) -> AgentExecutionStats {
+        AgentExecutionStats {
+            total_executions: total,
+            successful_executions: successful,
+            failed_executions: total - successful,
+            total_tokens_used: 0,
+            total_latency_ms: latency,
+            last_executed_at: None,
+        }
+    }
+
+    #[test]
+    fn ranking_orders_by_measured_success_rate() {
+        let candidates = vec![
+            candidate("shaky"),
+            candidate("solid"),
+            candidate("middling"),
+        ];
+        let stats = |agent_id: &str| match agent_id {
+            "shaky" => stats_of(10, 2, 100),
+            "solid" => stats_of(10, 9, 100),
+            "middling" => stats_of(10, 5, 100),
+            _ => AgentExecutionStats::default(),
+        };
+        let (ranked, meaningful) = rank_for_slot(&candidates, stats);
+        assert!(meaningful, "10 executions is enough measurement");
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|row| row.agent_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["solid", "middling", "shaky"]
+        );
+        assert_eq!(ranked[0].rank, 1);
+    }
+
+    #[test]
+    fn more_evidence_outranks_less_at_equal_rate() {
+        // Both 100%, but one over 10 runs and one over 2 — the volume
+        // breaks the tie because more executions is more evidence.
+        let candidates = vec![candidate("thin"), candidate("thick")];
+        let stats = |agent_id: &str| match agent_id {
+            "thin" => stats_of(2, 2, 100),
+            "thick" => stats_of(10, 10, 100),
+            _ => AgentExecutionStats::default(),
+        };
+        let (ranked, _) = rank_for_slot(&candidates, stats);
+        assert_eq!(ranked[0].agent_id, "thick");
+    }
+
+    #[test]
+    fn unmeasured_candidates_sort_last_not_by_rate() {
+        // A measured 0% failure outranks an unmeasured agent: a failure
+        // that happened is evidence; nothing happening is not.
+        let candidates = vec![candidate("never_ran"), candidate("all_failed")];
+        let stats = |agent_id: &str| match agent_id {
+            "never_ran" => AgentExecutionStats::default(),
+            "all_failed" => stats_of(4, 0, 100),
+            _ => AgentExecutionStats::default(),
+        };
+        let (ranked, _) = rank_for_slot(&candidates, stats);
+        assert_eq!(ranked[0].agent_id, "all_failed");
+        assert_eq!(ranked[0].measured.total_executions, 4);
+    }
+
+    #[test]
+    fn thin_measurement_is_reported_as_not_meaningful() {
+        // fermi's §4.4: measure before promoting. A ranking over 1-2
+        // executions is noise dressed as a verdict — the flag says so.
+        let candidates = vec![candidate("one_run")];
+        let stats = |agent_id: &str| match agent_id {
+            "one_run" => stats_of(1, 1, 100),
+            _ => AgentExecutionStats::default(),
+        };
+        let (ranked, meaningful) = rank_for_slot(&candidates, stats);
+        assert!(!meaningful, "1 execution is not a measurement");
+        assert_eq!(ranked.len(), 1);
+    }
+
+    #[test]
+    fn latency_breaks_ties_at_equal_rate_and_volume() {
+        let candidates = vec![candidate("slow"), candidate("fast")];
+        let stats = |agent_id: &str| match agent_id {
+            "slow" => stats_of(10, 8, 5000),
+            "fast" => stats_of(10, 8, 1000),
+            _ => AgentExecutionStats::default(),
+        };
+        let (ranked, _) = rank_for_slot(&candidates, stats);
+        assert_eq!(ranked[0].agent_id, "fast");
     }
 
     #[test]

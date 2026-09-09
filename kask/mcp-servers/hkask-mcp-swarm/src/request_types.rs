@@ -497,6 +497,41 @@ pub struct ObservedSeamsLocalRequest {
     pub limit: Option<usize>,
 }
 
+/// The local fleet's shape — the prompt-tier digest.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FleetDigestLocalRequest {
+    /// Include the rendered prompt-tier text alongside the structured map.
+    /// Default true — the rendered form is what a meta agent injects.
+    #[serde(default = "default_true")]
+    pub include_rendered: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Who else answers the same ask — the cohort query.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WhoAnswersLocalRequest {
+    /// The `accepts` label to query (e.g. "text", "analysis").
+    pub label: String,
+}
+
+/// Rank candidate local agents for a slot — the measured competition.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectAgentLocalRequest {
+    /// The `accepts` label the slot demands. Candidates are local agents
+    /// whose `accepts` contains this label — the non-negotiable gate.
+    pub accepts_label: Option<String>,
+    /// Alternative narrowing: the `agent_type` the slot demands. Provide
+    /// exactly one of `accepts_label` / `agent_type` — a selection with no
+    /// narrowing enumerates the fleet, which is the anti-pattern this tool
+    /// exists to avoid.
+    pub agent_type: Option<String>,
+    /// Max candidates to return. Default 10.
+    pub limit: Option<usize>,
+}
+
 /// Remove a local agent card.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RemoveLocalRequest {

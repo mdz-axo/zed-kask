@@ -99,11 +99,11 @@ Each item elaborated in plan.md §Follow-up queue (defect verified against curre
 
 - [x] **T09 — Passage deletion ownership** — **verified 2026-09-09 (Group 1)**: machinery was already correct (landed with the orphan-cleanup ruling); the missing evidence captured — one-passage deletion with sibling survival + KNN retrieval + orphan-sweep control + NULL-passage legacy control; the prefix-collision observation pinned at the distillation watermark read. hkask-memory 37 green.
 - [x] **T10 — Exact harness comparison** — **verified 2026-09-09 (Group 1)**: RED observed (the pair came back `None`); both defects fixed — `before` now takes the LATEST metric value at-or-before the detection point (was the FIRST — the verdict could invert), `after` takes the latest METRIC-VALUED event (trailing verdicts no longer suppress the comparison to None). kask_bridge 187 green.
-- [ ] **T11 — Market-identity calibration** (defect CONFIRMED: dedup keys on probability+outcome only — five distinct 0.9/no markets yield ONE sample; legacy-migration operator gate, additive-only default) — **Group 2, next**
-- [ ] **T12 — Cap-reset evidence** (defect CONFIRMED: act() resets caps BEFORE the exhaustion check — remaining==0 is never observable, the E04 alert is dead in practice) — **Group 2, next**
-- [ ] **T13 — Retrain finalization** (defects found: nil-UUID silent fallback on malformed job id, placeholder adapter fields, unproven poll idempotence; recover the completion-manifest test seam first)
-- [ ] **T14 — IPC discovery convention** (defect CONFIRMED: hardcoded /run/user/1000 fallback — wrong path on any other UID; fix per-UID resolution on both publish and discover)
-- [ ] **T15 — Skill-feedback sensing** (spec recovery REQUIRED first: the read side exists, the intended completion/operator-feedback writer is unrecovered — "unwired" is not "unwanted")
+- [x] **T11 — Market-identity calibration** — **verified 2026-09-09 (Group 2)**: RED observed (five distinct 0.9/no markets yielded ONE sample); `ResolvedObservation` gains `market_key`, `contains` dedups on market identity (None → never a duplicate — no fabricated identity), journal additive (legacy preserved as-is, operator gate not triggered), both providers thread the key. prediction-markets 50 green.
+- [x] **T12 — Cap-reset evidence** — **verified 2026-09-09 (Group 2)**: RED observed (zero alerts — the E04 exhaustion alert was dead code); the exhaustion snapshot is now captured BEFORE the per-tick reset; controls: replenished agent doesn't re-alert, the transient alert never enters the reviewable queue, nothing auto-resolves (reset alone earns no advice credit — structural). hkask-regulation 72 green.
+- [ ] **T13 — Retrain finalization** (defects found: nil-UUID silent fallback on malformed job id, placeholder adapter fields, unproven poll idempotence; recover the completion-manifest test seam first) — **Group 3**
+- [ ] **T14 — IPC discovery convention** (defect CONFIRMED: hardcoded /run/user/1000 fallback — wrong path on any other UID; fix per-UID resolution on both publish and discover) — **Group 3**
+- [ ] **T15 — Skill-feedback sensing** (spec recovery REQUIRED first: the read side exists, the intended completion/operator-feedback writer is unrecovered — "unwired" is not "unwanted") — **Group 3**
 
 ## Operator decision — D01
 

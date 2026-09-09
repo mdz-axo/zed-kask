@@ -26,6 +26,22 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 3. **Verify the implementation against all four principles.** Audit the implementation or proposed diff. Check that assumptions were stated explicitly, multiple interpretations were presented, unclear points were questioned, and simpler approaches were considered. Confirm every feature was explicitly requested, no single-use abstractions exist, the solution is minimum code, and no speculative features or impossible-scenario error handling remain. Verify every changed line traces to the user's request, adjacent code is untouched, existing style is matched, orphan imports from your changes are removed, and pre-existing dead code was left alone (mentioned, not deleted). Confirm success criteria are defined and verifiable, tests exist for stated goals, and each criterion can be verified independently. Produce a violations report with principle, severity, location, and correction. Score compliance per principle (1.0 = full compliance, 0.0 = severe violation); overall is the arithmetic mean. Mark passed only if there are zero critical violations and overall ≥ 0.7. Be strict — a 200-line solution that could be 50 lines is a critical violation.
 
+## Interaction with output-shaping skills
+
+When an output-shaping skill (e.g., adhd-mode) is active in the session:
+
+1. The content obligations above (assumptions, risks, goals, guardrails,
+   violations, scores) always ship. Shape rules arrange that content; they
+   never delete it.
+2. Lead with the verdict or the decision request; the structured report
+   follows.
+3. When a shape cap would drop required content, split and rank using the
+   shape skill's own escape (adhd-mode rule 9's must/nice split) or group by
+   anti-pattern — never truncate — verified by adhd-mode's shape gate when
+   active.
+4. The shape skill's override conditions and the harness system prompt
+   outrank these guidelines' presentation defaults.
+
 ## Registry Templates
 
 | Template | Purpose |

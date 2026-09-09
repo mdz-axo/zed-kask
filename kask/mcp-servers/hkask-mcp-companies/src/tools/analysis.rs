@@ -245,7 +245,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. Market caps are in each listing's local currency. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
+        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. USD-stated market-cap bounds are converted into each exchange's listing currency using EODHD FOREX daily closes (cached 24h): rows carry market_capitalization_usd and results rank by USD cap; exchanges without a currency mapping or FX rate are dropped and named in exchange_errors. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
     )]
     pub async fn company_screener(
         &self,
@@ -270,8 +270,8 @@ impl CompaniesServer {
             }
 
             // Exchange criteria are handler-owned: one EODHD query per
-            // exchange code, merged round-robin. Filter triples never carry
-            // the exchange dimension.
+            // exchange code. Filter triples never carry the exchange
+            // dimension.
             let exchange_codes = screener::extract_exchange_codes(&criteria);
             let mut filter_criteria = criteria.clone();
             if let Some(filter_object) = filter_criteria.as_object_mut() {
@@ -285,33 +285,107 @@ impl CompaniesServer {
                 .map(|object| object.len())
                 .unwrap_or(0);
 
+            // USD conversion: EODHD reports market caps in each listing's
+            // currency, so USD-stated bounds must be converted per exchange
+            // (FOREX daily closes, cached 24h) to select the intended band.
+            let cap_bounds_present = ["market_capitalization_min", "market_capitalization_max"]
+                .iter()
+                .any(|key| criteria.get(*key).is_some());
+            let conversion_active =
+                cap_bounds_present && exchange_codes.iter().any(|code| code != "US");
+            let fx = if conversion_active {
+                Some(self.acquire_screener_fx(&exchange_codes).await)
+            } else {
+                None
+            };
+
             let mut warnings: Vec<String> = Vec::new();
             if parsed_count == 0 && !overrides_applied {
                 warnings.push(
                     "No criteria parsed from the prompt — returning the full universe sorted by market cap. Rephrase using advertised field names (e.g. 'market capitalization between 2 billion and 200 billion', 'sector Technology', 'US, Japan and Europe listed') or pass criteria_overrides (keys: market_capitalization_min/_max, exchanges, sector, industry, ...).".to_string(),
                 );
             }
-            let has_market_cap_bounds = ["market_capitalization_min", "market_capitalization_max"]
-                .iter()
-                .any(|key| criteria.get(*key).is_some());
-            if has_market_cap_bounds && exchange_codes.iter().any(|code| code != "US") {
-                warnings.push(
-                    "Market-cap bounds are applied in each listing's local currency (EODHD reports local-currency market caps), so USD-stated bounds on non-US exchanges select a different band than intended. Screen per region with converted bounds, or pass per-exchange bounds via criteria_overrides.".to_string(),
-                );
+            match &fx {
+                // Conversion active — the fx output object documents rates;
+                // no local-currency warning.
+                Some(Ok(_)) => {}
+                Some(Err(reason)) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.companies.screener",
+                        "USD conversion unavailable: {reason}"
+                    );
+                    warnings.push(format!(
+                        "USD conversion unavailable ({reason}) — market-cap bounds are applied in each listing's local currency, so USD-stated bounds on non-US exchanges select a different band than intended."
+                    ));
+                }
+                None => {
+                    if cap_bounds_present && exchange_codes.is_empty() {
+                        warnings.push(
+                            "Market-cap bounds with no exchange restriction apply in each listing's local currency (EODHD reports local-currency market caps). Add geography (e.g. 'US, Japan and Europe listed') to enable USD conversion per exchange.".to_string(),
+                        );
+                    }
+                }
             }
 
-            // Fetch: a single query without exchange criteria, or one query
-            // per exchange code (concurrent). A partial exchange failure
-            // keeps the surviving exchanges and surfaces the failure; a
-            // total failure propagates.
-            let fanout_results: Option<
-                Vec<(String, Result<Vec<serde_json::Value>, McpToolError>)>,
-            > = if exchange_codes.is_empty() {
-                None
+            let mut exchange_errors = serde_json::Map::new();
+            let (merged_rows, exchange_counts) = if exchange_codes.is_empty() {
+                let rows = providers::fetch_eodhd_screener(
+                    &self.client,
+                    &self.eodhd_api_key,
+                    &screener_filters,
+                )
+                .await?;
+                (rows, serde_json::Map::new())
             } else {
-                let fetches = exchange_codes.iter().map(|code| {
-                    let mut filters = screener_filters.clone();
-                    filters.push(serde_json::json!(["exchange", "=", code]));
+                // Build per-exchange queries. With an FX context, cap bounds
+                // are converted into each exchange's listing currency
+                // (rate 1.0 for USD); exchanges without a currency mapping
+                // or rate are dropped and named. Without one, bounds pass
+                // through unconverted.
+                let mut queries: Vec<(String, f64, Vec<serde_json::Value>)> = Vec::new();
+                match &fx {
+                    Some(Ok(context)) => {
+                        for code in &exchange_codes {
+                            match context.rate_for(code) {
+                                Ok(rate) => {
+                                    let mut filters = screener_filters.clone();
+                                    if rate != 1.0 {
+                                        filters = convert_cap_filters(&filters, rate);
+                                    }
+                                    filters.push(serde_json::json!(["exchange", "=", code]));
+                                    queries.push((code.clone(), rate, filters));
+                                }
+                                Err(reason) => {
+                                    exchange_errors.insert(
+                                        code.clone(),
+                                        serde_json::Value::String(reason),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        for code in &exchange_codes {
+                            let mut filters = screener_filters.clone();
+                            filters.push(serde_json::json!(["exchange", "=", code]));
+                            queries.push((code.clone(), 1.0, filters));
+                        }
+                    }
+                }
+                if queries.is_empty() {
+                    let reasons: Vec<String> = exchange_errors
+                        .iter()
+                        .map(|(code, reason)| format!("{code}: {reason}"))
+                        .collect();
+                    return Err(McpToolError::unavailable(format!(
+                        "all exchange queries dropped before fetching: {}",
+                        reasons.join("; ")
+                    )));
+                }
+
+                let fetches = queries.iter().map(|(code, rate, filters)| {
+                    let filters = filters.clone();
+                    let code = code.clone();
                     async move {
                         let outcome = providers::fetch_eodhd_screener(
                             &self.client,
@@ -319,89 +393,128 @@ impl CompaniesServer {
                             &filters,
                         )
                         .await;
-                        (code.clone(), outcome)
+                        (code, *rate, outcome)
                     }
                 });
-                Some(futures::future::join_all(fetches).await)
-            };
+                let results = futures::future::join_all(fetches).await;
 
-            let (merged_rows, exchange_counts, exchange_errors) = match fanout_results {
-                None => {
-                    let rows = providers::fetch_eodhd_screener(
-                        &self.client,
-                        &self.eodhd_api_key,
-                        &screener_filters,
-                    )
-                    .await?;
-                    (rows, serde_json::Map::new(), serde_json::Map::new())
+                // A partial exchange failure keeps the surviving exchanges
+                // and surfaces the failure; a total failure propagates.
+                if results.iter().all(|(_, _, outcome)| outcome.is_err()) {
+                    let error = results
+                        .into_iter()
+                        .find_map(|(_, _, outcome)| outcome.err())
+                        .unwrap_or_else(|| {
+                            McpToolError::internal("all exchange fetches failed")
+                        });
+                    return Err(error);
                 }
-                Some(results) => {
-                    if results.iter().all(|(_, outcome)| outcome.is_err()) {
-                        let error = results
-                            .into_iter()
-                            .find_map(|(_, outcome)| outcome.err())
-                            .unwrap_or_else(|| {
-                                McpToolError::internal("all exchange fetches failed")
-                            });
-                        return Err(error);
+
+                let mut buckets: Vec<(String, f64, Vec<serde_json::Value>)> = Vec::new();
+                for (code, rate, outcome) in results {
+                    match outcome {
+                        Ok(rows) => buckets.push((code, rate, rows)),
+                        Err(error) => {
+                            exchange_errors
+                                .insert(code, serde_json::Value::String(error.to_string()));
+                        }
                     }
-                    let mut buckets: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-                    let mut exchange_errors = serde_json::Map::new();
-                    for (code, outcome) in results {
-                        match outcome {
-                            Ok(rows) => buckets.push((code, rows)),
-                            Err(error) => {
-                                exchange_errors
-                                    .insert(code, serde_json::Value::String(error.to_string()));
+                }
+
+                // Annotate rows with a USD market cap so cross-exchange
+                // comparison and ranking are currency-consistent.
+                let annotate = matches!(&fx, Some(Ok(_)));
+                if annotate {
+                    for (_, rate, rows) in &mut buckets {
+                        for row in rows.iter_mut() {
+                            if let Some(cap) = row
+                                .get("market_capitalization")
+                                .and_then(|value| value.as_f64())
+                                && let Some(usd) = serde_json::Number::from_f64(cap / *rate)
+                                && let Some(object) = row.as_object_mut()
+                            {
+                                object.insert(
+                                    "market_capitalization_usd".to_string(),
+                                    serde_json::Value::Number(usd),
+                                );
                             }
                         }
                     }
-                    // Round-robin interleave: every exchange's best matches
-                    // surface before any exchange's second match, so `limit`
-                    // truncation cannot empty out an exchange.
-                    let mut merged: Vec<serde_json::Value> = Vec::new();
+                }
+
+                // Merge: with USD conversion, rank by market_capitalization_usd
+                // (the cap-comparable order the truncation contract
+                // promises); without it, round-robin interleave so every
+                // exchange is represented under `limit` truncation.
+                let mut merged: Vec<serde_json::Value> = if annotate {
+                    let mut all: Vec<serde_json::Value> = buckets
+                        .iter()
+                        .flat_map(|(_, _, rows)| rows.iter().cloned())
+                        .collect();
+                    all.sort_by(|a, b| {
+                        let a_usd = a
+                            .get("market_capitalization_usd")
+                            .and_then(|value| value.as_f64());
+                        let b_usd = b
+                            .get("market_capitalization_usd")
+                            .and_then(|value| value.as_f64());
+                        match (a_usd, b_usd) {
+                            (Some(x), Some(y)) => {
+                                y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal)
+                            }
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    });
+                    all
+                } else {
+                    let mut interleaved: Vec<serde_json::Value> = Vec::new();
                     let longest = buckets
                         .iter()
-                        .map(|(_, rows)| rows.len())
+                        .map(|(_, _, rows)| rows.len())
                         .max()
                         .unwrap_or(0);
                     for index in 0..longest {
-                        for (_, rows) in &buckets {
+                        for (_, _, rows) in &buckets {
                             if let Some(row) = rows.get(index) {
-                                merged.push(row.clone());
+                                interleaved.push(row.clone());
                             }
                         }
                     }
-                    // Listings dedup by (exchange, code) — a company
-                    // cross-listed on several exchanges appears once per
-                    // exchange (documented).
-                    let mut seen = std::collections::HashSet::new();
-                    merged.retain(|row| {
-                        let exchange = row
-                            .get("exchange")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("");
-                        let code = row
-                            .get("code")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("");
-                        seen.insert((exchange.to_string(), code.to_string()))
-                    });
-                    let exchange_counts: serde_json::Map<String, serde_json::Value> = buckets
-                        .iter()
-                        .map(|(code, rows)| {
-                            (code.clone(), serde_json::Value::from(rows.len() as u64))
-                        })
-                        .collect();
-                    (merged, exchange_counts, exchange_errors)
-                }
+                    interleaved
+                };
+
+                // Listings dedup by (exchange, code) — a company
+                // cross-listed on several exchanges appears once per
+                // exchange (documented).
+                let mut seen = std::collections::HashSet::new();
+                merged.retain(|row| {
+                    let exchange = row
+                        .get("exchange")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    let code = row
+                        .get("code")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    seen.insert((exchange.to_string(), code.to_string()))
+                });
+
+                let exchange_counts: serde_json::Map<String, serde_json::Value> = buckets
+                    .iter()
+                    .map(|(code, _, rows)| {
+                        (code.clone(), serde_json::Value::from(rows.len() as u64))
+                    })
+                    .collect();
+                (merged, exchange_counts)
             };
 
             if !exchange_errors.is_empty() {
-                let failed: Vec<String> = exchange_errors.keys().cloned().collect();
+                let dropped: Vec<String> = exchange_errors.keys().cloned().collect();
                 warnings.push(format!(
-                    "Exchange fetch failed for {} — {} of {} exchanges dropped from results.",
-                    failed.join(", "),
+                    "Exchanges dropped from results: {} — {} of {} exchanges excluded; reasons in exchange_errors.",
+                    dropped.join(", "),
                     exchange_errors.len(),
                     exchange_codes.len()
                 ));
@@ -433,7 +546,7 @@ impl CompaniesServer {
             };
             let count = rows.len();
 
-            let output = serde_json::json!({
+            let mut output = serde_json::json!({
                 "prompt": req.prompt,
                 "parsed_criteria": criteria,
                 "screener_filters": screener_filters,
@@ -447,13 +560,138 @@ impl CompaniesServer {
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                 },
-                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange, interleaved round-robin; results are listings (a cross-listed company appears once per exchange) and market caps are in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
+                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap; without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
                 "source": "EODHD Screener API"
             });
+
+            // FX transparency: rates, as-of date, and the exchange→currency
+            // mapping actually used (only when at least one rate resolved).
+            if let Some(Ok(context)) = &fx {
+                let mut exchange_currencies = serde_json::Map::new();
+                let mut usd_rates = serde_json::Map::new();
+                for code in &exchange_codes {
+                    if let Some(currency) = context.currency_by_exchange.get(code) {
+                        exchange_currencies.insert(code.clone(), serde_json::json!(currency));
+                        if let Some(rate) = context.rate_by_currency.get(currency) {
+                            usd_rates.insert(currency.clone(), serde_json::json!(rate));
+                        }
+                    }
+                }
+                if !usd_rates.is_empty()
+                    && let Some(object) = output.as_object_mut()
+                {
+                    object.insert(
+                        "fx".to_string(),
+                        serde_json::json!({
+                            "as_of": context.as_of,
+                            "exchange_currencies": serde_json::Value::Object(exchange_currencies),
+                            "usd_rates": serde_json::Value::Object(usd_rates),
+                            "note": "USD market-cap bounds converted per exchange with EODHD FOREX daily closes; rows carry market_capitalization_usd."
+                        }),
+                    );
+                }
+            }
 
             Ok(fibo::enrich_with_ontology(output, "company_screener"))
         })
         .await
+    }
+
+    /// Acquire the USD conversion context for a fan-out: the cached
+    /// exchange→currency map plus concurrent cached USD rates for every
+    /// distinct non-USD currency among the codes. A failed exchanges-list
+    /// fetch degrades the whole conversion (Err); individual rate failures
+    /// surface per-exchange via [`ScreenerFx::rate_for`].
+    async fn acquire_screener_fx(&self, codes: &[String]) -> Result<ScreenerFx, String> {
+        let list = self
+            .cached_exchanges_list()
+            .await
+            .map_err(|error| format!("EODHD exchanges list fetch failed: {error}"))?;
+
+        let mut currency_by_exchange = std::collections::HashMap::new();
+        if let Some(entries) = list.as_array() {
+            for entry in entries {
+                if let (Some(code), Some(currency)) = (
+                    entry.get("Code").and_then(|value| value.as_str()),
+                    entry.get("Currency").and_then(|value| value.as_str()),
+                ) {
+                    currency_by_exchange.insert(code.to_uppercase(), currency.to_uppercase());
+                }
+            }
+        }
+
+        let mut currencies: Vec<String> = codes
+            .iter()
+            .filter_map(|code| currency_by_exchange.get(code))
+            .filter(|currency| *currency != "USD")
+            .cloned()
+            .collect();
+        currencies.sort();
+        currencies.dedup();
+
+        let fetches = currencies
+            .iter()
+            .map(|currency| self.cached_forex_rate(currency));
+        let rate_results = futures::future::join_all(fetches).await;
+
+        let mut rate_by_currency = std::collections::HashMap::new();
+        let mut as_of = String::new();
+        for (currency, outcome) in currencies.iter().zip(rate_results) {
+            if let Ok((date, rate)) = outcome {
+                if date > as_of {
+                    as_of = date;
+                }
+                rate_by_currency.insert(currency.clone(), rate);
+            }
+        }
+
+        Ok(ScreenerFx {
+            as_of,
+            currency_by_exchange,
+            rate_by_currency,
+        })
+    }
+
+    /// The EODHD exchange inventory, cached 24h.
+    async fn cached_exchanges_list(&self) -> Result<serde_json::Value, McpToolError> {
+        const ENDPOINT: &str = "screener_exchanges_list";
+        if let Some(cache) = self.fibo_cache.as_ref()
+            && let Some(cached) = cache.get_raw("EXCHANGES", ENDPOINT, "none")
+        {
+            return Ok(cached);
+        }
+        let list = providers::fetch_eodhd_exchanges(&self.client, &self.eodhd_api_key).await?;
+        if let Some(cache) = self.fibo_cache.as_ref() {
+            cache.store_raw("EXCHANGES", ENDPOINT, "none", &list, "EODHD");
+        }
+        Ok(list)
+    }
+
+    /// The latest USD→currency FOREX close, cached 24h.
+    async fn cached_forex_rate(&self, currency: &str) -> Result<(String, f64), McpToolError> {
+        const ENDPOINT: &str = "screener_forex_rate";
+        let symbol = format!("USD{currency}.FOREX");
+        if let Some(cache) = self.fibo_cache.as_ref()
+            && let Some(cached) = cache.get_raw(&symbol, ENDPOINT, "none")
+            && let (Some(date), Some(rate)) = (
+                cached.get("date").and_then(|value| value.as_str()),
+                cached.get("close").and_then(|value| value.as_f64()),
+            )
+        {
+            return Ok((date.to_string(), rate));
+        }
+        let (date, rate) =
+            providers::fetch_eodhd_forex_rate(&self.client, &self.eodhd_api_key, currency).await?;
+        if let Some(cache) = self.fibo_cache.as_ref() {
+            cache.store_raw(
+                &symbol,
+                ENDPOINT,
+                "none",
+                &serde_json::json!({"date": date, "close": rate}),
+                "EODHD",
+            );
+        }
+        Ok((date, rate))
     }
 
     #[tool(
@@ -514,4 +752,56 @@ impl CompaniesServer {
     }
 
     // ── Portfolio tools ──
+}
+
+// ── Screener USD conversion ─────────────────────────────────────────────
+
+/// USD conversion context for the screener: the exchange→currency map from
+/// the EODHD Exchanges API and USD→currency rates from EODHD FOREX EOD
+/// closes, both cached 24h in the fibo cache.
+struct ScreenerFx {
+    as_of: String,
+    currency_by_exchange: std::collections::HashMap<String, String>,
+    rate_by_currency: std::collections::HashMap<String, f64>,
+}
+
+impl ScreenerFx {
+    /// USD→listing-currency rate for an exchange code (1.0 for USD).
+    /// Errors name the reason: an unmapped code (not in the EODHD exchange
+    /// list) or a missing rate for its currency.
+    fn rate_for(&self, code: &str) -> Result<f64, String> {
+        match self.currency_by_exchange.get(code) {
+            None => Err(format!(
+                "no currency mapping for exchange {code} — not in the EODHD exchange list"
+            )),
+            Some(currency) if currency == "USD" => Ok(1.0),
+            Some(currency) => self
+                .rate_by_currency
+                .get(currency)
+                .copied()
+                .ok_or_else(|| format!("FX rate USD{currency} unavailable")),
+        }
+    }
+}
+
+/// Convert market_capitalization filter bounds into a listing currency
+/// (multiply by the USD→currency rate); other filters pass through.
+fn convert_cap_filters(filters: &[serde_json::Value], rate: f64) -> Vec<serde_json::Value> {
+    filters
+        .iter()
+        .map(|filter| {
+            let Some(parts) = filter.as_array() else {
+                return filter.clone();
+            };
+            if parts.first().and_then(|field| field.as_str()) != Some("market_capitalization") {
+                return filter.clone();
+            }
+            let Some(value) = parts.get(2).and_then(|value| value.as_f64()) else {
+                return filter.clone();
+            };
+            let mut converted = parts.clone();
+            converted[2] = serde_json::json!(value * rate);
+            serde_json::Value::Array(converted)
+        })
+        .collect()
 }

@@ -127,7 +127,7 @@ src/
 
 ### Behavioral boundaries
 
-- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` parses natural-language prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts; `research_search` uses its own research providers.
+- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` parses natural-language prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts, converting USD market-cap bounds per exchange via cached EODHD FOREX daily closes (rows carry `market_capitalization_usd`); `research_search` uses its own research providers.
 - The DCF projection is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.
 - `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix.
 - DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition.
@@ -159,4 +159,4 @@ env -u HKASK_FMP_API_KEY -u HKASK_EODHD_API_KEY cargo test -p hkask-mcp-companie
 GITHUB_ACTIONS=1 ./script/clippy -p hkask-mcp-companies
 ```
 
-`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, and the screener's per-exchange fan-out and offset-cap pagination (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.
+`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, and the screener's per-exchange fan-out, USD bound conversion, and offset-cap pagination (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.

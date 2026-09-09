@@ -346,6 +346,21 @@ impl LocalSwarmRuntime {
         );
         result.input_contract_check = input_contract_check;
         result.output_contract_check = output_contract_check;
+        // Grounding + completeness + reliance — stamped in the same shared
+        // path, from the verdicts just computed (one producer: reliance is
+        // derived here, every consumer reads it). Always stamped, even for
+        // prose-only responses and contract-less agents, so a caller never
+        // has to distinguish "not checked" from "silently skipped" — the
+        // token says which (`unusable` / `unchecked`).
+        let graded = crate::grounding::grade(
+            agent.capabilities.output_contract.as_ref(),
+            &result.response,
+            &result.tool_calls,
+            result.output_contract_check.as_ref(),
+        );
+        result.grounding = Some(graded.report);
+        result.completeness = Some(graded.completeness);
+        result.reliance = Some(graded.reliance);
         Ok(result)
     }
 
@@ -380,6 +395,9 @@ impl LocalSwarmRuntime {
             reasoning_steps: raw.reasoning_steps,
             input_contract_check: None,
             output_contract_check: None,
+            grounding: None,
+            completeness: None,
+            reliance: None,
         }
     }
 
@@ -492,6 +510,17 @@ impl LocalSwarmRuntime {
             );
             built.input_contract_check = input_contract_check;
             built.output_contract_check = output_contract_check;
+            // Grounding + completeness + reliance — batch parity with
+            // `delegate` (the same one-producer stamping point).
+            let graded = crate::grounding::grade(
+                contracts[index].1.as_ref(),
+                &built.response,
+                &built.tool_calls,
+                built.output_contract_check.as_ref(),
+            );
+            built.grounding = Some(graded.report);
+            built.completeness = Some(graded.completeness);
+            built.reliance = Some(graded.reliance);
             results.push(Ok(built));
         }
         results
@@ -671,6 +700,29 @@ pub struct LocalDelegateResult {
     /// contradicted its own declared type), not a failed delegation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_contract_check: Option<serde_json::Value>,
+    /// Grounding report — the local analog of fermi's `grounding_trust`
+    /// enforce: contracted fields with no possible source are nulled in the
+    /// enforced `document` carried here, the stripped paths are named, and
+    /// every contracted block is stamped with a closed-vocabulary
+    /// provenance. The raw `response` is kept verbatim — it is the evidence
+    /// of what the model claimed. Always stamped by `delegate` (a prose-only
+    /// response reports `reliance: unusable`, not silence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grounding: Option<serde_json::Value>,
+    /// Completeness report — the local analog of fermi's `Gate::Completeness`:
+    /// which contracted fields the agent owed (a named tool never called, or
+    /// commissioned work absent), separated from `no_data` (a tool was asked
+    /// and had nothing — nobody's fault) and `excused` (the contract requires
+    /// null). The count is a floor, not a total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completeness: Option<serde_json::Value>,
+    /// The one-token reliance verdict — `{status, why}` — derived from the
+    /// grounding, completeness, and schema verdicts already computed on this
+    /// result (never recomputed by consumers): `unusable | malformed |
+    /// amended | incomplete | unchecked | clean`. The caller's only question
+    /// — can I use this answer? — answered by one field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reliance: Option<serde_json::Value>,
 }
 
 impl LocalDelegateResult {
@@ -699,6 +751,20 @@ impl LocalDelegateResult {
                 entry["reasoning_steps"] =
                     serde_json::to_value(&self.reasoning_steps).unwrap_or(serde_json::Value::Null);
             }
+        }
+        // The verification verdicts travel on every entry shape — a
+        // pipeline step's caller has the same "can I use this answer?"
+        // question as a single delegation's caller, and re-deriving it from
+        // the sub-blocks is the four-vocabularies disease the token exists
+        // to remove.
+        if let Some(grounding) = &self.grounding {
+            entry["grounding"] = grounding.clone();
+        }
+        if let Some(completeness) = &self.completeness {
+            entry["completeness"] = completeness.clone();
+        }
+        if let Some(reliance) = &self.reliance {
+            entry["reliance"] = reliance.clone();
         }
         entry
     }

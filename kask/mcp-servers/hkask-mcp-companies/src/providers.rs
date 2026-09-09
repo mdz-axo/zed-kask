@@ -1702,6 +1702,48 @@ async fn fetch_screener_page(
     }
 }
 
+/// Fetch the EODHD Exchanges API list — the authoritative exchange-code →
+/// currency map (each entry carries `Code` and `Currency`). One call; the
+/// inventory changes rarely, so callers cache it.
+///
+/// EODHD Exchanges API: `https://eodhd.com/api/exchanges-list/?api_token=...`
+/// See: https://eodhd.com/financial-apis/exchanges-api/
+pub async fn fetch_eodhd_exchanges(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+) -> Result<Value, McpToolError> {
+    eodhd_get(client, "/exchanges-list", eodhd_api_key, "", &[]).await
+}
+
+/// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
+/// max-by-date row's close of `USD{currency}.FOREX`. Returns the rate's
+/// as-of date alongside the value.
+pub async fn fetch_eodhd_forex_rate(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+    currency: &str,
+) -> Result<(String, f64), McpToolError> {
+    let symbol = format!("USD{currency}.FOREX");
+    let rows = eodhd_get(client, "/eod", eodhd_api_key, &symbol, &[]).await?;
+    last_forex_close(&rows)
+        .ok_or_else(|| McpToolError::unavailable(format!("no EOD close rows for {symbol}")))
+}
+
+/// The max-by-date (date, close) pair from EOD FOREX EOD rows.
+fn last_forex_close(rows: &Value) -> Option<(String, f64)> {
+    rows.as_array()?
+        .iter()
+        .filter_map(|row| {
+            let date = row.get("date")?.as_str()?.to_string();
+            let close = row
+                .get("close")
+                .and_then(|value| value.as_f64())
+                .or_else(|| row.get("adjusted_close").and_then(|value| value.as_f64()))?;
+            Some((date, close))
+        })
+        .max_by(|left, right| left.0.cmp(&right.0))
+}
+
 /// Inputs for multi-signal symbol resolution: the company name and ticker
 /// from the prompt, plus optional exchange / country disambiguators. At
 /// least one of `company_name` / `ticker` must be present (enforced by

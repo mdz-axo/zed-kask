@@ -246,6 +246,12 @@ pub struct WorkflowStageOutcome {
     pub error: Option<String>,
     /// Per-stage notes (open slot, declared/actual drift).
     pub notes: Vec<String>,
+    /// The one-token reliance verdict for this stage's response
+    /// (`{status, why}`), stamped by the runtime's delegate path. A caller
+    /// composing the workflow's output reads the final stage's token the
+    /// same way a single-delegation caller does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reliance: Option<serde_json::Value>,
 }
 
 /// Run a declared workflow sequentially. Stage 1 receives `task`; each later
@@ -255,8 +261,9 @@ pub struct WorkflowStageOutcome {
 /// outcomes are kept.
 ///
 /// `lookup` resolves an agent id to its `(accepts, produces)` — the same
-/// closure shape as [`check_workflow`]. `delegate` runs one agent
-/// `(agent_id, task) -> Result<response, error>`. `record_edge` is called
+/// closure shape as [`check_workflow`]. `delegate` runs one agent,
+/// returning its response and the reliance verdict the runtime stamped
+/// (`(response, reliance)`); errors stop the run. `record_edge` is called
 /// once per downstream dispatch that carries upstream output — the observed
 /// topology accumulates at the point of truth, and the caller decides where
 /// it lands (the event store in production, a Vec in tests).
@@ -274,7 +281,7 @@ pub async fn run_workflow<D, F, R>(
 ) -> Vec<WorkflowStageOutcome>
 where
     D: Fn(&str, &str) -> F,
-    F: Future<Output = Result<String, String>>,
+    F: Future<Output = Result<(String, Option<serde_json::Value>), String>>,
     R: FnMut(&str, &str),
 {
     let mut outcomes = Vec::with_capacity(template.stages.len());
@@ -294,6 +301,7 @@ where
                         "open slot — no agent declared; fill the slot (swarm_update_local_agent or a new card) and re-run"
                             .to_string(),
                     ],
+                    reliance: None,
                 });
                 break;
             }
@@ -309,6 +317,7 @@ where
                     "agent '{declared_agent}' not found in local registry"
                 )),
                 notes: Vec::new(),
+                reliance: None,
             });
             break;
         }
@@ -319,7 +328,7 @@ where
             record_edge(from, declared_agent);
         }
         match delegate(declared_agent, &input).await {
-            Ok(response) => {
+            Ok((response, reliance)) => {
                 outcomes.push(WorkflowStageOutcome {
                     stage: stage.name.clone(),
                     agent: Some(declared_agent.clone()),
@@ -327,6 +336,7 @@ where
                     response: Some(response.clone()),
                     error: None,
                     notes: Vec::new(),
+                    reliance,
                 });
                 input = response;
                 upstream_agent = Some(declared_agent.clone());
@@ -339,6 +349,7 @@ where
                     response: None,
                     error: Some(error),
                     notes: Vec::new(),
+                    reliance: None,
                 });
                 break;
             }
@@ -498,7 +509,10 @@ mod tests {
                 let task = task.to_string();
                 async move {
                     calls.lock().unwrap().push((agent, task.clone()));
-                    Ok(format!("{task} (handled)"))
+                    Ok((
+                        format!("{task} (handled)"),
+                        Some(serde_json::json!({"status": "unchecked"})),
+                    ))
                 }
             }
         }};
@@ -533,6 +547,17 @@ mod tests {
         );
         // One observed edge: research → writer.
         assert_eq!(edges, vec![("research".to_string(), "writer".to_string())]);
+        // The runtime's reliance verdict travels on each stage outcome — a
+        // workflow caller reads the final stage's token like a single
+        // delegation caller does.
+        assert_eq!(
+            outcomes[1]
+                .reliance
+                .as_ref()
+                .and_then(|reliance| reliance.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("unchecked")
+        );
     }
 
     #[tokio::test]
@@ -619,7 +644,10 @@ mod tests {
                 if task.contains("(handled)") {
                     Err("writer exploded".to_string())
                 } else {
-                    Ok(format!("{task} (handled)"))
+                    Ok((
+                        format!("{task} (handled)"),
+                        Some(serde_json::json!({"status": "unchecked"})),
+                    ))
                 }
             }
         };

@@ -867,7 +867,7 @@ impl SwarmServer {
                         runtime
                             .delegate(&agent, &task)
                             .await
-                            .map(|result| result.response)
+                            .map(|result| (result.response, result.reliance))
                             .map_err(|error| error.to_string())
                     }
                 },
@@ -996,6 +996,163 @@ impl SwarmServer {
                          fermi measured 3 of 3 production hand-offs with zero declared-label \
                          overlap — 'undeclared' is the norm, not a fault. The report is a \
                          note, never a block.",
+            }))
+        })
+        .await
+    }
+
+    /// The local fleet's shape — the prompt tier of fermi's meta-agent
+    /// fleet-awareness pattern. A fixed-size digest of categories and
+    /// counts (never individual agents), the staleness anchor (the fleet
+    /// size it was built from), and the what-you-do-not-know counterweight
+    /// that names the tools serving the territory. The companion tool
+    /// tier: `swarm_list_local_agents` (the index), `swarm_get_local_agent`
+    /// (per-agent facts), `swarm_who_answers_local` (cohorts).
+    #[tool(
+        description = "The local fleet's shape as a fixed-size digest: agent-type counts and accepts-label cohorts with three-state readings (bespoke / cohort / universal — a label above 10% of the fleet is the calling convention, not a specialisation). Names categories and counts, never individual agents. Carries the fleet size it was built from (staleness self-detection) and the what-you-do-not-know note naming the tools that serve per-agent facts. Read-only, computed from the live registry."
+    )]
+    pub(crate) async fn swarm_fleet_digest_local(
+        &self,
+        parameters: Parameters<FleetDigestLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_fleet_digest_local", async {
+            let req = parameters.0;
+            let cards = self.local_registry.list();
+            let digest = crate::fleet_digest::digest(&cards);
+            let mut value = digest.to_json();
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "live_fleet_size".to_string(),
+                    serde_json::json!(cards.len()),
+                );
+                object.insert(
+                    "stale".to_string(),
+                    serde_json::json!(!digest.describes(cards.len())),
+                );
+                if req.include_rendered {
+                    object.insert("rendered".to_string(), serde_json::json!(digest.render()));
+                }
+            }
+            Ok(value)
+        })
+        .await
+    }
+
+    /// Who else answers the same ask — the cohort query. Unlike the digest
+    /// (which never names agents), this names them: it is a tool-tier
+    /// answer to a specific question, not a prompt-tier map.
+    #[tool(
+        description = "Which local agents accept a given asks label, with the cohort reading: bespoke (only this one — a real answer, not a missing one), cohort (a genuine set of interchangeable answerers), or universal (so widely accepted the label describes the calling convention). Returns the sorted agent list. Read-only."
+    )]
+    pub(crate) async fn swarm_who_answers_local(
+        &self,
+        parameters: Parameters<WhoAnswersLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_who_answers_local", async {
+            let req = parameters.0;
+            if req.label.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "label must be non-empty".to_string(),
+                ));
+            }
+            let cards = self.local_registry.list();
+            let answer = crate::fleet_digest::answerers(&cards, &req.label);
+            Ok(serde_json::json!({
+                "question": answer.question,
+                "agents": answer.agents,
+                "count": answer.reading.count(),
+                "fleet_size": cards.len(),
+                "reading": answer.reading.as_str(),
+            }))
+        })
+        .await
+    }
+
+    /// Rank candidate local agents for a slot — the measured competition,
+    /// the local analog of fermi's `select_agent`. Candidates narrow by
+    /// `accepts` label or `agent_type` (exactly one — a selection with no
+    /// narrowing enumerates the fleet, the anti-pattern the digest exists
+    /// to avoid). Ranking reads the measured per-agent stats: success rate
+    /// over recorded executions, then evidence volume, then latency. Every
+    /// row carries its own execution count, and the report flags when the
+    /// measurement is too thin for the order to be earned.
+    #[tool(
+        description = "Rank candidate local agents for a slot by measured performance. Narrow with exactly one of accepts_label (candidates whose accepts contains the label — the non-negotiable gate) or agent_type. Ranks by success rate over recorded executions, then evidence volume, then average latency; unmeasured candidates sort last. Every row carries its execution count, and ranking_meaningful is false when the best-measured candidate has fewer than 3 executions — the order is then not earned. Read-only."
+    )]
+    pub(crate) async fn swarm_select_agent_local(
+        &self,
+        parameters: Parameters<SelectAgentLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_select_agent_local", async {
+            let req = parameters.0;
+            let label = req.accepts_label.as_deref().map(str::trim);
+            let agent_type = req.agent_type.as_deref().map(str::trim);
+            let narrowed = match (label, agent_type) {
+                (Some(label), None) if !label.is_empty() => {
+                    let label = label.to_string();
+                    self.local_registry
+                        .list()
+                        .into_iter()
+                        .filter(|card| card.accepts.iter().any(|accepts| accepts == &label))
+                        .collect::<Vec<_>>()
+                }
+                (None, Some(agent_type)) if !agent_type.is_empty() => {
+                    let agent_type = agent_type.to_string();
+                    self.local_registry
+                        .list()
+                        .into_iter()
+                        .filter(|card| card.agent_type == agent_type)
+                        .collect::<Vec<_>>()
+                }
+                (Some(_), Some(_)) => {
+                    return Err(McpToolError::invalid_argument(
+                        "provide exactly one of accepts_label or agent_type, not both".to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "narrow the selection with accepts_label or agent_type — a selection \
+                         with no narrowing enumerates the fleet (use swarm_fleet_digest_local \
+                         for the shape, swarm_list_local_agents for the index)"
+                            .to_string(),
+                    ));
+                }
+            };
+            let limit = req.limit.unwrap_or(10).max(1);
+            let stats_store = self.agent_stats.clone();
+            let (ranked, meaningful) = crate::agent_stats::rank_for_slot(&narrowed, |agent_id| {
+                stats_store.stats(agent_id)
+            });
+            let total_candidates = ranked.len();
+            let unmeasured = ranked
+                .iter()
+                .filter(|row| row.measured.total_executions == 0)
+                .count();
+            let rows: Vec<serde_json::Value> = ranked
+                .into_iter()
+                .take(limit)
+                .map(|row| {
+                    serde_json::json!({
+                        "rank": row.rank,
+                        "agent_id": row.agent_id,
+                        "agent_type": row.agent_type,
+                        "measured": row.measured.to_json(),
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "candidates": rows,
+                "total_candidates": total_candidates,
+                "unmeasured": unmeasured,
+                "ranking_meaningful": meaningful,
+                "note": if meaningful {
+                    "Ranked by measured success rate over recorded executions, then evidence \
+                     volume, then average latency. Every row carries its own execution count."
+                } else {
+                    "The best-measured candidate has fewer than 3 recorded executions — \
+                     the order below is not earned. Run the candidates (swarm_delegate_local \
+                     or the eval harness) before trusting this ranking."
+                },
             }))
         })
         .await
@@ -3673,5 +3830,164 @@ mod tests {
             .await
             .expect("local delegation needs no budget");
         assert!(!result.response.is_empty());
+    }
+
+    /// An inference port that returns a fixed JSON document — the fixture
+    /// for grounding wiring tests (a contracted agent's response shape).
+    struct JsonInference {
+        text: String,
+    }
+
+    impl hkask_types::InferencePort for JsonInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let text = self.text.clone();
+            Box::pin(async move {
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "mock".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// The grounding gate is wired into the shared delegate path: a
+    /// contracted agent's delegation result carries the grounding report,
+    /// the completeness report, and the one-token reliance verdict — stamped
+    /// by the runtime, not by any tool layer. This is the wiring test the
+    /// `.rules` capability trap demands: the pure functions are unit-tested
+    /// in `grounding.rs`; this proves the runtime path actually calls them.
+    #[tokio::test]
+    async fn delegate_stamps_grounding_completeness_and_reliance() {
+        use crate::local_runtime::LocalSwarmRuntime;
+        use std::sync::Arc;
+
+        // The agent declares `price` sourced and `outlook` inferred. The
+        // mock returns a document with a price — but no tool ran, so the
+        // price has no possible source: stripped, reliance `amended`.
+        let mut agent = mock_agent_card("contracted", "You return JSON.");
+        agent.capabilities.output_contract = Some(serde_json::json!({
+            "grounding": {
+                "price": {"status": "sourced"},
+                "outlook": {"status": "inferred"}
+            }
+        }));
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
+            text: r#"{"price": 42.50, "outlook": "bullish"}"#.to_string(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+
+        let result = runtime
+            .delegate(&agent, "analyze")
+            .await
+            .expect("delegation succeeds");
+
+        // The one-token verdict is present and says what happened.
+        let reliance = result.reliance.as_ref().expect("reliance stamped");
+        assert_eq!(
+            reliance.get("status").and_then(serde_json::Value::as_str),
+            Some("amended"),
+            "a sourced value with no tool call is stripped — amended"
+        );
+        assert!(reliance.get("why").is_some(), "the token carries its gloss");
+
+        // The grounding report names the stripped path and carries the
+        // enforced document (the price nulled, the outlook kept).
+        let grounding = result.grounding.as_ref().expect("grounding stamped");
+        let stripped = grounding
+            .get("stripped")
+            .and_then(serde_json::Value::as_array)
+            .expect("stripped list");
+        assert_eq!(stripped.len(), 1);
+        let document = grounding.get("document").expect("enforced document");
+        assert!(
+            document
+                .get("price")
+                .is_some_and(serde_json::Value::is_null)
+        );
+        assert_eq!(
+            document.get("outlook").and_then(serde_json::Value::as_str),
+            Some("bullish")
+        );
+
+        // The completeness report is present (nothing owed here — both
+        // contracted fields were filled).
+        let completeness = result.completeness.as_ref().expect("completeness stamped");
+        assert_eq!(
+            completeness
+                .get("asked_for")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+
+        // The raw response is retained verbatim — the evidence of what the
+        // model claimed (fermi keeps episodes.response_text raw on purpose).
+        assert!(result.response.contains("42.50"));
+    }
+
+    /// An uncontracted agent still gets a verdict: `unchecked` for a
+    /// document, `unusable` for prose — never silence. A caller must be
+    /// able to distinguish "not checked" from "silently skipped".
+    #[tokio::test]
+    async fn delegate_stamps_reliance_even_without_a_contract() {
+        use crate::local_runtime::LocalSwarmRuntime;
+        use std::sync::Arc;
+
+        let agent = mock_agent_card("plain", "You return JSON.");
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
+            text: r#"{"summary": "hello"}"#.to_string(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+        let result = runtime.delegate(&agent, "summarize").await.expect("ok");
+        assert_eq!(
+            result
+                .reliance
+                .as_ref()
+                .and_then(|reliance| reliance.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("unchecked"),
+            "a document with no contract is unchecked — not a pass, not silence"
+        );
+
+        // Prose-only: unusable.
+        let prose_inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
+            text: "just prose, no document".to_string(),
+        });
+        let prose_runtime =
+            LocalSwarmRuntime::new_for_test(prose_inference, Arc::new(NoopDispatch));
+        let prose_result = prose_runtime
+            .delegate(&agent, "summarize")
+            .await
+            .expect("ok");
+        assert_eq!(
+            prose_result
+                .reliance
+                .as_ref()
+                .and_then(|reliance| reliance.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("unusable")
+        );
     }
 }

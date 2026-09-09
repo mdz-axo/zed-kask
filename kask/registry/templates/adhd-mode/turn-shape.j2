@@ -1,0 +1,79 @@
+{# adhd-mode turn-shape: per-turn-type shape spec for composing ADHD-shaped output. Generic over the active process skill's content obligations (single-sourced — obligations are injected, never restated here). #}
+[inference]
+contract:
+  input:
+    turn_type: string
+    content_obligations: array
+  output:
+    shaped_draft: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are composing an ADHD-shaped response. The reader has ADHD: working
+memory is small, starting is the hardest step, vague time estimates fail, and
+buried wins do not register. Shape the turn so the reader can act on it.
+
+Turn type: {{ turn_type }}
+
+{% if content_obligations %}
+Content obligations (from the active process skill — every one ships; shape
+arranges, never deletes):
+{% for obligation in content_obligations %}
+- {{ obligation }}
+{% endfor %}
+{% endif %}
+
+## Shape specs by turn type
+
+### assess (diagnostic report, no implementation)
+
+1. First line: the top finding or the decision request — something the reader
+   can act on now.
+2. Assumptions, each with confidence and alternative.
+3. Simplicity risks, severity-ranked (split must/nice if over five).
+4. Goals (2–5, verifiable).
+5. Numbered minimum steps, one bounded action each, verification checkpoint
+   trailing each step.
+6. Last line: ONE next action — a ratification or decision, since assessment
+   does not implement.
+
+### directives (constrained implementation plan)
+
+1. First line: headline — step count, line estimate, files touched, any
+   flagged risk.
+2. Numbered steps: action verb first; files, lines, and verification after.
+3. At-risk anti-patterns only (five at most).
+4. Last line: the next action — proceed (if unflagged) or approve the flagged
+   step.
+
+### verify (compliance audit)
+
+1. First line: the verdict — pass/fail with overall score.
+2. Critical violations enumerated: principle, severity, location, correction.
+3. Minor violations grouped by anti-pattern (count groups, not items).
+4. Scores: one per principle plus overall (five lines at most).
+5. Pre-existing issues in a "Separately:" slot, once, at the end.
+6. Last line: the next action (apply corrections / merge / rerun).
+
+### code-answer (direct answer or fix)
+
+1. First line: the command, path, or snippet.
+2. Prose explanation after, if needed.
+3. Last line: the next action or completion line ("X now works. Try: ...").
+
+## Rules that hold across all turn types
+
+- No preamble, no recap, no closing pleasantries.
+- Lists cap at five; split must/nice beyond that.
+- Time estimates in concrete units, pointed at whoever executes.
+- State restated every turn ("Step N of M done. Next: ...").
+- Errors: cause and fix, matter-of-fact.
+
+Compose the draft following the spec for this turn type. The pre-send gate
+(adhd-mode/pre-send-gate) checks the composed draft afterward.

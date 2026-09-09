@@ -34,6 +34,8 @@ const TTL_KEY_METRICS: u64 = 24 * 60 * 60; // 24h
 const TTL_COMPANY_PROFILE: u64 = 24 * 60 * 60; // 24h
 const TTL_HISTORICAL_PRICE: u64 = 60 * 60; // 1h
 const TTL_STOCK_QUOTE: u64 = 5 * 60; // 5 min — near real-time
+const TTL_SCREENER_EXCHANGES_LIST: u64 = 24 * 60 * 60; // 24h — exchange inventory changes rarely
+const TTL_SCREENER_FOREX_RATE: u64 = 24 * 60 * 60; // 24h — daily FOREX close
 const TTL_DEFAULT: u64 = 60 * 60; // 1h
 
 fn ttl_for_endpoint(endpoint: &str) -> u64 {
@@ -43,6 +45,8 @@ fn ttl_for_endpoint(endpoint: &str) -> u64 {
         "company_profile" => TTL_COMPANY_PROFILE,
         "historical_price" => TTL_HISTORICAL_PRICE,
         "stock_quote" => TTL_STOCK_QUOTE,
+        "screener_exchanges_list" => TTL_SCREENER_EXCHANGES_LIST,
+        "screener_forex_rate" => TTL_SCREENER_FOREX_RATE,
         _ => TTL_DEFAULT,
     }
 }

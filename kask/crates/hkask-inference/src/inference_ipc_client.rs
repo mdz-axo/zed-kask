@@ -77,26 +77,48 @@ const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 ///
 /// Written by `kask_bridge::set_inference_socket_path` so MCP server child
 /// processes can discover the socket even when their env lacks
+/// The XDG runtime directory for the inference-socket-path file — the ONE
+/// resolver shared by publication (`kask_bridge::inference_socket`) and
+/// discovery (this client) so the two sides can never diverge.
+///
+/// Resolution: `XDG_RUNTIME_DIR` when set and non-empty, else
+/// `/run/user/{uid}` from the real UID (`/proc/self/status` — std-only, no
+/// libc/unsafe). `None` when neither resolves (no XDG and no readable
+/// /proc, e.g. non-Linux): callers must treat that as "no location" —
+/// falling back to a hardcoded UID would publish/discover in ANOTHER
+/// user's directory, which is worse than nothing.
+pub fn runtime_dir() -> Option<String> {
+    runtime_dir_with(std::env::var("XDG_RUNTIME_DIR").ok().as_deref(), own_uid())
+}
+
+/// The pure resolution core — testable without env/proc access.
+/// `xdg` wins when non-empty; otherwise the per-UID fallback; otherwise
+/// `None` (never a hardcoded UID).
+pub fn runtime_dir_with(xdg: Option<&str>, uid: Option<u32>) -> Option<String> {
+    match xdg {
+        Some(xdg) if !xdg.is_empty() => Some(xdg.to_string()),
+        _ => uid.map(|uid| format!("/run/user/{uid}")),
+    }
+}
+
+/// Our real UID, std-only (no `unsafe`/`libc` — both forbidden in hkask
+/// crates): read from `/proc/self/status`. `None` when unreadable.
+fn own_uid() -> Option<u32> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find(|line| line.starts_with("Uid:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<u32>().ok())
+        })
+}
+
 /// `HKASK_INFERENCE_SOCKET` (e.g. after a self-healing reconnect using a
 /// stale `LaunchSpec`).
 fn read_socket_path_from_file() -> Option<String> {
-    // Use the actual UID from the environment, not a hardcoded 1000.
-    // On Linux, `/proc/self` gives us the real UID without a libc dep.
-    let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
-        // Read /proc/self/status to find the real UID without a libc dep.
-        // Falls back to 1000 if the procfs read fails (non-Linux or
-        // restricted environment).
-        let uid = std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("Uid:"))
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .and_then(|v| v.parse::<u32>().ok())
-            })
-            .unwrap_or(1000);
-        format!("/run/user/{uid}")
-    });
+    let xdg = runtime_dir()?;
     std::fs::read_to_string(format!("{xdg}/kask/inference-socket-path"))
         .ok()
         .map(|s| s.trim().to_string())
@@ -1190,6 +1212,43 @@ mod tests {
         assert!(
             matches!(err, InferenceError::Connection(ref m) if m.contains("Embeddings") && m.contains("Generate")),
             "unexpected-outcome error should name both the variant and the method: {err:?}"
+        );
+    }
+
+    /// T14: the shared runtime-dir resolution table — the ONE resolver
+    /// publication and discovery both use. XDG wins when non-empty; the
+    /// per-UID fallback otherwise; `None` when neither resolves (never a
+    /// hardcoded UID — a wrong-user path is worse than none).
+    #[test]
+    fn runtime_dir_resolution_table() {
+        use super::{own_uid, runtime_dir_with};
+        // XDG set and non-empty wins.
+        assert_eq!(
+            runtime_dir_with(Some("/tmp/xdg-runtime"), Some(1001)),
+            Some("/tmp/xdg-runtime".to_string())
+        );
+        // Empty XDG is ignored — the per-UID fallback applies.
+        assert_eq!(
+            runtime_dir_with(Some(""), Some(1001)),
+            Some("/run/user/1001".to_string())
+        );
+        // No XDG → per-UID, for ANY uid (the pre-fix publication hardcoded
+        // 1000 — discovery silently failed for every other user).
+        assert_eq!(
+            runtime_dir_with(None, Some(1001)),
+            Some("/run/user/1001".to_string())
+        );
+        assert_eq!(
+            runtime_dir_with(None, Some(0)),
+            Some("/run/user/0".to_string())
+        );
+        // Neither resolves → None, never a hardcoded path.
+        assert_eq!(runtime_dir_with(None, None), None);
+        // The live resolver agrees with the core for the current process.
+        let live = super::runtime_dir();
+        assert_eq!(
+            live,
+            runtime_dir_with(std::env::var("XDG_RUNTIME_DIR").ok().as_deref(), own_uid())
         );
     }
 }

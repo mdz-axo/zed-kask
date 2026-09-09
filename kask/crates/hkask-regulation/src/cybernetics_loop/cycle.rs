@@ -418,22 +418,29 @@ impl super::CyberneticsLoop {
     }
 
     pub(super) async fn act(&self, actions: &[RegulatoryAction]) {
-        self.reset_all_caps().await;
-
-        // E04: Detect and escalate call-cap exhaustion via the algedonic pathway.
-        // A cap is exhausted when its remaining count hit zero this tick.
-        {
+        // E04: capture call-cap exhaustion BEFORE the per-tick reset — the
+        // reset replenishes every cap (remaining = ceiling), so reading
+        // after it would never observe remaining == 0 and the exhaustion
+        // alert could never fire (the pre-fix defect: the alert was dead
+        // code). Charges land between ticks (metered dispatches), so the
+        // pre-reset read is the only moment the exhaustion is observable.
+        let exhausted: Vec<_> = {
             let statuses = self
                 .call_cap_manager
                 .read()
                 .await
                 .all_agent_statuses()
                 .await;
-            let exhausted: Vec<_> = statuses
+            statuses
                 .into_iter()
-                .filter(|(_, s)| s.remaining == 0)
-                .collect();
+                .filter(|(_, status)| status.remaining == 0)
+                .collect()
+        };
+        self.reset_all_caps().await;
 
+        // E04: Detect and escalate call-cap exhaustion via the algedonic pathway.
+        // A cap is exhausted when its remaining count hit zero this tick.
+        {
             let alert_entries: Vec<(String, String)> = exhausted
                 .iter()
                 .map(|(agent, status)| {
@@ -1396,6 +1403,7 @@ mod tests {
     use crate::regulation_policy::RegulationPolicy;
     use crate::runtime::RegulationLedger;
     use crate::{RolloutEventError, RolloutEventSource};
+    use hkask_types::WebID;
     use std::sync::{Arc, Mutex};
     use tokio::sync::RwLock;
 
@@ -1522,6 +1530,114 @@ mod tests {
                 .expect("auto_resolved lock")
                 .push(output.to_string());
         }
+    }
+
+    /// T12: call-cap exhaustion is detected BEFORE the per-tick reset —
+    /// the reset replenishes every cap (remaining = ceiling), so reading
+    /// after it would never observe remaining == 0 and the E04 exhaustion
+    /// alert could never fire (the pre-fix defect: the alert was dead
+    /// code). Controls: the reset still replenishes; a replenished agent
+    /// does not re-alert without new exhaustion; and the reset alone earns
+    /// no advice-progress credit — the exhaustion alert is transient
+    /// (escalated: false, no recovery signal), so it never enters the
+    /// reviewable queue and the auto-resolve machinery has nothing to
+    /// credit the reset with.
+    #[tokio::test]
+    async fn cap_exhaustion_is_detected_before_the_reset_replenishes() {
+        let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation_loop
+            .set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
+
+        let agent = WebID::from_persona(b"agent-x");
+        {
+            let cap_manager = regulation_loop.call_cap_manager.read().await;
+            cap_manager.register_call_cap(agent, 2).await;
+            // Exhaust between ticks, as metered dispatches would.
+            cap_manager.charge_metered(&agent).await;
+            cap_manager.charge_metered(&agent).await;
+        }
+
+        // No live alerts channel wired — the alert falls to the archive.
+        regulation_loop.act(&[]).await;
+
+        {
+            let records = archive.0.lock().unwrap_or_else(|e| e.into_inner());
+            let exhaustion_records: Vec<_> = records
+                .iter()
+                .filter(|(path, observation)| {
+                    path.contains("algedonic")
+                        && observation
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .is_some_and(|m| m.contains("exhausted"))
+                })
+                .collect();
+            assert_eq!(
+                exhaustion_records.len(),
+                1,
+                "the exhausted agent must produce exactly one alert: {records:#?}"
+            );
+            assert!(
+                exhaustion_records[0]
+                    .1
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .is_some_and(|m| m.contains(&agent.to_string())),
+                "the alert must name the exhausted agent"
+            );
+        }
+
+        // The reset still replenished: the cap is back at its ceiling.
+        let statuses = regulation_loop
+            .call_cap_manager
+            .read()
+            .await
+            .all_agent_statuses()
+            .await;
+        let status = statuses
+            .iter()
+            .find(|(id, _)| *id == agent)
+            .expect("registered");
+        assert_eq!((status.1.ceiling, status.1.remaining), (2, 2));
+
+        // Control: a second act() with no new charges does not re-alert —
+        // replenishment alone is not exhaustion.
+        regulation_loop.act(&[]).await;
+        let records = archive.0.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            records
+                .iter()
+                .filter(|(path, observation)| {
+                    path.contains("algedonic")
+                        && observation
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .is_some_and(|m| m.contains("exhausted"))
+                })
+                .count(),
+            1,
+            "a replenished agent must not re-alert"
+        );
+
+        // Control: the reset alone earns no advice-progress credit — the
+        // transient exhaustion alert never enters the reviewable queue
+        // (nothing persisted, nothing auto-resolved).
+        assert!(
+            escalation.persisted.lock().expect("persisted").is_empty(),
+            "the transient exhaustion alert must not enter the reviewable queue"
+        );
+        assert!(
+            escalation
+                .auto_resolved
+                .lock()
+                .expect("resolved")
+                .is_empty(),
+            "the automatic reset must not earn advice-progress credit"
+        );
     }
 
     /// expect: "Immediate acceptance of advice does not prove that an alert cleared" [P9]

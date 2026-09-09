@@ -247,50 +247,92 @@ cross-machine communication — the types are already wire-compatible
 ## The fermi trust-evolution absorption (2026-09-09)
 
 fermi's 56-commit wave (62c434f6..1468f18b) hardened its verification and
-coordination model. This section records what zed-kask adopted, what it
-deliberately deferred with named triggers, and why — so a future session
-reading fermi's `completeness.rs` or `reliance.rs` does not port them
-before their prerequisites exist (fermi's own rule: *a contract cannot
-name a source that does not exist* — a check the platform cannot run reads
-as coverage and is worse than no check).
+coordination model. This section records what zed-kask absorbed — all of
+it, not a curated subset. An earlier revision of this section listed four
+of these pieces as "deferred with triggers"; the operator rejected that
+framing (2026-09-09): quiet deferral is partial completion wearing the
+language of discipline, and the goal is the working capability. All seven
+pieces below are built and tested.
 
-**Adopted** (prerequisites existed):
+**Cloud delegation — the trust envelope.** fermi computes `reliance` —
+one token for "can I use this answer?" — plus the enforced `document`,
+`grounding.stripped`, and `completeness.owed` on its execute route.
+zed-kask's `swarm_execute_agent` previously extracted the narrative and
+discarded the verdicts (the "grade then discard" disease one layer out)
+and bypassed the spend gate. It now passes the envelope through
+verbatim after sanitization and routes through the consent gate
+(target = agent name). The @mention path (`swarm_delegate`) keeps raw
+chat content by design — it serves workspace-embedded flows.
 
-- **The trust envelope on cloud delegation.** fermi computes `reliance` —
-  one token for "can I use this answer?" — plus the enforced `document`,
-  `grounding.stripped`, and `completeness.owed` on its execute route.
-  zed-kask's `swarm_execute_agent` previously extracted the narrative and
-  discarded the verdicts (the "grade then discard" disease one layer out)
-  and bypassed the spend gate. It now passes the envelope through
-  verbatim after sanitization and routes through the consent gate
-  (target = agent name). The @mention path (`swarm_delegate`) keeps raw
-  chat content by design — it serves workspace-embedded flows.
-- **The workflow runner.** `workflow.rs`'s pure functions gained their
-  promised consumer: `swarm_run_workflow_local` executes a declared
-  `workflow_template` sequentially, the artifact flowing verbatim between
-  stages (fermi's `coordination_graph` feeding rule). Open slots and
-  missing agents stop the run with named outcomes.
-- **The observed topology.** fermi measured that declared ports predict
-  NONE of the real hand-offs (3 of 3 production compositions had zero
-  label overlap), so the declared-only seam check reports the norm as a
-  mismatch. Delegation edges (agent A's output fed agent B's input) are
-  now recorded at dispatch — by `swarm_pipeline_local` when the
-  `{prev_output}` placeholder carries the upstream output, and by the
-  workflow runner between stages — and `swarm_observed_seams_local`
-  reports them with per-edge agreement against the declared ports. The
-  edge is recorded at dispatch, not success: a downstream agent that ran
-  and failed still received the artifact (fermi's `parent_episode_id`
-  semantics). Observed is the fact; declared is the aspiration; the
-  report is a note, never a block.
+**The workflow runner.** `workflow.rs`'s pure functions gained their
+promised consumer: `swarm_run_workflow_local` executes a declared
+`workflow_template` sequentially, the artifact flowing verbatim between
+stages (fermi's `coordination_graph` feeding rule). Open slots and
+missing agents stop the run with named outcomes. Each stage outcome
+carries the runtime's reliance verdict for that stage's response.
 
-**Deferred, with triggers** (porting before the trigger is theatre):
+**The observed topology.** fermi measured that declared ports predict
+NONE of the real hand-offs (3 of 3 production compositions had zero
+label overlap), so the declared-only seam check reports the norm as a
+mismatch. Delegation edges (agent A's output fed agent B's input) are
+recorded at dispatch — by `swarm_pipeline_local` when the
+`{prev_output}` placeholder carries the upstream output, and by the
+workflow runner between stages — and `swarm_observed_seams_local`
+reports them with per-edge agreement against the declared ports. The
+edge is recorded at dispatch, not success: a downstream agent that ran
+and failed still received the artifact (fermi's `parent_episode_id`
+semantics). Observed is the fact; declared is the aspiration; the
+report is a note, never a block.
 
-| fermi piece | trigger that unblocks it | why it waits |
-| --- | --- | --- |
-| `completeness.rs` / `grounding_trust` gates on local delegation | the panel authors typed-tier output contracts (`contract.rs` excludes them today — "a blocking check the form cannot satisfy would be theatre") | a gate needs a contract to check against; local cards declare none |
-| `reliance.rs` one-token verdict locally | the row above lands | one signal (`task_success`) has no combination problem; the vocabulary is adopted so the first local verification surface emits one token from day one |
-| `fleet_digest.rs` three-tier meta-agent awareness | the local fleet grows past listing size | `swarm_list_local_agents` suffices today; the discipline (registry-first answers, name-what-you-don't-know, staleness anchor) is adopted as a rule regardless |
-| `select_agent` competition | measured verdict volume per agent justifies ranking (run the count first) | with a handful of stamped verdicts per agent, ranking is noise — fermi's own §4.4 lesson is measure before promoting |
+**The local grounding gate** (`grounding.rs`). The port of fermi's
+`grounding_trust::enforce` + `Gate::Completeness` over local output
+contracts. A contracted block declared `sourced` with a value and zero
+tool calls in the run is a value with no possible source — **stripped**
+(nulled) in the enforced document, which travels beside the raw response
+(the evidence, kept verbatim). A block declared `unavailable` that
+carries a value is stripped the same way (the genome_profiler shape: a
+plausible number in a field no source can supply). Completeness splits
+an empty contracted field three ways — `no_data` (a tool was asked and
+had nothing — nobody's fault), `owed` (a named tool never called, or
+commissioned `inferred`/`narrative` work absent — the agent's fault),
+and `excused` (the contract requires null). Every contracted block is
+stamped with a closed-vocabulary provenance
+(`tool_verified`/`model_inference`/`derived`/`stripped`/`no_data`/`owed`/
+`excused_null`).
+
+**The local reliance token.** One token, worst-first (`unusable >
+malformed > amended > incomplete > unchecked > clean`), derived from the
+grounding, completeness, and schema verdicts already computed — never
+recomputed by consumers. Stamped in the runtime's shared delegate path
+(`delegate` and `delegate_batch`), the one point where card, response,
+and tool calls coexist, so every delegation surface (delegate, fanout,
+pipeline, execute_plan, workflow stages) reports the same verdict from
+the same producer. Always stamped, even for prose-only responses
+(`unusable`) and contract-less agents (`unchecked`) — a caller never has
+to distinguish "not checked" from "silently skipped".
+
+**The fleet digest** (`fleet_digest.rs`). The prompt tier of fermi's
+meta-agent fleet-awareness pattern: a fixed-size digest of categories
+and counts — **never individual agents** (the O(structure) invariant,
+pinned by test) — with the staleness anchor (the fleet size it was built
+from) and the what-you-do-not-know counterweight naming the tools that
+serve per-agent facts. `accepts` labels classify three ways
+(`bespoke`/`cohort`/`universal` — above a tenth of the fleet, a label is
+the calling convention, not a specialisation). Surfaced by
+`swarm_fleet_digest_local` (the map) and `swarm_who_answers_local` (the
+cohort query — which names agents, because it is a tool-tier answer to
+a specific question, not a prompt-tier map).
+
+**Measured selection** (`agent_stats::rank_for_slot`, surfaced by
+`swarm_select_agent_local`). The local analog of fermi's `select_agent`:
+rank candidates for a slot by measured performance — success rate over
+recorded executions, then evidence volume, then average latency — with
+the port/type match as the non-negotiable narrowing gate (a selection
+with no narrowing enumerates the fleet and is refused). Every row
+carries its own execution count, and the report flags when the best
+measurement is under 3 executions — the order is then not earned, and
+the report says so instead of dressing noise as a verdict (fermi's §4.4:
+measure before promoting).
 
 **Adopted as discipline** (rules, not modules): subject + machine-stable
 reason on every verdict/decision record (fermi's gate-ledger lesson — a
@@ -327,4 +369,8 @@ falsification for new guards.
 | Workflow runner (pure closures)  | `kask/mcp-servers/hkask-mcp-swarm/src/workflow.rs` `run_workflow`        |
 | Observed delegation edges       | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs` `record_delegation_edge`, `DELEGATION_EDGE_EVENT_KIND` |
 | Observed-seam agreement         | `kask/mcp-servers/hkask-mcp-swarm/src/workflow.rs` `observed_seam_agreement` |
-| fermi reference (upstream)       | `Clones/fermi` 62c434f6..1468f18b: `src/reliance.rs`, `src/completeness.rs`, `src/port_trust.rs`, `src/agent_backend/coordination_graph.rs`, `docs/plans/WHAT_THE_PLATFORM_CAN_REFUSE.md`, `docs/architecture/META_AGENT_FLEET_AWARENESS.md` |
+| Local grounding gate            | `kask/mcp-servers/hkask-mcp-swarm/src/grounding.rs` `grade` |
+| Reliance stamping (one producer) | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs` `delegate`/`delegate_batch` |
+| Fleet digest (O(structure))     | `kask/mcp-servers/hkask-mcp-swarm/src/fleet_digest.rs` `digest`, `MAP_ROWS`, `WHAT_YOU_DO_NOT_KNOW` |
+| Measured selection              | `kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs` `rank_for_slot`, `MIN_MEASURED_EXECUTIONS` |
+| fermi reference (upstream)       | `Clones/fermi` 62c434f6..1468f18b: `src/reliance.rs`, `src/completeness.rs`, `src/port_trust.rs`, `src/agent_backend/coordination_graph.rs`, `src/fleet_digest.rs`, `docs/plans/WHAT_THE_PLATFORM_CAN_REFUSE.md`, `docs/architecture/META_AGENT_FLEET_AWARENESS.md` |

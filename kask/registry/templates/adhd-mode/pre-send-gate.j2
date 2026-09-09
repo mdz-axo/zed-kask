@@ -1,0 +1,101 @@
+{# adhd-mode pre-send gate: extraction checklist feeding the deterministic lisp gate (Forms G and C pinned in the adhd-mode SKILL.md). Rendered per turn while the mode is on. #}
+[inference]
+contract:
+  input:
+    turn_type: string
+    content_obligations: array
+  output:
+    gate_fields: object
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are the extraction stage of the adhd-mode pre-send gate. Extract the gate
+fields from the composed draft — evidence, not verdicts. The deterministic
+checks run elsewhere (lisp_eval Forms G and C pinned in the adhd-mode
+SKILL.md); your job is honest extraction.
+
+Turn type: {{ turn_type }}
+
+{% if content_obligations %}
+Content obligations in play (from the active process skill — every one must
+ship; shape arranges, never deletes):
+{% for obligation in content_obligations %}
+- {{ obligation }}
+{% endfor %}
+
+After extraction, the caller binds `required` to these obligations for Form C.
+{% else %}
+No process-skill content obligations in play this turn; Form C does not run.
+{% endif %}
+
+## Extraction checklist
+
+Extract each field from the draft as evidence:
+
+- `opener` — the actual first words of the draft (first two or three words,
+  verbatim). Empty string if the draft starts with the answer.
+- `closer` — the actual last words of the draft (last two or three words,
+  verbatim).
+- `sidebar_count` — "by the way" sidebars: asides that are neither part of the
+  answer nor the single offered follow-up.
+- `empty_hedge_count` — hedging adverbs adding no information ("perhaps",
+  "might", "could possibly"). A hedge carrying real uncertainty is NOT empty —
+  deleting it would manufacture confidence.
+- `idiom_count` — idioms or figurative phrases ("circle back", "get the ball
+  rolling", "on the same page").
+- `assumptions_count` — items in the assumptions list.
+- `risks_count` — items in the risks list.
+- `goals_count` — items in the goals list.
+- `critical_count` — critical violations enumerated individually (not
+  grouped).
+- `minor_groups` — minor-violation groups (grouped by anti-pattern; count
+  groups, not items).
+- `next_actions_count` — next actions offered at the end. A completion line
+  ("X now works. Try: ...") counts as one. Exactly one is the target.
+- `first_line_is_action` — true iff the first line is something the reader
+  can do now: a command, path, snippet, decision request, or recommendation
+  they can act on.
+- `last_line_states_next` — true iff the last line states what to do next.
+- `last_line_states_done` — true iff the message, read at its seams, states
+  what just happened.
+
+Lists not present this turn extract as 0.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "opener": "",
+  "closer": "",
+  "sidebar_count": 0,
+  "empty_hedge_count": 0,
+  "idiom_count": 0,
+  "assumptions_count": 0,
+  "risks_count": 0,
+  "goals_count": 0,
+  "critical_count": 0,
+  "minor_groups": 0,
+  "next_actions_count": 1,
+  "first_line_is_action": true,
+  "last_line_states_next": true,
+  "last_line_states_done": true
+}
+```
+
+## Revision protocol
+
+The gate returns `revise` with named fixes (`delete-opener:<phrase>`,
+`delete-closer:<phrase>`, `delete-sidebar`, `delete-empty-hedge`,
+`replace-idiom`, `split:<list>`, `exactly-one-next-action`,
+`reshape:<field>`) or `missing-content` with the missing sections. Apply the
+named fixes, re-extract the changed fields, re-run the checks. Maximum 2
+revision passes; then send the best available draft with a one-line note of
+unsatisfied items.
