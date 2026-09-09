@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Research MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-research`
-**Tools:** 22 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), and 2 evidence tools (`cite_sources`, `evaluate_evidence`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
+**Tools:** 26 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 4 research-run/paper tools (`begin_research_run`, `get_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
 **Auto-start:** Yes (free providers work with no credentials)
 
 The research server is the web-research surface: a provider pool
@@ -177,6 +177,7 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
 | `HKASK_RERANK_MODEL` | Rerank model override (default `OpenRouter/qwen/qwen3-reranker-8b`) |
+| `HKASK_EMBEDDING_MODEL` | Embedding model for the semantic duplication tier (emitted unconditionally by the settings chain; unset is a legitimate degraded mode — the deterministic shingle floor runs with a surfaced reason) |
 
 ## One-time data migration — `rss.db` → `research.db`
 
@@ -192,6 +193,80 @@ failure** (Magna Carta P1: an existing encrypted DB is operator-owned and
 is never silently orphaned). Operators who set `HKASK_RESEARCH_DB` to an
 explicit path are unaffected (the env var continues to point wherever it
 pointed; only the default filename changed).
+
+## Evidence evaluation — the signal model (2026-09-09)
+
+`evaluate_evidence` scores each artifact into per-component signals (base,
+corroboration, recency, content) with basis strings, plus a set-level
+report. All arithmetic is pure and deterministic (the G3 no-LLM-relay
+contract); the weight model IS the const table (`DEFAULT_PROFILE` — no
+weight literal lives in a code path).
+
+**Syndication-aware corroboration.** Corroboration counts independent
+evidence units, not raw domains: content-bearing artifacts are clustered
+by 4-word shingle similarity (Jaccard ≥ 0.5, transitively closed), and a
+cluster with a sourced member is one unit — one wire story on three
+domains is one visible unit, not three corroborations. Content-less
+sourced artifacts fall back to domain counting, and the signal basis says
+so. The set report carries `content_clusters` so a syndicated story is
+visible, not merely discounted.
+
+**Sensitivity.** The set report carries the ordering's sensitivity under
+named weight-profile substitution (`corroboration_heavy`, `recency_heavy`):
+`stable` (identical ordering under every profile), `unstable` with the
+driver component, or `not_evaluable` with a reason (fewer than 2
+artifacts, or all-equal scores) — never a fabricated `stable`.
+
+**Semantic duplication tier (parameter-gated).** `duplication: "semantic"`
+opts into the embedding tier: content-bearing artifacts are clustered by
+cosine ≥ 0.85 (the `corpus_deduplicate` threshold) via one batch
+`InferencePort::embed` call through the inference bridge. Degradation
+follows the rerank contract — never silent: no model configured, embed
+failure, or a vector-count mismatch runs the deterministic shingle floor
+with a surfaced `duplication_reason` naming the cause; the mode is
+`shingles`/`semantic`.
+
+## Research-run ledger (2026-09-09)
+
+The server keeps a non-repudiable record of what its tools actually
+returned under a research run — the zed-kask strengthening of Feynman's
+agent-authored `ResearchRun` manifest, which can claim anything about its
+own inputs. `begin_research_run` mints a run id
+(blake3(question || began_at)[..16]); `web_search`, `web_extract`, and
+`web_find_similar` accept an optional `run_id` and append their returned
+sources with `recorded_by='server'` (first observation wins — a re-serve
+never clobbers the audit copy; a run-scoped call bypasses the
+response-cache read so the ledger records what THIS request returned).
+Ledger write failures surface in the tool output as a `run_ledger` note,
+never swallowed. `get_research_run` returns the manifest with per-source
+confidence recomputed server-side from the ledger's own excerpt copies
+and a `validation` block.
+
+**The verified gate (fail-closed).** `annotate_research_run` records
+agent-declared verification states (not_checked, inferred, partial,
+verified, blocked, failed). `verified` is accepted ONLY for a URL the
+server itself recorded under the run and ONLY with a basis — an
+annotation about a source the server never served is `invalid_argument`
+naming the rule. Annotations are upsert-idempotent on (run_id, url);
+annotating an unseen URL records it as an agent-declared row
+(`recorded_by='agent'`, excluded from verified eligibility).
+
+**Composition seam.** `run_sources.corpus_ref` is the agent's pointer to
+the durable recall copy ingested via the corpus server — different job,
+different owner; `excerpt` is the server's own capped audit copy. No
+server-to-server coupling.
+
+## Paper identity (2026-09-09)
+
+`resolve_paper` parses any identifier form — DOI (bare, `doi:`, doi.org
+URL), arXiv ID, PMID, PMCID, OpenAlex work ID — into a typed identity
+with the canonical URL and a stable kind-prefixed ledger key; every
+rejection names what was expected. OpenAlex (a free provider, always
+registered) enriches with title/authors/year/venue when a record exists;
+the identity is the deterministic floor and is returned even when the
+metadata lookup degrades (a note either way — never silent). arXiv IDs
+have no direct OpenAlex lookup key and resolve to no-record. Pass
+`run_id` to record the resolution into the run ledger.
 
 ## References
 

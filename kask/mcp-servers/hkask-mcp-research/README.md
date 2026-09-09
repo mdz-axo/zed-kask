@@ -7,8 +7,7 @@ Web search, extraction, and feed-based research MCP server.
 | Tool                     | Description                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `web_ping`               | Liveness and provider health check                                                                                                                       |
-| `web_search`             | Search the web with RRF fusion. Set `provider` for a single-provider call (no fusion). Strategy: quick (best-scored single), web (all), news, deep (all + rerank) |
-| `web_recommend_provider` | Score each configured provider against a query + intent. Returns ranked recommendations with cost, latency, strengths/weaknesses. Call before `web_search` to pick deliberately |
+| `web_search`             | Search the web with RRF fusion. Set `provider` for a single-provider call (no fusion), or `intent` to have the tool pick the top-scored provider. Strategy: quick (best-scored single), web (all), news, deep (all + rerank) |
 | `web_find_similar`       | Find pages similar to a given URL using Exa findSimilar                                                                                                  |
 | `web_extract`            | Extract content from a URL into markdown or structured JSON                                                                                              |
 | `web_browse`             | Browse a URL via Firecrawl (JS-heavy), Tavily `/extract`, or Exa `/contents` — fallback across all configured browse providers                           |
@@ -25,9 +24,14 @@ Web search, extraction, and feed-based research MCP server.
 | `rss_discover_feeds`     | Discover RSS/Atom feeds from a URL via HTML link autodiscovery                                                                                           |
 | `rss_edit_tag`           | Edit tags on entries: mark read/unread, star/unstar, add/remove labels                                                                                   |
 | `rss_synthesize`         | Create a synthetic feed from a non-feed website or JSON API (css, json_path, diff_hash, llm_schema, pdf_ocr extractors)                                  |
-| `rss_fetch_synthetic`    | Re-extract from a synthetic feed's source URL and insert new entries                                                                                     |
 | `rss_list_synthetic`     | List all synthetic feeds with their specs and last-extraction stats                                                                                      |
 | `rss_delete_synthetic`   | Delete a synthetic feed and all its entries                                                                                                              |
+| `begin_research_run`     | Begin a research run: opens a server-side ledger recording what the research tools actually return under the run                                          |
+| `get_research_run`       | Get a run's manifest: sources, verification states, server-side recomputed confidence, and the validation block                                          |
+| `annotate_research_run`  | Annotate a run's source with an agent-declared verification state; `verified` requires a server-recorded source and a basis (fail-closed)                |
+| `resolve_paper`          | Resolve a paper reference (DOI, arXiv, PMID, PMCID, OpenAlex) to a typed identity with canonical URL and OpenAlex metadata enrichment                     |
+| `evaluate_evidence`      | Score evidence against a question: per-component signals with basis strings, syndication-aware corroboration, sensitivity, duplication mode              |
+| `cite_sources`           | Generate citations from retrieved sources (apa, bibtex, chicago, json)                                                                                   |
 
 ## Configuration
 
@@ -43,6 +47,7 @@ Web search, extraction, and feed-based research MCP server.
 | `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 50)          |
 | `HKASK_RERANK_MODEL`          | Model for the deep strategy's rerank stage (default: `OpenRouter/qwen/qwen3-reranker-8b`, served via the provider's native rerank endpoint through the inference bridge) |
+| `HKASK_EMBEDDING_MODEL`       | Embedding model for the semantic duplication tier (unset = the deterministic shingle floor runs with a surfaced reason) |
 | `HKASK_RERANK_MAX_CONCURRENCY` | Max concurrent rerank scoring calls per deep search (default: 8; the stage fans out one scoring call per candidate up to this cap) |
 
 Free providers (Semantic Scholar, arXiv) are always available — no API key

@@ -1,14 +1,52 @@
 ---
 title: "Research Server Capability Adoption Plan (Feynman transfers)"
 audience: [developers, architects, agents]
-last_updated: 2026-09-07
+last_updated: 2026-09-09
 version: "0.39.0"
-status: "Proposed (OUGHT) — none of this is implemented; every IS claim below is grep-verified as of 2026-09-07"
+status: "Implemented 2026-09-09 (C1/C2/C3 + embedding tier landed; two deviations recorded below pending operator ratification) — the design sections below remain the ratified spec; the IS baseline describes the pre-implementation state"
 domain: "Inference"
 mds_categories: [domain, composition, lifecycle]
 ---
 
 # Research Server Capability Adoption Plan
+
+## Implementation record (2026-09-09)
+
+All six capability commits landed, each TDD with observed RED, scoped
+clippy/machete/typos, and the MCP test ratchet green:
+
+| Commit | Domain | Hash |
+|---|---|---|
+| 1 | C1 evidence module (signal model, shingle syndication, sensitivity) | `3086057c20` |
+| 2 | C2 schema + rename sweep + begin/get + run_id recording | `a46bc81c4d` |
+| 3 | C2 validation gate (annotate + validate_research_run) | `165560e722` |
+| 4 | C3 paper identity (PaperId + resolve_paper) | `b1bec58688` |
+| 5 | C3 OpenAlex provider + enrichment + run recording | `4ca415f53f` |
+| 6 | C1 embedding tier (parameter-gated, Decision 6 default) | `d65c512c67` |
+
+**Deviations from the ratified design — pending operator ratification:**
+
+1. **`evaluate_evidence` does NOT gain `run_id`** (departs from the C2
+   design's tool list). Its artifacts are agent-passed; recording them as
+   `recorded_by='server'` would launder arbitrary URLs into the
+   non-repudiation ledger, defeating Decision 4's fail-closed verified
+   gate. The three genuinely server-fetched tools (`web_search`,
+   `web_extract`, `web_find_similar`) record; the agent composes
+   `evaluate_evidence` over the ledger's own copies via
+   `get_research_run`. Fail-closed (Decision 4) won over the letter of the
+   C2 tool list.
+2. **The G2 sensitivity fixture was reconstructed.** The plan's G2 lisp
+   gate carried an internal contradiction (its arithmetic flips the
+   ordering its prose says must not flip). The intent — a stable fixture
+   whose ordering survives substitution — was preserved; the pinned
+   fixtures live in `evidence.rs` tests with the lisp agreement checks
+   passing. Reconstruction labeled per the spec-loss rules; ratification
+   pending.
+
+**Interface-budget note:** the essentialist pass during implementation
+reduced C1 to 8 public items (the two heavy profiles became private;
+`SetSensitivity` was deleted as a one-field pass-through wrapper) — under
+the plan's own budgeted 9.
 
 Adopts the high- and medium-value capabilities identified in the Feynman
 (`advaitpaliwal/feynman`, v0.3.49) architecture analysis into

@@ -281,7 +281,7 @@ status: VERIFIED
 | `corpus` | `hkask-mcp-corpus` | 1 | 20 |
 | `curator` | `hkask-mcp-curator` | 2 | 11 |
 | `kata-kanban` | `hkask-mcp-kata-kanban` | 1 | 4 |
-| `research` | `hkask-mcp-research` | 6 | 4 |
+| `research` | `hkask-mcp-research` | 6 | 5 |
 | `scenarios` | `hkask-mcp-scenarios` | 0 | 2 |
 | `prediction-markets` | `hkask-mcp-prediction-markets` | 1 | 4 |
 | `swarm` | `hkask-mcp-swarm` | 2 | 16 unique (`HKASK_SWARM_LEDGER_PATH` removed with the local budget system, 2026-09-08) |
