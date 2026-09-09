@@ -1,8 +1,10 @@
-# zed-kask invariant gates. These are the cheap bash guards that were
+# zed-kask invariant gates. These are the cheap guards that were
 # previously convention-enforced only (run by hand or from the DIVERGENCE.md
 # runbook) — an upstream merge that reintroduces a guarded surface used to
-# fail nothing automated. Each script is pure bash/grep and finishes in
-# seconds; no toolchain or build is required.
+# fail nothing automated. The bash/grep scripts finish in seconds; the
+# formatting step additionally resolves the pinned toolchain from
+# rust-toolchain.toml on first use (rustup auto-install) and parses the
+# workspace without compiling.
 #
 # - check-hkask-no-zed-deps.sh: the §13.1 governing invariant (no hKask
 #   crate depends on a zed-kask crate). DIVERGENCE.md advertises this as
@@ -13,6 +15,14 @@
 # - check-desktop-no-collision.sh: execs check-zed-isolation.sh; kept as an
 #   explicit step so the .desktop collision guard named in .rules is a
 #   visible, independently-failing CI step.
+# - cargo fmt --all -- --check: the workspace stays formatting-clean —
+#   14 hunks of drift landed on main undetected before this gate (2026-09-08).
+# - check-no-new-dead-code-allows.sh: no net-new #[allow(dead_code)] beyond
+#   kask/scripts/dead-code-allow-baseline.txt — the residue-hiding mechanism
+#   from the 2026-09-08 strangler-fig audit (every finding carried one; a
+#   struct-level allow even masked never-read fields). Adding an allow
+#   requires bumping the baseline in the same commit, which makes the
+#   addition a visible, reviewable act.
 name: Kask invariants
 
 on:
@@ -33,3 +43,7 @@ jobs:
         run: bash kask/scripts/build/check-desktop-no-collision.sh
       - name: Build profile seam — MCP servers build cheap, installs are capped and traced
         run: bash kask/scripts/build/check-build-profile.sh
+      - name: Formatting — cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: Dead-code allows — no net-new beyond the committed baseline
+        run: bash kask/scripts/check-no-new-dead-code-allows.sh

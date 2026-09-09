@@ -23,15 +23,24 @@
 #   bash kask/scripts/check-no-new-dead-code-allows.sh --refresh
 # Exit codes: 0 = no file exceeds its baseline, 1 = violations found
 set -uo pipefail
-cd "$(dirname "$0")/.." || exit 1
 
-BASELINE="scripts/dead-code-allow-baseline.txt"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "FAIL: $SCRIPT_DIR is not inside a git repository."
+  exit 1
+}
+cd "$REPO_ROOT" || exit 1
 
-# Per-file counts of allow(dead_code) across tracked .rs files,
-# `path:count` per line, zero-count files omitted.
+BASELINE="$SCRIPT_DIR/dead-code-allow-baseline.txt"
+
+# Per-file counts of allow(dead_code) across ALL tracked .rs files (the
+# whole fork — crates/ and kask/), `path:count` per line, zero-count files
+# omitted. -H forces the filename prefix even when a batch contains a
+# single file (bare counts would corrupt the parse); -r skips the run
+# entirely on empty input (grep with no file argument would read stdin).
 current_counts() {
   git ls-files '*.rs' \
-    | xargs grep -c 'allow(dead_code)' 2>/dev/null \
+    | xargs -r grep -cH 'allow(dead_code)' 2>/dev/null \
     | grep -v ':0$' \
     | sort
 }
