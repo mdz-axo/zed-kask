@@ -601,11 +601,31 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 **Verification:** recover the completion-manifest test seam (a fixture manifest the status tool can read) first; then RED-first per defect.
 **Refused shortcut:** asserting only the happy path; leaving the nil-UUID fallback in place.
 
+### T20 — Full zed-kask seam and divergence audit — AWAITING OPERATOR SCHEDULING (operator-requested 2026-09-09)
+
+**Request:** the operator asked for a full seam and divergence audit with two explicit tracks — check and clean up the code, and check and clean up the DIVERGENCE.md documentation, "which probably isn't fully aligned with the code."
+
+**Grounds (drift verified against current code, 2026-09-09):** the misalignment is observed, not hypothetical — (1) `SpanKind` doc comments said `reg.regulation.*` while `namespace_and_path` mapped `reg.outcome.*` (drift inside the seam's own types, fixed in 22bbf99fae); (2) the verify_impact skip comment proposed an incomplete fix — a before-value without a re-sense arm verifies nothing (mechanism misdescription, corrected in 4d56f468f7); (3) the 22bbf99fae commit message describes a span "rename" that never happened (it was a stale-comment fix) — fresh records misdescribe code; (4) the `kask-seam-audit` skill's description cites "D1–D33, D17/D19 retired" while DIVERGENCE.md carries D45+ — the audit instrument's own map is stale; (5) the T-V1 entry is a single multi-thousand-character line accumulating records from multiple sessions — structurally resistant to alignment review.
+
+**Approach:** two tracks, both finding-cited (file:line), trusting neither side blanketly:
+- **Code track (check + clean up):** for every D-seam, verify the pinned tests exist and pass (the .rules: every `// zed-kask:` comment disabling upstream behavior needs a test pinning it); sweep zed-side `// zed-kask:` markers and D-seam patterns for deviations with NO DIVERGENCE.md record (unrecorded divergence is indistinguishable from upstream drift at the next rebase); remove dead seam surface (unreferenced seam helpers, retired-seam leftovers).
+- **Documentation track (check + clean up):** for every DIVERGENCE.md entry, verify against current code — cited file paths exist, cited tests exist and pass, described behavior matches the code; correct stale descriptions, retire entries whose seams are gone, record the unrecorded seams the code track finds; verify D-numbering contiguity and the retired list; reconcile the `kask-seam-audit` skill's D-range.
+- **Instrument:** the `kask-seam-audit` skill (security / refactor-architecture / ui-layout-discipline tracks, file:line findings) extended with the documentation-alignment track. Consumer stakes: `upstream-rebase` builds its per-D-seam strategy map from DIVERGENCE.md — misalignment corrupts the next rebase's strategy decisions directly.
+
+**Acceptance:** every D-seam entry verified (pinned test present + passing, or entry corrected/retired with the finding cited); zero zed-side `// zed-kask:` markers without a DIVERGENCE.md entry or a documented exemption; every DIVERGENCE.md citation (path, test name) resolves against the current tree; a findings report with per-entry verdicts (aligned / corrected / retired / newly recorded), each citing file:line.
+
+**Verification:** the findings report is the artifact; any code cleanup the audit spawns becomes its own follow-up task with RED/GREEN evidence under the per-task closeout checklist — the audit itself changes no behavior.
+
+**Refused shortcuts:** no wholesale regeneration of DIVERGENCE.md from current code (doc-from-code laundering — the .rules trap: verify against intent, never rewrite the doc to agree with the tree); no treating "the cited test exists" as "the description is accurate" (both must be checked); no deferring stale-entry corrections to the next rebase (that is where misalignment does its damage).
+
+**Scope: L (full surface). Depends: a quiet tree — the audit reads every seam; schedule when no other session is mid-flight.**
+
 ### Scheduling proposal (groups of 2–3 with cumulative checkpoints, per the plan)
 
 - **Group 1 — evidence fidelity (memory/event substrate):** T09 + T10. Both S; both are "the recorded evidence must survive to the reader" defects in the memory/event layer. Cumulative: hkask-memory + kask_bridge suites.
 - **Group 2 — measurement integrity (calibration/regulation):** T11 + T12. Both S/M; both are "evidence destroyed or deduped before observation" defects. Cumulative: prediction-markets + hkask-regulation suites. T11 carries the legacy-migration operator gate (additive-only default).
 - **Group 3 — lifecycle/infra:** T13 + T14 + T15. T13 and T14 have confirmed defects (S/M); T15 is gated on spec recovery — schedule it last in the group so the recovery work (read-only) can start anytime without blocking T13/T14.
+- **Group 4 — seam/divergence alignment:** T20 standalone (scope L). Schedule when the tree is quiet — no parallel session mid-flight — since the audit reads every seam, and its findings feed the next upstream rebase's strategy decisions.
 
 Each group ends with a checkpoint: cumulative regressions, build/lints, operator review before the next group.
 
