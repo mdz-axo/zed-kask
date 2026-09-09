@@ -28,7 +28,7 @@ Return JSON only:
 {
   "activation_status": "active",
   "reg_span_emitted": true,
-  "goal_id": "goal-{{ goal.goal_text | default('unnamed') | lower | replace(' ', '-') | truncate(40, true, '') }}",
+  "goal_id": "goal-{{ goal.goal_text | default('unnamed') | lower | replace(' ', '-') }}",
   "goal_text": "{{ goal.goal_text | default('') }}",
   "criteria": {{ goal.criteria | default([]) | tojson }},
   "visibility": "{{ goal.visibility | default('private') }}",

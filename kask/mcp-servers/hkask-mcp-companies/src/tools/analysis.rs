@@ -355,7 +355,20 @@ impl CompaniesServer {
                             match context.rate_for(code) {
                                 Ok(rate) => {
                                     let mut filters = screener_filters.clone();
-                                    if rate != 1.0 {
+                                    // Mixed-currency exchanges (London's IOB
+                                    // hosts ¥/kr/Ft lines) are queried
+                                    // unbounded: cap bounds converted into
+                                    // the exchange's currency would
+                                    // numerically exclude every
+                                    // foreign-currency row (a ¥9.2T cap sits
+                                    // above any GBP ceiling), silently
+                                    // losing Japan. Selection for these
+                                    // exchanges happens entirely in the
+                                    // row-currency pass and the client-side
+                                    // band enforcement.
+                                    let mixed = MIXED_CURRENCY_EXCHANGES
+                                        .contains(&code.as_str());
+                                    if !mixed && rate != 1.0 {
                                         filters = convert_cap_filters(&filters, rate);
                                     }
                                     filters.push(serde_json::json!(["exchange", "=", code]));

@@ -636,6 +636,64 @@ mod corpus_sweep_tests {
         );
     }
 
+    /// Corpus-wide pin: every shipped .j2 template must RENDER without a
+    /// context-independent defect under the same environment the tool uses
+    /// (lenient undefined behavior, registry-rooted loader). Stripping-clean
+    /// is not enough — triage.j2 stripped clean but failed at render time
+    /// with an unknown filter (`truncate`), and extract-hmems.j2's bare
+    /// `[inference]` marker made the stanza stripper eat its `{% if %}`
+    /// (orphaning the `{% else %}`) — both live-observed 2026-09-09; only a
+    /// full render catches the class.
+    ///
+    /// Classification: only syntax errors, unknown filters/tests/functions/
+    /// methods, bad escapes, and broken includes are defects — they fail
+    /// regardless of context. Operation-on-undefined (InvalidOperation,
+    /// UndefinedError, …) with an EMPTY context is the template's context
+    /// contract failing loud — correct behavior; the caller retries with
+    /// the required variables. Those are allowed here.
+    #[test]
+    fn corpus_templates_render_without_error() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates");
+        let base = base.canonicalize().expect("templates dir exists in repo");
+
+        let mut checked = 0usize;
+        let mut failed = Vec::new();
+        for entry in walkdir(&base) {
+            let content = std::fs::read_to_string(&entry).expect("read template");
+            let stripped = strip_frontmatter(&content);
+            checked += 1;
+            let mut env = minijinja::Environment::new();
+            bind_registry_loader(&mut env, &base);
+            if let Err(err) = env.render_str(&stripped, serde_json::json!({})) {
+                match err.kind() {
+                    minijinja::ErrorKind::SyntaxError
+                    | minijinja::ErrorKind::UnknownFilter
+                    | minijinja::ErrorKind::UnknownTest
+                    | minijinja::ErrorKind::UnknownFunction
+                    | minijinja::ErrorKind::UnknownMethod
+                    | minijinja::ErrorKind::BadEscape
+                    | minijinja::ErrorKind::BadInclude
+                    | minijinja::ErrorKind::TemplateNotFound => {
+                        failed.push(format!("{}: {err}", entry.display()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(
+            checked > 200,
+            "corpus scan found only {checked} templates — scan path broken"
+        );
+        assert!(
+            failed.is_empty(),
+            "{} of {checked} templates fail to render:\n  {}",
+            failed.len(),
+            failed.join("\n  ")
+        );
+    }
+
     /// Recursive .j2 walk (mirrors agent_skills/build.rs's collector).
     fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         let mut out = Vec::new();

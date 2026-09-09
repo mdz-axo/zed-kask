@@ -21,13 +21,13 @@ You are a kanban task management triage agent. Determine which phase of kanban t
 ## Available Inputs
 
 {% if project_description and project_description | trim | length > 0 %}
-- **project_description**: present ({{ project_description | truncate(100) }})
+- **project_description**: present ({{ project_description }})
 {% else %}
 - **project_description**: absent
 {% endif %}
 
 {% if task_to_delegate and task_to_delegate | length > 0 %}
-- **task_to_delegate**: present ({{ task_to_delegate | tojson | truncate(100) }})
+- **task_to_delegate**: present ({{ task_to_delegate | tojson }})
 {% else %}
 - **task_to_delegate**: absent
 {% endif %}

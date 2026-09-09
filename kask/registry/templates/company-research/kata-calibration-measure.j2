@@ -84,7 +84,10 @@ These are previously resolved market outcomes. Compare the analyst's prior forec
 {% if context_text %}
 ## Context Text (the research note — for ellipsis analysis)
 
-{{ context_text | truncate(2000) }}
+{# Callers bound context_text to ~2000 characters — minijinja has no
+   truncate filter (live-observed 2026-09-09); the bound is the caller's
+   contract, not the template's. #}
+{{ context_text }}
 {% endif %}
 
 ## What to Do

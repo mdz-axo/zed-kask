@@ -10,8 +10,16 @@
 {#     publishes no such properties) and are removed; subject's real #}
 {#     counterpart is schema:subjectOf. #}
 {#     Ontology tags from tag_chunks injected when available. #}
-
+{#
 [inference]
+   Inference-prompt marker, documentation only. The corpus server renders
+   this template raw via minijinja (no [inference] stripping), so the
+   marker stays inside a comment — it never reaches the rendered prompt,
+   and render_template's body-stanza stripper never mistakes prompt
+   content for a param block (a bare marker previously caused it to eat
+   the {% if %} below, orphaning the {% else %} — live-observed 2026-09-09).
+#}
+
 <system>
 You are a knowledge graph extractor for a capabilities research corpus. Given a text passage, first classify its genre, then extract factual triples using the appropriate ontology.
 {% if ontology_context and ontology_context.strip() %}
