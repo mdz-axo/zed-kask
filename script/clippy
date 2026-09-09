@@ -4,6 +4,22 @@ set -euo pipefail
 
 if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
     set -- "$@" --workspace
+    # zed-kask: exclude remote_server from the workspace clippy. Its
+    # `debug-embed` feature (upstream, needed for cross-compilation asset
+    # embedding) is the sole request that turns on rust-embed's
+    # debug-embed across the graph; under --all-features that feature
+    # unifies into the single host proc-macro rust-embed-impl, which then
+    # emits `Filenames::Embedded` ungated in every derive — while the
+    # target rust-embed instance crates like settings link (dev profile,
+    # no debug-embed in its feature world) lacks that variant (E0599).
+    # Upstream never sees this because its clippy runs --release, where
+    # `not(debug_assertions)` makes the variant exist unconditionally;
+    # the D52 dev-profile default exposed it. Excluding the crate removes
+    # the divergent feature request (one rust-embed feature world) without
+    # touching upstream code or breaking cross-compilation. remote_server
+    # is upstream-owned (kask never modifies it) — its lint health is
+    # upstream CI's, like the machete scoping below.
+    set -- "$@" --exclude remote_server
 fi
 
 set -x
