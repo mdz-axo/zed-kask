@@ -103,7 +103,12 @@ impl GalleryState {
                         path.display()
                     )));
                 }
-                let absolute_path = path.to_str().ok_or_else(|| crate::MediaError::Io(format!("Non-UTF-8 asset path: {}", path.display())))?.to_string();
+                let absolute_path = path
+                    .to_str()
+                    .ok_or_else(|| {
+                        crate::MediaError::Io(format!("Non-UTF-8 asset path: {}", path.display()))
+                    })?
+                    .to_string();
                 let bytes = crate::read_image_capped(&absolute_path)?;
                 let image = image::load_from_memory(&bytes).map_err(|error| {
                     crate::MediaError::Io(format!("Decode {}: {error}", path.display()))

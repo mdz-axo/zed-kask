@@ -1306,7 +1306,7 @@ impl SwarmServer {
             // globally opted in (`curator_consent_default`).
             //
             // The settlement invariant is structural: `CuratorSession` owns
-            // the `Option<DelegateAuthorization>` and settles it on `Drop`
+            // the `Option<Settlement>` and settles it on `Drop`
             // unless `send` succeeds (which calls `disarm` internally).
             // Settlement follows the T05 policy: proven pre-dispatch
             // rejection releases the token; an ambiguous outcome holds it

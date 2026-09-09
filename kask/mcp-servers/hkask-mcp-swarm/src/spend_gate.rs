@@ -88,7 +88,7 @@ impl Settlement {
     /// refunds the consumed token; session credits the reserved cost back
     /// (best-effort with a loud warn on store failure — the dispatch already
     /// failed).
-    fn release(self, consent: &ConsentStore) {
+    pub(crate) fn release(self, consent: &ConsentStore) {
         match self {
             Self::SingleUse { refund_grant } => consent.refund(refund_grant),
             Self::Session { token, cost } => consent.release_session(&token, cost),
@@ -99,65 +99,15 @@ impl Settlement {
     /// single-use token stays consumed and the session credits stay
     /// deducted — a retry cannot reuse the held capacity. The caller
     /// surfaces the uncertainty.
-    fn hold(self) {
+    pub(crate) fn hold(self) {
         drop(self);
     }
     /// What is held, for the uncertainty message surfaced to the operator.
-    fn held_description(&self) -> String {
+    pub(crate) fn held_description(&self) -> String {
         match self {
             Self::SingleUse { .. } => "the consent token stays consumed".to_string(),
             Self::Session { cost, .. } => format!("{cost} session credits stay held"),
         }
-    }
-}
-
-/// A carried, refundable authorization to hire an agent. Created by
-/// `authorize_hire`; consumed by `complete_hire` (which refunds on failure or
-/// deducts from the session on success) or refunded explicitly via `refund`
-/// (used by `swarm_create_swarm`'s per-hire error-collection loop, which
-/// continues on failure rather than early-returning).
-pub struct HireAuthorization {
-    settlement: Settlement,
-}
-
-impl HireAuthorization {
-    /// Release the reservation on a proven pre-dispatch rejection (see
-    /// `Settlement::release`).
-    pub(crate) fn release(self, consent: &ConsentStore) {
-        self.settlement.release(consent);
-    }
-    /// Hold the reservation on an ambiguous dispatch outcome (see
-    /// `Settlement::hold`).
-    pub(crate) fn hold(self) {
-        self.settlement.hold();
-    }
-    /// What is held, for the uncertainty message.
-    pub(crate) fn held_description(&self) -> String {
-        self.settlement.held_description()
-    }
-}
-
-/// A carried, refundable authorization to delegate to an agent. Created by
-/// `authorize_delegate`; consumed by `complete_delegate` or refunded via
-/// `refund` (used by `swarm_xaman`'s two-step session lifecycle).
-pub struct DelegateAuthorization {
-    settlement: Settlement,
-}
-
-impl DelegateAuthorization {
-    /// Release the reservation on a proven pre-dispatch rejection (see
-    /// `Settlement::release`).
-    pub(crate) fn release(self, consent: &ConsentStore) {
-        self.settlement.release(consent);
-    }
-    /// Hold the reservation on an ambiguous dispatch outcome (see
-    /// `Settlement::hold`).
-    pub(crate) fn hold(self) {
-        self.settlement.hold();
-    }
-    /// What is held, for the uncertainty message.
-    pub(crate) fn held_description(&self) -> String {
-        self.settlement.held_description()
     }
 }
 
@@ -175,8 +125,8 @@ impl DelegateAuthorization {
 /// on one session cannot both dispatch against the same credits.
 ///
 /// On any gate failure the reservation is released and an `McpToolError`
-/// returned. On success a `HireAuthorization` is returned for the subsequent
-/// `complete_hire` call.
+/// returned. On success the `Settlement` (the reservation) is returned for
+/// the subsequent `complete_hire` call.
 pub(crate) async fn authorize_hire(
     client: &SwarmClient,
     consent: &ConsentStore,
@@ -185,7 +135,7 @@ pub(crate) async fn authorize_hire(
     consume_cost: u32,
     budget: Option<u32>,
     include_optional: bool,
-) -> Result<HireAuthorization, McpToolError> {
+) -> Result<Settlement, McpToolError> {
     // The in-flight authorization state: a single-use token is consumed
     // (reserved) here; a session token is only reserved at the end, after
     // every check has passed.
@@ -310,7 +260,7 @@ pub(crate) async fn authorize_hire(
             Settlement::Session { token, cost }
         }
     };
-    Ok(HireAuthorization { settlement })
+    Ok(settlement)
 }
 
 /// Execute the hire POST with the `/hire`→`/add` fallback, settling the
@@ -321,12 +271,12 @@ pub(crate) async fn authorize_hire(
 pub(crate) async fn complete_hire(
     client: &SwarmClient,
     consent: &ConsentStore,
-    auth: HireAuthorization,
+    reservation: Settlement,
     workspace_id: &str,
     agent_name: &str,
     include_optional: bool,
 ) -> Result<serde_json::Value, McpToolError> {
-    let mut auth = Some(auth);
+    let mut reservation = Some(reservation);
     let result = match client
         .post(
             &format!("/workspaces/{}/hire", url_encode_segment(workspace_id)),
@@ -368,65 +318,35 @@ pub(crate) async fn complete_hire(
         Ok(data) => {
             // Success: the reservation IS the spend — the single-use token
             // stays consumed and the session credits stay deducted.
-            drop(auth.take());
+            drop(reservation.take());
             Ok(data)
         }
         Err(e) => {
-            let held = auth.take();
+            let held = reservation.take();
             settle_dispatch_failure(consent, held, e).map_err(SwarmError::into_tool_error)
         }
-    }
-}
-
-/// Settlement operations shared by both authorization kinds, so the
-/// dispatch-failure classification is written once.
-trait DispatchSettlement {
-    fn release_reservation(self, consent: &ConsentStore);
-    fn hold_reservation(self);
-    fn reservation_description(&self) -> String;
-}
-
-impl DispatchSettlement for HireAuthorization {
-    fn release_reservation(self, consent: &ConsentStore) {
-        self.release(consent);
-    }
-    fn hold_reservation(self) {
-        self.hold();
-    }
-    fn reservation_description(&self) -> String {
-        self.held_description()
-    }
-}
-
-impl DispatchSettlement for DelegateAuthorization {
-    fn release_reservation(self, consent: &ConsentStore) {
-        self.release(consent);
-    }
-    fn hold_reservation(self) {
-        self.hold();
-    }
-    fn reservation_description(&self) -> String {
-        self.held_description()
     }
 }
 
 /// Settle a failed dispatch by the operator-ratified T05 policy
 /// (2026-09-08): a PROVEN pre-dispatch rejection releases the reservation
 /// and propagates the error; an AMBIGUOUS outcome holds the reservation and
-/// surfaces the uncertainty (never auto-released).
-fn settle_dispatch_failure<T: DispatchSettlement>(
+/// surfaces the uncertainty (never auto-released). `None` carries no
+/// reservation (the curate gate when `curator_consent_default` opted the
+/// operator in globally).
+fn settle_dispatch_failure(
     consent: &ConsentStore,
-    auth: Option<T>,
+    reservation: Option<Settlement>,
     error: SwarmError,
 ) -> Result<serde_json::Value, SwarmError> {
-    match auth {
-        Some(authorization) => {
+    match reservation {
+        Some(settlement) => {
             if error.is_proven_rejection() {
-                authorization.release_reservation(consent);
+                settlement.release(consent);
                 Err(error)
             } else {
-                let held = authorization.reservation_description();
-                authorization.hold_reservation();
+                let held = settlement.held_description();
+                settlement.hold();
                 Err(SwarmError::DispatchAmbiguous(format!(
                     "{error}; {held} — inspect the ABW workspace before \
                      retrying; a retry cannot reuse this authorization"
@@ -447,7 +367,7 @@ pub fn authorize_delegate(
     auth: SpendAuth<'_>,
     workspace_id: &str,
     credits_authorized: u32,
-) -> Result<DelegateAuthorization, McpToolError> {
+) -> Result<Settlement, McpToolError> {
     let settlement = match auth {
         SpendAuth::SingleUse(token) => {
             // The consumed token IS the reservation.
@@ -522,7 +442,7 @@ pub fn authorize_delegate(
         ))
         .into_tool_error());
     }
-    Ok(DelegateAuthorization { settlement })
+    Ok(settlement)
 }
 
 /// Execute the delegate @mention POST, settling the reservation by the T05
@@ -532,12 +452,12 @@ pub fn authorize_delegate(
 pub(crate) async fn complete_delegate(
     client: &SwarmClient,
     consent: &ConsentStore,
-    auth: DelegateAuthorization,
+    reservation: Settlement,
     workspace_id: &str,
     agent_name: &str,
     task: &str,
 ) -> Result<serde_json::Value, McpToolError> {
-    let mut auth = Some(auth);
+    let mut reservation = Some(reservation);
     // Strip leading @mentions (KA-06): a task starting with `@other_agent`
     // would mention a different agent in the workspace chat.
     let task_clean = crate::sanitize::strip_leading_mentions(task);
@@ -550,11 +470,11 @@ pub(crate) async fn complete_delegate(
     match result {
         Ok(data) => {
             // Success: the reservation IS the spend.
-            drop(auth.take());
+            drop(reservation.take());
             Ok(data)
         }
         Err(e) => {
-            let held = auth.take();
+            let held = reservation.take();
             settle_dispatch_failure(consent, held, e).map_err(SwarmError::into_tool_error)
         }
     }
@@ -566,7 +486,7 @@ pub(crate) async fn complete_delegate(
 /// (action "curate", fixed target "xaman") and returns `Ok(Some(auth))`.
 /// Curate is single-use only — sessions do not cover the curate action.
 ///
-/// The caller (`swarm_xaman`) holds the `Option<DelegateAuthorization>` and
+/// The caller (`swarm_xaman`) holds the `Option<Settlement>` and
 /// refunds it on every failure path of its two-step session lifecycle
 /// (session create + message send), which has custom error mapping and
 /// cannot be wrapped in a single `complete_*`.
@@ -574,7 +494,7 @@ pub fn authorize_curate(
     client: &SwarmClient,
     consent: &ConsentStore,
     token: Option<&str>,
-) -> Result<Option<DelegateAuthorization>, McpToolError> {
+) -> Result<Option<Settlement>, McpToolError> {
     if client.config().curator_consent_default {
         return Ok(None);
     }
@@ -595,9 +515,7 @@ pub fn authorize_curate(
         credits_authorized: grant,
         token: token.to_string(),
     };
-    Ok(Some(DelegateAuthorization {
-        settlement: Settlement::SingleUse { refund_grant },
-    }))
+    Ok(Some(Settlement::SingleUse { refund_grant }))
 }
 
 #[cfg(test)]

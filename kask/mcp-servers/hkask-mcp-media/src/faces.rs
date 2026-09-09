@@ -127,7 +127,8 @@ impl MediaServer {
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
         let image_url = format!("data:{};base64,{}", mime, b64);
 
-        let image = image::load_from_memory(&data).map_err(|error| MediaError::Io(error.to_string()))?;
+        let image =
+            image::load_from_memory(&data).map_err(|error| MediaError::Io(error.to_string()))?;
         let (width, height) = (image.width(), image.height());
         let size_bytes = data.len() as u64;
 
@@ -219,13 +220,14 @@ impl MediaServer {
                 // comparator. (A previous cosine fast-path on LLM-produced
                 // "embeddings" was removed: LLMs cannot emit geometrically
                 // consistent vectors, so those scores were noise.)
-                let ref_url = match self.resolve_image_url_by_id(&ga.gallery_id, &reg_entry.image_id) {
-                    Ok(url) => url,
-                    Err(e) => {
-                        errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
-                        continue;
-                    }
-                };
+                let ref_url =
+                    match self.resolve_image_url_by_id(&ga.gallery_id, &reg_entry.image_id) {
+                        Ok(url) => url,
+                        Err(e) => {
+                            errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
+                            continue;
+                        }
+                    };
 
                 match vision::match_faces(
                     &self.vision_port,
@@ -420,12 +422,17 @@ impl MediaServer {
         bbox: &serde_json::Value,
     ) -> Result<String, MediaError> {
         let record = self.gallery_store.get_by_id(gallery_id, image_id)?;
-        if record.missing { return Err(MediaError::ImageNotFound(image_id.into())); }
+        if record.missing {
+            return Err(MediaError::ImageNotFound(image_id.into()));
+        }
         let bytes = crate::read_image_capped(&record.absolute_path)?;
         if format!("{:x}", sha2::Sha256::digest(&bytes)) != record.hash {
-            return Err(MediaError::Io("Face image changed; rescan before matching".into()));
+            return Err(MediaError::Io(
+                "Face image changed; rescan before matching".into(),
+            ));
         }
-        let img = image::load_from_memory(&bytes).map_err(|error| MediaError::Io(error.to_string()))?;
+        let img =
+            image::load_from_memory(&bytes).map_err(|error| MediaError::Io(error.to_string()))?;
 
         let x_pct = bbox["x_pct"].as_f64().unwrap_or(0.0);
         let y_pct = bbox["y_pct"].as_f64().unwrap_or(0.0);

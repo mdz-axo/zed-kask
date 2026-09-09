@@ -1,6 +1,6 @@
 # Kask reliability checklist
 
-Current handoff: [Final verification and remaining program](kask-reliability-final-verification-continuation.md), with build status superseded by [plan.md](plan.md)'s release/runtime evidence. Both release-build commands passed using current artifacts; live editor-quit confirmation and operator reviews remain pending. The whole reliability program is not complete.
+Current handoff: [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E: C1 done, C2 core done, C2 leftovers + C3 next, then Checkpoint B re-presentation and Phase C resumption). [plan.md](plan.md) carries the evidence tables. Live editor-quit confirmation and operator reviews at Checkpoints B/D remain pending. The whole reliability program is not complete.
 
 Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 

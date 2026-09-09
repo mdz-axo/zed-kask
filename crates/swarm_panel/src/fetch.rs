@@ -524,13 +524,10 @@ impl SwarmPanel {
                 .ok();
 
                 // 4. End of the combined task — decrement `in_flight` here.
-                // The local ledger balance is NOT fetched: the local ledger is
-                // accounting-only (it records accumulated local spend and may
-                // legitimately be negative — see `steer_system_prompt`), not a
-                // spendable wallet. Surfacing it in the header would present
-                // it as a budget the operator must track, which is not how
-                // local swarms work. `swarm_balance_local` remains available
-                // to the curator in Steer for reconciliation.
+                // No local balance is fetched: the local swarm ledger was
+                // removed with the budget teardown (2026-09-08) — local
+                // agents run on the operator's own substrate, so there is no
+                // balance to fetch or reconcile.
                 this.update(cx, |this, cx| {
                     this.fetch.fetch_completed();
                     cx.notify();

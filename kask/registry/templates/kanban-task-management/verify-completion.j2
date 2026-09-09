@@ -9,6 +9,7 @@ contract:
   output:
     passed: boolean
     reasoning: string
+    verification_tier: string
     criteria_results: array
 visibility: Public
 ---
@@ -52,6 +53,10 @@ For EACH acceptance criterion, evaluate whether the submitted evidence satisfies
 1. **Read the criterion** — what exactly does it require?
 2. **Find evidence** — where in the submission is this addressed?
 3. **Judge satisfaction** — does the evidence PROVE the criterion is met?
+4. **Classify the oracle** — what class of evidence supports the judgment?
+   - `ran-and-pasted`: a command and its observed output, pasted verbatim
+   - `demonstrated`: the behavior exercised, its observed effect shown
+   - `asserted`: the submitter's claim, without shown oracle output
 
 Be specific. "The evidence mentions X but doesn't demonstrate Y working" is better than "criterion not met."
 
@@ -63,10 +68,12 @@ Return a JSON object:
 {
   "passed": true or false,
   "reasoning": "Overall assessment in 2-3 sentences. If failed, state the primary gap.",
+  "verification_tier": "ran-and-pasted | demonstrated | asserted — the weakest oracle class among satisfied criteria",
   "criteria_results": [
     {
       "criterion": "The exact criterion text",
       "satisfied": true or false,
+      "oracle_class": "ran-and-pasted | demonstrated | asserted",
       "evidence": "What in the submission addresses this criterion",
       "feedback": "If satisfied: brief confirmation. If not: what's missing and how to fix it."
     }
@@ -77,6 +84,8 @@ Return a JSON object:
 ## Rules
 - A criterion is satisfied ONLY if concrete evidence exists in the submission
 - "It could work" is not sufficient — demand demonstration
+- A criterion is satisfied only by `ran-and-pasted` or `demonstrated` evidence — `asserted` does not satisfy (the floor tier is never the ceiling). "Tests pass" without the pasted output is asserted.
+- `verification_tier` is the weakest oracle class among the satisfied criteria — the task's verification provenance, visible on the board.
 - If a criterion is ambiguous, interpret it in favor of the submitter
 - If ALL criteria pass → passed: true
 - If ANY criterion fails → passed: false, with specific feedback on each failure
@@ -85,7 +94,7 @@ Return a JSON object:
 
 These instructions are for the agent running the skill, not for the template's LLM. The process produces the verification result; the agent then records it on the task:
 
-1. Call `kanban_task_verify` with `{"task_id": "...", "evidence": "..."}`. Use the `reasoning` field as the evidence string. This records the verification result on the task and (if passed) advances the task to `done`.
+1. Call `kanban_task_verify` with `{"task_id": "...", "evidence": "[oracle: <verification_tier>] " + reasoning}`. The tier prefix records the verification provenance on the task. This records the verification result and (if passed) advances the task to `done`.
 2. If `passed` is true, call `kanban_task_move` with `{"task_id": "...", "target_status": "done"}` to advance the task to Done (the verify call may do this automatically, but the move is idempotent).
 3. If `passed` is false, call `kanban_task_comment` with the per-criterion feedback so the assigned agent can see what to fix. Then call `kanban_task_move` with `{"target_status": "in_progress"}` to return the task to InProgress.
 4. If the task needs rework after being returned, call `kanban_task_reopen` with optional new rjoule budgets if the agent needs more resources.

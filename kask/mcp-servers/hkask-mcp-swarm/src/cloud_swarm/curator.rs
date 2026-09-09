@@ -7,7 +7,7 @@
 //! send). The prior inline ladder had four `auth.take().refund()` sites — a
 //! manual footgun where a new failure path could forget the refund.
 //!
-//! `CuratorSession` owns the `Option<DelegateAuthorization>` and settles it
+//! `CuratorSession` owns the `Option<Settlement>` and settles it
 //! on `Drop` unless `disarm()` is called on success. Settlement follows the
 //! operator-ratified T05 policy (2026-09-08): every failure path classifies
 //! the error — a proven pre-dispatch rejection releases the authorization,
@@ -21,7 +21,7 @@ use crate::abw_client::SwarmClient;
 use crate::abw_util::url_encode_segment;
 use crate::consent::ConsentStore;
 use crate::error::SwarmError;
-use crate::spend_gate::{self, DelegateAuthorization};
+use crate::spend_gate::{self, Settlement};
 
 /// A settlement guard for a Xaman Ek curator call. Owns the consent
 /// authorization and settles it on `Drop` unless `disarm()` is called on
@@ -29,14 +29,14 @@ use crate::spend_gate::{self, DelegateAuthorization};
 ///
 /// Created via [`CuratorSession::create`] (creates a new ABW session) or
 /// [`CuratorSession::resume`] (reuses an existing session_id). Both settle
-/// the authorization on construction failure per the T05 classification.
+/// the reservation on construction failure per the T05 classification.
 /// Call `send` to post a message; on success, `send` calls `disarm`
 /// internally so the auth is consumed. On any `Err` return from
 /// `create`/`send`, the guard settles (release or hold) and drops.
 pub struct CuratorSession<'a> {
     client: &'a SwarmClient,
     consent: &'a ConsentStore,
-    auth: Option<DelegateAuthorization>,
+    auth: Option<Settlement>,
     session_id: String,
     /// Whether the authorization has been settled (consumed on success,
     /// released on proven rejection, or held on ambiguity). When `true`,
@@ -53,7 +53,7 @@ impl<'a> CuratorSession<'a> {
     pub(crate) async fn create(
         client: &'a SwarmClient,
         consent: &'a ConsentStore,
-        mut auth: Option<DelegateAuthorization>,
+        mut auth: Option<Settlement>,
         session_type: &str,
     ) -> Result<Self, McpToolError> {
         let created = client
@@ -93,7 +93,7 @@ impl<'a> CuratorSession<'a> {
     pub(crate) fn resume(
         client: &'a SwarmClient,
         consent: &'a ConsentStore,
-        auth: Option<DelegateAuthorization>,
+        auth: Option<Settlement>,
         session_id: String,
     ) -> Self {
         Self {
@@ -148,7 +148,7 @@ impl<'a> CuratorSession<'a> {
     /// uncertainty. Returns the tool error to propagate.
     fn settle_on_error(
         consent: &ConsentStore,
-        auth: Option<DelegateAuthorization>,
+        auth: Option<Settlement>,
         e: SwarmError,
     ) -> McpToolError {
         let Some(auth) = auth else {
@@ -195,7 +195,7 @@ pub fn authorize(
     client: &SwarmClient,
     consent: &ConsentStore,
     token: Option<&str>,
-) -> Result<Option<DelegateAuthorization>, McpToolError> {
+) -> Result<Option<Settlement>, McpToolError> {
     spend_gate::authorize_curate(client, consent, token)
 }
 
@@ -235,7 +235,7 @@ mod tests {
     async fn expect_create_error(
         client: &SwarmClient,
         store: &ConsentStore,
-        auth: Option<DelegateAuthorization>,
+        auth: Option<Settlement>,
         session_type: &str,
     ) -> McpToolError {
         match CuratorSession::create(client, store, auth, session_type).await {

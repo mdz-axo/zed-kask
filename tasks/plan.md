@@ -19,7 +19,7 @@ Audit findings are source-backed hypotheses with concrete triggers, not reproduc
 
 ## Current validation close-out — 2026-09-08
 
-**Current continuation:** [Final verification and remaining program continuation](kask-reliability-final-verification-continuation.md). Its unstarted-build statement is superseded by the release-build evidence below. Both build-only commands passed; normal editor quit and operator reviews at Checkpoints A/D remain unobserved. The reliability program is **not complete**.
+**Current continuation:** [Complexity teardown and program resumption](kask-teardown-continuation-prompt.md) (Phase E). The prior [final-verification continuation](kask-reliability-final-verification-continuation.md) is historical: its release-build gap has since closed (evidence below), Checkpoint A is ratified, T04–T06 are verified, and the program is now in the operator-ruled teardown mode. Live editor-quit confirmation and Checkpoints B/D remain pending. The reliability program is **not complete**.
 
 ### Release build and runtime identity — 2026-09-08
 
@@ -356,9 +356,15 @@ Acceptance:
 
 **Verification (2026-09-08):** `cargo test --offline --locked -p hkask-mcp-swarm -p hkask-mcp-kata-kanban -p swarm_panel -p kask_bridge -j 4` — 132 + 46/21/1 + 69 + allowlist suites, **0 failed**; `HKASK_BUILD_JOBS=4 CARGO_NET_OFFLINE=true ./script/clippy --locked -p hkask-mcp-swarm -p hkask-mcp-kata-kanban -p swarm_panel -p kask_bridge` clean; rustfmt clean on every touched file; `git diff --check` clean. The kata-kanban spawn path and T06 replay tests pass unchanged (the replay protection is orthogonal to the budget removal).
 
-### C2/C3 — queued (same rules as C1)
+### C2 — Consolidate the T04–T06 additions — IN PROGRESS (core done 2026-09-09)
 
-C2: consolidate what T04–T06 added (`DispatchSettlement` trait shape, duplicated test helpers, T04 eviction machinery review, my own T06 response-format residue). C3: repo-wide sweep for remaining deprecated-budget mentions and stale docs. Then Phase C (T07/T08) resumes under the new definition of done.
+**Done:** the `Settlement` type is now THE authorization type. The `HireAuthorization`/`DelegateAuthorization` newtype wrappers (two structs × three pure-delegation methods each) and the `DispatchSettlement` trait (2 impls × 3 methods, for two call sites) are deleted; `settle_dispatch_failure` is concrete over `Option<Settlement>`; `authorize_hire`/`authorize_delegate`/`authorize_curate`/`complete_*` and `CuratorSession` carry `Settlement` directly (its `release`/`hold`/`held_description` are `pub(crate)`). Three delegation layers became zero. Verified: swarm 132 + kata-kanban 46/21/1 all green, clippy clean, rustfmt clean, diff-check clean. Behavior unchanged (the T05 settlement tests pin it).
+
+**Remaining (small, next session):** (a) the `test_client` + `sqlite_store` helpers are duplicated between `spend_gate.rs` tests and `cloud_swarm/curator.rs` tests — extract to the `test_http` fixture module; (b) review T04's `DistillationCursor::merge` eviction block (~40 lines for a bound — assess whether a simpler bounded structure says the same thing); (c) confirm no other T06 response-format residue beyond what C1 already cleaned.
+
+### C3 — queued (same rules as C1)
+
+Repo-wide sweep for remaining deprecated-budget mentions and stale docs, then Phase C (T07/T08) resumes under the new definition of done.
 
 ## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
 

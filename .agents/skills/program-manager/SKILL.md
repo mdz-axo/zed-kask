@@ -31,6 +31,17 @@ description: Govern code-producing work as a technical program manager — recov
   classes (fix, delegate, operator-decision, instrument) are the
   regulator's requisite variety; the operator-decision list is the
   algedonic channel to the policy level (the operator as S5).
+- **Verification provenance** (this project's grounding-verify
+  discipline): "done" is a provenance claim, not a state. A claim's
+  tier is set by which oracle tested it — `asserted` (the worker's
+  report: the floor, never the ceiling) → `encoded` (stated
+  falsifiably) → `oracle_verified` (a matched, causally dependent,
+  spec-anchored check ran; output shown, not summarized) →
+  `operator_confirmed` (ground truth). The same lattice instantiates
+  as grounding-verify's provenance tiers, the kanban goal loop (agent
+  judges → operator scores, Brier-calibrated), and kanban task
+  verification's evidence tiers. Presenting a weak oracle's green as
+  verification is oracle substitution.
 
 ## The incident catalog (why this skill exists)
 
@@ -54,6 +65,11 @@ each one structurally impossible to repeat:
 6. **Forensic rabbit-holes** — an agent generates hypotheses faster than
    it kills them, burns the session, and the operator has to ask
    "what's going on?"
+7. **Oracle substitution** — a worker reports "compiles, tests pass"
+   as verification of functionality: oracles that never exercised the
+   claim. Tests verify their own assertions; a suite written from the
+   implementation is the code agreeing with itself. (Operator-reported
+   failure class, 2026-09-08.)
 
 ## When to Use
 
@@ -157,6 +173,15 @@ each one structurally impossible to repeat:
    - **Validation actually run**: the command, and its observed output.
      A repair claim without a run command and its output is FALSE. If
      validation cannot run, say so — do not claim it.
+   - **Oracle match**: the validation exercises the claim itself — the
+     behavior, the output, the fixed path. Compiling and a green
+     existing suite are weak oracles: they verify syntax and the
+     suite's own assertions, never the change's function. "Tests
+     pass" is evidence of what the tests assert, nothing more.
+   - **Anchoring**: any new test traces to the recovered spec — written
+     from the requirement, red first where feasible — not from the
+     implementation. A test written to match the code is the code
+     agreeing with itself: internally consistent, anchored in nothing.
    - **Residue sweep**: grep for what the change orphaned — deleted
      deps (`use <dep>` hits), stale comments describing old behavior,
      probe/test artifacts in production trees, hallucinated ids
@@ -253,6 +278,12 @@ report.
 - **Honest validation.** Report the failing command if validation
   fails. Report that you could not run it if you could not. Never
   report unrun validation as passed.
+- **No oracle substitution.** "It compiles" and "the suite passes" are
+  weak-oracle signals; a functional claim is verified only by a check
+  that exercises the claim — run the behavior, show the output — or by
+  the operator's confirmation. Report the verification tier actually
+  reached (oracle-verified / asserted); never present an asserted
+  claim as verified.
 - **Timebox forensics.** Three failed attempts or three
   no-new-state iterations → stop, summarize, escalate. The operator
   should never have to ask "what's going on?"

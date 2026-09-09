@@ -64,11 +64,29 @@ skip result without meaningful work. This is necessary because skill execution p
 | `kanban_task_comment` | delegate, operate | Post-step: post progress notes / coordinator replies |
 | `kanban_task_add_deliverable` | delegate, operate | Post-step: record deliverable links |
 | `kanban_task_move` | operate | Post-step: execute status transitions |
-| `kanban_task_verify` | operate | Post-step: record verification evidence |
+| `kanban_task_verify` | operate | Post-step: record tiered verification evidence (`[oracle: class]` prefix) |
 | `kanban_task_reopen` | operate | Post-step: reopen for rework |
 | `kanban_task_comments_since` | operate | Pre-step: read incremental updates |
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+
+## Verification Evidence Tiers
+
+`kanban_task_verify` evidence is tiered by oracle class — the same
+provenance lattice as grounding-verify's provenance tiers and the
+program-manager's definition of done. The verify-completion evaluator
+classifies each criterion's evidence:
+
+- `ran-and-pasted` — a command and its observed output, pasted verbatim
+- `demonstrated` — the behavior exercised, its observed effect shown
+- `asserted` — the worker's claim, without shown oracle output
+
+A criterion is satisfied only by `ran-and-pasted` or `demonstrated`
+evidence; `asserted` does not satisfy — the floor tier is never the
+ceiling. The recorded evidence string carries the tier prefix
+(`[oracle: demonstrated] ...`), so a board reader sees what class of
+verification closed the task. "Tests pass" without the pasted output
+is asserted; the pasted command and exit code are ran-and-pasted.
 
 ## Registry Templates
 

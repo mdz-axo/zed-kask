@@ -131,9 +131,9 @@ pub fn map_gallery_store_error(e: GalleryStoreError) -> McpToolError {
         GalleryStoreError::Infra(ref infra) => {
             hkask_mcp_server::server::map_infra_error(infra, "gallery store")
         }
-        GalleryStoreError::InvalidMode(_) | GalleryStoreError::Conflict(_) | GalleryStoreError::InvalidPath(_) => {
-            McpToolError::invalid_argument(message)
-        }
+        GalleryStoreError::InvalidMode(_)
+        | GalleryStoreError::Conflict(_)
+        | GalleryStoreError::InvalidPath(_) => McpToolError::invalid_argument(message),
     }
 }
 
