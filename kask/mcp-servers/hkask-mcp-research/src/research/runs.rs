@@ -176,7 +176,7 @@ pub(crate) fn get_research_run(
     let scored = if artifacts.is_empty() {
         None
     } else {
-        Some(score_evidence_set(&artifacts, &DEFAULT_PROFILE))
+        Some(score_evidence_set(&artifacts, &DEFAULT_PROFILE, None))
     };
 
     let sources: Vec<serde_json::Value> = rows

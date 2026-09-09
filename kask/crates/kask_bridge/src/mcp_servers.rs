@@ -304,6 +304,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // research-run tools return "not configured" despite the env
             // being set.
             "HKASK_RESEARCH_DB",
+            // Embedding model for the semantic duplication tier — read by
+            // `hkask_inference::model_constants::embedding_model()` at the
+            // construction seam. Emitted unconditionally by
+            // `emit_corpus_embedding_env` (consuming servers have no
+            // fallback for unset env); without this entry the research
+            // server would silently miss the operator's model override.
+            "HKASK_EMBEDDING_MODEL",
             // Deep-strategy rerank model — read by
             // `hkask_inference::model_constants::rerank_model()` at call
             // time. Without this, an operator override is silently stripped
@@ -1300,6 +1307,12 @@ mod tests {
         assert!(
             s.config_env.unwrap().contains(&"HKASK_RESEARCH_DB"),
             "research reads HKASK_RESEARCH_DB via std::env::var but it is not allowlisted"
+        );
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_EMBEDDING_MODEL"),
+            "research reads HKASK_EMBEDDING_MODEL via model_constants::embedding_model() \
+             but it is not allowlisted — the semantic duplication tier would silently \
+             degrade to the shingle floor despite an operator override"
         );
         assert!(
             s.config_env.unwrap().contains(&"HKASK_DATA_DIR"),

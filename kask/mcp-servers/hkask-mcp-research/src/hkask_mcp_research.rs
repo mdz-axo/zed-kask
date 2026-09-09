@@ -76,6 +76,13 @@ hkask_mcp_server::mcp_server!(
         /// reason naming the setting — never a hidden constant (the
         /// operator's no-hidden-models spec).
         pub rerank_model: Option<String>,
+        /// The embedding model for the semantic duplication tier — resolved
+        /// ONCE at the construction seam from `HKASK_EMBEDDING_MODEL` (the
+        /// visible `kask.embedding_model` setting chain). `None` = not
+        /// configured: the tier degrades to the deterministic shingle floor
+        /// with a surfaced reason naming the setting — unset is a legitimate
+        /// degraded mode because the floor exists (never a hidden constant).
+        pub embedding_model: Option<String>,
     }
 );
 
@@ -1765,6 +1772,7 @@ impl ResearchServer {
         Parameters(EvaluateEvidenceRequest {
             question,
             artifacts,
+            duplication,
         }): Parameters<EvaluateEvidenceRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "evaluate_evidence", async {
@@ -1776,10 +1784,75 @@ impl ResearchServer {
                     "artifacts must not be empty",
                 ));
             }
+            match duplication.as_deref() {
+                None | Some("semantic") => {}
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "duplication must be 'semantic' or omitted, got '{other}'"
+                    )));
+                }
+            }
+
+            // Tier-2 duplication (parameter-gated): the caller opts in with
+            // duplication="semantic". The deterministic shingle floor runs
+            // when the tier is not requested, no model is configured, or the
+            // embed call fails — every degradation surfaced with its reason,
+            // never silent (the rerank degradation contract).
+            let mut duplication_reason: Option<String> = None;
+            let semantic_vectors: Option<Vec<(usize, Vec<f32>)>> = match duplication.as_deref() {
+                Some("semantic") => match self.embedding_model.as_deref() {
+                    None => {
+                        duplication_reason = Some(
+                            "semantic duplication requested but no embedding model \
+                                 configured — set kask.embedding_model (injected as \
+                                 HKASK_EMBEDDING_MODEL); the deterministic shingle \
+                                 floor ran instead"
+                                .to_string(),
+                        );
+                        None
+                    }
+                    Some(model) => {
+                        let content_indices: Vec<usize> = artifacts
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, artifact)| artifact.content.is_some())
+                            .map(|(index, _)| index)
+                            .collect();
+                        let texts: Vec<String> = content_indices
+                            .iter()
+                            .map(|&index| artifacts[index].content.clone().unwrap_or_default())
+                            .collect();
+                        match self.inference_port.embed(model, &texts).await {
+                            Ok(vectors) if vectors.len() == content_indices.len() => {
+                                Some(content_indices.into_iter().zip(vectors).collect())
+                            }
+                            Ok(vectors) => {
+                                duplication_reason = Some(format!(
+                                    "embedding tier returned {} vectors for {} \
+                                         content-bearing artifacts — the deterministic \
+                                         shingle floor ran instead",
+                                    vectors.len(),
+                                    content_indices.len()
+                                ));
+                                None
+                            }
+                            Err(error) => {
+                                duplication_reason = Some(format!(
+                                    "embedding tier failed ({error}) — the \
+                                         deterministic shingle floor ran instead"
+                                ));
+                                None
+                            }
+                        }
+                    }
+                },
+                _ => None,
+            };
 
             // Deterministic signal computation (not LLM relay — G3 contract).
             // Scoring lives in `score_evidence_set` (pure, unit-tested).
-            let scored = score_evidence_set(&artifacts, &DEFAULT_PROFILE);
+            let scored =
+                score_evidence_set(&artifacts, &DEFAULT_PROFILE, semantic_vectors.as_deref());
 
             let artifact_reports: Vec<serde_json::Value> = artifacts
                 .iter()
@@ -1836,24 +1909,29 @@ impl ResearchServer {
                 .sum::<f64>()
                 / scored.artifacts.len() as f64;
 
+            let mut set_block = serde_json::json!({
+                "distinct_domains": scored.distinct_domains,
+                "sourced_count": scored.sourced_count,
+                "content_clusters": scored
+                    .content_clusters
+                    .iter()
+                    .map(|cluster| serde_json::json!({
+                        "domains": cluster.domains,
+                        "artifact_urls": cluster.artifact_urls,
+                    }))
+                    .collect::<Vec<serde_json::Value>>(),
+                "sensitivity": sensitivity_json(&scored.sensitivity),
+                "duplication_mode": scored.duplication_mode,
+            });
+            if let Some(reason) = duplication_reason {
+                set_block["duplication_reason"] = serde_json::json!(reason);
+            }
+
             let mut result = serde_json::json!({
                 "question": question,
                 "average_confidence": (average_confidence * 100.0).round() / 100.0,
                 "artifacts": artifact_reports,
-                "set": {
-                    "distinct_domains": scored.distinct_domains,
-                    "sourced_count": scored.sourced_count,
-                    "content_clusters": scored
-                        .content_clusters
-                        .iter()
-                        .map(|cluster| serde_json::json!({
-                            "domains": cluster.domains,
-                            "artifact_urls": cluster.artifact_urls,
-                        }))
-                        .collect::<Vec<serde_json::Value>>(),
-                    "sensitivity": sensitivity_json(&scored.sensitivity),
-                    "duplication_mode": scored.duplication_mode,
-                },
+                "set": set_block,
             });
             // Ontology-concept key: the StepVerification concept labels this
             // result (evidence quality was assessed). Routed through the
@@ -2167,6 +2245,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // construction seam (no hidden constant — the operator's
                 // no-hidden-models spec).
                 hkask_inference::model_constants::rerank_model(),
+                // The embedding model for the semantic duplication tier —
+                // same construction-seam resolution; unset is a legitimate
+                // degraded mode (the shingle floor exists).
+                hkask_inference::model_constants::embedding_model(),
             ))
         },
         credential_requirements(),

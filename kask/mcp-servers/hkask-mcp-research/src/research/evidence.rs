@@ -72,6 +72,11 @@ const RECENCY_HEAVY_PROFILE: [(EvidenceComponent, f64); 4] = [
 pub(crate) const SHINGLE_JACCARD_THRESHOLD: f64 = 0.5;
 const SHINGLE_SIZE: usize = 4;
 
+/// Cosine-similarity threshold for the embedding tier (Commit 6):
+/// `corpus_deduplicate`'s threshold (cosine 0.85), pinned under unit test.
+/// Parameter-gated — the deterministic shingle floor is always available.
+pub(crate) const SEMANTIC_COSINE_THRESHOLD: f64 = 0.85;
+
 /// One component's contribution to one artifact's score. `basis` is the
 /// why-string: it states how the earned value was determined, so a reader
 /// never has to reverse-engineer the arithmetic.
@@ -289,6 +294,7 @@ fn confidence_of(
 pub(crate) fn score_evidence_set(
     artifacts: &[EvaluateArtifact],
     profile: &[(EvidenceComponent, f64); 4],
+    semantic_vectors: Option<&[(usize, Vec<f32>)]>,
 ) -> EvidenceReport {
     let distinct_domains: usize = artifacts
         .iter()
@@ -297,7 +303,7 @@ pub(crate) fn score_evidence_set(
         .len();
     let sourced_count: usize = artifacts.iter().filter(|a| a.source.is_some()).count();
 
-    let clusters = cluster_content(artifacts);
+    let clusters = cluster_content(artifacts, semantic_vectors);
     let units = corroboration_units(artifacts, &clusters);
 
     let raws: Vec<RawAchievements> = artifacts.iter().map(raw_achievements).collect();
@@ -327,7 +333,11 @@ pub(crate) fn score_evidence_set(
         sourced_count,
         content_clusters: content_clusters_of(artifacts, &clusters),
         sensitivity: sensitivity_status(&raws, units),
-        duplication_mode: "shingles",
+        duplication_mode: if semantic_vectors.is_some() {
+            "semantic"
+        } else {
+            "shingles"
+        },
     }
 }
 
@@ -362,21 +372,67 @@ fn shingle_jaccard(
     left.intersection(right).count() as f64 / union_size as f64
 }
 
+/// Cosine similarity of two embedding vectors. A zero-norm vector has no
+/// direction — an explicit 0.0 (the 0/0 NaN trap), never a silent NaN.
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
+    let dot_product: f32 = left.iter().zip(right).map(|(a, b)| a * b).sum();
+    let left_norm: f32 = left.iter().map(|a| a * a).sum::<f32>().sqrt();
+    let right_norm: f32 = right.iter().map(|b| b * b).sum::<f32>().sqrt();
+    if left_norm == 0.0 || right_norm == 0.0 {
+        return 0.0;
+    }
+    (dot_product / (left_norm * right_norm)) as f64
+}
+
 /// Cluster the content-bearing artifacts by shingle similarity (Jaccard
 /// ≥ `SHINGLE_JACCARD_THRESHOLD`), transitively closed — syndication chains
 /// through intermediates. Returns groups of artifact indices, ordered by
 /// first member.
-fn cluster_content(artifacts: &[EvaluateArtifact]) -> Vec<Vec<usize>> {
+fn cluster_content(
+    artifacts: &[EvaluateArtifact],
+    semantic_vectors: Option<&[(usize, Vec<f32>)]>,
+) -> Vec<Vec<usize>> {
     let content_indices: Vec<usize> = artifacts
         .iter()
         .enumerate()
         .filter(|(_, artifact)| artifact.content.is_some())
         .map(|(index, _)| index)
         .collect();
-    let shingles: Vec<std::collections::HashSet<String>> = content_indices
-        .iter()
-        .map(|&index| shingle_set(artifacts[index].content.as_deref().unwrap_or_default()))
-        .collect();
+    // Shingle sets are computed only for the deterministic floor; the
+    // semantic tier compares embedding vectors instead.
+    let shingles: Option<Vec<std::collections::HashSet<String>>> =
+        semantic_vectors.is_none().then(|| {
+            content_indices
+                .iter()
+                .map(|&index| shingle_set(artifacts[index].content.as_deref().unwrap_or_default()))
+                .collect()
+        });
+    let similar = |left: usize, right: usize| -> bool {
+        match (semantic_vectors, shingles.as_ref()) {
+            (Some(vectors), _) => {
+                let left_vector = vectors
+                    .iter()
+                    .find(|(index, _)| *index == content_indices[left]);
+                let right_vector = vectors
+                    .iter()
+                    .find(|(index, _)| *index == content_indices[right]);
+                match (left_vector, right_vector) {
+                    (Some((_, left_vector)), Some((_, right_vector))) => {
+                        cosine_similarity(left_vector, right_vector) >= SEMANTIC_COSINE_THRESHOLD
+                    }
+                    // An uncovered artifact has no similarity information —
+                    // its own cluster, never a fabricated edge.
+                    _ => false,
+                }
+            }
+            (None, Some(sets)) => {
+                shingle_jaccard(&sets[left], &sets[right]) >= SHINGLE_JACCARD_THRESHOLD
+            }
+            // Unreachable: shingles are computed exactly when the vectors
+            // are absent.
+            (None, None) => false,
+        }
+    };
 
     // Union-find over positions in `content_indices`, path-halving find.
     let mut parent: Vec<usize> = (0..content_indices.len()).collect();
@@ -390,7 +446,7 @@ fn cluster_content(artifacts: &[EvaluateArtifact]) -> Vec<Vec<usize>> {
     }
     for left in 0..content_indices.len() {
         for right in (left + 1)..content_indices.len() {
-            if shingle_jaccard(&shingles[left], &shingles[right]) >= SHINGLE_JACCARD_THRESHOLD {
+            if similar(left, right) {
                 let root_left = find(&mut parent, left);
                 let root_right = find(&mut parent, right);
                 if root_left != root_right {
@@ -569,7 +625,7 @@ mod evidence_scoring_tests {
     use super::*;
     use crate::research::types::EvaluateArtifact;
 
-    fn artifact(
+    pub(super) fn artifact(
         url: &str,
         source: Option<&str>,
         published: Option<&str>,
@@ -608,7 +664,7 @@ mod evidence_scoring_tests {
                 Some("the quick brown fox jumps"),
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert_eq!(report.distinct_domains, 1);
         assert_eq!(report.sourced_count, 2);
         assert_eq!(report.artifacts[0].corroboration_count, 1);
@@ -629,7 +685,7 @@ mod evidence_scoring_tests {
             Some(&today()),
             Some("unique body text words"),
         )];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert!((report.artifacts[0].confidence - 0.8).abs() < 1e-9);
         assert_eq!(report.artifacts[0].published_age_days, Some(0));
         assert!(matches!(
@@ -650,6 +706,7 @@ mod evidence_scoring_tests {
                 None,
             )],
             &DEFAULT_PROFILE,
+            None,
         );
         let stale = score_evidence_set(
             &[artifact(
@@ -659,6 +716,7 @@ mod evidence_scoring_tests {
                 None,
             )],
             &DEFAULT_PROFILE,
+            None,
         );
         assert!(
             stale.artifacts[0].confidence < fresh.artifacts[0].confidence,
@@ -676,6 +734,7 @@ mod evidence_scoring_tests {
         let report = score_evidence_set(
             &[artifact("https://x.example/1", None, None, None)],
             &DEFAULT_PROFILE,
+            None,
         );
         assert_eq!(report.artifacts[0].corroboration_count, 0);
         assert!((report.artifacts[0].confidence - 0.3).abs() < 1e-9);
@@ -708,7 +767,7 @@ mod evidence_scoring_tests {
                 Some("gamma story body text three"),
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert_eq!(report.distinct_domains, 3);
         assert_eq!(report.artifacts[0].corroboration_count, 3);
         assert!((report.artifacts[0].confidence - 0.8).abs() < 1e-9);
@@ -741,7 +800,7 @@ mod evidence_scoring_tests {
                 Some("wire story body text alpha beta gamma delta"),
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert_eq!(report.distinct_domains, 3);
         assert_eq!(report.artifacts[0].corroboration_count, 1);
         assert_eq!(report.content_clusters.len(), 1);
@@ -816,7 +875,7 @@ mod evidence_scoring_tests {
             ),
             artifact("https://b.example/1", Some("b.example"), None, None),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert!(matches!(
             report.sensitivity,
             SensitivityStatus::Stable {
@@ -845,7 +904,7 @@ mod evidence_scoring_tests {
                 None,
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert!(matches!(
             report.sensitivity,
             SensitivityStatus::Unstable {
@@ -866,6 +925,7 @@ mod evidence_scoring_tests {
                 None,
             )],
             &DEFAULT_PROFILE,
+            None,
         );
         match report.sensitivity {
             SensitivityStatus::NotEvaluable { reason } => {
@@ -899,7 +959,7 @@ mod evidence_scoring_tests {
                 Some("same words here now"),
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         match report.sensitivity {
             SensitivityStatus::NotEvaluable { reason } => {
                 assert!(reason.contains("equally"), "reason: {reason}");
@@ -928,7 +988,7 @@ mod evidence_scoring_tests {
                 Some("hi there"),
             ),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert_eq!(report.artifacts[0].corroboration_count, 2);
         for scored in &report.artifacts {
             assert!(
@@ -959,7 +1019,7 @@ mod evidence_scoring_tests {
                 Some("story words here now please"),
             ),
         ];
-        let report = score_evidence_set(&mixed, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&mixed, &DEFAULT_PROFILE, None);
         assert_eq!(report.artifacts[0].corroboration_count, 1);
         assert_eq!(report.artifacts[1].corroboration_count, 0);
         assert_eq!(report.content_clusters.len(), 1);
@@ -979,7 +1039,7 @@ mod evidence_scoring_tests {
                 Some("story words here now please"),
             ),
         ];
-        let report = score_evidence_set(&unsourced_only, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&unsourced_only, &DEFAULT_PROFILE, None);
         assert_eq!(report.artifacts[0].corroboration_count, 0);
         assert!((report.artifacts[0].confidence - 0.5).abs() < 1e-9); // base + content
     }
@@ -997,7 +1057,7 @@ mod evidence_scoring_tests {
             ),
             artifact("https://b.example/1", Some("b.example"), None, None),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         assert_eq!(report.artifacts[0].corroboration_count, 2);
         let content_basis = report.artifacts[0]
             .signals
@@ -1035,6 +1095,7 @@ mod evidence_scoring_tests {
                 None,
             )],
             &DEFAULT_PROFILE,
+            None,
         );
         let recency = report.artifacts[0]
             .signals
@@ -1070,7 +1131,7 @@ mod evidence_scoring_tests {
             ),
             artifact("https://c.example/1", None, None, None),
         ];
-        let report = score_evidence_set(&arts, &DEFAULT_PROFILE);
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
         for scored in &report.artifacts {
             let sum: f64 = scored.signals.iter().map(|signal| signal.earned).sum();
             assert!(
@@ -1086,5 +1147,78 @@ mod evidence_scoring_tests {
             .map(|signal| signal.earned)
             .unwrap_or_default();
         assert!((base - 0.3).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod semantic_tier_tests {
+    use super::evidence_scoring_tests::artifact;
+    use super::*;
+
+    #[test]
+    fn semantic_cosine_threshold_is_pinned() {
+        // corpus_deduplicate's threshold, pinned: parallel vectors cluster,
+        // orthogonal do not, and a zero-norm vector is an explicit 0.0 —
+        // never a NaN from 0/0.
+        assert!((SEMANTIC_COSINE_THRESHOLD - 0.85).abs() < 1e-9);
+        assert!(cosine_similarity(&[1.0, 2.0], &[2.0, 4.0]) >= SEMANTIC_COSINE_THRESHOLD);
+        assert!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]) < SEMANTIC_COSINE_THRESHOLD);
+        let zero_norm = cosine_similarity(&[0.0, 0.0], &[1.0, 1.0]);
+        assert_eq!(zero_norm, 0.0);
+        assert!(zero_norm.is_finite());
+    }
+
+    #[test]
+    fn semantic_vectors_cluster_paraphrases_the_shingle_floor_misses() {
+        // Two artifacts with entirely different words (shingle Jaccard 0)
+        // but parallel embedding vectors — the same story paraphrased.
+        // The semantic tier clusters them; the shingle floor cannot.
+        let arts = vec![
+            artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                Some("completely different words entirely here now"),
+            ),
+            artifact(
+                "https://b.example/1",
+                Some("b.example"),
+                None,
+                Some("totally unlike those other ones entirely"),
+            ),
+        ];
+        let vectors = vec![(0usize, vec![1.0, 0.0]), (1usize, vec![1.0, 0.0])];
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, Some(&vectors));
+        assert_eq!(report.artifacts[0].corroboration_count, 1);
+        assert_eq!(report.content_clusters.len(), 1);
+        assert_eq!(report.duplication_mode, "semantic");
+
+        let floor = score_evidence_set(&arts, &DEFAULT_PROFILE, None);
+        assert_eq!(floor.artifacts[0].corroboration_count, 2);
+        assert_eq!(floor.content_clusters.len(), 2);
+        assert_eq!(floor.duplication_mode, "shingles");
+    }
+
+    #[test]
+    fn semantic_vectors_below_threshold_do_not_cluster() {
+        let arts = vec![
+            artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                Some("alpha one two three four"),
+            ),
+            artifact(
+                "https://b.example/1",
+                Some("b.example"),
+                None,
+                Some("beta five six seven eight"),
+            ),
+        ];
+        let vectors = vec![(0usize, vec![1.0, 0.0]), (1usize, vec![0.0, 1.0])];
+        let report = score_evidence_set(&arts, &DEFAULT_PROFILE, Some(&vectors));
+        assert_eq!(report.artifacts[0].corroboration_count, 2);
+        assert_eq!(report.content_clusters.len(), 2);
+        assert_eq!(report.duplication_mode, "semantic");
     }
 }

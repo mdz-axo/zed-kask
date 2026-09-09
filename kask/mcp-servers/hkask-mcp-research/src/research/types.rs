@@ -304,6 +304,12 @@ pub struct EvaluateEvidenceRequest {
     pub question: String,
     /// Artifacts to evaluate (URLs + optional content/metadata from web_search/web_extract).
     pub artifacts: Vec<EvaluateArtifact>,
+    /// Duplication-detection tier: "semantic" opts into the embedding tier
+    /// (cosine ≥ 0.85 via the inference bridge — one embed call per
+    /// content-bearing artifact). Omitted, the deterministic shingle floor
+    /// runs. Degradation (no model configured, embed failure) falls back to
+    /// the floor with a surfaced reason — never silent.
+    pub duplication: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

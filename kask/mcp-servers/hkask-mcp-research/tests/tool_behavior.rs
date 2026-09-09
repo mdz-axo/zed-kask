@@ -225,6 +225,7 @@ fn make_server_without_db() -> ResearchServer {
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
         None,
+        None,
     )
 }
 
@@ -257,6 +258,7 @@ fn make_server_with_research_db() -> ResearchServer {
             .build()
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
+        None,
         None,
     )
 }
@@ -879,6 +881,7 @@ fn make_server_with_pool_and_port(
             .expect("reqwest client build"),
         inference_port,
         rerank_model.map(str::to_string),
+        None,
     )
 }
 
@@ -1277,6 +1280,7 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
         None,
+        None,
     );
     let output = server
         .web_search(Parameters(SearchRequest {
@@ -1333,6 +1337,7 @@ async fn evaluate_evidence_rejects_empty_question() {
     let error = err(server
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "  ".to_string(),
+            duplication: None,
             artifacts: vec![evidence_artifact(
                 "https://a.example/1",
                 Some("a.example"),
@@ -1350,6 +1355,7 @@ async fn evaluate_evidence_rejects_empty_artifacts() {
     let error = err(server
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "what is the evidence?".to_string(),
+            duplication: None,
             artifacts: Vec::new(),
         }))
         .await);
@@ -1362,6 +1368,7 @@ async fn evaluate_evidence_emits_signal_model() {
     let out = ok(server
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
+            duplication: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -1456,6 +1463,7 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
     let out = ok(server
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "did the wire story spread?".to_string(),
+            duplication: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -1590,6 +1598,7 @@ fn make_server_with_pool_and_db(
             .build()
             .expect("reqwest client build"),
         Arc::new(FailingInferencePort),
+        None,
         None,
     )
 }
@@ -2064,4 +2073,163 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
     );
     assert_eq!(sources[0]["recorded_by"].as_str(), Some("server"));
     assert_eq!(sources[0]["provider"].as_str(), Some("openalex"));
+}
+
+// ── Semantic duplication tier (Commit 6) ───────────────────────────────────
+
+/// Stub inference port whose embed returns one fixed vector per input text —
+/// every content-bearing artifact embeds parallel, so the semantic tier
+/// clusters them all.
+struct EmbeddingInferencePort;
+
+impl InferencePort for EmbeddingInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: inference bridge down".to_string(),
+            ))
+        })
+    }
+
+    fn rerank<'a>(
+        &'a self,
+        _model: &str,
+        _query: &str,
+        _documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: rerank bridge down".to_string(),
+            ))
+        })
+    }
+
+    fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        // Collect before the async block so the future captures owned data
+        // only — the borrowed `texts` cannot outlive the call.
+        let vectors: Vec<Vec<f32>> = texts.iter().map(|_| vec![1.0_f32, 0.0]).collect();
+        Box::pin(async move { Ok(vectors) })
+    }
+}
+
+fn make_server_with_embedding(
+    inference_port: Arc<dyn InferencePort>,
+    embedding_model: Option<&str>,
+) -> ResearchServer {
+    ResearchServer::new(
+        WebID::new(),
+        Arc::new(NoCredentialsPool),
+        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
+        RateLimiter::new(10000, 60),
+        None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        inference_port,
+        None,
+        embedding_model.map(str::to_string),
+    )
+}
+
+fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
+    EvaluateEvidenceRequest {
+        question: "is it duplicated?".to_string(),
+        artifacts: vec![
+            evidence_artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                Some("completely different words entirely here now"),
+            ),
+            evidence_artifact(
+                "https://b.example/1",
+                Some("b.example"),
+                None,
+                Some("totally unlike those other ones entirely"),
+            ),
+        ],
+        duplication: duplication.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn evaluate_evidence_semantic_without_model_degrades_to_shingles_with_reason() {
+    // No embedding model configured: the tier degrades to the deterministic
+    // floor with a reason naming the setting — never silent, never an error.
+    let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), None);
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
+        .await));
+    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
+    let reason = json["set"]["duplication_reason"]
+        .as_str()
+        .expect("degradation reason surfaced");
+    assert!(
+        reason.contains("HKASK_EMBEDDING_MODEL"),
+        "reason names the setting: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn evaluate_evidence_semantic_with_embed_failure_degrades_with_reason() {
+    // Model configured but the embed call fails: the floor runs, the
+    // failure is surfaced.
+    let server = make_server_with_embedding(Arc::new(FailingInferencePort), Some("test-embed"));
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
+        .await));
+    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
+    let reason = json["set"]["duplication_reason"]
+        .as_str()
+        .expect("degradation reason surfaced");
+    assert!(
+        reason.contains("embedding tier failed"),
+        "reason names the failure: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn evaluate_evidence_semantic_success_clusters_by_cosine() {
+    // Model configured, embed succeeds: the semantic tier clusters the two
+    // paraphrased artifacts the shingle floor cannot (different words,
+    // parallel vectors) — one unit, one cluster, mode "semantic", no reason.
+    let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), Some("test-embed"));
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
+        .await));
+    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("semantic"));
+    assert!(
+        json["set"].get("duplication_reason").is_none(),
+        "no degradation: {json}"
+    );
+    let artifacts = json["artifacts"].as_array().expect("artifacts");
+    assert_eq!(artifacts[0]["corroboration_count"].as_u64(), Some(1));
+    let clusters = json["set"]["content_clusters"]
+        .as_array()
+        .expect("clusters");
+    assert_eq!(clusters.len(), 1);
+}
+
+#[tokio::test]
+async fn evaluate_evidence_rejects_unknown_duplication_mode() {
+    let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), None);
+    let error = err(server
+        .evaluate_evidence(Parameters(semantic_request(Some("fuzzy"))))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("duplication"),
+        "message names the field: {}",
+        error.message
+    );
 }
