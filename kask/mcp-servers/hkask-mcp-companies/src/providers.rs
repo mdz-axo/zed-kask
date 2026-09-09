@@ -1617,7 +1617,7 @@ async fn fetch_screener_page(
 ) -> Result<Vec<Value>, McpToolError> {
     let offset_str = offset.to_string();
     let resp = client
-        .get(&format!("{EODHD_BASE_URL}/screener"))
+        .get(provider_url(EODHD_BASE_URL, "/screener"))
         .query(&[
             ("api_token", eodhd_api_key),
             ("fmt", "json"),

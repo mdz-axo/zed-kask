@@ -209,7 +209,7 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 | `moat_check` | Competitive moat: gross-margin stability + working-capital market-power signals |
 | `management_scorecard` | CEO capital allocation scorecard (ROIC vs invested capital) |
 | `working_capital_cycle` | Days payable, days sales outstanding, cash-conversion cycle |
-| `company_screener` | Screen companies from natural-language criteria using the FMP stock screener (bypasses `fetch`) |
+| `company_screener` | Screen companies from natural-language criteria using the EODHD screener with per-exchange fan-out (bypasses `fetch`) |
 | `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims (bypasses `fetch`) |
 
 ### Portfolio analytics and DCF (5)
@@ -287,7 +287,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 ## Behavioral boundaries
 
-- **Provider routing.** Financial-data tools route eligible symbol lookups between FMP and EODHD. `is_international_symbol` (exchange-qualified symbols such as `VOD.L`, `BMW.DE`) selects EODHD as primary. `company_screener` is FMP-specific; `research_search` uses its own research providers and bypasses `fetch`.
+- **Provider routing.** Financial-data tools route eligible symbol lookups between FMP and EODHD. `is_international_symbol` (exchange-qualified symbols such as `VOD.L`, `BMW.DE`) selects EODHD as primary. `company_screener` parses prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts; `research_search` uses its own research providers and bypasses `fetch`.
 - **DCF projection.** The DCF is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.[^gordon-companies-ref]
 - **Scenario matrix.** `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix (Schwartz 2×2 framing).
 - **Forecast persistence.** DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition. The `revision_of` chain has no enforced depth limit — each revision references its predecessor by id, and revisions require the same owner and same symbol (`research_store.rs` `validate_forecast_revision`). Consumers should treat the chain as an unbounded linked list and cap traversal at the application layer if a bound is required.

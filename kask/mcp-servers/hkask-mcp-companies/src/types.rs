@@ -746,7 +746,17 @@ pub(crate) struct ScreenerRequest {
     /// match count is reported as `total_matches`.
     #[serde(default = "default_screener_limit")]
     pub limit: u32,
-    /// Override specific criteria directly (bypasses prompt parsing for these fields).
+    /// Override specific criteria directly (merged over the parsed criteria —
+    /// parsed fields not overridden survive).
+    ///
+    /// Keys use EODHD field names: `market_capitalization_min`/`_max`,
+    /// `adjusted_close_min`/`_max`, `avgvol_1d_min`/`_max`,
+    /// `avgvol_200d_min`/`_max`, `earnings_share_min`/`_max`,
+    /// `dividend_yield_min`/`_max`, `refund_1d_p_min`/`_max`,
+    /// `refund_5d_p_min`/`_max`, `sector`, `industry` (single values), and
+    /// `exchanges` (array of EODHD exchange codes, e.g. `["US","JP","TO"]`)
+    /// or `exchange` (single code) — exchange criteria fan out one query per
+    /// code.
     ///
     /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
     /// so the generated tool input schema is the empty object `{}` rather than the

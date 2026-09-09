@@ -33,7 +33,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `moat_check` | Analyze competitive moat through gross-margin stability and working-capital market-power signals. |
 | `management_scorecard` | Score CEO capital allocation against returns on capital and invested capital. |
 | `working_capital_cycle` | Analyze days payable, days sales outstanding, and cash-conversion cycle. |
-| `company_screener` | Screen companies from natural-language criteria using the FMP stock screener. |
+| `company_screener` | Screen companies from natural-language criteria using the EODHD screener, fanning out one query per exchange for multi-geography prompts. |
 | `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims. |
 
 ### Portfolio analytics and DCF
@@ -120,13 +120,14 @@ src/
 ├── scenarios.rs        fixed growth × gross-margin scenario matrix
 ├── superforecast.rs    Fermi calibration and Brier scoring
 ├── research.rs         Exa, Tavily, and Brave research retrieval
+├── screener.rs         natural-language screening prompt parser (EODHD)
 ├── fibo.rs             FIBO concept identifiers used by derived outputs
 └── portfolio.rs        SQLite-backed ledger, notes, and attachments
 ```
 
 ### Behavioral boundaries
 
-- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` is FMP-specific; `research_search` uses its own research providers.
+- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` parses natural-language prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts; `research_search` uses its own research providers.
 - The DCF projection is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.
 - `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix.
 - DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition.
@@ -158,4 +159,4 @@ env -u HKASK_FMP_API_KEY -u HKASK_EODHD_API_KEY cargo test -p hkask-mcp-companie
 GITHUB_ACTIONS=1 ./script/clippy -p hkask-mcp-companies
 ```
 
-`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, and DCF equivalence/guards. The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.
+`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, and the screener's per-exchange fan-out (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.
