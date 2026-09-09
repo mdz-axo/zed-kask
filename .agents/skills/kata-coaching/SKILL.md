@@ -18,6 +18,12 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 - When a learner needs to close the feedback loop by committing to a specific time and metric to check results.
 - When evaluating the overall convergence and effectiveness of a completed kata-coaching PDCA cycle.
 
+## When NOT to Use
+
+- Practicing the kata yourself — use `kata-improvement`; coaching questions guide a learner, they are not the practitioner's loop.
+- Executing the improvement task — the five questions structure thinking; the task runs through its own skill.
+- Conversational coaching outside the kata — `improv`'s coaching modes (Plussing, Yes But) cover that.
+
 ## Instructions
 
 ### coaching-q1-target

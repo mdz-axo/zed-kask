@@ -18,6 +18,12 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 - When computing a normalized convergence metric for scenario-planning cycles using independent quality gate outputs and heuristic divergence checks.
 - When deriving actionable per-scenario implications, robust strategies, contingent strategies, and measurable early-warning indicators.
 
+## When NOT to Use
+
+- Probabilistic forecasting of a single outcome — use `superforecasting`; scenarios exist when the uncertainty is structural, not scalar.
+- Prediction-market term-structure analysis — use `cmp-term-structure` / `scenario-planning` over the scenarios server.
+- Narrative or fiction writing — divergence here serves decision-making, not storytelling; every quadrant must carry implications and early-warning indicators.
+
 ## Instructions
 
 ### scenario_calibration (step 1, execute — no template)

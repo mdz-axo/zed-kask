@@ -27,6 +27,13 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 - When planning a strangler-fig migration to extract a shared service layer from duplicated surface logic for a specific domain.
 - When verifying surgical completeness after a domain migration or full extraction to ensure dependency direction, module depth, and P6/P7/P8 compliance.
 
+## When NOT to Use
+
+- Reviewing a change against its stated spec — use `code-review`.
+- Diagnosing a specific bug or regression — use `diagnose`; refactoring presupposes working code.
+- Greenfield interface design — use `deep-module`'s design step; this skill deepens what exists.
+- Upstream rebases — use `upstream-rebase` (per-D-seam strategy is its own discipline).
+
 ## Instructions
 
 ### ra-explore

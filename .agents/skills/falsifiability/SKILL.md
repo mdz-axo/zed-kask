@@ -20,6 +20,12 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 - When `sequential-inquiry` branches on "a counterfactual scenario must be explored" and needs a delegation target — currently a dead reference this skill wires up.
 - When evaluating whether an elimination cycle has converged — one corroborated survivor with all alternatives ruled out — or has plateaued with an irreducible remainder.
 
+## When NOT to Use
+
+- Bayesian belief updating — evidence that down-weights rather than eliminates is `superforecasting`'s concern; this skill kills hypotheses, it does not re-rate them.
+- Formal proof of program properties — use `lean-prover`; machine-checked proof is stronger than falsification.
+- Generating research questions — use `hypothesis-framer`; this skill adjudicates and eliminates what already exists.
+
 ## Instructions
 
 1. **Admit the target (Popper gate).** Before generating any hypotheses, test whether the claim or question under analysis is testable at all. Classify it on the pragmatic-semantics axes (IS/OUGHT, declarative/probabilistic/subjunctive, constraint force). State the concrete observation that, if witnessed, would contradict it. ADMIT only if a genuine falsifying observation exists and the target is an IS-mode claim (or a subjunctive claim whose counterfactual is testable). RULE OUT tautologies, pure OUGHTs, and unfalsifiable-by-construction claims, recording the reason. If the target is ruled out but salvageable, propose a refined testable reformulation. Do not proceed to hypothesizing with an inadmissible target.

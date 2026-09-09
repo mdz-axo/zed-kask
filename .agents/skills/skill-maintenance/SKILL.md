@@ -39,6 +39,12 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 - When you need to audit skills for staleness signals and health scoring.
 - When you need to map task patterns against the skill corpus for coverage gaps.
 
+## When NOT to Use
+
+- Auditing `.j2` template or `manifest.yaml` logic — use `skill-logic-audit` (its target class; SKILL.md bodies are not valid logic-audit targets).
+- Authoring a new skill from scratch — use `create-skill` (it delegates validation back here at Phase 4).
+- Matching tasks to installed skills — use `skill-router`; acquiring new ones — `skill-discovery`.
+
 ## Instructions
 
 ### skill-maintenance-validate
@@ -157,6 +163,18 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 4. For partial coverage, identify the missing aspects and the extension needed.
 5. Respond with covered patterns, uncovered patterns, partial coverage, and
    recommendations.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S12 / T1–T5 with per-check evidence and fix suggestions. |
+| `skill-maintenance-audit.j2` | Staleness audit: dead tool references, missing templates, removed vocabulary, vague instructions; health scores and retirement recommendations. |
+| `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
+| `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |
+| `skill-maintenance-coverage.j2` | Map task patterns against the skill corpus: covered, uncovered, partial — with impact and action recommendations. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `skill-maintenance/skill-maintenance-validate`) and a context object with the required variables.
 
 ## Constraints
 

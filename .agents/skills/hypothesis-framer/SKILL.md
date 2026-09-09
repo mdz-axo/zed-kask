@@ -16,6 +16,12 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 - When iterative PDCA refinement is needed to converge the question-hypothesis-aims chain into a coherent, testable, decision-ready framing
 - When convergence assessment across FINER compliance, PICO completeness, hypothesis coherence, and aims alignment is needed to determine if the research framing is ready
 
+## When NOT to Use
+
+- Bug root-cause hypotheses — `diagnose` + `falsifiability` own that shape; PICO is clinical/research framing.
+- Testability adjudication alone — `falsifiability`'s admissibility gate is the shared instrument; this skill builds the full question-hypothesis-aims chain.
+- Forecasting questions — use `superforecasting`; a forecast is not a research hypothesis.
+
 ## Instructions
 
 1. **Evaluate the broad research topic against FINER criteria.** For each of the five dimensions — Feasible (subjects, expertise, resources, institutional support), Interesting (audience, applicability, engagement), Novel (knowledge gap, methodology, confirmation), Ethical (regulatory compliance, risk, informed consent, animal welfare), and Relevant (clinical impact, knowledge contribution, generalizability, timeliness) — assign a score from 0–10 with specific, justified rationale.

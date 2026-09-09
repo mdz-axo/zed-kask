@@ -17,6 +17,12 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 
 - Consume gap signals from skill-router (uncovered capabilities) or task-breakdown (task patterns that no skill covers).
 
+## When NOT to Use
+
+- Matching tasks to already-installed skills — use `skill-router` (its uncovered-capability signals feed this skill).
+- Authoring a skill from scratch — `create-skill`; discovery evaluates candidates, it does not write them.
+- Auditing or maintaining installed skills — `skill-maintenance`.
+
 ## Instructions
 
 ### skill-discovery-detect-gap

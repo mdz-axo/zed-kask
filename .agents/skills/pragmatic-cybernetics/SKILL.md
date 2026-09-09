@@ -14,6 +14,12 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 - Evaluate variety balance using Ashby's Law of Requisite Variety to identify deficits and recommend attenuation or amplification strategies.
 - Map hKask components to Viable System Model (VSM) S1–S5 subsystems to assess overall system viability and identify unviable components requiring structural intervention.
 
+## When NOT to Use
+
+- Classifying statements (IS/OUGHT, constraint force) — use `pragmatic-semantics`; this skill analyzes loops and variety, not sentences.
+- Operating the regulation loops — `gemba-walk` and `algedonic-review` run them; this skill diagnoses their design.
+- Implementing control systems — it is an analysis lens (VSM, Ashby, loop properties), not a builder.
+
 ## Instructions
 
 ### cybernetics-analyze-loop

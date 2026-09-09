@@ -18,6 +18,12 @@ description: "4-step Improvement Kata templates for scientific capability develo
 - When computing a normalized convergence metric to evaluate the coherence of a PDCA cycle.
 - When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
 
+## When NOT to Use
+
+- Coaching a human learner through the kata — use `kata-coaching` (the five questions); this skill is the practitioner's own loop.
+- Executing a specific improvement task — the kata is the practice method for developing capability, not a task executor; run the task through its own skill.
+- One-shot problems with no iteration — a single experiment with no target condition to converge toward needs a plan, not a kata.
+
 ## Instructions
 
 ### improvement-step1-direction

@@ -41,6 +41,13 @@ Three signal forms drive both pathways:
 - When you need to evaluate self-improvement claims rigorously (trajectory tracking, transfer testing, regression checks, cost accounting)
 - When you need to govern self-modification safely (verifier-gated updates, layered permission systems, critic decoupling)
 
+## When NOT to Use
+
+- One-off corrections — if the fix is known, apply it directly; a PDCA cycle around a known fix is ceremony.
+- Skill authoring and maintenance — use `create-skill` / `skill-maintenance` (the scaffolding-improvement pathway delegates there anyway).
+- Memory curation — use `therapy`; reorganizing memory is not self-modification of configuration.
+- The measured fine-tuning loop — use `adapter-lifecycle` (rollout measurement → dataset bridging → training → evaluation); this skill selects the pathway, it does not run the training loop.
+
 ## Architecture: Nested PDCA + Outer Kata
 
 The skill follows a **three-layer architecture**:

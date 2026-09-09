@@ -38,6 +38,12 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 - Conducting adversarial reviews of a Rust design proposal to find gaps, test edge cases, challenge assumptions, and identify deeper ecosystem connections.
 - Computing a normalized convergence metric for an idiomatic-rust inquiry cycle to determine if further design refinement is needed.
 
+## When NOT to Use
+
+- Non-Rust languages — use the language's own idiomatic skill (`idiomatic-lisp` for Lisp).
+- Machine-checked proof — use `lean-prover`.
+- Reviewing a change against its spec — use `code-review`; this skill designs, it does not adjudicate diffs.
+
 ## PDCA Loop
 
 ```

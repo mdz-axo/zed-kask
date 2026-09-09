@@ -19,6 +19,13 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 - When evaluating generated forecasts through an independent quality gate to assess calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias.
 - When LEAP expert-judgment forecasts are available for the forecasting question or a close reference class, and you want to anchor the outside view on FRI's longitudinal expert panel rather than (or in addition to) market-implied probabilities.
 
+## When NOT to Use
+
+- Questions outside the Goldilocks zone — already-resolved facts and pure-chance events get no value from the pipeline; answer directly.
+- Reading a market's current probability — the market price IS the aggregate estimate; use the prediction-markets tools, don't re-derive it.
+- Scoring a forecast with no recorded prior — post-hoc Brier scoring requires a persisted forecast (forecast_record); reconstructing one after the fact is fabrication.
+- Quick one-off estimates where the question is trivially decomposable — the eight-stage pipeline costs more than the answer is worth.
+
 ## Instructions
 
 ### stage_0_triage

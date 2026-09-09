@@ -204,7 +204,7 @@ Every string below appears verbatim in the `CANONICAL_NAMESPACES` array in
 | **Memory** | `reg.memory`, `.decay`, `.encode` — no `.episodic` is registered |
 | **MCP** | `reg.mcp`, `.cap`, `.media.face` |
 | **Pipeline** | `reg.pipeline`, `.calibration`, `.decimation`, `.decimation.binarize`, `.triage`, `.pdf_extract`, `.ocr` + 5 `.ocr.*` failure modes |
-| **Skill phases** | `reg.lora.*` (6), `reg.bughunt.*` (6), `reg.codereview.*` (5), `reg.eqm*` (7) |
+| **Skill phases** | `reg.lora.*` (6), `reg.bughunt.*` (6), `reg.codereview.*` (5) — plus every skill's automatic `reg.skill.<id>.{outcome,operator_feedback}` feedback spans (host-wired via `record_skill_span`, hierarchical via the `reg.skill` root) |
 | **Training providers** | `reg.training.provider.runpod.{cancel,status,submit}`; `reg.training.checkpoint.resume` |
 | **Sovereignty** | `reg.sovereignty` + 4 sub-namespaces |
 

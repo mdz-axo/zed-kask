@@ -17,6 +17,12 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 - When probing for knowledge gaps and challenging assumptions during an oral examination.
 - When synthesizing a final gap analysis with per-area ratings and prioritized study recommendations.
 
+## When NOT to Use
+
+- Teaching new material — grill-me tests understanding that exists; it does not deliver a lesson.
+- Reviewing a code change — use `code-review`.
+- Adversarial self-review of one's own reasoning — use `falsifiability`'s challenge stage; grill-me interrogates a learner about a topic, decoupled from authorship.
+
 ## Instructions
 
 ### grill-me-round

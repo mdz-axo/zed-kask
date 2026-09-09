@@ -46,6 +46,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 - For adding new memories (use `memory_insert` directly).
 - For single-memory updates (use `memory_update` directly).
 - For creating a skill from scratch with no memory basis (use `create-skill` directly).
+- For skill refinement — `skill-maintenance` / `gemba-walk` own that surface.
+- For mechanical pruning without diagnosis — `curator_memory_prune` is the tool; therapy is for contradictions, miscalibration, and reification.
 
 ## Grounding
 

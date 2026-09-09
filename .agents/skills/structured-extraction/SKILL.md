@@ -15,6 +15,12 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 - When you need to extract binary relations between identified entities as OpenIE `(arg1, relation, arg2)` tuples (Banko et al. 2007) — free-text predicates, not RDF triples. For closed-type RE (ACE2005/TACRED/DocRED inventories), pre-populate the predicate vocabulary in `extraction_hints`.
 - When you need to map extracted entities and relations to a target JSON schema, resolving field mappings and inferring missing fields.
 
+## When NOT to Use
+
+- Verifying claims against sources — use `grounding-verify`; extraction produces candidates, not verdicts.
+- Semantic document search — use the corpus tools (`corpus_query`); retrieval is not extraction.
+- Validating already-structured data against a schema — just validate; there is nothing to extract.
+
 ## Instructions
 
 ### identify-entities

@@ -17,6 +17,12 @@ Goal specification and verification. Extracts structured goals from user intent,
 - When a goal needs to be activated for Regulation span tracking and execution context preparation
 - When a judge verdict needs to be routed to a resolution action (complete, continue, or escalate to human)
 
+## When NOT to Use
+
+- Decomposing work into tasks — use `task-breakdown`; a goal's criteria are inputs to decomposition, not the decomposition itself.
+- Managing work on a board — use `kanban-task-management`; this skill judges completion, it does not track progress.
+- Requirements intake and spec authority — use `product-manager`; the operator owns what the goal is, this skill structures and verifies it.
+
 ## Instructions
 
 ### Goal Creation (create.j2)

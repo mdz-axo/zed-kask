@@ -17,6 +17,12 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 - When you need to assess decision robustness by perturbing criterion weights to identify rank reversals, critical weights, and classify overall stability.
 - When you need to compute a convergence metric for an MCDA PDCA cycle to determine whether ranking confidence and sensitivity robustness are sufficient to stop iterating.
 
+## When NOT to Use
+
+- Decisions with fixed methodology weights — when the weights are fixed by firm methodology (e.g. GORILLA's 25/30/25/20), a `lisp_eval` scoring call is the honest instrument; MCDA adds ceremony (the essentialist Surface gate rejection).
+- Single-criterion decisions — with one criterion there is nothing to weight, mask, or perturb; just decide.
+- No enumerable criteria — without criteria to classify and weight, the method has no input; elicit requirements first.
+
 ## Instructions
 
 ### identify-criteria

@@ -19,6 +19,12 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - When standard evidence-gathering has plateaued and a perspective-shift (not more data) is the path forward — improv modes reframe rather than accumulate
 - After mode selection and application, evaluate whether convergence has been reached
 
+## When NOT to Use
+
+- Shaping output for a reader — use `adhd-mode`; improv modes shape the conversation, not the rendering.
+- Structured decision analysis — use `mcda`; modes build on contributions, they do not weight criteria.
+- Factual lookups with one right answer — nothing to build on; answer directly.
+
 ## Instructions
 
 ### Mode Selection (`improv-select`)

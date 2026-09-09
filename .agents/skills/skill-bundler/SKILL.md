@@ -6,13 +6,19 @@ description: "Run peer-level skills concurrently and merge their outputs into a 
 
 # Skill Bundler
 
-Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out dispatches each skill via the `skill` tool; this skill handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop . the bundler dispatches each skill in parallel, collects results (allSettled . partial results OK if a skill errors), and synthesizes them.
+Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out dispatches each skill via the `skill` tool; this skill handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop — the bundler dispatches each skill in parallel, collects results (allSettled: partial results OK if a skill errors), and synthesizes them.
 
 ## When to Use
 
 - You have run 3+ peer-level skills concurrently on the same task and need their outputs merged into one coherent report.
 - You need per-skill summaries, cross-skill insights (what the combination reveals that no single skill did), explicit conflicts between skills' conclusions, and prioritized recommendations.
 - You do NOT need skill composition, ordering resolution, or ontology anchoring — the bundler merges; it does not compose.
+
+## When NOT to Use
+
+- Composing or ordering skills — the bundler merges; it does not compose (its own constraint). Sequential skills with dependencies must run in order directly.
+- A single skill's output — there is nothing to merge.
+- Iterative convergence loops — single-pass merge by design (`max_iterations: 1`).
 
 ## Instructions
 

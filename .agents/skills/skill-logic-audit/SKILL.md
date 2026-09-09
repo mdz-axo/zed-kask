@@ -15,6 +15,12 @@ Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against 
 - Composing a revised artifact with a unified diff from calibrated concerns
 - Driving a user-review loop for accept/reject/counter-proposal
 
+## When NOT to Use
+
+- SKILL.md bodies — not valid audit targets (this skill's own constraint); use `skill-maintenance`.
+- Skill health scoring, staleness signals, retirement thresholds — `skill-maintenance-audit`.
+- Coverage-gap mapping against the corpus — `skill-maintenance-coverage`.
+
 ## Instructions
 
 ### logic-load-goal

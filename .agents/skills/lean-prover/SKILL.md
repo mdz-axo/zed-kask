@@ -62,6 +62,12 @@ Check: Phase 3 — Refute    → Search for counterexamples and failed proof pat
 Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 ```
 
+## When NOT to Use
+
+- Informal mathematical argument — testable-but-unproven claims belong to `falsifiability` / `hypothesis-framer`; proof is a stronger standard than falsification.
+- Rust type-system design — use `idiomatic-rust`.
+- Property-based testing — `tdd`'s proptest universals test behavior; they do not prove it.
+
 ## Instructions
 
 ### lean-prover-anchor

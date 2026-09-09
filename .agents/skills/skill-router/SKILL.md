@@ -15,6 +15,12 @@ Route tasks to EXISTING installed skills. Given a task/slice description and the
 - Identify uncovered capabilities (capabilities the task needs that no installed skill covers) as gap signals for `skill-discovery`.
 - Apply an optional `epistemic_state` boost to certainty-finding skills when the calling agent is in a low-confidence regime.
 
+## When NOT to Use
+
+- Acquiring NEW skills — use `skill-discovery` (this skill's own gap signals feed it); routing matches what exists.
+- Authoring a skill no catalog covers — `create-skill`.
+- Executing the matched skill — invoke it directly; a recommendation is not a dispatch.
+
 ## Instructions
 
 ### skill-router-match

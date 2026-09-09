@@ -17,6 +17,12 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 - When resolving conflicts between statements using 5-tier OT ranking (ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring).
 - When ranking contradictory statements to determine a winner based on constraint force hierarchy and provenance weighting.
 
+## When NOT to Use
+
+- Feedback-loop and variety analysis — use `pragmatic-cybernetics`.
+- Extracting structured data from text — use `structured-extraction`; classification is not extraction.
+- Rendering final verdicts on code findings — `code-review` embeds this lens but owns the adjudication.
+
 ## Instructions
 
 ### semantics-classify-statement
