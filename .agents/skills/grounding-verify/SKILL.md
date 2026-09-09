@@ -510,6 +510,11 @@ the pipeline that knows the domain — e.g., the equity table
 for market cap) belongs to company-research-deep/flash's context
 construction, not to this skill's body.
 
+**Deliberate scope boundaries (operator ratification, 2026-09-08):**
+verification tiers (depth selection) and the primary source pull live
+in the composing pipelines, not in this skill — the skill is
+single-pass by design and verifies against provided sources only.
+
 ## Cross-Skill Composition
 
 - Step 1 reuses `structured-extraction` (claim extraction as
@@ -561,8 +566,9 @@ construction, not to this skill's body.
   unknown, not clean.
 - The `verified_claims` registry is append-only within a verification
   run. Claims do not get re-classified when new sources are added.
-- The confidence band is derived from the provenance floor, never
-  accepted from the LLM's self-assessed confidence.
+- The confidence band is derived — provenance floor, conflict caps,
+  decoupling cap — never accepted from the LLM's self-assessed
+  confidence.
 - `verification_scope_limitations` must be disclosed in the output. The
   fact score covers factuality, not completeness or reasoning quality.
 - When composed as a `spawn_agent` call, the verifier has no shared

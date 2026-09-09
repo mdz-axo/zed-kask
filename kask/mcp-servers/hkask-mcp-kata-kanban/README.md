@@ -44,11 +44,6 @@ h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 | `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; `brier: null` + note when no prediction was recorded |
 | `kanban_goal_list` | List the caller's goals with latest verdicts and resolution state, newest first |
 
-### Budget management
-| Tool | Description |
-|------|-------------|
-| `kanban_task_add_rjoules` | Add rJoules to a task's inference/API budget (250k ≈ $1 spend) |
-
 ### Communication
 | Tool | Description |
 |------|-------------|

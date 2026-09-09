@@ -38,7 +38,10 @@
 //! `reserve` claims the key, then `record` attaches the response. A key reserved
 //! but never recorded (the server died mid-work) is `Pending` — reported as such
 //! rather than silently re-run, because whether the work landed is exactly what
-//! is unknown.
+//! is unknown. Tools whose work has post-effect steps (see
+//! `kanban_task_spawn`'s result note) must fold those failures into a partial
+//! SUCCESS response rather than returning `Err`: an error here releases the
+//! claim, and a same-key retry would duplicate the effect.
 //!
 //! Mirrors `hkask_mcp_swarm::consent`'s store shape deliberately: that code
 //! already proved the cross-process single-use pattern against SQLite.

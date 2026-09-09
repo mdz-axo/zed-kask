@@ -73,10 +73,10 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Concurrent shared-store authorization cannot oversubscribe the session or dispatch beyond capacity. (Two stores on one SQLite file; both race tests RED pre-fix "oversubscribed"; exactly one POST served.)
   - [x] Success settles once; proven pre-dispatch rejection releases only its reservation; existing ceilings/single-use controls pass. (Reservation-at-authorize; `settle_success` deleted; connection-refused/HTTP-rejection controls.)
   - [x] Ambiguous post-acceptance/persistence failure retains durable evidence across restart; recovery policy ratified before coding. (Hold across reopen; retry refused; uncertainty surfaced; 133/133 suite, clippy/rustfmt clean. Evidence in plan.md T05.)
-- [ ] **T06 — Preserve replay protection after agent creation** (no dependency)
-  - [ ] Post-spawn failure plus retry produces one agent and an explicit replay/pending/partial outcome.
-  - [ ] Concurrent same-key attempts and reopened durable claims remain protected within the existing TTL.
-  - [ ] Clean pre-effect rejection remains retryable; worktree/local failure paths and ephemeral-goal controls pass.
+- [x] **T06 — Preserve replay protection after agent creation** (no dependency) — **verified 2026-09-08**
+  - [x] Post-spawn failure plus retry produces one agent and an explicit replay/pending/partial outcome. (One-shot `task_comment` fault after a counting worktree spawn; partial response recorded and REPLAYED on retry; RED pre-fix observed. `result_note_error` field carries the partial outcome.)
+  - [x] Concurrent same-key attempts and reopened durable claims remain protected within the existing TTL. (tokio::join! admits exactly one spawn; a reserved-never-recorded claim survives a restart and refuses the retry.)
+  - [x] Clean pre-effect rejection remains retryable; ephemeral-goal controls pass. (Invalid-input retry runs fresh; goal replay tests unchanged. Suite 46+21+1, clippy/rustfmt clean. Evidence in plan.md T06.)
 - [ ] **Checkpoint B:** cumulative memory/budget/spawn checks, scoped builds/lints, policy-gate review, operator review.
 
 ## Phase C — Make regulation acknowledgments truthful

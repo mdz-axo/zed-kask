@@ -97,6 +97,13 @@ hkask_mcp_server::mcp_server!(
 /// A failed call releases the claim so a retry starts clean rather than
 /// inheriting an "outcome unknown" verdict for work that demonstrably did not
 /// happen.
+///
+/// CONTRACT ON `work`: it must return `Err` only when NO effect landed.
+/// Post-effect failures (bookkeeping after the spawn, etc.) must be folded
+/// into a successful partial response instead — see `kanban_task_spawn`'s
+/// `result_note_error`. Releasing the claim on a post-effect error would let
+/// a same-key retry duplicate the effect, which is exactly what this
+/// protection exists to prevent.
 async fn with_idempotency<F>(
     store: &idempotency::IdempotencyStore,
     tool: &'static str,
@@ -1219,9 +1226,26 @@ impl KanbanServer {
                      {}",
                     task.title, tid, message
                 );
-                self.service
-                    .task_comment(tid, self.webid, &result_note)
-                    .map_err(map_kanban_error)?;
+                // Post-spawn bookkeeping: the agent thread already exists, so
+                // a comment failure must NOT fail the call — an Err here would
+                // release the replay-protection claim and a same-key retry
+                // would spawn a SECOND agent. Fold the failure into the
+                // response instead (uniform with task_move/task_record_
+                // delegation, already warn-only after the effect).
+                let result_note_error =
+                    match self.service.task_comment(tid, self.webid, &result_note) {
+                        Ok(_) => None,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.kata_kanban",
+                                task_id = %tid,
+                                %error,
+                                "could not record the worktree spawn note — the spawn \
+                                 itself succeeded; surfacing the partial outcome"
+                            );
+                            Some(error.to_string())
+                        }
+                    };
                 if let Err(error) = self
                     .service
                     .task_move(tid, TaskStatus::InProgress, self.webid)
@@ -1240,6 +1264,7 @@ impl KanbanServer {
                          The agent runs in an isolated worktree.",
                         task.title, tid
                     ),
+                    result_note_error,
                     ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                 }))
             }
@@ -1363,9 +1388,25 @@ impl KanbanServer {
             latency_ms = result.latency_ms,
             response = result.response,
         );
-        self.service
-            .task_comment(tid, self.webid, &result_note)
-            .map_err(map_kanban_error)?;
+        // Post-spawn bookkeeping: the delegation already executed, so a
+        // comment failure must NOT fail the call — an Err here would release
+        // the replay-protection claim and a same-key retry would run a
+        // SECOND delegation. Fold the failure into the response instead
+        // (uniform with task_record_delegation/task_move above/below,
+        // already warn-only after the effect).
+        let result_note_error = match self.service.task_comment(tid, self.webid, &result_note) {
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    task_id = %tid,
+                    %error,
+                    "could not record the spawn result note — the delegation \
+                     itself succeeded; surfacing the partial outcome"
+                );
+                Some(error.to_string())
+            }
+        };
         if let Err(error) = self
             .service
             .task_move(tid, TaskStatus::InProgress, self.webid)
@@ -1384,6 +1425,7 @@ impl KanbanServer {
                 "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
                 result.agent_id, task.title, result.cost, result.tokens_used
             ),
+            result_note_error,
             ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
         })
     }

@@ -504,6 +504,14 @@ pub struct TaskSpawnRequest {
 pub(crate) struct TaskSpawnResponse {
     pub task_id: String,
     pub message: String,
+    /// Set when the spawn itself succeeded but its reconciliation note
+    /// (the task comment) could not be recorded — the partial-outcome
+    /// signal: the agent exists, the note does not. Absent when the note
+    /// was recorded. Surfaced as a response field (not an error) so the
+    /// replay-protection reservation records the partial result and a
+    /// same-key retry replays it instead of spawning a second agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_note_error: Option<String>,
     /// Ontology concept: <https://w3id.org/pko#StepExecution>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,

@@ -765,3 +765,248 @@ async fn task_move_carries_pko_execution_status_for_every_standard_transition() 
         "moving to done must carry the PKO execution status, got: {parsed}"
     );
 }
+
+// ── T06: replay protection across the spawn's post-effect failure ──────────
+
+/// Counting worktree-spawn stub: SUCCEEDS and counts, so a duplicate spawn
+/// is observable as a count above one (the plan's "counting successful
+/// spawn port").
+struct CountingWorktreeSpawn {
+    spawns: std::sync::atomic::AtomicUsize,
+}
+
+impl WorktreeSpawnPort for CountingWorktreeSpawn {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        _prompt: &'a str,
+        _title: &'a str,
+        _worktree_name: Option<&'a str>,
+        _base_ref: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
+        self.spawns
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Ok("worktree wt-1 ready (test stub)".to_string()) })
+    }
+}
+
+/// A spawn-test server whose worktree port SUCCEEDS and counts, plus the
+/// shared driver (for reopen tests) and the port (for spawn counting).
+fn make_spawn_server() -> (
+    KanbanServer,
+    Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    Arc<CountingWorktreeSpawn>,
+) {
+    let driver = SqliteDriver::in_memory_driver();
+    let idempotency_driver = driver.clone();
+    let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
+    let service = KanbanService::new(store);
+    let ledger_path = std::env::temp_dir()
+        .join(format!("kanban-t06-{}-{}.db", std::process::id(), line!()))
+        .to_string_lossy()
+        .to_string();
+    let idempotency =
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(idempotency_driver)
+            .expect("idempotency schema");
+    let port = Arc::new(CountingWorktreeSpawn {
+        spawns: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let server = KanbanServer::new(
+        WebID::new(),
+        service,
+        Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, throwaway_stats())),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
+        Arc::new(idempotency),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+    );
+    (server, driver, port)
+}
+
+async fn spawn_task(
+    server: &KanbanServer,
+    task_id: &str,
+    key: Option<&str>,
+) -> Result<serde_json::Value, McpToolError> {
+    let out = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id: task_id.to_string(),
+            idempotency_key: key.map(str::to_string),
+            delegation_level: "standard".to_string(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            swarm_id: None,
+        }))
+        .await?;
+    Ok(parse(&out))
+}
+
+async fn board_and_task(server: &KanbanServer) -> String {
+    let board = create_board(server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+    let task = create_task(server, &board_id, "Spawn me", None)
+        .await
+        .expect("tool ok");
+    task["task_id"].as_str().expect("task_id").to_string()
+}
+
+/// T06: a post-spawn bookkeeping failure (the result note's task comment)
+/// must not fail the call — failing it releases the replay-protection claim
+/// and a same-key retry spawns a SECOND agent. The spawn succeeds, the
+/// partial outcome is recorded and surfaced, and the retry REPLAYS it.
+#[tokio::test]
+async fn post_spawn_comment_failure_keeps_replay_protection() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    // One-shot fault: the NEXT task_comment (the post-spawn result note —
+    // the pre-spawn config comment writes directly, not via task_comment)
+    // fails after the agent thread already exists.
+    server.service.fail_next_comments(1);
+
+    let first = spawn_task(&server, &task_id, Some("spawn-gesture"))
+        .await
+        .expect("the spawn itself succeeded — the comment failure is folded into the response");
+    assert!(
+        first.get("result_note_error").is_some(),
+        "the partial outcome must be surfaced in the response: {first}"
+    );
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Same-key retry: REPLAYS the recorded partial result — no second agent.
+    let retry = spawn_task(&server, &task_id, Some("spawn-gesture"))
+        .await
+        .expect("the retry replays the recorded partial result");
+    assert_eq!(
+        retry["replayed"].as_bool(),
+        Some(true),
+        "the retry must be a replay, not a re-run: {retry}"
+    );
+    assert!(
+        retry.get("result_note_error").is_some(),
+        "the replayed partial result keeps its partial marker: {retry}"
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a same-key retry after a post-spawn bookkeeping failure must not \
+         spawn a second agent"
+    );
+}
+
+/// T06: two CONCURRENT same-key spawns admit at most one agent — the
+/// reserve INSERT is atomic, so exactly one call runs the work; the other
+/// replays the recorded response or is refused pending (claim preserved).
+#[tokio::test]
+async fn concurrent_same_key_spawns_admit_one_agent() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    let (first, second) = tokio::join!(
+        spawn_task(&server, &task_id, Some("race")),
+        spawn_task(&server, &task_id, Some("race")),
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "concurrent same-key spawns must admit exactly one agent"
+    );
+    match (&first, &second) {
+        (Ok(a), Ok(b)) => {
+            assert!(
+                a["replayed"].as_bool() == Some(true) || b["replayed"].as_bool() == Some(true),
+                "when both concurrent calls succeed, one must be the replay: {a} / {b}"
+            );
+        }
+        (Ok(_), Err(error)) | (Err(error), Ok(_)) => {
+            assert!(
+                error.message.contains("did not complete"),
+                "the loser of the race must be refused with the pending-claim \
+                 verdict, not re-run: {error:?}"
+            );
+        }
+        (Err(a), Err(b)) => panic!("both concurrent spawns failed: {a:?}; {b:?}"),
+    }
+}
+
+/// T06: a claim reserved but never recorded (a previous attempt died
+/// mid-work — external acceptance before response recording) survives a
+/// server restart on the shared database and REFUSES the retry: the spawn
+/// is not re-run, so no duplicate agent.
+#[tokio::test]
+async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
+    let (server, driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Simulate the crashed attempt: the key was reserved, the response was
+    // never recorded (the server died between the phases).
+    let crashed_store =
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
+            .expect("idempotency schema");
+    assert_eq!(
+        crashed_store
+            .reserve("kanban_task_spawn", "crashed")
+            .expect("reserve"),
+        hkask_mcp_kata_kanban::idempotency::Reservation::Fresh
+    );
+    drop(crashed_store);
+
+    // A second server over the same database — the restart.
+    let restarted = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
+        Arc::new(LazyLocalSwarmRuntime::lazy(
+            std::env::temp_dir()
+                .join(format!("kanban-t06-restart-{}.db", std::process::id()))
+                .to_string_lossy()
+                .to_string(),
+            throwaway_stats(),
+        )),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(CountingWorktreeSpawn {
+            spawns: std::sync::atomic::AtomicUsize::new(0),
+        }) as Arc<dyn WorktreeSpawnPort>,
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
+                .expect("idempotency schema"),
+        ),
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+    );
+
+    let error = spawn_task(&restarted, &task_id, Some("crashed"))
+        .await
+        .expect_err("a pending claim refuses the retry");
+    assert!(
+        error.message.contains("did not complete"),
+        "the refusal must name the unknown outcome: {error:?}"
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the spawn must not re-run under a pending claim"
+    );
+}
+
+/// T06 control: a PRE-effect failure (validation) releases the claim, so
+/// the same key can be retried successfully once the input is corrected.
+#[tokio::test]
+async fn pre_effect_failure_releases_the_claim_for_a_clean_retry() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    // Pre-effect failure: an unparseable task id never reaches the spawn.
+    let _error = spawn_task(&server, "not-a-task-id", Some("clean-retry"))
+        .await
+        .expect_err("an invalid task id fails");
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // The same key now runs cleanly on the real task — fresh, not refused.
+    let retried = spawn_task(&server, &task_id, Some("clean-retry"))
+        .await
+        .expect("the corrected retry runs");
+    assert!(
+        retried.get("replayed").is_none(),
+        "the retry must have run fresh, not replayed: {retried}"
+    );
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+}

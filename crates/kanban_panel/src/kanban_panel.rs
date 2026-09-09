@@ -804,7 +804,6 @@ impl KanbanPanel {
                 criteria: Vec::new(),
                 comments: Vec::new(),
                 verification: None,
-                spend_log: Vec::new(),
             })
             .collect();
 

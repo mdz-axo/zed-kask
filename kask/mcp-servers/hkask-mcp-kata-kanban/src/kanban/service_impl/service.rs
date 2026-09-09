@@ -43,6 +43,12 @@ pub struct KanbanService {
     /// de-facto-infallible in-memory driver creation surfaces as a typed
     /// error rather than a constructor panic.
     pub(crate) goal_store: std::sync::Arc<std::sync::Mutex<Option<HMemStore>>>,
+    /// One-shot fault injection for the replay-protection integration
+    /// suite: the next N `task_comment` calls fail instead of writing
+    /// (`#[doc(hidden)]` arm below). Arc-shared across clones so a test can
+    /// arm the fault on the service it keeps while the server holds a
+    /// clone. Zero in production — nothing reads it except `task_comment`.
+    pub(crate) comment_faults: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 // HMem entity prefixes
@@ -60,7 +66,19 @@ impl KanbanService {
         Self {
             store,
             goal_store: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            comment_faults: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// Arm a one-shot `task_comment` fault for the replay-protection
+    /// integration suite: the next `fail_next` comment writes fail with a
+    /// typed error instead of reaching the store. `#[doc(hidden)]` because
+    /// this exists for `tests/idempotent_creates.rs`, not for downstream
+    /// consumers — production callers never touch it.
+    #[doc(hidden)]
+    pub fn fail_next_comments(&self, fail_next: usize) {
+        self.comment_faults
+            .store(fail_next, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Authority check: the actor must be the task owner or assignee.

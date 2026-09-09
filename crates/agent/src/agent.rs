@@ -4655,47 +4655,71 @@ mod internal_tests {
 
     #[test]
     fn skill_outcome_recorder_records_and_is_replaceable() {
-        // Same process-global Mutex slot discipline as the MCP recorder test
-        // above — all skill-recorder assertions stay in ONE test so parallel
-        // tests cannot race the shared slot.
+        // Same process-global slot discipline as the MCP recorder test above,
+        // with one additional hazard: `SkillTool::run` fires this hook on every
+        // activation, so parallel skill_tool tests in this binary push entries
+        // into the captured vec mid-flight. The closure never panics under the
+        // lock (a panic would poison the mutex for every later closure call),
+        // assertions snapshot-then-release before asserting, and only THIS
+        // test's ids (`bug-hunt`/`tdd`) are asserted. The slot is left inert on
+        // exit.
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
         set_skill_outcome_recorder(std::sync::Arc::new(move |skill_id, success, error| {
-            captured.lock().expect("captured lock").push((
-                skill_id.to_string(),
-                success,
-                error.map(str::to_string),
-            ));
+            if let Ok(mut entries) = captured.lock() {
+                entries.push((skill_id.to_string(), success, error.map(str::to_string)));
+            }
         }));
         record_skill_outcome("bug-hunt", true, None);
         record_skill_outcome("tdd", false, Some("declared dependencies not installed"));
-        {
+        let relevant: Vec<(String, bool, Option<String>)> = {
             let recorded = recorded.lock().expect("recorded lock");
-            assert_eq!(recorded.len(), 2);
-            assert_eq!(recorded[0], ("bug-hunt".to_string(), true, None));
-            assert_eq!(
-                recorded[1],
+            recorded
+                .iter()
+                .filter(|(id, _, _)| id == "bug-hunt" || id == "tdd")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant,
+            vec![
+                ("bug-hunt".to_string(), true, None),
                 (
                     "tdd".to_string(),
                     false,
                     Some("declared dependencies not installed".to_string())
                 )
-            );
-        }
+            ],
+            "this test's two calls are recorded in order; other ids are \
+             concurrent tests firing the process-global hook"
+        );
 
         // Re-settable: a second set replaces the first.
         let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let flag = replaced_called.clone();
         set_skill_outcome_recorder(std::sync::Arc::new(move |_, _, _| {
-            *flag.lock().expect("flag lock") = true;
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
         }));
         record_skill_outcome("media-workflow", true, None);
-        assert!(*replaced_called.lock().expect("replaced lock"));
+        assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
+        let relevant_after: Vec<_> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| id == "bug-hunt" || id == "tdd" || id == "media-workflow")
+                .cloned()
+                .collect()
+        };
         assert_eq!(
-            recorded.lock().expect("recorded lock").len(),
+            relevant_after.len(),
             2,
             "the replaced recorder must no longer receive calls"
         );
+
+        // Leave the global slot inert for subsequent parallel tests.
+        set_skill_outcome_recorder(std::sync::Arc::new(|_, _, _| {}));
     }
 
     /// An injector that recalls nothing. Wiring it must be observationally

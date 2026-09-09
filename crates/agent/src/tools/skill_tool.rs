@@ -948,8 +948,16 @@ mod tests {
     /// feedback drift sensing: success on a rendered envelope, failure on
     /// missing dependencies. Not-found and authorization-denied are request
     /// errors, not skill outcomes — neither is recorded (see the
-    /// `SkillOutcomeRecorder` doc in `agent.rs`). All assertions in ONE test:
-    /// the recorder is a process-global slot parallel tests could race.
+    /// `SkillOutcomeRecorder` doc in `agent.rs`).
+    ///
+    /// Concurrency discipline: the recorder is a process-global slot and
+    /// `SkillTool::run` fires it on EVERY activation, so parallel skill_tool
+    /// tests push entries into this test's captured vec mid-flight. The
+    /// closure never panics under the lock (a panic would poison the mutex
+    /// for every later closure call), assertions snapshot-then-release before
+    /// asserting, and only entries for THIS test's skill ids (`outcome-*`) are
+    /// asserted — other ids are concurrent tests, not this test's subject.
+    /// The global slot is left inert on exit so later tests fire into a no-op.
     #[gpui::test]
     async fn test_skill_tool_records_outcome(cx: &mut TestAppContext) {
         init_test(cx);
@@ -957,11 +965,9 @@ mod tests {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
         crate::set_skill_outcome_recorder(std::sync::Arc::new(move |skill_id, success, error| {
-            captured.lock().expect("captured lock").push((
-                skill_id.to_string(),
-                success,
-                error.map(str::to_string),
-            ));
+            if let Ok(mut entries) = captured.lock() {
+                entries.push((skill_id.to_string(), success, error.map(str::to_string)));
+            }
         }));
 
         // Success path: the envelope renders → (name, true, None).
@@ -1020,9 +1026,18 @@ mod tests {
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
         assert!(task.await.is_err());
 
-        let recorded = recorded.lock().expect("recorded lock");
+        // Snapshot under the lock, release, THEN assert — an assertion panic
+        // must not poison the mutex while the closure is still installed.
+        let relevant: Vec<(String, bool, Option<String>)> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| id.starts_with("outcome-") || id == "no-such-skill")
+                .cloned()
+                .collect()
+        };
         assert_eq!(
-            *recorded,
+            relevant,
             vec![
                 ("outcome-skill".to_string(), true, None),
                 (
@@ -1031,7 +1046,12 @@ mod tests {
                     Some("declared dependencies not installed".to_string())
                 ),
             ],
-            "exactly the found-and-attempted skills are recorded — not-found is not a skill outcome"
+            "exactly the found-and-attempted skills are recorded — not-found is not a skill \
+             outcome; non-matching ids are concurrent tests firing the process-global hook"
         );
+
+        // Leave the global slot inert — later tests firing the hook must hit
+        // a no-op, not this test's captured state.
+        crate::set_skill_outcome_recorder(std::sync::Arc::new(|_, _, _| {}));
     }
 }
