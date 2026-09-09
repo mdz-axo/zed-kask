@@ -62,8 +62,18 @@ pub struct GetSwarmRequest {
 pub struct ExecuteAgentRequest {
     /// Agent name (e.g. "market_analyst").
     pub agent_name: String,
-    /// The query or task for the agent.
+    /// The query or task for the agent. Leading @mentions are stripped
+    /// (KA-06) before the POST.
     pub query: String,
+    /// The consent token from `swarm_request_consent` (action "delegate",
+    /// target = agent_name — the spend target is the agent, not a workspace).
+    /// Single-use; mutually exclusive with `session_token`.
+    pub consent_token: Option<String>,
+    /// A pre-authorized session token from `swarm_authorize_session`.
+    /// Mutually exclusive with `consent_token`.
+    pub session_token: Option<String>,
+    /// The credit cost the operator authorized.
+    pub credits_authorized: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -465,6 +475,26 @@ pub struct GetLocalAgentRequest {
 pub struct WorkflowCheckLocalRequest {
     /// The local agent whose `workflow_template` to check.
     pub agent_name: String,
+}
+
+/// Run a local agent's declared `workflow_template` end-to-end.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RunWorkflowLocalRequest {
+    /// The local agent whose `workflow_template` to run.
+    pub agent_name: String,
+    /// The task — stage 1's input. Each later stage receives its
+    /// predecessor's response verbatim (the artifact flows).
+    pub task: String,
+}
+
+/// Report the observed delegation topology — which agents' outputs have
+/// actually fed which agents' inputs — and compare it against the declared
+/// ports.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ObservedSeamsLocalRequest {
+    /// Max edges to return, most-recent-first by last observation.
+    /// Default 50.
+    pub limit: Option<usize>,
 }
 
 /// Remove a local agent card.

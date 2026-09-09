@@ -138,15 +138,15 @@ verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:153-17
 status: VERIFIED
 -->
 
-## Tool surface (82)
+## Tool surface (84)
 
-### Cloud tools (47) — ABW, defined in `cloud_swarm_tools.rs` (router at `:149`)
+### Cloud tools (48) — ABW, defined in `cloud_swarm_tools.rs` (router at `:149`)
 
 Every cloud tool calls `client.require_auth()`
-(`abw_client.rs:44-49`) except `swarm_authorize_session`. The six
+(`abw_client.rs:44-49`) except `swarm_authorize_session`. The seven
 spend-mutating tools (`swarm_hire`, `swarm_delegate`,
-`swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
-`swarm_xaman`, per `hkask_mcp_swarm.rs:62-63`) additionally route through
+`swarm_delegate_and_wait`, `swarm_fanout`, `swarm_execute_agent`,
+`swarm_create_swarm`, `swarm_xaman`) additionally route through
 the consent/session spend gate (`spend_gate.rs:1-22`).
 
 **Catalogue and workspace reads**
@@ -159,10 +159,11 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_run_status`             | run status / messages                      | `:871` |
 | `swarm_search_knowledge`       | ABW knowledge-graph search                 | `:1676` |
 | `swarm_ontology_templates`     | ontology templates                         | `:366` |
-| `swarm_execute_agent`          | one LLM call (text consult)               | `:393` |
+| `swarm_execute_agent`          | single-shot execute via the envelope route — returns fermi's trust envelope (`reliance`, enforced `document`, `grounding.stripped`, `completeness.owed`, `validation`) verbatim; spend-gated like `swarm_delegate` (consent target = agent name) | `:467` |
 | `swarm_generate_prompt`        | generate agent prompt                     | `:925` |
 | `swarm_generate_ontology`      | generate ontology                          | `:975` |
 | `swarm_publish_checks`         | pre-publish validation                     | `:1801` |
+| `swarm_update_agent`           | partial agent update (`PUT /api/agents/:id`) | `:321` |
 
 **Consent and spend**
 
@@ -221,15 +222,17 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_workspace_read_file`        | read a workspace file         | `:2894` |
 | `swarm_workspace_write_file`      | write a workspace file        | `:2941` |
 
-### Local tools (35)
+### Local tools (37)
 
 **Delegation execution — `local_tools.rs` (router at `:156`)**
 
 | Tool                          | Purpose                                              | Definition |
 | ----------------------------- | ---------------------------------------------------- | ---------- |
-| `swarm_delegate_local`        | delegate (skill cascade + tool loop; runs card-declared evaluators, `:214-240`) | `:176` |
+| `swarm_delegate_local`        | delegate (skill cascade + tool loop; runs card-declared evaluators, `:214-240`) | `:223` |
 | `swarm_fanout_local`          | fan-out; default sequential, `parallel=true` runs inference concurrently with batched debit (`:322-345`); cap `MAX_FANOUT = 10` (`local_runtime.rs:736`) | `:294` |
-| `swarm_pipeline_local`        | sequential pipeline (`{{prev_output}}` substitution; cap `MAX_PIPELINE_STEPS = 10`, `:524`) | `:509` |
+| `swarm_pipeline_local`        | sequential pipeline (`{{prev_output}}` substitution; cap `MAX_PIPELINE_STEPS = 10`); records observed delegation edges when the placeholder carries the upstream output | `:519` |
+| `swarm_run_workflow_local`    | run a declared `workflow_template` end-to-end (artifact flows verbatim between stages; stops at open slot / missing agent / failure; cap `MAX_WORKFLOW_STAGES = 10`; records observed edges) | `:797` |
+| `swarm_observed_seams_local`  | report the observed delegation topology (edges from the event store, `kind = delegation_edge`) with per-edge agreement vs declared ports (`workflow::observed_seam_agreement`) — a note, never a block | `:909` |
 | `swarm_execute_plan_local`    | execute a plan with per-step evaluators (cap `MAX_FANOUT`, `:1966`); writes the task board | `:1954` |
 | `swarm_evaluate_local`        | deterministic task-success evaluator (contains / not_contains / regex / exit_code / file_exists, `run_evaluator` `:43-81`) | `:1907` |
 | `swarm_eval_suite_local`      | eval suite over a case dataset (cap `MAX_SUITE_CASES = 10`, `:2230`) | `:2218` |

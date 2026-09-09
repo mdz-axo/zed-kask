@@ -732,18 +732,20 @@ mod smoke_tests {
 // `combined_router()`, silently registers nothing (`cargo check` passes on an
 // unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
 // `pub(crate) async fn swarm_*` signatures): 48 cloud (swarm_update_agent
-// added 2026-09-03, fermi API alignment) + 26 local (swarm_get_local_agent
-// added 2026-09-03, local parity with swarm_get_agent) +
-// 4 knowledge + 3 a2a + 1 workflow = 82 (the 3 local-ledger tools were
+// added 2026-09-03, fermi API alignment) + 28 local (swarm_get_local_agent
+// added 2026-09-03, local parity with swarm_get_agent; swarm_run_workflow_local
+// and swarm_observed_seams_local added 2026-09-09, fermi trust-evolution
+// absorption — the workflow runner and the observed-topology report) +
+// 4 knowledge + 3 a2a + 1 workflow = 84 (the 3 local-ledger tools were
 // removed with the local budget system, operator ruling 2026-09-04).
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_82_registered_tools() {
+    fn tool_surface_is_exactly_84_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 82, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 84, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree by NAME — a `name =`

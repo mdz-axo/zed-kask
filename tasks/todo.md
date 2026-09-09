@@ -83,10 +83,10 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
 ## Phase C — Make regulation acknowledgments truthful
 
-- [ ] **T07 — Report actual directive outcomes** (no dependency)
-  - [ ] Applied acknowledgments correspond to supported effects; failed/unsupported variants are distinct.
-  - [ ] Dampening does not imply application; existing cap/threshold behavior remains intact.
-  - [ ] No autonomous actuator or new authority; acknowledgment compatibility reviewed; inbox-to-event tests pass.
+- [x] **T07 — Report actual directive outcomes** (no dependency) — **verified 2026-09-09** (RED pre-fix: 4 of 8 variants persisted false "applied" acks, incl. a duplicate on the evolve request and a silently-swallowed EscalateDomain; fix: `DirectiveOutcome` truth-valuing, duplicate + catch-all + always-"applied" literal deleted; 66 tests green, clippy/fmt clean; evidence in plan.md T07)
+  - [x] Applied acknowledgments correspond to supported effects; failed/unsupported variants are distinct.
+  - [x] Dampening does not imply application; existing cap/threshold behavior remains intact.
+  - [x] No autonomous actuator or new authority; acknowledgment compatibility reviewed; inbox-to-event tests pass.
 - [ ] **T08 — Deliver explicit domain escalations** (depends on T07)
   - [ ] Domain/severity/evidence reaches the existing human-review queue/channel; both paths tested.
   - [ ] Missing/broken sinks are visible; queued/attempted/confirmed persistence is distinguished despite the current best-effort sink.

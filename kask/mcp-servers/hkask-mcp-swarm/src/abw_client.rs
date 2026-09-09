@@ -245,8 +245,9 @@ pub(crate) mod test_http {
 
     /// Read the full request (headers + content-length body) so the server
     /// can respond (or close) without leaving unread data that would turn a
-    /// clean close into a connection reset.
-    fn read_request(stream: &mut TcpStream) {
+    /// clean close into a connection reset. When `captured` is given, the
+    /// request line is recorded for route assertions.
+    fn read_request(stream: &mut TcpStream, captured: Option<&Arc<Mutex<Vec<String>>>>) {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let mut buf = [0u8; 8192];
         let mut received: Vec<u8> = Vec::new();
@@ -259,6 +260,17 @@ pub(crate) mod test_http {
                 Ok(n) => received.extend_from_slice(&buf[..n]),
             }
         };
+        if let Some(captured) = captured {
+            let request_line = String::from_utf8_lossy(&received)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            captured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(request_line);
+        }
         let headers = String::from_utf8_lossy(&received[..header_end]).to_lowercase();
         let content_length = headers
             .lines()
@@ -277,6 +289,7 @@ pub(crate) mod test_http {
         port: u16,
         shutdown: Arc<std::sync::atomic::AtomicBool>,
         requests_served: Arc<AtomicUsize>,
+        request_lines: Arc<Mutex<Vec<String>>>,
         handle: Option<std::thread::JoinHandle<()>>,
     }
 
@@ -289,9 +302,11 @@ pub(crate) mod test_http {
             let behaviors: Arc<Mutex<VecDeque<Behavior>>> =
                 Arc::new(Mutex::new(VecDeque::from(behaviors)));
             let requests_served = Arc::new(AtomicUsize::new(0));
+            let request_lines = Arc::new(Mutex::new(Vec::new()));
             let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let queue = Arc::clone(&behaviors);
             let served = Arc::clone(&requests_served);
+            let captured = Arc::clone(&request_lines);
             let shutdown_flag = Arc::clone(&shutdown);
             let handle = std::thread::spawn(move || {
                 for stream in listener.incoming() {
@@ -308,7 +323,7 @@ pub(crate) mod test_http {
                     served.fetch_add(1, Ordering::SeqCst);
                     match behavior {
                         Behavior::Respond(status, body) => {
-                            read_request(&mut stream);
+                            read_request(&mut stream, Some(&captured));
                             let response = format!(
                                 "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                                 body.len(),
@@ -321,7 +336,7 @@ pub(crate) mod test_http {
                             // Read the request fully, then close WITHOUT a
                             // response — reqwest sees a completed send and a
                             // connection that ended before any answer.
-                            read_request(&mut stream);
+                            read_request(&mut stream, Some(&captured));
                         }
                     }
                 }
@@ -330,6 +345,7 @@ pub(crate) mod test_http {
                 port,
                 shutdown,
                 requests_served,
+                request_lines,
                 handle: Some(handle),
             }
         }
@@ -342,6 +358,18 @@ pub(crate) mod test_http {
         /// How many requests the fixture actually served.
         pub(crate) fn requests_served(&self) -> usize {
             self.requests_served.load(Ordering::SeqCst)
+        }
+
+        /// The HTTP request line (e.g. `POST /agents/x/execute HTTP/1.1`)
+        /// of every served request, in serve order — so a test can pin the
+        /// ROUTE a spend-gate completion actually POSTs to. A route typo
+        /// passes every count-based assertion and fails only against the
+        // live API; this makes it fail in the fixture.
+        pub(crate) fn request_lines(&self) -> Vec<String> {
+            self.request_lines
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
         }
     }
 

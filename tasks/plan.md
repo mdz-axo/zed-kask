@@ -296,16 +296,24 @@ Acceptance:
 
 ### Phase C — Make regulation acknowledgments truthful
 
-### T07 — Report actual directive outcomes
+### T07 — Report actual directive outcomes — VERIFIED 2026-09-09
 
 **Scope:** M; curation; `hkask-regulation`. **Depends on:** none.
 **Likely files:** `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs`, existing regulation tests; acknowledgment consumers only if the recovered schema requires it.
 **Anchor:** directive inbox → application handler → acknowledgment/event sink.
 
+**Defect found (pre-fix):** every non-dampened directive persisted a `CurationDirectiveAcknowledged` record with `outcome: "applied"` regardless of what happened. Four of eight variants lied: `UpdateCapabilities` and `SeekMoreEvidence` logged only (no capability-mutation or evidence-seeking handler exists) but claimed "applied"; `EscalateDomain` was silently swallowed by the `_ => {}` catch-all AND acknowledged "applied"; `EvolveMcpToolSchema` persisted its honest `outcome: "recorded"` payload record and THEN a second, false generic "applied" record on top. No consumer parses the outcome field yet (verified by grep — schema change is safe), so the lie was pure future corruption of the audit trail.
+
+**Fix (delete the false paths, not add new ones):** `apply_directive` returns a `DirectiveOutcome` (`Applied`/`Recorded`/`LogOnly`/`Unsupported`) and `persist_directive_acknowledgment` persists that truth. The always-"applied" literal is deleted; the duplicate evolve acknowledgment is deleted (the `Recorded` arm skips the generic ack — its payload record IS the acknowledgment); the `_ => {}` catch-all is deleted in favor of explicit arms for every variant, so adding a `CuratorDirective` variant without choosing an outcome is a compile error, not a silently-ignored directive acknowledged as applied. `EscalateDomain` now honestly reports `unsupported` with a warn (T08 wires the real delivery path). Dampened directives still produce no acknowledgment (dampening ≠ application — pinned). No capability authority or autonomous actuator was added to make any acknowledgment true.
+
+**Verification (executed 2026-09-09):** RED observed pre-fix — `directive_acknowledgments_report_actual_outcomes` failed at "exactly one acknowledgment per directive" (6 records for 5 directives: the evolve false duplicate). GREEN post-fix: the full variant table through `process_inbox` with a capturing `RegulationSink` — real effects asserted on live state (override installs ceiling 5 → `(5,5)`; replenish credits 3 after consuming 8 of 10 → `(10,5)` — credit saturates at the ceiling, so the test consumes first; clear restores `(10,10)`), log-only variants report `log_only`, `escalate_domain` reports `unsupported`, the evolve request reports `recorded` exactly once with its payload. Controls: `dampened_directive_is_not_acknowledged` (repeat within the 60s window → no ack) and `persist_failure_does_not_wedge_the_inbox` (failing sink → warn, inbox drains, no panic). Suite: `cargo test -p hkask-regulation` → **66 passed, 0 failed** (63 existing + 3 new). `./script/clippy -p hkask-regulation` exit 0, zero warnings; rustfmt clean. Test-design note: the metacognitive override cooldown (120s — any metacognitive directive passing dedup suppresses ALL overrides) means the cap variants run on a second loop instance; that cooldown is existing designed dampener behavior, not the behavior under test.
+
+**Net-LOC:** +383 in `directive.rs` (+86 production: the `DirectiveOutcome` enum and the explicit per-variant arms with their why-comments; +297 test: the required variant-table evidence). The false-acknowledgment paths are deleted; the addition is the truth-valuing structure the task spec required ("failures and unsupported/log-only variants are explicitly distinguished"). No external consumers of the outcome field (grep-verified), so no compatibility review was triggered.
+
 Acceptance:
-- Applied acknowledgment requires evidence of the actual supported effect; failures and unsupported/log-only variants are explicitly distinguished.
-- Dampened input is not represented as applied; working cap/threshold operations preserve their behavior.
-- No capability authority or autonomous actuator is added to satisfy a formerly misleading acknowledgment; incompatible acknowledgment schema changes require review.
+- Applied acknowledgment requires evidence of the actual supported effect; failures and unsupported/log-only variants are explicitly distinguished. ✓
+- Dampened input is not represented as applied; working cap/threshold operations preserve their behavior. ✓ (cap operations' live-state assertions pass unchanged)
+- No capability authority or autonomous actuator is added to satisfy a formerly misleading acknowledgment; incompatible acknowledgment schema changes require review. ✓ (no consumer exists; field values changed from always-"applied" to truthful — recorded here as the review)
 
 **Verification:** table of existing directive variants through inbox processing with real state assertions and a recording event sink; handler failures must not become success.
 **Refused shortcut:** rename a log message while continuing to persist false completion.

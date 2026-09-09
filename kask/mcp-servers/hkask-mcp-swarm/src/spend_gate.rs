@@ -1,6 +1,6 @@
-//! Consent-gated spend gate — the single enforcement surface for the four
+//! Consent-gated spend gate — the single enforcement surface for the five
 //! spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
-//! `swarm_create_swarm`, `swarm_xaman`).
+//! `swarm_execute_agent`, `swarm_create_swarm`, `swarm_xaman`).
 //!
 //! Each spend follows a two-phase shape. `authorize_*` takes the RESERVATION
 //! — a single-use consent token is consumed (the consumed token IS the
@@ -365,19 +365,19 @@ pub fn authorize_delegate(
     client: &SwarmClient,
     consent: &ConsentStore,
     auth: SpendAuth<'_>,
-    workspace_id: &str,
+    target: &str,
     credits_authorized: u32,
 ) -> Result<Settlement, McpToolError> {
     let settlement = match auth {
         SpendAuth::SingleUse(token) => {
             // The consumed token IS the reservation.
             let grant = consent
-                .consume(token, "delegate", workspace_id, credits_authorized)
+                .consume(token, "delegate", target, credits_authorized)
                 .map_err(SwarmError::into_tool_error)?;
             Settlement::SingleUse {
                 refund_grant: ConsentGrant {
                     action: "delegate".to_string(),
-                    target: workspace_id.to_string(),
+                    target: target.to_string(),
                     credits_authorized: grant,
                     token: token.to_string(),
                 },
@@ -392,7 +392,7 @@ pub fn authorize_delegate(
             if u64::from(credits_authorized) > u64::from(ceiling) {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
-                    workspace = %workspace_id,
+                    spend_target = %target,
                     authorized = credits_authorized,
                     ceiling,
                     "spend_gate::authorize_delegate: authorized ceiling exceeds per-dispatch limit — refused"
@@ -431,7 +431,7 @@ pub fn authorize_delegate(
         settlement.release(consent);
         tracing::warn!(
             target: "hkask.mcp.swarm",
-            workspace = %workspace_id,
+            spend_target = %target,
             authorized,
             ceiling,
             "spend_gate::authorize_delegate: authorized ceiling exceeds per-dispatch limit — refused"
@@ -465,6 +465,41 @@ pub(crate) async fn complete_delegate(
         .post(
             &format!("/workspaces/{}/messages", url_encode_segment(workspace_id)),
             &serde_json::json!({ "content": format!("@{} {}", agent_name, task_clean) }),
+        )
+        .await;
+    match result {
+        Ok(data) => {
+            // Success: the reservation IS the spend.
+            drop(reservation.take());
+            Ok(data)
+        }
+        Err(e) => {
+            let held = reservation.take();
+            settle_dispatch_failure(consent, held, e).map_err(SwarmError::into_tool_error)
+        }
+    }
+}
+
+/// Execute the single-shot execute POST (`POST /api/agents/:id/execute` —
+/// fermi's envelope route), settling under the same T05 policy as
+/// `complete_delegate`. Distinct from the @mention route on purpose: the
+/// execute route is the only one that returns the trust envelope
+/// (`reliance`, `grounding`, `completeness`, `validation`, the enforced
+/// `document`), so a caller that needs the verdict delegates through here;
+/// a caller that needs workspace chat context keeps `complete_delegate`.
+pub(crate) async fn complete_execute(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    reservation: Settlement,
+    agent_name: &str,
+    query: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let mut reservation = Some(reservation);
+    let query_clean = crate::sanitize::strip_leading_mentions(query);
+    let result = client
+        .post(
+            &format!("/agents/{}/execute", url_encode_segment(agent_name)),
+            &serde_json::json!({ "query": query_clean }),
         )
         .await;
     match result {
@@ -674,7 +709,107 @@ mod tests {
         assert_eq!(
             remaining(&store, &session),
             10,
-            "ABW's rejection proves the dispatch did not land"
+            "proven never-landed releases the reservation"
+        );
+    }
+
+    /// The execute completion POSTs to the envelope route
+    /// (`/agents/:id/execute`) — not the @mention route — and returns the
+    /// trust envelope verbatim. A route typo here passes every count-based
+    /// assertion and fails only against live fermi, so the route is pinned
+    /// from the fixture's captured request line, and the envelope fields
+    /// (`reliance`, `document`, `grounding`, `completeness`) are asserted
+    /// to survive the completion untouched — the caller branches on them.
+    #[tokio::test]
+    async fn complete_execute_posts_the_envelope_route_and_passes_it_through() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let session = store.open_session(10, &[]).expect("session");
+        let envelope = serde_json::json!({
+            "agent_id": "market_analyst",
+            "reliance": { "status": "unchecked", "why": "no contract was applied" },
+            "status": "Success",
+            "document": { "items": [] },
+            "grounding": { "amended": false, "stripped": [], "violations": 0 },
+            "completeness": { "asked_for": 8, "filled": 7, "owed": [], "no_data": 1 },
+            "validation": { "type": null, "status": "unverified_no_schema", "violations": [] },
+            "credits_charged": 2
+        });
+        let server = FixtureServer::start(vec![Behavior::Respond(200, envelope.to_string())]);
+        let client = test_client(&server.base_url());
+        let auth = authorize_delegate(
+            &client,
+            &store,
+            SpendAuth::Session(&session),
+            "market_analyst",
+            10,
+        )
+        .expect("reserved");
+        let data = complete_execute(&client, &store, auth, "market_analyst", "the query")
+            .await
+            .expect("execute succeeds");
+        // The route is the envelope route — the whole reason this completion
+        // exists separately from `complete_delegate`. The client's base path
+        // carries the `/api` prefix (fermi's route table:
+        // `/api/agents/*/execute`).
+        assert_eq!(
+            server.request_lines(),
+            vec!["POST /api/agents/market_analyst/execute HTTP/1.1".to_string()],
+            "the execute completion must POST the envelope route"
+        );
+        // The envelope passes through verbatim — the completion never
+        // re-derives, filters, or flattens what fermi computed.
+        assert_eq!(
+            data.pointer("/reliance/status").and_then(|v| v.as_str()),
+            Some("unchecked")
+        );
+        assert_eq!(
+            data.pointer("/grounding/amended").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            data.pointer("/completeness/no_data")
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert!(
+            data.get("document").is_some(),
+            "the enforced document travels"
+        );
+        assert_eq!(
+            remaining(&store, &session),
+            0,
+            "success: the reservation IS the spend"
+        );
+    }
+
+    /// T05 applies to the execute route exactly as to the @mention route: a
+    /// proven pre-dispatch failure (connection refused) releases the
+    /// reservation. Proves the settlement wiring, not just the POST.
+    #[tokio::test]
+    async fn execute_connection_refused_releases_session_reservation() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let session = store.open_session(10, &[]).expect("session");
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = probe.local_addr().expect("addr").port();
+        drop(probe);
+        let client = test_client(&format!("http://127.0.0.1:{port}"));
+        let auth = authorize_delegate(
+            &client,
+            &store,
+            SpendAuth::Session(&session),
+            "market_analyst",
+            10,
+        )
+        .expect("reserved");
+        let _ = complete_execute(&client, &store, auth, "market_analyst", "the query")
+            .await
+            .expect_err("connection refused is an error");
+        assert_eq!(
+            remaining(&store, &session),
+            10,
+            "proven never-sent releases the reservation"
         );
     }
 

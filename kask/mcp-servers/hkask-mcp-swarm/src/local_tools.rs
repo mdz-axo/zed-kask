@@ -80,6 +80,57 @@ async fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bo
     }
 }
 
+/// The event kind for one observed delegation edge — the fact that one
+/// agent's output flowed into another agent's input. Written by every
+/// surface that pipes artifacts between agents (pipeline steps, the
+/// workflow runner) and read by `swarm_observed_seams_local`.
+pub(crate) const DELEGATION_EDGE_EVENT_KIND: &str = "delegation_edge";
+
+/// Record one observed delegation edge to the event store. One producer of
+/// the payload shape: every write site goes through here so the
+/// observed-seams report can rely on the fields. Non-fatal by the stats
+/// contract (an observation is an enhancement, not a dependency — the
+/// delegation is the product): a store that cannot open or an append that
+/// fails is `warn`-ed, never fails the delegation. The read side surfaces
+/// store unavailability as an error, so a silent gap cannot read as
+/// "no edges observed".
+fn record_delegation_edge(
+    lazy_store: &crate::local_runtime::LazyEventStore,
+    rollout_id: &str,
+    from_agent: &str,
+    to_agent: &str,
+    via: &str,
+) {
+    let store = match lazy_store.get_or_init() {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                %error,
+                "delegation edge not recorded — event store unavailable"
+            );
+            return;
+        }
+    };
+    if let Err(error) = store.append(
+        rollout_id,
+        DELEGATION_EDGE_EVENT_KIND,
+        &serde_json::json!({
+            "from_agent": from_agent,
+            "to_agent": to_agent,
+            "via": via,
+        }),
+    ) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            %error,
+            from = %from_agent,
+            to = %to_agent,
+            "delegation edge append failed"
+        );
+    }
+}
+
 /// Build the per-task report for one `swarm_eval_agent_local` task. Pure —
 /// takes the counted outcomes, returns the JSON entry. Extracted so the
 /// pass-rate and standard-error math is unit-testable without inference.
@@ -490,7 +541,11 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             let mut results = Vec::new();
             let mut prev_output = String::new();
+            let mut prev_agent: Option<String> = None;
             let mut total_tokens = 0i64;
+            // One rollout id per pipeline run — the event-store grouping for
+            // the observed delegation edges this run records.
+            let rollout_id = format!("pipeline-{}", chrono::Utc::now().timestamp_millis());
             for (i, step) in req.steps.iter().enumerate() {
                 // Substitute {prev_output} with the previous step's response.
                 let task = if i == 0 {
@@ -511,6 +566,22 @@ impl SwarmServer {
                     }));
                     break; // pipeline stops on agent-not-found
                 };
+                // Observed delegation edge: the previous step's output flowed
+                // into this dispatch (the {prev_output} placeholder was
+                // present, so the artifact travelled). Recorded at dispatch —
+                // a step that runs and fails still received the artifact, so
+                // the edge is real (fermi's parent_episode_id semantics).
+                if i > 0 && step.task.contains("{prev_output}") {
+                    if let Some(from) = &prev_agent {
+                        record_delegation_edge(
+                            &self.event_store,
+                            &rollout_id,
+                            from,
+                            &step.agent_name,
+                            "pipeline",
+                        );
+                    }
+                }
                 match runtime.delegate(&agent, &task).await {
                     Ok(r) => {
                         self.validate_produces(&step.agent_name, &agent.produces, &r.response);
@@ -531,6 +602,7 @@ impl SwarmServer {
                         )
                         .await;
                         prev_output = r.response.clone();
+                        prev_agent = Some(step.agent_name.clone());
                         total_tokens += r.tokens_used;
                         let mut entry = r.to_result_json(false);
                         entry["step"] = serde_json::json!(i);
@@ -705,6 +777,226 @@ impl SwarmServer {
             });
             serde_json::to_value(&report)
                 .map_err(|e| McpToolError::internal(format!("failed to serialize report: {e}")))
+        })
+        .await
+    }
+
+    /// Run a local agent's declared `workflow_template` end-to-end — the
+    /// execution counterpart of `swarm_workflow_check_local`, built on the
+    /// same pure functions (`workflow::run_workflow`). Sequential stages;
+    /// the artifact flows verbatim (fermi's `coordination_graph` feeding
+    /// rule — stage 1 receives the task, each later stage its
+    /// predecessor's response). Stops at the first open slot (the outcome
+    /// names it — fill the slot and re-run), missing agent, or failed
+    /// stage; prior outcomes are kept. Each downstream dispatch that
+    /// carries upstream output records an observed delegation edge to the
+    /// event store (`swarm_observed_seams_local` reads them).
+    #[tool(
+        description = "Run a local agent's declared workflow_template end-to-end. Stage 1 receives the task; each later stage receives its predecessor's response verbatim. Stops at the first open slot (named in the outcome — fill it and re-run), missing agent, or failed stage; prior outcomes are kept. Records observed delegation edges to the event store for swarm_observed_seams_local. Returns the check report (slot resolution + seam notes), per-stage outcomes, and the final output. Per-agent execution stats (tokens, latency) accumulate on each agent's card via swarm_get_local_agent."
+    )]
+    pub(crate) async fn swarm_run_workflow_local(
+        &self,
+        parameters: Parameters<RunWorkflowLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_run_workflow_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and task must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            let Some(template) = &card.workflow_template else {
+                return Ok(serde_json::json!({
+                    "agent_id": req.agent_name,
+                    "workflow": serde_json::Value::Null,
+                    "note": "agent declares no workflow_template",
+                }));
+            };
+            const MAX_WORKFLOW_STAGES: usize = 10;
+            if template.stages.len() > MAX_WORKFLOW_STAGES {
+                return Err(McpToolError::invalid_argument(format!(
+                    "workflow cap is {MAX_WORKFLOW_STAGES} stages, got {}",
+                    template.stages.len()
+                )));
+            }
+            // The check report rides along — the caller sees the slot
+            // resolution and seam notes for the run they just executed,
+            // from the same pure functions the check tool uses.
+            let registry = self.local_registry.clone();
+            let report = crate::workflow::check_workflow(&req.agent_name, template, |agent_id| {
+                registry
+                    .get(agent_id)
+                    .map(|card| (card.accepts.clone(), card.produces))
+            });
+            let rollout_id = format!(
+                "workflow-{}-{}",
+                req.agent_name,
+                chrono::Utc::now().timestamp_millis()
+            );
+            // The delegate closure resolves the card and runs the runtime's
+            // delegate loop; the runner owns the flow semantics (verbatim
+            // artifact, stop conditions, edge timing).
+            let delegate_registry = self.local_registry.clone();
+            let outcomes = crate::workflow::run_workflow(
+                template,
+                &req.task,
+                |agent_id| {
+                    delegate_registry
+                        .get(agent_id)
+                        .map(|card| (card.accepts.clone(), card.produces))
+                },
+                |agent_id, task| {
+                    let agent_id = agent_id.to_string();
+                    let task = task.to_string();
+                    let registry = &delegate_registry;
+                    async move {
+                        let agent = registry.get(&agent_id).ok_or_else(|| {
+                            format!("agent '{agent_id}' not found in local registry")
+                        })?;
+                        runtime
+                            .delegate(&agent, &task)
+                            .await
+                            .map(|result| result.response)
+                            .map_err(|error| error.to_string())
+                    }
+                },
+                |from, to| {
+                    record_delegation_edge(&self.event_store, &rollout_id, from, to, "workflow")
+                },
+            )
+            .await;
+            let stages_completed = outcomes.iter().filter(|outcome| outcome.ok).count();
+            let final_output = outcomes
+                .iter()
+                .rev()
+                .find(|outcome| outcome.ok)
+                .and_then(|outcome| outcome.response.clone());
+            Ok(serde_json::json!({
+                "agent_id": req.agent_name,
+                "check": report,
+                "stages": outcomes,
+                "stages_completed": stages_completed,
+                "final_output": final_output,
+                "rollout_id": rollout_id,
+            }))
+        })
+        .await
+    }
+
+    /// Report the observed delegation topology — which local agents'
+    /// outputs have actually flowed into which agents' inputs — and
+    /// compare each edge against the two cards' declared ports. The local
+    /// analog of fermi's `port_trust::OBSERVED_SEAMS_SQL` + `seam_agreement`:
+    /// fermi measured that declared ports predict NONE of the real
+    /// hand-offs (3 of 3 production compositions had zero label overlap),
+    /// so `undeclared` is the norm, not a fault — the report is a note,
+    /// never a block. Edges accumulate as `swarm_pipeline_local` and
+    /// `swarm_run_workflow_local` dispatch with upstream output.
+    #[tool(
+        description = "Report the observed delegation topology: which local agents' outputs have actually flowed into which agents' inputs (edges recorded at dispatch by swarm_pipeline_local and swarm_run_workflow_local), aggregated as from/to/hops/last_seen/via, each compared against the two cards' declared ports. Agreement is 'declared' when upstream produces overlaps downstream accepts (empty ports are permissive — absence is not contradiction), 'undeclared' otherwise, 'unknown_agent' when a card has since been removed. fermi measured that declared ports predict none of the real hand-offs, so 'undeclared' is the norm, not a fault. Read-only."
+    )]
+    pub(crate) async fn swarm_observed_seams_local(
+        &self,
+        parameters: Parameters<ObservedSeamsLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_observed_seams_local", async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(50).max(1);
+            // The store IS the data source here — unavailability is an
+            // error, not an empty report (the broken-feedback-loop trap: a
+            // DB outage must not read as "no edges observed").
+            let store = self
+                .event_store
+                .get_or_init()
+                .map_err(map_local_swarm_error)?;
+            let events = store
+                .query(&hkask_event_store::EventFilter {
+                    kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                    ..Default::default()
+                })
+                .map_err(|error| {
+                    McpToolError::internal(format!("event store query failed: {error}"))
+                })?;
+            // Aggregate (from, to) → hops, last_seen, via set.
+            let mut aggregated: std::collections::BTreeMap<
+                (String, String),
+                (usize, String, std::collections::BTreeSet<String>),
+            > = std::collections::BTreeMap::new();
+            for event in &events {
+                let Some(from) = event.payload.get("from_agent").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(to) = event.payload.get("to_agent").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let via = event
+                    .payload
+                    .get("via")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let entry = aggregated
+                    .entry((from.to_string(), to.to_string()))
+                    .or_insert((0, event.created_at.clone(), Default::default()));
+                entry.0 += 1;
+                if event.created_at > entry.1 {
+                    entry.1 = event.created_at.clone();
+                }
+                entry.2.insert(via);
+            }
+            let mut edges: Vec<serde_json::Value> = aggregated
+                .into_iter()
+                .map(|((from, to), (hops, last_seen, via))| {
+                    // Compare against the declared ports — the same pure
+                    // function the seam checks use, so the permissive-empty
+                    // rule and the overlap test cannot drift between the
+                    // two surfaces.
+                    let registry = &self.local_registry;
+                    let (agreement, note) =
+                        crate::workflow::observed_seam_agreement(&from, &to, |agent_id| {
+                            registry
+                                .get(agent_id)
+                                .map(|card| (card.accepts.clone(), card.produces))
+                        });
+                    serde_json::json!({
+                        "from_agent": from,
+                        "to_agent": to,
+                        "hops": hops,
+                        "last_seen": last_seen,
+                        "via": via.into_iter().collect::<Vec<_>>(),
+                        "agreement": agreement,
+                        "note": note,
+                    })
+                })
+                .collect();
+            // Most recently observed first.
+            edges.sort_by(|a, b| {
+                let a_seen = a.get("last_seen").and_then(|v| v.as_str()).unwrap_or("");
+                let b_seen = b.get("last_seen").and_then(|v| v.as_str()).unwrap_or("");
+                b_seen.cmp(a_seen)
+            });
+            let total_edges = edges.len();
+            edges.truncate(limit);
+            Ok(serde_json::json!({
+                "edges": edges,
+                "total_edges": total_edges,
+                "returned": limit.min(total_edges),
+                "note": "Observed edges are the fact; declared ports are the aspiration. \
+                         fermi measured 3 of 3 production hand-offs with zero declared-label \
+                         overlap — 'undeclared' is the norm, not a fault. The report is a \
+                         note, never a block.",
+            }))
         })
         .await
     }
@@ -2964,6 +3256,56 @@ mod tests {
         assert_eq!(report["repeats"], 3);
         let rate = report["pass_rate"].as_f64().unwrap();
         assert!((rate - 1.0 / 3.0).abs() < 1e-12);
+    }
+
+    /// The observed-seams data plane: edges written by
+    /// `record_delegation_edge` must be queryable by kind with the payload
+    /// shape intact — the read tool's aggregation is only as good as this
+    /// round trip. A payload-shape drift between writer and reader would
+    /// silently produce empty reports (the vacuity fermi's
+    /// `the_seam_comparison_can_see_a_match` guard exists to prevent).
+    #[test]
+    fn delegation_edges_round_trip_through_the_event_store() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = crate::local_runtime::LazyEventStore::lazy(
+            dir.path().join("events.db").to_string_lossy().to_string(),
+        );
+        record_delegation_edge(&store, "pipeline-1", "research", "writer", "pipeline");
+        record_delegation_edge(&store, "pipeline-1", "research", "writer", "pipeline");
+        record_delegation_edge(&store, "workflow-2", "research", "critic", "workflow");
+        let opened = store.get_or_init().expect("event store opens");
+        let events = opened
+            .query(&hkask_event_store::EventFilter {
+                kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                ..Default::default()
+            })
+            .expect("query by kind");
+        assert_eq!(events.len(), 3, "every edge is queryable by kind");
+        let first = &events[0];
+        assert_eq!(first.rollout_id, "pipeline-1");
+        assert_eq!(
+            first.payload.get("from_agent").and_then(|v| v.as_str()),
+            Some("research")
+        );
+        assert_eq!(
+            first.payload.get("to_agent").and_then(|v| v.as_str()),
+            Some("writer")
+        );
+        assert_eq!(
+            first.payload.get("via").and_then(|v| v.as_str()),
+            Some("pipeline")
+        );
+        // A non-edge event in the same store must not leak into the report.
+        opened
+            .append("other-rollout", "model_request", &serde_json::json!({}))
+            .expect("append unrelated event");
+        let only_edges = opened
+            .query(&hkask_event_store::EventFilter {
+                kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                ..Default::default()
+            })
+            .expect("query again");
+        assert_eq!(only_edges.len(), 3, "the kind filter is exact");
     }
 
     #[test]

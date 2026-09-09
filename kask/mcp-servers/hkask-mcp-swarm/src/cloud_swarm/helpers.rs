@@ -153,66 +153,6 @@ pub fn unsupported_create_fields(req: &CreateAgentRequest) -> Vec<&'static str> 
     unsupported
 }
 
-/// Extract the agent's textual output from an ABW execute-agent response.
-///
-/// Fermi's `execute_agent_handler` returns the agent's narrative in
-/// `metadata.reasoning` and structured findings in `evidence[]`; it does
-/// not emit a top-level `response` field. Older ABW deploys used a
-/// top-level `response` string. This helper tries the current shape first,
-/// falls back to evidence summaries, then to the legacy `response` field,
-/// so the extraction works against both current `main` and older deploys.
-pub fn extract_execute_response(data: &serde_json::Value) -> Option<String> {
-    // Current fermi shape: metadata.reasoning (the LLM's narrative output).
-    if let Some(reasoning) = data
-        .get("metadata")
-        .and_then(|m| m.get("reasoning"))
-        .and_then(|r| r.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return Some(reasoning.to_string());
-    }
-    // Fallback: join evidence summaries + key findings (structured output).
-    if let Some(evidence) = data.get("evidence").and_then(|e| e.as_array()) {
-        let parts: Vec<String> = evidence
-            .iter()
-            .filter_map(|e| {
-                let mut bits: Vec<String> = Vec::new();
-                if let Some(s) = e
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    bits.push(s.to_string());
-                }
-                if let Some(kf) = e.get("key_findings").and_then(|v| v.as_array()) {
-                    for f in kf {
-                        if let Some(t) = f.as_str().filter(|s| !s.is_empty()) {
-                            bits.push(t.to_string());
-                        }
-                    }
-                }
-                if bits.is_empty() {
-                    None
-                } else {
-                    Some(bits.join("\n"))
-                }
-            })
-            .collect();
-        if !parts.is_empty() {
-            return Some(parts.join("\n\n"));
-        }
-    }
-    // Legacy: top-level `response` string (older ABW deploys).
-    if let Some(resp) = data
-        .get("response")
-        .and_then(|r| r.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return Some(resp.to_string());
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

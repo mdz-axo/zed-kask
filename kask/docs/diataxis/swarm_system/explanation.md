@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-08-28
+last_updated: 2026-09-09
 version: "2.0.0"
 status: "Active"
 domain: "Swarm"
@@ -244,6 +244,61 @@ Task with the response as an Artifact (`a2a.rs:1-12`). An HTTP binding
 cross-machine communication — the types are already wire-compatible
 (`hkask_mcp_swarm.rs:330-366`).
 
+## The fermi trust-evolution absorption (2026-09-09)
+
+fermi's 56-commit wave (62c434f6..1468f18b) hardened its verification and
+coordination model. This section records what zed-kask adopted, what it
+deliberately deferred with named triggers, and why — so a future session
+reading fermi's `completeness.rs` or `reliance.rs` does not port them
+before their prerequisites exist (fermi's own rule: *a contract cannot
+name a source that does not exist* — a check the platform cannot run reads
+as coverage and is worse than no check).
+
+**Adopted** (prerequisites existed):
+
+- **The trust envelope on cloud delegation.** fermi computes `reliance` —
+  one token for "can I use this answer?" — plus the enforced `document`,
+  `grounding.stripped`, and `completeness.owed` on its execute route.
+  zed-kask's `swarm_execute_agent` previously extracted the narrative and
+  discarded the verdicts (the "grade then discard" disease one layer out)
+  and bypassed the spend gate. It now passes the envelope through
+  verbatim after sanitization and routes through the consent gate
+  (target = agent name). The @mention path (`swarm_delegate`) keeps raw
+  chat content by design — it serves workspace-embedded flows.
+- **The workflow runner.** `workflow.rs`'s pure functions gained their
+  promised consumer: `swarm_run_workflow_local` executes a declared
+  `workflow_template` sequentially, the artifact flowing verbatim between
+  stages (fermi's `coordination_graph` feeding rule). Open slots and
+  missing agents stop the run with named outcomes.
+- **The observed topology.** fermi measured that declared ports predict
+  NONE of the real hand-offs (3 of 3 production compositions had zero
+  label overlap), so the declared-only seam check reports the norm as a
+  mismatch. Delegation edges (agent A's output fed agent B's input) are
+  now recorded at dispatch — by `swarm_pipeline_local` when the
+  `{prev_output}` placeholder carries the upstream output, and by the
+  workflow runner between stages — and `swarm_observed_seams_local`
+  reports them with per-edge agreement against the declared ports. The
+  edge is recorded at dispatch, not success: a downstream agent that ran
+  and failed still received the artifact (fermi's `parent_episode_id`
+  semantics). Observed is the fact; declared is the aspiration; the
+  report is a note, never a block.
+
+**Deferred, with triggers** (porting before the trigger is theatre):
+
+| fermi piece | trigger that unblocks it | why it waits |
+| --- | --- | --- |
+| `completeness.rs` / `grounding_trust` gates on local delegation | the panel authors typed-tier output contracts (`contract.rs` excludes them today — "a blocking check the form cannot satisfy would be theatre") | a gate needs a contract to check against; local cards declare none |
+| `reliance.rs` one-token verdict locally | the row above lands | one signal (`task_success`) has no combination problem; the vocabulary is adopted so the first local verification surface emits one token from day one |
+| `fleet_digest.rs` three-tier meta-agent awareness | the local fleet grows past listing size | `swarm_list_local_agents` suffices today; the discipline (registry-first answers, name-what-you-don't-know, staleness anchor) is adopted as a rule regardless |
+| `select_agent` competition | measured verdict volume per agent justifies ranking (run the count first) | with a handful of stamped verdicts per agent, ranking is noise — fermi's own §4.4 lesson is measure before promoting |
+
+**Adopted as discipline** (rules, not modules): subject + machine-stable
+reason on every verdict/decision record (fermi's gate-ledger lesson — a
+record that cannot say what it was about cannot be reviewed); one producer
+of the verdict, everything else reads it; registry-first fleet answers for
+the Curator (the `biotech_analyst` confabulation incident); break-script
+falsification for new guards.
+
 ## Source citations
 
 | Concept                          | Location                                                                |
@@ -268,3 +323,8 @@ cross-machine communication — the types are already wire-compatible
 | `MAX_TOOL_ROUNDS`                | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:22`              |
 | Spend gate two-phase shape       | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:1-22`                |
 | Session budget (Loop C gain)     | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:583`          |
+| Trust envelope passthrough      | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:446-531`; `spend_gate.rs` `complete_execute` |
+| Workflow runner (pure closures)  | `kask/mcp-servers/hkask-mcp-swarm/src/workflow.rs` `run_workflow`        |
+| Observed delegation edges       | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs` `record_delegation_edge`, `DELEGATION_EDGE_EVENT_KIND` |
+| Observed-seam agreement         | `kask/mcp-servers/hkask-mcp-swarm/src/workflow.rs` `observed_seam_agreement` |
+| fermi reference (upstream)       | `Clones/fermi` 62c434f6..1468f18b: `src/reliance.rs`, `src/completeness.rs`, `src/port_trust.rs`, `src/agent_backend/coordination_graph.rs`, `docs/plans/WHAT_THE_PLATFORM_CAN_REFUSE.md`, `docs/architecture/META_AGENT_FLEET_AWARENESS.md` |

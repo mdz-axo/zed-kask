@@ -21,7 +21,7 @@ pub(crate) mod strategy_evaluator;
 pub(crate) mod system_simulator;
 
 pub(crate) mod runtime;
-pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
+pub use algedonic::{AlertEmailSink, AlertEscalationSink, AlertQueueOutcome, RuntimeAlert};
 pub use cybernetics_loop::{CyberneticsLoop, RolloutEventError, RolloutEventSource};
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};

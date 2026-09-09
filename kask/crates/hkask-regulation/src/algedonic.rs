@@ -85,10 +85,47 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
 /// Implementations must be non-blocking and best-effort — a failing or missing
 /// sink never breaks the regulation loop. The sole caller is
 /// `CyberneticsLoop::act` / `verify_impact`, which runs inside `Tokio::spawn`.
+/// The durable-write outcome of [`AlertEscalationSink::try_persist_alert`].
+/// The three states are distinct so an explicit escalation's acknowledgment
+/// never conflates confirmed, attempted, and failed delivery.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlertQueueOutcome {
+    /// The alert is confirmed in the reviewable queue. Carries the
+    /// queue-assigned escalation id when the write inserted a new row;
+    /// `None` when an existing pending row was updated in place
+    /// (superseded — no new id exists).
+    Confirmed(Option<String>),
+    /// The alert was handed to a best-effort sink that cannot report
+    /// whether the durable write succeeded.
+    Attempted,
+}
+
 pub trait AlertEscalationSink: Send + Sync {
     /// Compare durable triggering conditions with fresh observations each tick.
     /// Missing observations must never resolve an escalation.
     fn reconcile_conditions(&self, _observations: &[crate::loops::Signal]) {}
+
+    /// Persist an alert to the reviewable escalation queue, reporting the
+    /// durable-write outcome — the reporting variant of `persist_alert`.
+    ///
+    /// Returns `Ok(Confirmed(id))` when the write is verified (id when the
+    /// sink can report one), `Ok(Attempted)` for best-effort sinks that
+    /// cannot report, and `Err` when the write failed. The default falls
+    /// back to best-effort `persist_alert` and returns `Ok(Attempted)`, so
+    /// existing sinks keep their contract; sinks backed by a durable queue
+    /// should override to report the truth.
+    ///
+    /// Errors are logged by the caller and never propagated — alert
+    /// persistence is best-effort, never a correctness path.
+    fn try_persist_alert(
+        &self,
+        output: &str,
+        confidence: f64,
+        error_context: &str,
+    ) -> Result<AlertQueueOutcome, String> {
+        self.persist_alert(output, confidence, error_context);
+        Ok(AlertQueueOutcome::Attempted)
+    }
 
     /// Persist an alert to the reviewable escalation queue.
     ///

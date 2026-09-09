@@ -177,20 +177,22 @@ impl BridgeAlertEscalationSink {
     }
 }
 
-impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
-    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
-        self.reconcile_conditions_at(observations, chrono::Utc::now());
-    }
-
-    fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
-        // Supersede at the source: a pending escalation for the same
-        // condition is updated in place (latest output/context,
-        // retry_count+1) instead of appending a duplicate row per re-sensed
-        // cycle. The condition key strips the per-cycle value
-        // (`alert_condition`), so a persistent deficit — whose embedded
-        // value changes every tick — updates ONE reviewable row rather than
-        // flooding the queue. The operator reviews that row; when they
-        // resolve or dismiss it, the next cycle inserts a fresh one.
+impl BridgeAlertEscalationSink {
+    /// The reporting core both `persist_alert` and `try_persist_alert`
+    /// delegate to. Supersede at the source: a pending escalation for the
+    /// same condition is updated in place (latest output/context,
+    /// retry_count+1) instead of appending a duplicate row per re-sensed
+    /// cycle. The condition key strips the per-cycle value
+    /// (`alert_condition`), so a persistent deficit — whose embedded
+    /// value changes every tick — updates ONE reviewable row rather than
+    /// flooding the queue. The operator reviews that row; when they
+    /// resolve or dismiss it, the next cycle inserts a fresh one.
+    fn persist_alert_reporting(
+        &self,
+        output: &str,
+        confidence: f64,
+        error_context: &str,
+    ) -> Result<hkask_regulation::AlertQueueOutcome, String> {
         let condition = hkask_regulation::alert_condition(output);
         match self.queue.supersede_pending_by_condition(
             condition,
@@ -203,7 +205,9 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                     target: "reg.alert",
                     "Superseded pending escalation — condition re-fired while pending"
                 );
-                return;
+                // The row is confirmed in the queue; a supersede updates the
+                // existing entry, so no new id exists to report.
+                return Ok(hkask_regulation::AlertQueueOutcome::Confirmed(None));
             }
             Ok(false) => {} // no existing pending — insert below
             Err(e) => {
@@ -223,20 +227,28 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
         // fields are preserved in `error_context` (JSON).
         let template_id = hkask_types::TemplateID::new();
         let bot_id = hkask_types::BotID::new();
-        match self.queue.add(
-            template_id,
-            bot_id,
-            output.to_string(),
-            confidence,
-            0,
-            error_context.to_string(),
-        ) {
-            Ok(id) => {
-                tracing::debug!(
-                    target: "reg.alert",
-                    escalation_id = %id,
-                    "Algedonic alert persisted to escalation queue"
-                );
+        match self
+            .queue
+            .add(
+                template_id,
+                bot_id,
+                output.to_string(),
+                confidence,
+                0,
+                error_context.to_string(),
+            )
+            .map(|id| hkask_regulation::AlertQueueOutcome::Confirmed(Some(id.to_string())))
+            .map_err(|e| e.to_string())
+        {
+            Ok(outcome) => {
+                if let hkask_regulation::AlertQueueOutcome::Confirmed(Some(ref id)) = outcome {
+                    tracing::debug!(
+                        target: "reg.alert",
+                        escalation_id = %id,
+                        "Algedonic alert persisted to escalation queue"
+                    );
+                }
+                Ok(outcome)
             }
             Err(e) => {
                 tracing::warn!(
@@ -244,8 +256,30 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                     error = %e,
                     "Failed to persist algedonic alert to escalation queue"
                 );
+                Err(e)
             }
         }
+    }
+}
+
+impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
+    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+        self.reconcile_conditions_at(observations, chrono::Utc::now());
+    }
+
+    fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
+        // Best-effort: the outcome is logged inside the reporting core and
+        // discarded here — the legacy contract.
+        let _ = self.persist_alert_reporting(output, confidence, error_context);
+    }
+
+    fn try_persist_alert(
+        &self,
+        output: &str,
+        confidence: f64,
+        error_context: &str,
+    ) -> Result<hkask_regulation::AlertQueueOutcome, String> {
+        self.persist_alert_reporting(output, confidence, error_context)
     }
 
     fn has_pending_alert(&self, output: &str) -> bool {
@@ -310,7 +344,85 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_regulation::AlertEscalationSink as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn in_memory_queue() -> Arc<hkask_storage::EscalationQueue> {
+        Arc::new(
+            hkask_storage::EscalationQueue::from_driver(
+                hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+            )
+            .expect("queue"),
+        )
+    }
+
+    /// T08: `try_persist_alert` reports the durable-write truth against a
+    /// real queue — a new insert is Confirmed with the row's id and the row
+    /// is readable with the exact payload; a re-fired condition supersedes
+    /// the pending row (Confirmed, no new id) instead of duplicating it.
+    #[test]
+    fn try_persist_alert_reports_confirmed_insert_and_supersede() {
+        let queue = in_memory_queue();
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+        let context =
+            serde_json::json!({"explicit": true, "domain": "storage", "severity": "warning", "evidence": "variety deficit"})
+                .to_string();
+
+        // First delivery: confirmed insert with a readable id.
+        let first = sink
+            .try_persist_alert(
+                "Explicit escalation (storage, warning) — first",
+                0.5,
+                &context,
+            )
+            .expect("insert");
+        let hkask_regulation::AlertQueueOutcome::Confirmed(Some(id)) = first else {
+            panic!("a fresh insert must report Confirmed with the row id: {first:?}")
+        };
+        let entry = queue.get(&id).expect("get").expect("entry");
+        assert_eq!(
+            entry.output,
+            "Explicit escalation (storage, warning) — first"
+        );
+        assert_eq!(entry.confidence, 0.5);
+
+        // Same condition re-fired: the pending row is superseded in place —
+        // confirmed in queue, no new id, still exactly one pending row.
+        let second = sink
+            .try_persist_alert(
+                "Explicit escalation (storage, warning) — updated",
+                0.5,
+                &context,
+            )
+            .expect("supersede");
+        assert_eq!(
+            second,
+            hkask_regulation::AlertQueueOutcome::Confirmed(None),
+            "a supersede updates the existing row — confirmed, no new id"
+        );
+        let pending = queue.list_pending().expect("pending");
+        assert_eq!(pending.len(), 1, "supersede must not duplicate the row");
+        assert_eq!(
+            pending[0].output,
+            "Explicit escalation (storage, warning) — updated"
+        );
+    }
+
+    /// T08 control: the legacy best-effort `persist_alert` still writes
+    /// through the same core (its outcome is logged inside, not returned).
+    #[test]
+    fn persist_alert_still_writes_through_the_reporting_core() {
+        let queue = in_memory_queue();
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+        sink.persist_alert(
+            "Explicit escalation (storage, critical) — legacy",
+            1.0,
+            "{}",
+        );
+        let pending = queue.list_pending().expect("pending");
+        assert_eq!(pending.len(), 1, "the legacy path must still write the row");
+        assert_eq!(pending[0].confidence, 1.0);
+    }
 
     fn reliability(
         value: f64,

@@ -22,8 +22,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 // Re-export the pure helpers from `cloud` so the `test_utils` module and
 // any internal callers can reach them at the crate root.
 pub use crate::cloud_swarm::{
-    build_agent_update_payload, build_create_agent_card, extract_execute_response,
-    unsupported_create_fields, valence_payload,
+    build_agent_update_payload, build_create_agent_card, unsupported_create_fields, valence_payload,
 };
 
 /// Map one ABW catalogue agent (fermi `build_agent_json`) into the trimmed
@@ -443,9 +442,27 @@ impl SwarmServer {
         .await
     }
 
-    /// Run a text-only consultation with an ABW agent (token fees apply).
+    /// Execute an ABW agent single-shot via the execute route — the envelope
+    /// route. fermi's `POST /api/agents/:id/execute` is the only surface that
+    /// returns the trust envelope: `reliance` (one token for "can I use this
+    /// answer?"), the enforced `document`, `grounding.stripped` (what was
+    /// removed and why), `completeness.owed` (what the agent skipped), and
+    /// `validation`. The @mention path (`swarm_delegate`) returns raw chat
+    /// content and none of these — use this tool when the caller needs to
+    /// know whether the answer was amended; use `swarm_delegate` when the
+    /// task belongs in the workspace chat (context, other agents, the run
+    /// log).
+    ///
+    /// The pre-envelope body of this tool extracted the narrative
+    /// (`metadata.reasoning`) and forwarded four scalar fields — the exact
+    /// "grade then discard the verdict" shape fermi's
+    /// `WHAT_THE_PLATFORM_CAN_REFUSE` §1 documents one layer out: fermi
+    /// amended the document and this wrapper handed back prose with no
+    /// notice of what was stripped. It also bypassed the spend gate — the
+    /// route charges the caller's wallet, so the consent gate applies
+    /// exactly as it does to `swarm_delegate`.
     #[tool(
-        description = "Execute an Agent Bestiary World agent with a query (single turn, no tools — text consultation). Costs token fees. Requires API key; the agent's owner must have funded it."
+        description = "Execute an ABW agent single-shot via the execute route (POST /api/agents/:id/execute) and return the trust envelope: reliance.status (unusable|malformed|amended|incomplete|unchecked|clean — one token for 'can I use this answer?', derived by fermi so the caller does not re-derive it), the enforced document, grounding.stripped (fields removed for having no possible source), completeness.owed (fields the agent skipped), validation.status, metadata.reasoning (amended prose), credits_charged. Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = agent_name) or a session token."
     )]
     pub(crate) async fn swarm_execute_agent(
         &self,
@@ -461,37 +478,42 @@ impl SwarmServer {
                     "agent_name and query must be non-empty".to_string(),
                 ));
             }
-
-            let data = self
-                .client
-                .post(
-                    &format!("/agents/{}/execute", url_encode_segment(&req.agent_name)),
-                    &serde_json::json!({ "query": req.query }),
-                )
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-
-            // Fermi's execute handler returns the agent's output in
-            // `metadata.reasoning` and `evidence[]`, not a top-level
-            // `response` field. `extract_execute_response` handles the
-            // current shape, the evidence fallback, and the legacy
-            // `response` field for older deploys.
-            let response_text = extract_execute_response(&data);
-            let response_value = response_text
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null);
+            // Same consent gate as @mention delegation: the execute route
+            // charges the caller's wallet (fermi's execute_agent_handler
+            // checks the wallet before running), so the operator's
+            // authorization applies identically. The consent target is the
+            // agent — the spend's subject.
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.agent_name,
+                req.credits_authorized,
+            )?;
+            let data = spend_gate::complete_execute(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.agent_name,
+                &req.query,
+            )
+            .await?;
+            // The envelope is passed through after sanitization — never
+            // re-derived or flattened. fermi computed `reliance` from the
+            // grounding/completeness/validation verdicts so the caller does
+            // not have to (one producer of the verdict); filtering or
+            // recomposing it here would be a second producer that can
+            // disagree with the blocks it summarises.
+            let sanitized = sanitize_workspace_payload(data);
             Ok(self
                 .client
                 .with_wallet(serde_json::json!({
-                    "agent_name": req.agent_name,
-                    "response": sanitize_abw_response(Some(&response_value)),
-                    // Forward the structured fields fermi emits so the
-                    // caller sees status, cost, and confidence alongside
-                    // the narrative.
-                    "status": data.get("status"),
-                    "confidence": data.get("confidence"),
-                    "episode_id": data.get("episode_id"),
-                    "credits_charged": data.get("credits_charged"),
+                    "executed_agent": req.agent_name,
+                    "credits_authorized": req.credits_authorized,
+                    "result": sanitized,
                 }))
                 .await)
         })

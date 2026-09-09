@@ -9,7 +9,7 @@
 //!
 //! Sub-modules:
 //! - `helpers` — pure functions (`build_create_agent_card`,
-//!   `extract_execute_response`) with their property tests.
+//!   `build_agent_update_payload`) with their property tests.
 //! - `curator` — the Xaman Ek `CuratorSession` refund guard.
 
 pub mod curator;
@@ -18,6 +18,5 @@ pub mod helpers;
 // Re-export the pure helpers so `cloud_swarm_tools.rs` and `test_utils` can import
 // them from `cloud` without reaching into the sub-module.
 pub use helpers::{
-    build_agent_update_payload, build_create_agent_card, extract_execute_response,
-    unsupported_create_fields, valence_payload,
+    build_agent_update_payload, build_create_agent_card, unsupported_create_fields, valence_payload,
 };
