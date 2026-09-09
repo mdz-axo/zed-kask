@@ -1,6 +1,6 @@
 ---
 name: company-research-flash
-description: "Equity research flash pipeline (EFRA-AI conversion). Sequential 23-step process: SCOUT alpha score → INTEL + earnings listening + semantic classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA + calibration gap → LENS five-framework audit → convergence check → PERSIST → CONDENSE ≤1000-word note. Early-exit gates DROP/HALT/BLOCK. Converges on LENS verdict consistency."
+description: "Equity research flash pipeline (EFRA-AI conversion). 23-step process: SCOUT alpha score → INTEL + earnings listening + semantic classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA + calibration gap → LENS five-framework audit → convergence check → PERSIST → CONDENSE ≤1000-word note. Early-exit gates DROP/HALT/BLOCK. Converges on LENS verdict consistency."
 ---
 
 # Company Research — Flash Pipeline

@@ -1,7 +1,7 @@
 ---
 name: principle-constraints
 core: false
-description: "Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers. Each constraint carries an assertion, an enforced_at location (file:line or UNKNOWN), a falsifier (a test that must exist and pass), and a status (enforced | gap | unverified). Constraints without a located enforcement path are flagged as gaps — the gap is the skill's highest-value output. The output is a proposal for human review. Sibling to constraint-forces-recast (generates concepts satisfying a constraint set); this skill generates the constraint set from a principle."
+description: "Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers. Each carries an assertion, an enforced_at location (file:line or UNKNOWN), a falsifier (a test that must exist and pass), and a status (enforced | gap | unverified). Constraints without a located enforcement path are gaps — the gap is the highest-value output. The output is a proposal for human review. Sibling to constraint-forces-recast; this skill generates the constraint set from a principle."
 ---
 
 

@@ -31,7 +31,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 6. Note risks and unknowns; surface every assumption as an open question rather than silently resolving it.
 7. Schedule high-risk areas early so they can be addressed first (fail fast).
 8. When `prior_outcome` is present (v0.31.0, τ_t extrinsic exploratory experience): use completion/rework/blocked rates and `plan_followed` to calibrate granularity, AC specificity, and dependency thoroughness. Do not fabricate outcome patterns.
-9. When `prior_operator_feedback` is present (v0.31.0, e_t intrinsic evaluative feedback): calibrate toward the operator's accepted style; note overridden tasks, rejection reasons, and `corrected_fields` direction. Do not let operator preference override evidence-based decomposition principles — note conflicts rather than complying.
+9. When `prior_operator_feedback` is present (v0.31.0, e_t intrinsic evaluative feedback): calibrate toward the operator's accepted style; note overridden tasks, rejection reasons, and `corrected_fields` direction. The operator records these dispositions via the `record_skill_feedback` tool (accept/reject with an optional reason — the note is the payload this step reads as `prior_operator_feedback`). Do not let operator preference override evidence-based decomposition principles — note conflicts rather than complying.
 10. Produce a JSON object with `context_summary`, `dependency_graph` (node, depends_on, depth, notes), `risks` (risk, impact, mitigation), and `open_questions`.
 
 ### task-breakdown-decompose

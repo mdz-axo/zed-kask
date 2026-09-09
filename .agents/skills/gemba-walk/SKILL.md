@@ -50,7 +50,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 1. Render the `gemba-walk/synthesize-briefing` template to structure the three signal channels into a coherent briefing.
 2. The briefing has four sections: system health summary, algedonic alert digest, escalation backlog digest, per-skill performance digest.
 3. Each per-skill entry includes issue count, recent failure patterns, and a health classification (healthy / watch / intervene).
-4. The briefing explicitly notes when skill feedback spans (outcome, operator_feedback) are not available via MCP — this is a known gap, not a silent omission.
+4. The briefing explicitly notes when skill feedback spans (outcome, operator_feedback) are not exposed for reading via MCP — this is a known gap, not a silent omission. (Both span writers are wired — skill outcomes and operator feedback are recorded to the RegulationLedger; only the read surface is missing.)
 
 ### PRESENT — Render briefing (step 3)
 
@@ -86,7 +86,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT execute refinement actions — it only recommends.
 - Ground every claim in the raw signal data. Do not fabricate alerts, escalations, or skill issues that are not present in the inputs.
 - If a signal channel returned an error or empty result, note it in the briefing — do not silently omit it.
-- Skill feedback spans (outcome, operator_feedback, convergence) live in the in-memory RegulationLedger and are not exposed via MCP. The skill uses `curator_consult` as a proxy signal (skill-use issue reports are persisted to the curator's memory).
+- Skill feedback spans (outcome, operator_feedback, convergence) are recorded to the in-memory RegulationLedger (the outcome and operator_feedback writers are both wired — the direct `record_skill_feedback` tool and the advice-apply bridge), but the ledger is not exposed for reading via MCP. The skill uses `curator_consult` as a proxy signal (skill-use issue reports are persisted to the curator's memory).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Design References

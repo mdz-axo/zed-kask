@@ -213,6 +213,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
                 id: id.clone(),
                 operator_confirmed: confirmed,
                 action_note: note.into(),
+                skill_id: None,
             }))
             .await
             .expect_err("confirmation required");
@@ -223,6 +224,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
             id: "absent".into(),
             operator_confirmed: true,
             action_note: "done".into(),
+            skill_id: None,
         }))
         .await
         .expect_err("missing");
@@ -247,6 +249,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
                 id: invalid.to_string(),
                 operator_confirmed: true,
                 action_note: "done".into(),
+                skill_id: None,
             }))
             .await
             .expect_err("unmeasurable");
@@ -258,6 +261,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
                 id: id.clone(),
                 operator_confirmed: true,
                 action_note: "repaired service".into(),
+                skill_id: None,
             }))
             .await
             .expect("apply"),
@@ -269,6 +273,7 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
                 id: id.clone(),
                 operator_confirmed: true,
                 action_note: "repeat".into(),
+                skill_id: None,
             }))
             .await
             .expect("idempotent"),
@@ -306,6 +311,102 @@ async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
     assert_eq!(
         reviews["reviews"][0]["application"]["action_note"],
         "repaired service"
+    );
+}
+
+/// expect: "An advice-apply naming a skill persists the skill in the
+/// escalation context and echoes it in the response — the durable half of
+/// the T15 operator-feedback record; an apply without one adds nothing" [P9]
+#[tokio::test]
+async fn advice_apply_persists_and_echoes_skill_feedback() {
+    let queue =
+        Arc::new(EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("queue"));
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::from_stores(CuratorStores {
+            escalation_queue: Some(queue.clone()),
+            regulation_store: None,
+            memory: None,
+        })),
+        failing_inference_port(),
+    );
+    let trigger = serde_json::json!({"source":"cybernetics", "metric":"tool_reliability", "value":0.2, "set_point":0.8, "timestamp":chrono::Utc::now()});
+    let trigger: hkask_regulation::Signal =
+        serde_json::from_value(trigger).expect("signal fixture");
+
+    // An apply naming a skill: the skill is persisted in the escalation
+    // context (the durable record the curator owns) and echoed in the
+    // response (the value the editor-side bridge parses to fire the
+    // operator-feedback span).
+    let with_skill = queue
+        .add(
+            hkask_types::TemplateID::new(),
+            hkask_types::BotID::new(),
+            "reliability".into(),
+            1.0,
+            0,
+            serde_json::json!({"recovery_signal":trigger}).to_string(),
+        )
+        .expect("add")
+        .to_string();
+    let response = parse(
+        &server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: with_skill.clone(),
+                operator_confirmed: true,
+                action_note: "accepted the rank-32 recommendation".into(),
+                skill_id: Some("lora-training".into()),
+            }))
+            .await
+            .expect("apply"),
+    );
+    assert_eq!(response["skill_id"], "lora-training");
+    let context: serde_json::Value = serde_json::from_str(
+        &queue
+            .get(&with_skill)
+            .expect("get")
+            .expect("entry")
+            .error_context,
+    )
+    .expect("context json");
+    assert_eq!(context["skill_id"], "lora-training");
+
+    // An apply without a skill: the response echoes null and the context
+    // carries no skill_id key — nothing new is recorded.
+    let without_skill = queue
+        .add(
+            hkask_types::TemplateID::new(),
+            hkask_types::BotID::new(),
+            "reliability".into(),
+            1.0,
+            0,
+            serde_json::json!({"recovery_signal":trigger}).to_string(),
+        )
+        .expect("add")
+        .to_string();
+    let response = parse(
+        &server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: without_skill.clone(),
+                operator_confirmed: true,
+                action_note: "repaired service".into(),
+                skill_id: None,
+            }))
+            .await
+            .expect("apply"),
+    );
+    assert_eq!(response["skill_id"], serde_json::Value::Null);
+    let context: serde_json::Value = serde_json::from_str(
+        &queue
+            .get(&without_skill)
+            .expect("get")
+            .expect("entry")
+            .error_context,
+    )
+    .expect("context json");
+    assert!(
+        context.get("skill_id").is_none(),
+        "an apply without a skill must not fabricate one: {context}"
     );
 }
 
