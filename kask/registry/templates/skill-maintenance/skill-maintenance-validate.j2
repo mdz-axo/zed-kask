@@ -82,11 +82,9 @@ only canonical actions; non-canonical actions cause runtime errors.
 | ID | Check | Pass Criteria | Severity |
 |----|-------|---------------|----------|
 | E1 | Action compliance | Every step's `action` is one of: `select`, `populate`, `compute`, `execute`, `feedback`, `validate`, `retrieve`, `render`, `loop`, `choice`, `abort`, `escalate`. No `evaluate`, `run_command`, `classify`, `mcp_tool`, `check`, `call`, `emit`, `recall`, `record`, or other non-canonical actions. | Critical |
-| E2 | rJoule block present | Manifest has an `rjoule:` block. If any step uses `action: select` (inference), `rjoule.cap` must be > 0. Cap proportional to inference calls: 1-2 for simple skills, 3-5 for multi-step, 5+ for media generation. | Critical |
 | E3 | Convergence block | For `category: skill` manifests: `convergence:` block with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` ("abort", "escalate", or "proceed"). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`. Legacy fields `threshold` and `convergence_field` are deprecated but tolerated. | Critical |
 | E4 | Category valid | `manifest.category` is one of: `skill`, `qa-script`, `runtime-config`, `daemon-process`, `pipeline`. Only `skill` manifests are agent-invokable. | Critical |
 | E5 | Template ref resolvable | Every `template_ref` (that is not a runtime-resolved `{% raw %}{{...}}{% endraw %}` or `{% raw %}${...}{% endraw %}` expression) resolves to an embedded `.j2` or `.yaml` file in `registry/templates/`. | Critical |
-| E6 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest must have an `rjoule` block in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
 | E7 | Step description | Every step has a non-empty `description` field. | Critical |
 | E8 | Ordinal sequence | Step ordinals are sequential starting from 1 (or 0 for pre-processing steps). | Medium |
 | E9 | Ledger span namespace | `ledger.span_namespace` is present and equals `reg.skill.<manifest.id>` (the literal string `reg.skill.` + the manifest's `id`). The abolished `spans:` list MUST NOT be present in the `ledger:` block. | Critical |

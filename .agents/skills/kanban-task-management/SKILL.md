@@ -1,7 +1,7 @@
 ---
 name: kanban-task-management
 core: true
-description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn config and rJoule budgeting, monitor boards, coordinate agents, verify completion, and escalate."
+description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn configuration, monitor boards, coordinate agents, verify completion, and escalate."
 ---
 
 # Kanban Task Management
@@ -97,7 +97,7 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 | `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
 | `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
 | `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
-| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope, rJoule budget, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
+| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
 | `execute-task.j2` | Execute a delegated task within its approved configuration. Includes post-step instructions for the agent to call kanban_task_comment and kanban_task_add_deliverable. Phase: delegate. |
 | `monitor-board.j2` | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
 | `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |

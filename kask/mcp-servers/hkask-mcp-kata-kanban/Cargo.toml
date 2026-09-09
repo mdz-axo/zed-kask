@@ -15,7 +15,7 @@ hkask-inference.workspace = true
 # Brier the prediction-markets calibration store uses.
 hkask-forecast.workspace = true
 # Local swarm delegation — kanban_task_spawn delegates to local agents via the
-# shared local-swarm runtime (ledger + inference + guard + agent executor).
+# shared local-swarm runtime (inference + guard + agent executor).
 hkask-mcp-swarm.workspace = true
 # PKO execution-status mapping for task status transitions (the shared
 # vocabulary bridge — kanban_status_to_pko_execution).

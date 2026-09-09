@@ -202,27 +202,7 @@ pub fn authorize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abw_client::test_http::{Behavior, FixtureServer};
-    use crate::config::SwarmConfig;
-
-    fn test_client(base_url: &str) -> SwarmClient {
-        SwarmClient::new(
-            reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .expect("test client"),
-            SwarmConfig {
-                api_base_url: base_url.to_string(),
-                api_key: None,
-                ..SwarmConfig::default()
-            },
-        )
-    }
-
-    fn sqlite_store(dir: &tempfile::TempDir) -> ConsentStore {
-        ConsentStore::open_sqlite(dir.path().join("curate.db").to_str().expect("path"))
-            .expect("consent store")
-    }
+    use crate::abw_client::test_http::{Behavior, FixtureServer, sqlite_store, test_client};
 
     /// The curate token is single-use with cost 0 — the reservation is the
     /// consumed token gating content sent to the third-party curator.

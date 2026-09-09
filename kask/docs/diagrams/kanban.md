@@ -29,13 +29,9 @@ one exception is `KanbanService::task_reopen`, which moves Done→InProgress
 directly (skipping Review) as an explicit rework escape hatch — the only
 sanctioned multi-step transition.
 
-Budget exhaustion (`task_gas_exhaust` / `task_rjoule_exhaust`) moves a task
-to Done from InProgress or Review regardless of the one-step rule, stamping a
-failed verification.
-
 **Correction (2026-08-28):** `task_reopen` moved from
-`kanban/service_impl/dejam.rs` to `kanban/service_impl/service.rs` — the
-diagram itself is unchanged.
+`kanban/service_impl/dejam.rs` to `kanban/service_impl/service.rs` —
+the diagram itself is unchanged.
 
 ```mermaid
 stateDiagram-v2
@@ -49,8 +45,6 @@ stateDiagram-v2
     Review --> InProgress : regress
     Review --> Done : advance
     Done --> InProgress : task_reopen (rework escape hatch)
-    InProgress --> Done : budget exhausted (rJoule)
-    Review --> Done : budget exhausted (rJoule)
     Done --> [*] : task archived
 ```
 

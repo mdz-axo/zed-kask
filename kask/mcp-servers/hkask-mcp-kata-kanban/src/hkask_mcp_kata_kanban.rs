@@ -52,9 +52,8 @@ hkask_mcp_server::mcp_server!(
     pub struct KanbanServer {
         pub service: KanbanService,
         /// Local swarm runtime — kanban_task_spawn delegates task execution to a
-        /// local agent (ledger-funded inference + guard + skill execution). Shared
-        /// ledger path with hkask-mcp-swarm so operator funding is reusable.
-        /// Used as the fallback when the worktree spawn port is unavailable.
+        /// local agent (inference + guard + skill execution). Used as the
+        /// fallback when the worktree spawn port is unavailable.
         pub local_runtime: Arc<LazyLocalSwarmRuntime>,
         /// Local agent registry — reusable expert agents (cards on disk). When a
         /// spawn's `delegated_skills` are covered by an existing card, it is

@@ -269,13 +269,14 @@ For every proposed move:
   (the compound agent auto-hires its team, but the required dependencies must
   exist in the catalogue).
 {% if mode == "local" %}
-- **Cost awareness**: each `swarm_delegate_local` call costs 1 credit per
-  1000 tokens, capped at `credits_authorized`. No hire cost —
-  `swarm_create_local_agent` creates a card for free (no `swarm_hire_local` tool,
-  §15.1.1 rejected). Record estimated_credits per move as the
-  `credits_authorized` the operator should set for the call.
+- **Cost awareness**: local delegation has no credit cost — it runs on the
+  operator's own substrate (no local budget, operator ruling 2026-09-04).
+  No hire cost — `swarm_create_local_agent` creates a card for free (no
+  `swarm_hire_local` tool, §15.1.1 rejected). Record `tokens_used` and
+  `latency_ms` per move as the cost signal; there is no `credits_authorized`
+  to set.
 {% else %}
-- **rJoule awareness** (verified live 2026-08-02): own-agent hire via `/add` is
+- **Credit awareness** (verified live 2026-08-02): own-agent hire via `/add` is
   a flat 2 cr fee; third-party `/hire` is a flat 5 cr base (quote `total` =
   base + required + optional); each @mention 1 cr + tokens, each delegation
   1 cr + tokens. Record estimated_credits per move.

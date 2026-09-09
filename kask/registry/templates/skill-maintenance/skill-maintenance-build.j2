@@ -92,11 +92,6 @@ convergence:
   convergence_field: step_N_result.convergence_metric  # last step's convergence field
   on_not_reached: escalate  # "abort" or "escalate"
 
-rjoule:
-  cap: 2                   # proportional to inference calls: 1-2 simple, 3-5 multi-step, 5+ media. 0 if no inference.
-  alert_threshold: 0.8
-  hard_limit: true
-
 steps:
   - ordinal: 1
     action: select          # render .j2 + inference + parse JSON
@@ -151,15 +146,6 @@ ledger:
 | `choice` | Branch on condition |
 | `abort` | Exit with success (converged) |
 | `escalate` | Exit with error (blocked) |
-
-### rJoule Budget Guidelines
-
-| Skill complexity | Step count | rjoule.cap |
-|-----------------|-----------|------------|
-| Simple (1-2 templates) | 1-3 | 1-2 |
-| Multi-step process | 4-7 | 3-5 |
-| Media generation | 5+ | 5+ |
-| Infrastructure (no inference) | any | 0 |
 
 ## Step 2: Derive SKILL.md Companion
 
@@ -224,7 +210,6 @@ Respond with a JSON object:
     "contract_valid": true,
     "vocabulary_coverage": true,
     "actions_canonical": true,
-    "rjoule_block_present": true,
     "convergence_block_present": true
   }
 }
@@ -236,8 +221,6 @@ Respond with a JSON object:
 - The process manifest (registry/manifests/<name>.yaml) is mandatory for every skill.
 - Every .j2 template must have a contract with structured input and output types.
 - Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, loop, choice, abort, escalate).
-- The process manifest must have a `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
-- The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.
 - The process manifest must have a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (CI-enforced). The `spans:` list is abolished — do not add it.
 - Every `lisp.eval` compute step must have a non-empty `form` string in `input_mapping` (E12). The `form` must use only supported special forms (`quote`, `if`, `let`, `lambda`, `define`, `begin`, `and`, `or`, `not`) and builtins (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`, `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`, `numberp`, `assoc`, `append`, `string=`, `concat`). `=` is numeric-only; string equality uses `string=`. String concatenation uses `concat`. List concatenation uses `append`. Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`) (E14).

@@ -54,7 +54,6 @@ capability types live in their owning domain crates.
 | `ChatMessage`                                         | Foundation inference message type (`role` + `content`)             |
 | `LLMParameters`                                       | Temperature, top_p, max_tokens configuration                       |
 | `ToolTaint`                                           | FIDES IFC label for MCP tools (Source/Sink/Pure/Endorser)          |
-| `RJoule`                                              | Energy/gas unit newtype over `u64`                                 |
 
 ## Usage
 

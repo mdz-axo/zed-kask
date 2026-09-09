@@ -97,7 +97,7 @@ These instructions are for the agent running the skill, not for the template's L
 1. Call `kanban_task_verify` with `{"task_id": "...", "evidence": "[oracle: <verification_tier>] " + reasoning}`. The tier prefix records the verification provenance on the task. This records the verification result and (if passed) advances the task to `done`.
 2. If `passed` is true, call `kanban_task_move` with `{"task_id": "...", "target_status": "done"}` to advance the task to Done (the verify call may do this automatically, but the move is idempotent).
 3. If `passed` is false, call `kanban_task_comment` with the per-criterion feedback so the assigned agent can see what to fix. Then call `kanban_task_move` with `{"target_status": "in_progress"}` to return the task to InProgress.
-4. If the task needs rework after being returned, call `kanban_task_reopen` with optional new rjoule budgets if the agent needs more resources.
+4. If a completed task needs rework, call `kanban_task_reopen` to move it back to InProgress.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 {% endif %}

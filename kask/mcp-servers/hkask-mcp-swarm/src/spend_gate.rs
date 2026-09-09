@@ -521,29 +521,7 @@ pub fn authorize_curate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abw_client::test_http::{Behavior, FixtureServer};
-    use crate::config::SwarmConfig;
-
-    fn test_client(base_url: &str) -> SwarmClient {
-        SwarmClient::new(
-            reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .expect("test client"),
-            SwarmConfig {
-                api_base_url: base_url.to_string(),
-                api_key: None,
-                ..SwarmConfig::default()
-            },
-        )
-    }
-
-    /// Two stores on one SQLite file model two server instances sharing the
-    /// consent DB (the panel flow and the tool flow).
-    fn sqlite_store(dir: &tempfile::TempDir) -> ConsentStore {
-        ConsentStore::open_sqlite(dir.path().join("consent.db").to_str().expect("path"))
-            .expect("consent store")
-    }
+    use crate::abw_client::test_http::{Behavior, FixtureServer, sqlite_store, test_client};
 
     /// Read a live session's remaining balance without deducting anything:
     /// `consume_session` with cost 0 validates and returns the balance.

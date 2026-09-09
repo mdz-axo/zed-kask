@@ -219,9 +219,14 @@ impl SwarmClient {
 /// Bounded local HTTP fixture for spend-gate settlement tests — the
 /// "barrier-controlled bounded HTTP fixture" the reliability plan requires.
 /// Serves a fixed sequence of behaviors, one per connection, then stops.
-/// Never contacts any real provider.
+/// Never contacts any real provider. Also hosts the shared settlement-test
+/// fixtures: a keyless `SwarmClient` constructor and a SQLite `ConsentStore`
+/// opener, so the spend-gate and curator suites share one construction.
 #[cfg(test)]
 pub(crate) mod test_http {
+    use super::SwarmClient;
+    use crate::config::SwarmConfig;
+    use crate::consent::ConsentStore;
     use std::collections::VecDeque;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -352,5 +357,29 @@ pub(crate) mod test_http {
                 let _ = handle.join();
             }
         }
+    }
+
+    /// A keyless `SwarmClient` pointed at `base_url` with a short timeout —
+    /// the shared construction for settlement tests.
+    pub(crate) fn test_client(base_url: &str) -> SwarmClient {
+        SwarmClient::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+                .expect("test client"),
+            SwarmConfig {
+                api_base_url: base_url.to_string(),
+                api_key: None,
+                ..SwarmConfig::default()
+            },
+        )
+    }
+
+    /// A SQLite-backed consent store in `dir`. Two stores opened on one
+    /// file model two server instances sharing the consent DB (the panel
+    /// flow and the tool flow).
+    pub(crate) fn sqlite_store(dir: &tempfile::TempDir) -> ConsentStore {
+        ConsentStore::open_sqlite(dir.path().join("consent.db").to_str().expect("path"))
+            .expect("consent store")
     }
 }
