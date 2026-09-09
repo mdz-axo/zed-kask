@@ -1,61 +1,8 @@
 {# goal: Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. #}
-# Logo Formal Prompt — Bokhua-Inspired Generation (KnowAct)
-# Core generation prompt. Every logo flow delegates to this template.
-# Gate system from Bokhua's Principles of Logo Design (2022).
+{# Logo formal prompt — Bokhua-inspired generation. Core generation
+   prompt; every logo flow delegates to this template. Gate system from
+   Bokhua's Principles of Logo Design (2022). #}
 
-[inference]
-template_type: KnowAct
-name: media_logo_formal_prompt
-version: "1.0.0"
-description: "Generate a professional logo from formal design parameters using Bokhua's five design gates"
-model_type: default
-parameters:
-  - name: name
-    type: string
-    required: true
-    description: "Business or group name"
-  - name: tagline
-    type: string
-    required: false
-    description: "Optional tagline or motto"
-  - name: industry
-    type: string
-    required: false
-    description: "Industry context"
-  - name: style
-    type: enum
-    values: [minimal, modern, playful, corporate, vintage, luxury, tech, handmade, bold, elegant]
-    default: minimal
-    description: "Visual style direction"
-  - name: logo_type
-    type: enum
-    values: [wordmark, lettermark, emblem, abstract, combination, mascot]
-    default: wordmark
-    description: "Type of logo mark"
-  - name: palette
-    type: string
-    required: false
-    description: "Hex colors or named palette"
-  - name: dominant_shape
-    type: enum
-    values: [circle, square, triangle, organic, line-based, negative-space]
-    required: false
-    description: "Dominant geometric shape language"
-  - name: density
-    type: enum
-    values: [sparse, balanced, dense]
-    default: balanced
-    description: "Visual density of the mark"
-  - name: typography_class
-    type: enum
-    values: [serif, sans-serif, slab, script, display, geometric]
-    required: false
-    description: "Typography class for wordmarks/lettermarks"
-  - name: generation_model
-    type: string
-    required: false
-    description: "Image generation model (see logo-builder SKILL.md §6 for selection guidance)"
----
 Design a professional logo for a {% if industry %}{{ industry }}{% else %}business{% endif %} called "{{ name }}"{% if tagline %}, with the tagline "{{ tagline }}"{% endif %}.
 
 ## Design Parameters

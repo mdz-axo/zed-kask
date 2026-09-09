@@ -111,9 +111,11 @@ impl AgentTool for RenderTemplateTool {
             // Strip YAML frontmatter (--- delimited header).
             let template_body = strip_frontmatter(&content);
 
-            // Build minijinja environment and render.
-            let env = minijinja::Environment::new();
-            // Add a loader for inline template — we render the body directly.
+            // Build minijinja environment and render. The loader resolves
+            // `{% include %}` names against the registry root — a bare
+            // render_str environment has no templates, so includes fail.
+            let mut env = minijinja::Environment::new();
+            bind_registry_loader(&mut env, &base_path);
             let result = env.render_str(&template_body, &input.context).map_err(|e| {
                 RenderTemplateToolOutput::Error {
                     error: format!("Template rendering failed: {e}"),
@@ -295,6 +297,35 @@ fn strip_frontmatter(content: &str) -> String {
     working.trim().to_string()
 }
 
+/// Bind a loader that resolves `{% include %}` names against the registry
+/// templates base, so shared fragments (e.g. coding-guidelines/anti-patterns.j2)
+/// are reachable from the templates that include them. Included templates get
+/// the same frontmatter stripping as the top-level render, so a fragment's
+/// `[inference]` header never leaks into the rendered prompt. Names that
+/// escape the base directory resolve to not-found — the same traversal
+/// boundary as `resolve_template_path` (canonicalize + starts_with).
+fn bind_registry_loader(env: &mut minijinja::Environment<'_>, base: &std::path::Path) {
+    let Ok(base) = base.canonicalize() else {
+        // Unreadable base — includes simply don't resolve, as before.
+        return;
+    };
+    env.set_loader(move |name| {
+        if name.contains("..") || name.starts_with('/') {
+            return Ok(None);
+        }
+        let Ok(canonical) = base.join(name).canonicalize() else {
+            return Ok(None);
+        };
+        if !canonical.starts_with(&base) {
+            return Ok(None);
+        }
+        match std::fs::read_to_string(&canonical) {
+            Ok(content) => Ok(Some(strip_frontmatter(&content))),
+            Err(_) => Ok(None),
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +415,58 @@ mod tests {
         let rendered = env.render_str(&result, &()).unwrap();
         assert!(rendered.contains("You are a kanban task management triage agent."));
         assert!(!rendered.contains("{#"));
+    }
+
+    #[test]
+    fn test_include_resolves_fragment_within_registry() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let mut env = minijinja::Environment::new();
+        bind_registry_loader(&mut env, &base);
+        let rendered = env
+            .render_str(
+                "{% include \"coding-guidelines/anti-patterns.j2\" %}",
+                serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(rendered.contains("Unsolicited docstring/formatting changes"));
+    }
+
+    #[test]
+    fn test_include_strips_included_template_header() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let mut env = minijinja::Environment::new();
+        bind_registry_loader(&mut env, &base);
+        let rendered = env
+            .render_str(
+                "{% include \"kanban-task-management/triage.j2\" %}",
+                serde_json::json!({}),
+            )
+            .unwrap();
+        // The included template's [inference] header and contract are
+        // stripped exactly as a top-level render would.
+        assert!(!rendered.contains("[inference]"));
+        assert!(!rendered.contains("contract:"));
+        assert!(rendered.contains("You are a kanban task management triage agent."));
+    }
+
+    #[test]
+    fn test_include_traversal_is_blocked() {
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let mut env = minijinja::Environment::new();
+        bind_registry_loader(&mut env, &base);
+        // A traversal name resolves to not-found → render error, never a
+        // file outside the registry.
+        let result = env.render_str("{% include \"../../Cargo.toml\" %}", serde_json::json!({}));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -499,7 +582,18 @@ mod corpus_sweep_tests {
             // tdd-tracer's "verify the contract: it enforces…").
             for (idx, line) in stripped.lines().take(5).enumerate() {
                 let trimmed_line = line.trim();
-                if trimmed_line.starts_with("visibility:") || trimmed_line.starts_with("contract:")
+                if trimmed_line.starts_with("visibility:")
+                    || trimmed_line.starts_with("contract:")
+                    // Bracketed header markers: the algedonic templates'
+                    // TOML-style [contract] block leaked wholesale when the
+                    // header lacked its `---` terminator (fixed 2026-09-09).
+                    || trimmed_line.starts_with("[contract]")
+                    || trimmed_line.starts_with("[/contract]")
+                    // Manifest residue: a KnowAct-style manifest block after
+                    // leading comments survives stripping (the
+                    // logo-formal-prompt leak, fixed 2026-09-09) and always
+                    // carries template_type: first.
+                    || trimmed_line.starts_with("template_type:")
                 {
                     leaked.push(format!(
                         "{}: line {} leaked header metadata `{}`",

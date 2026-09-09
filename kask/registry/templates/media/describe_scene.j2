@@ -1,18 +1,9 @@
-# Media Gallery — Scene Description Manifest
-# Generates a detailed scene description using a vision LLM.
+{# Shadow copy of the embedded constant DESCRIBE_SCENE in
+   hkask-mcp-media/src/templates.rs — the media server compiles its templates
+   into the binary; this file is the render_template-reachable reference.
+   Edit both or neither. #}
+{# Media Gallery — scene description: subject, setting, lighting, mood. #}
 
-[inference]
-template_type: WordAct
-name: media_describe_scene
-version: "1.0.0"
-description: "Describe the full scene: subject, setting, lighting, mood"
-model_type: classifier
-parameters:
-  - name: style
-    type: enum
-    values: [descriptive, artistic, technical, alt_text]
-    default: descriptive
----
 {% if style == "descriptive" %}
 Describe this image in detail. Cover the subject, setting, lighting, colors, composition, mood, and any notable details. Write 2-4 sentences.
 

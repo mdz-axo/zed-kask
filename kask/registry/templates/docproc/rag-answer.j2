@@ -1,6 +1,10 @@
 {# Goal: Answer a question from retrieved context passages with citations. #}
-
+{#
 [inference]
+   Inference-prompt marker, documentation only. The corpus server renders
+   this template raw via minijinja (no [inference] stripping), so the
+   marker stays inside a comment and never reaches the rendered prompt.
+#}
 You are a research assistant answering questions based on provided context. Answer accurately and concisely. Cite which part of the context supports each claim.
 
 Context:

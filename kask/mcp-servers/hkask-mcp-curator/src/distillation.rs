@@ -1123,9 +1123,7 @@ mod tests {
             })
             .expect("turn 12");
         assert!(
-            throughs
-                .iter()
-                .any(|through| *through == turn12.observed_at),
+            throughs.contains(&turn12.observed_at),
             "the first batch's watermark must cover exactly its 12 turns"
         );
         let turn15 = store
@@ -1138,9 +1136,7 @@ mod tests {
             })
             .expect("turn 15");
         assert!(
-            throughs
-                .iter()
-                .any(|through| *through == turn15.observed_at),
+            throughs.contains(&turn15.observed_at),
             "the second batch's watermark must cover the thread's newest turn"
         );
     }

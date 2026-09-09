@@ -1,18 +1,9 @@
-# Media Gallery — Style Classification Manifest
-# Classifies an image's photographic style, genre, and era using a vision LLM.
+{# Shadow copy of the embedded constant CLASSIFY_STYLE in
+   hkask-mcp-media/src/templates.rs — the media server compiles its templates
+   into the binary; this file is the render_template-reachable reference.
+   Edit both or neither. #}
+{# Media Gallery — style classification: photographic style, genre, era. #}
 
-[inference]
-template_type: WordAct
-name: media_classify_style
-version: "1.0.0"
-description: "Classify image style: photographic style, genre, era"
-model_type: classifier
-parameters:
-  - name: categories
-    type: string
-    required: false
-    description: "Comma-separated category names. If empty, auto-discover."
----
 Analyze this image and classify its photographic style.
 
 {% if categories %}

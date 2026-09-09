@@ -1,14 +1,9 @@
-# Media Gallery — Composition Analysis Manifest
-# Analyzes photographic composition of an image using a vision LLM.
+{# Shadow copy of the embedded constant TAG_COMPOSITION in
+   hkask-mcp-media/src/templates.rs — the media server compiles its templates
+   into the binary; this file is the render_template-reachable reference.
+   Edit both or neither. #}
+{# Media Gallery — composition analysis: focal point, thirds, lines, framing. #}
 
-[inference]
-template_type: WordAct
-name: media_tag_composition
-version: "1.0.0"
-description: "Analyze photographic composition of an image"
-model_type: classifier
-parameters: []
----
 Analyze the photographic composition of this image.
 
 Evaluate these compositional elements:
