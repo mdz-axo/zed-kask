@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 77 skills ship. 324 Jinja2 templates across 67 crates remain under
+> plus a markdown body of process instructions. 75 skills ship. 323 Jinja2 templates across 65 crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
 > source of truth for skill execution.
 
@@ -38,7 +38,13 @@ mds_categories: [domain, composition]
 name. `SkillTool::run` resolves the skill directory, reads `SKILL.md`, and injects the body via
 `render_skill_envelope`. The model reads the instructions and follows them — calling `lisp_eval`
 for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools
-for external capabilities. Convergence is the model's judgment, optionally checked by `lisp_eval`.
+for external capabilities.
+
+**Composition law:** every skill's SKILL.md body carries its core process — including at least
+one PDCA (Plan→Do→Check→Act) self-improvement loop with a clear improvement dimension (the
+Check step's measurable signal, a threshold or convergence criterion, and a bound). Templates
+are leaves: steps of that loop, rendered at the points the SKILL.md directs — never the
+carrier of the loop itself.
 
 ---
 

@@ -113,7 +113,13 @@ skill's artifacts.
 ### How ontological anchoring shapes the skill
 
 1. **PDCA shape**: the ontology's process structure implies the skill's
-   phase structure. The SKILL.md's Instructions section follows this shape.
+   phase structure. The SKILL.md's Instructions section follows this shape
+   and MUST contain at least one PDCA (Plan→Do→Check→Act) self-improvement
+   loop — the loop lives in the SKILL.md body; templates are leaves (steps)
+   of the loop, rendered at the points the loop directs. Every loop carries a
+   clear improvement dimension: the Check step's measurable signal, a
+   threshold or convergence criterion, and a bound (max iterations or a
+   stability condition).
 2. **Template contracts**: the ontology's entity types become the template's
    output fields. PKO's Procedure, Step, StepExecution become JSON fields.
 3. **Tool selection**: the ontology's process determines which tools the

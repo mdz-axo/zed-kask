@@ -181,8 +181,7 @@ probability (alignment invariant) — before re-invoking superforecasting.
 | `stage_5_synthesis.j2` | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
 | `stage_6_calibration.j2` | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
 | `stage_7_record.j2` | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
-| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
-| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0-1 scores plus a gate_pass determination with actionable fix notes. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 

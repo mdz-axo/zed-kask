@@ -8,6 +8,17 @@ description: "Bounded dual-layer logic audit of .j2 templates and manifest.yaml 
 
 Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against their stated goals. Unfolded from skill-maintenance (originally folded 2026-07-25, unfolded 2026-08-14).
 
+## The composition law (context for every audit)
+
+A kask skill's core process — including at least one PDCA
+(Plan→Do→Check→Act) self-improvement loop — lives in the SKILL.md body.
+Templates are leaves: steps of that loop, rendered by `render_template`
+at the points the SKILL.md directs. A template may contain its own
+internal loop, but it is never the carrier of the skill's core loop.
+Audit a template as a step-leaf: its goal must serve the SKILL.md phase
+that invokes it, its inputs must match what that phase passes, and its
+outputs must feed the phase that consumes them.
+
 ## When to Use
 
 - Auditing a .j2 template's logic against its stated `{# goal: ... #}` annotation

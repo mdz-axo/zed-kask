@@ -75,6 +75,15 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      `unbound symbol: X` error where X is not one of your stub variables
      is a broken form (missing builtin or special form). Type or runtime
      errors over stub values are fine — the form's symbols resolved.
+   - **S13**: The SKILL.md body contains at least one PDCA
+     (Plan→Do→Check→Act) self-improvement loop as the skill's core
+     process. The loop lives in the SKILL.md body — templates are
+     leaves (steps) of the loop, never its carrier. The loop must
+     carry a clear improvement dimension: the Check step's measurable
+     signal, a threshold or convergence criterion, and a bound (max
+     iterations or a stability condition). A body with phases but no
+     Check→Act feedback path, or a Check with no named signal, fails
+     this check.
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)
