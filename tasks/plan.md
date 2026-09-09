@@ -552,7 +552,33 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 
 **Group 2 net-LOC:** +26/−25 in cycle.rs (the reorder) + the calibration identity threading (~+60 across calibration.rs/providers) + tests.
 
-### T13 — Retrain finalization — defect partially confirmed; seam recovery first
+### T13 — Retrain finalization — VERIFIED 2026-09-09 (Group 3)
+
+**Seam recovered first (per the dependency):** the adapter-registration + A/B block extracted from `training_status` into `finalize_completed_job(job_id, manifest, &mut result)` — testable with a fixture manifest, no live HuggingFace fetch. Behavior unchanged by the extraction (all 15 pre-existing tests green).
+
+**Defect (confirmed, RED observed):** `uuid::Uuid::parse_str(&job_id).unwrap_or_default()` — a malformed job id silently became the nil UUID, the pre-registration lookup silently missed, and the flow proceeded to register under the malformed id. RED: `malformed_job_id_is_rejected_not_silently_registered` failed (the call returned Ok, registering nothing but silently skipping the check). **Fix:** a malformed job id is a typed `invalid_argument` error naming the id.
+
+**Evidence:** the malformed-id rejection (RED→GREEN); `repeated_finalization_is_idempotent_with_durable_metrics` — first poll registers with the manifest's durable loss (0.42) and base_model, second poll finds it pre-registered ("Already registered"), no duplicate (the get_by_id pre-check makes the poll idempotent — now pinned); `missing_manifest_does_not_finalize` — no manifest → nothing registered, note set (failure does not finalize — pinned). The placeholder-fields finding from the elaboration: `skill_name` is empty for manifest-registered adapters (the manifest carries no skill identity), so the A/B comparison only runs for pre-registered retrain adapters — that is the existing designed boundary (the pre-registration path carries the skill name), not a defect; the manifest path's metrics (loss/duration) ARE durable (pinned).
+
+**Verification (2026-09-09):** hkask-mcp-training **18 passed** (15 + 3 new), 0 failed; clippy exit 0; rustfmt clean.
+
+### T14 — IPC discovery convention — VERIFIED 2026-09-09 (Group 3)
+
+**Defect (confirmed by inspection — the executable RED requires controlling the process UID, which is not portable):** the PUBLICATION side hardcoded `/run/user/1000` as the XDG fallback while the DISCOVERY side already resolved the real UID from `/proc/self/status` (its own comment: "Use the actual UID from the environment, not a hardcoded 1000") — the two sides diverged, and discovery silently failed for every non-1000 user.
+
+**Fix:** ONE shared resolver — `hkask_inference::inference_ipc_client::runtime_dir()` (+ the pure `runtime_dir_with(xdg, uid)` core) — used by BOTH publication (`kask_bridge::inference_socket`) and discovery. Resolution: non-empty `XDG_RUNTIME_DIR` wins → `/run/user/{uid}` from `/proc/self/status` (std-only, no unsafe/libc) → `None` when neither resolves (callers treat it as "no location" — publication warns and skips; discovery returns None; NEVER a hardcoded UID, which would write/read in another user's directory). The discovery's old silent uid=1000 proc-failure fallback is deleted with the unification.
+
+**Evidence:** `runtime_dir_resolution_table` — XDG wins; empty XDG ignored; per-UID for uid 1001 and 0; `None` when unresolvable; the live resolver agrees with the pure core for the current process. The publication wiring compiles against the shared resolver (kask_bridge suite green).
+
+**Verification (2026-09-09):** hkask-inference **54 passed** (53 + 1 new), kask_bridge **187 passed**, 0 failed; clippy exit 0; rustfmt clean.
+
+### T15 — Skill-feedback sensing — spec recovery COMPLETE; implementation gated on an operator routing decision
+
+**Recovery findings (2026-09-09):** the skill OUTCOME writer IS wired — `crates/zed/src/main.rs:970-995` wires `agent::set_skill_outcome_recorder` → `record_skill_span(skill_id, "outcome", payload)` into the shared RegulationLedger (landed 2026-09-08; the comment documents that before it "the read side shipped with no writer — the store was permanently empty and drift sensing could never fire"). The drift consumer's outcome half is live. **The `operator_feedback` writer NEVER EXISTED:** the storage API (`record_skill_span`'s phase parameter, runtime.rs:39-54) and the reader (metacognition.rs:432-435 — the "declining operator acceptance" trend, adversarial review finding 3) both ship, but zero production code writes `operator_feedback` spans — that half of the drift sensing reads a permanently-empty phase and can never fire. The intended capability is real (commit `df6095f09b` added both phases' storage and readers together); the producer was never wired — "unwired" is not "unwanted".
+
+**The routing decision returned to the operator (per the task's own gate — no invented policy):** WHAT production event constitutes operator feedback on a skill? Candidates: (a) the curator's advice-apply flow (`curator_advice_mark_applied` — the operator acting on a skill's advice is acceptance feedback), (b) a direct operator action (a panel control or tool call), (c) the gemba loop's operator review outcomes. The reader expects per-skill disposition payloads (acceptance rates). The operator picks the source; the wiring then follows the outcome-recorder precedent (a settable hook → `record_skill_span(skill_id, "operator_feedback", payload)`).
+
+**Group 3 net-LOC:** status.rs +197/−87 (the extraction + typed error), hkask_mcp_training.rs +126 (the fixture + 3 tests), inference_ipc_client.rs +~55 (the shared resolver + table test), inference_socket.rs +~15/−10 (the unified publication), grounding.rs 2-line typos fixture fix ("sorced"→"obscure" — a gate-forced fix in a parallel-session file, recorded per the coordination constraint).
 
 **Anchor:** `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:134`. **Scope: M. Depends: recover the completion-manifest test seam first.**
 **Defects found (verified):** (1) `uuid::Uuid::parse_str(&job_id).unwrap_or_default()` — a malformed job id silently becomes the nil UUID (the .rules silent-fallback trap; the lookup then misses or hits an unrelated row). (2) The adapter built from the completion manifest carries placeholder fields (`String::new()` for two, `0`, `1`) — durable metrics/artifact information may be incomplete. (3) Idempotence of the repeated poll on the register path is unproven (the pre-registered path reports "Already registered"; the fresh-register path calls `adapter_store.store` every poll until the store dedups — verify). (4) Failure does not finalize — verify a failed manifest read leaves no adapter.
@@ -560,24 +586,6 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 **Acceptance:** real pre-registration + fixture-backed successful manifest updates durable metrics/artifact info and the A/B comparison; repeated poll is idempotent (no duplicate adapters, no metric churn); failure does not finalize.
 **Verification:** recover the completion-manifest test seam (a fixture manifest the status tool can read) first; then RED-first per defect.
 **Refused shortcut:** asserting only the happy path; leaving the nil-UUID fallback in place.
-
-### T14 — IPC discovery convention — defect CONFIRMED
-
-**Anchor:** `kask/crates/kask_bridge/src/inference_socket.rs:49`. **Scope: S.**
-**Defect (verified):** the socket-path publication resolves the runtime dir as `XDG_RUNTIME_DIR` with the fallback `"/run/user/1000"` HARDCODED — on any other UID (or absent XDG), publication writes to the wrong path (or another user's directory), and discovery (which reads the same file) fails or worse. The `.rules` numeric-env-var trap class, but for a path.
-**Fix:** resolve per-UID: `XDG_RUNTIME_DIR` → `/run/user/$UID` (from the actual uid, e.g. `id -u`/`libc`) → explicit warn + no publication if neither resolves (never a silent wrong path). The discovery side (`InferenceIpcClient::from_env`) must use the SAME resolution. Env precedence (HKASK_INFERENCE_SOCKET) unchanged; the private-directory protections (0700 XDG dir) must not be weakened by any fallback.
-**Acceptance:** publication→discovery round-trips for absent/empty/populated XDG_RUNTIME_DIR and for a non-1000 UID; env precedence holds; no world-readable fallback location.
-**Verification:** RED-first with a fixture resolution table (unset XDG + uid 1001 → /run/user/1001/kask/...); discovery round-trip per case; the no-resolution case warns and skips publication.
-**Refused shortcut:** keeping the hardcoded 1000 and only fixing the discovery side.
-
-### T15 — Skill-feedback sensing — spec recovery required before implementation
-
-**Anchor:** `kask/crates/hkask-regulation/src/runtime.rs:730` (`record_skill_span`) / `:747` (`query_skill_feedback`). **Scope: M. Gate: spec/writer ownership recovery BEFORE implementation.**
-**Current state (verified):** the READ side exists — `query_skill_feedback`, `skill_ids_with_feedback`, the drift consumer in metacognition. The WRITE side has one generic producer (`record_skill_span`, called from the bridge for skill spans) but the intended production writer for SKILL COMPLETION / OPERATOR FEEDBACK is unrecovered — the requirement ("actual skill completion/operator feedback reaches the shared ledger and drift consumer with provenance; absent input remains explicitly unobserved") names a producer that may not be wired.
-**Recovery work (first):** find the spec — `git log -S` on `record_skill_span`/`skill_ids_with_feedback`, the skill-maintenance/adapter-lifecycle skills' declared feedback paths, and the curator's skill-outcome recording — to determine the intended writer and whether it was deleted, never wired, or lives behind a setting. Per the spec-loss trap: "unwired" is not "unwanted" — if the writer was deliberately designed but orphaned, flag it; if it never existed, the task is to surface "unobserved" honestly, not to invent a producer.
-**Acceptance (post-recovery):** actual skill completion/operator feedback reaches the ledger + drift consumer with provenance; absent input is explicitly unobserved (the drift consumer distinguishes no-data from bad-data); no invented skill identity or substitute LLM success labels.
-**Verification:** per the recovered spec; minimum: a provenance round-trip test and an absent-input control.
-**Refused shortcut:** fabricating feedback events from skill spans alone (spans are activity, not outcomes).
 
 ### Scheduling proposal (groups of 2–3 with cumulative checkpoints, per the plan)
 

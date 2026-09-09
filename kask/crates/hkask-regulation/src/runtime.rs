@@ -238,18 +238,6 @@ pub(crate) struct OutcomeTracker {
 }
 
 impl OutcomeTracker {
-    /// Error kinds that signal a missing configuration or dependency
-    /// (binary not installed, credential not provisioned) rather than tool
-    /// unreliability. Recorded in the per-kind breakdown for diagnosis but
-    /// excluded from the success-rate math: an environment gap the operator
-    /// must fix is not a degrading domain — counting it made a healthy
-    /// server read as failing (a media server without yt-dlp degraded the
-    /// whole media domain) and fired false `ToolReliabilityDegraded`
-    /// alerts. Classification comes from the typed `[kind]` marker the
-    /// dispatch paths extract (`hkask_types::tool_response::
-    /// is_config_gap_kind`).
-    const CONFIG_GAP_KINDS: [&str; 2] = ["unavailable", "permission_denied"];
-
     pub(crate) fn new() -> Self {
         Self {
             total: 0,
@@ -269,10 +257,17 @@ impl OutcomeTracker {
 
     pub(crate) fn record_failure(&mut self, error_kind: &str) {
         self.check_window();
-        // Config-gap kinds don't count toward the success rate — see
-        // CONFIG_GAP_KINDS. They still land in the per-kind breakdown so
-        // `curator_status` diagnosis can see them.
-        if !Self::CONFIG_GAP_KINDS.contains(&error_kind) {
+        // Not-tool-fault kinds don't count toward the success rate — see
+        // `hkask_types::tool_response::is_not_tool_fault_kind`: environment
+        // gaps (a binary not installed, a credential not provisioned) are
+        // operator-actionable signals, and `invalid_argument` rejections are
+        // caller-caused — the tool behaved as designed by rejecting malformed
+        // arguments (the model-caused classes: truncated tool-call JSON,
+        // dropped parameters). Counting either made healthy servers read as
+        // failing (a media server without yt-dlp degraded the whole media
+        // domain) and fired false `ToolReliabilityDegraded` alerts. They still
+        // land in the per-kind breakdown so diagnosis can see them.
+        if !hkask_types::tool_response::is_not_tool_fault_kind(error_kind) {
             self.total += 1;
             self.failures += 1;
         }
@@ -293,6 +288,33 @@ impl OutcomeTracker {
         }
     }
 
+    /// Raw success count. Callers reporting a domain snapshot must gate on
+    /// `total_operations() > 0` — these counters go stale between window
+    /// expiry and the next write.
+    pub(crate) fn successes(&self) -> u64 {
+        self.successes
+    }
+
+    /// Raw failure count of tool-fault failures only (not-tool-fault kinds
+    /// never increment it). Same window-expiry caveat as `successes`.
+    pub(crate) fn failures(&self) -> u64 {
+        self.failures
+    }
+
+    /// Per-error-kind counts for diagnosis, most frequent first, then by
+    /// kind name for deterministic output. Includes not-tool-fault kinds —
+    /// the breakdown is the visibility surface for kinds excluded from the
+    /// success-rate math.
+    pub(crate) fn error_kind_counts(&self) -> Vec<(String, u64)> {
+        let mut counts: Vec<(String, u64)> = self
+            .error_kinds
+            .iter()
+            .map(|(kind, count)| (kind.clone(), *count))
+            .collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        counts
+    }
+
     fn check_window(&mut self) {
         if self.window_start.elapsed() > self.window_duration {
             self.total = 0;
@@ -302,6 +324,35 @@ impl OutcomeTracker {
             self.window_start = Instant::now();
         }
     }
+
+    /// Whether the observation window is still live (has not expired
+    /// without a write). Expired trackers report no data — their counters
+    /// are stale until the next write resets them. Note a LIVE tracker can
+    /// still have `total_operations() == 0`: a domain whose only in-window
+    /// calls failed with not-tool-fault kinds (e.g. `invalid_argument`)
+    /// counts nothing toward the rate but its per-kind breakdown is real
+    /// diagnosis data.
+    pub(crate) fn window_live(&self) -> bool {
+        self.window_start.elapsed() < self.window_duration
+    }
+}
+
+/// One domain's outcome-tracker state, serialized into the tool-reliability
+/// diagnosis surfaces: the `reg.outcome.tool_domains` span and the
+/// escalation queue's `error_context`. This is the surface that names the
+/// failing domain — the aggregate success rate the sensor reports cannot.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct DomainOutcomeSnapshot {
+    pub domain: String,
+    pub successes: u64,
+    /// Tool-fault failures only — not-tool-fault kinds never increment it.
+    pub failures: u64,
+    pub total_operations: u64,
+    pub success_rate: Option<f64>,
+    /// (kind, count) pairs, most frequent first. Includes not-tool-fault
+    /// kinds — the breakdown is the visibility surface for kinds excluded
+    /// from the success-rate math.
+    pub error_kinds: Vec<(String, u64)>,
 }
 
 impl Default for OutcomeTracker {
@@ -829,10 +880,45 @@ impl RegulationLedger {
         state.outcome.get(domain).and_then(|t| t.success_rate())
     }
 
+    /// Per-domain outcome snapshots for the tool-reliability diagnosis
+    /// surfaces, ordered by domain name for deterministic output. A domain
+    /// whose window has expired reports zero operations and no error kinds
+    /// — stale counters never leak into a snapshot. A live domain whose
+    /// only in-window calls failed with not-tool-fault kinds reports
+    /// `total_operations: 0` with its per-kind counts intact: the rate
+    /// excludes those failures, the breakdown must not.
+    pub(crate) async fn outcome_breakdown(&self) -> Vec<DomainOutcomeSnapshot> {
+        let state = self.state.read().await;
+        let mut snapshots: Vec<DomainOutcomeSnapshot> = state
+            .outcome
+            .iter()
+            .map(|(domain, tracker)| {
+                let live = tracker.window_live();
+                DomainOutcomeSnapshot {
+                    domain: domain.clone(),
+                    successes: if live { tracker.successes() } else { 0 },
+                    failures: if live { tracker.failures() } else { 0 },
+                    total_operations: tracker.total_operations(),
+                    success_rate: tracker.success_rate(),
+                    error_kinds: if live {
+                        tracker.error_kind_counts()
+                    } else {
+                        Vec::new()
+                    },
+                }
+            })
+            .collect();
+        snapshots.sort_by(|a, b| a.domain.cmp(&b.domain));
+        snapshots
+    }
+
     /// List all domains with recorded tool outcomes.
     ///
     /// Used by `ToolReliabilitySensor` to aggregate success rates across
     /// all tracked domains. Returns domain names in arbitrary order.
+    /// (The sensor and `verify_impact` now read `outcome_breakdown` — the
+    /// floored aggregation — but this listing stays for direct ledger
+    /// queries and tests.)
     pub async fn tracked_outcome_domains(&self) -> Vec<String> {
         let state = self.state.read().await;
         state.outcome.keys().cloned().collect()
@@ -949,6 +1035,16 @@ mod tests {
             .record_outcome("quiet", false, Some("internal"))
             .await;
         assert_eq!(ledger.outcome_success_rate("quiet").await, Some(0.0));
+        // A second domain meeting the sensor's minimum-sample floor, so the
+        // observe-level assertions exercise the sensor's real aggregation
+        // path — the 1-sample "quiet" domain is below the floor, where
+        // observe is None by design and would make the expiry assertions
+        // vacuous.
+        for _ in 0..crate::sensor_provider::TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+            ledger
+                .record_outcome("sampled", false, Some("internal"))
+                .await;
+        }
         assert_eq!(
             sensor.observe().await.expect("active observation").value,
             0.0
@@ -958,11 +1054,13 @@ mod tests {
             let mut state = ledger.state.write().await;
             let old = Instant::now() - Duration::from_secs(OBSERVATION_WINDOW_SECS + 1);
             state.tracker.counter("quiet").window_start = old;
-            state
-                .outcome
-                .get_mut("quiet")
-                .expect("tracked domain")
-                .window_start = old;
+            for domain in ["quiet", "sampled"] {
+                state
+                    .outcome
+                    .get_mut(domain)
+                    .expect("tracked domain")
+                    .window_start = old;
+            }
         }
         assert_eq!(ledger.outcome_success_rate("quiet").await, None);
         assert!(
@@ -971,7 +1069,9 @@ mod tests {
         );
         assert!(ledger.check_outcome("quiet").await.is_none());
         assert_eq!(ledger.health().await.overall_deficit, 0);
-        ledger.record_outcome("active", true, None).await;
+        for _ in 0..crate::sensor_provider::TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+            ledger.record_outcome("active", true, None).await;
+        }
         let mut rates = Vec::new();
         for domain in ledger.tracked_outcome_domains().await {
             if let Some(rate) = ledger.outcome_success_rate(&domain).await {
@@ -1072,5 +1172,82 @@ mod tests {
             .await
             .expect("media domain tracked");
         assert_eq!(rate, 0.5, "one real failure of two counted ops");
+    }
+
+    /// Caller-caused argument rejections (`invalid_argument`) must not
+    /// degrade a domain's success rate — the tool behaved as designed by
+    /// rejecting malformed arguments; the failure is the caller's (the
+    /// model-caused classes: truncated tool-call JSON, dropped parameters),
+    /// not the tool's. The kind stays in the per-kind breakdown (see
+    /// `outcome_breakdown_names_domains_and_kinds`).
+    #[tokio::test]
+    async fn invalid_argument_failures_do_not_degrade_success_rate() {
+        let ledger = RegulationLedger::default();
+        ledger.record_outcome("media", true, None).await;
+        ledger
+            .record_outcome("media", false, Some("invalid_argument"))
+            .await;
+        let rate = ledger
+            .outcome_success_rate("media")
+            .await
+            .expect("media domain tracked");
+        assert_eq!(
+            rate, 1.0,
+            "a caller-caused rejection is not tool unreliability — the tool \
+             correctly rejected malformed input"
+        );
+    }
+
+    /// The per-domain breakdown is the diagnosis surface that names the
+    /// failing domain — the aggregate the sensor reports cannot. It must
+    /// carry per-domain rates, operation counts, and per-kind tallies, and
+    /// keep not-tool-fault kinds visible even when they are the domain's
+    /// only in-window calls (the rate excludes them; the breakdown must not).
+    #[tokio::test]
+    async fn outcome_breakdown_names_domains_and_kinds() {
+        let ledger = RegulationLedger::default();
+        // "media": 2 successes, 1 internal failure → rate 2/3.
+        ledger.record_outcome("media", true, None).await;
+        ledger.record_outcome("media", true, None).await;
+        ledger
+            .record_outcome("media", false, Some("internal"))
+            .await;
+        // "companies": only caller-caused rejections → total 0 (excluded
+        // from the rate math) but the breakdown must show the kinds.
+        ledger
+            .record_outcome("companies", false, Some("invalid_argument"))
+            .await;
+        ledger
+            .record_outcome("companies", false, Some("invalid_argument"))
+            .await;
+        ledger
+            .record_outcome("companies", false, Some("invalid_argument"))
+            .await;
+
+        let breakdown = ledger.outcome_breakdown().await;
+        assert_eq!(breakdown.len(), 2, "both tracked domains appear");
+        let companies = breakdown
+            .iter()
+            .find(|snapshot| snapshot.domain == "companies")
+            .expect("companies snapshot");
+        let media = breakdown
+            .iter()
+            .find(|snapshot| snapshot.domain == "media")
+            .expect("media snapshot");
+        assert_eq!(media.successes, 2);
+        assert_eq!(media.failures, 1);
+        assert_eq!(media.total_operations, 3);
+        assert_eq!(media.success_rate, Some(2.0 / 3.0));
+        assert_eq!(media.error_kinds, vec![("internal".to_string(), 1)]);
+        assert_eq!(
+            companies.total_operations, 0,
+            "invalid_argument rejections are excluded from the rate math"
+        );
+        assert_eq!(companies.success_rate, None);
+        assert_eq!(
+            companies.error_kinds,
+            vec![("invalid_argument".to_string(), 3)],
+            "the breakdown keeps excluded kinds visible for diagnosis"
+        );
     }
 }

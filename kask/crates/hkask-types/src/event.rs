@@ -619,17 +619,20 @@ pub enum SpanKind {
     /// Algedonic alert emitted: `reg.variety.algedonic_alert`
     VarietyAlgedonicAlert,
 
-    // ── Regulation spans (reg.regulation.*) — v0.31.0 Fermi impact-gate ──
-    /// Impact verification completed: `reg.regulation.impact_verified`
+    // ── Regulation spans (reg.outcome.*) — v0.31.0 Fermi impact-gate ──
+    /// Impact verification completed: `reg.outcome.impact_verified`
     ImpactVerified,
-    /// Action substituted due to repeated ineffectiveness: `reg.regulation.action_substituted`
+    /// Action substituted due to repeated ineffectiveness: `reg.outcome.action_substituted`
     ActionSubstituted,
-    /// Action blocked due to severe counterproductivity: `reg.regulation.action_blocked`
+    /// Action blocked due to severe counterproductivity: `reg.outcome.action_blocked`
     ActionBlocked,
-    /// Regulatory plateau detected — escalation triggered: `reg.regulation.plateau_detected`
+    /// Regulatory plateau detected — escalation triggered: `reg.outcome.plateau_detected`
     RegulatoryPlateauDetected,
-    /// Loop-quality telemetry recorded: `reg.regulation.loop_quality`
+    /// Loop-quality telemetry recorded: `reg.outcome.loop_quality`
     LoopMetricsTelemetry,
+    /// Per-domain tool-outcome breakdown (success rates, operation counts,
+    /// per-error-kind tallies): `reg.outcome.tool_domains`
+    ToolOutcomeBreakdown,
 }
 
 impl SpanKind {
@@ -644,6 +647,7 @@ impl SpanKind {
             SpanKind::ActionBlocked => ("reg.outcome", "action_blocked"),
             SpanKind::RegulatoryPlateauDetected => ("reg.outcome", "plateau_detected"),
             SpanKind::LoopMetricsTelemetry => ("reg.outcome", "loop_quality"),
+            SpanKind::ToolOutcomeBreakdown => ("reg.outcome", "tool_domains"),
         }
     }
 }

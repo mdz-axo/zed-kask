@@ -152,6 +152,24 @@ pub fn is_config_gap_kind(kind: &str) -> bool {
     )
 }
 
+/// Whether an error-kind string signals a failure that is not the tool's
+/// fault: an environment gap ([`is_config_gap_kind`]) or a caller-caused
+/// argument rejection (`invalid_argument`). Reliability consumers (the
+/// `RegulationLedger`'s success-rate math) exclude these kinds from the
+/// rate: a tool that correctly rejects malformed arguments behaved as
+/// designed, and the model-caused classes (truncated tool-call JSON at
+/// stream end, dropped parameters under huge prompts) are agent-loop
+/// signal, not tool unreliability. The kinds stay in the per-kind
+/// breakdown so diagnosis can still see them.
+#[must_use]
+pub fn is_not_tool_fault_kind(kind: &str) -> bool {
+    is_config_gap_kind(kind)
+        || matches!(
+            McpErrorKind::from_kind_str(kind),
+            Some(McpErrorKind::InvalidArgument)
+        )
+}
+
 /// Extract fenced media-block display hints from a tool output text (the
 /// `{"content": ...}` envelope serialized by `ToolSpanGuard::ok_json`).
 /// `display_hint` is a single fenced ```media block; `display_hints` is an
@@ -303,5 +321,20 @@ mod tests {
         assert!(!is_config_gap_kind("internal"));
         assert!(!is_config_gap_kind("timeout"));
         assert!(!is_config_gap_kind("unknown-kind"));
+    }
+
+    /// `invalid_argument` is caller-caused (the tool correctly rejected
+    /// malformed arguments — the model-caused truncation/parameter-dropping
+    /// classes), so it is not the tool's fault; the other behavioral kinds
+    /// remain tool-fault failures.
+    #[test]
+    fn is_not_tool_fault_kind_classifies_caller_caused_rejections() {
+        assert!(is_not_tool_fault_kind("invalid_argument"));
+        assert!(is_not_tool_fault_kind("unavailable"));
+        assert!(is_not_tool_fault_kind("permission_denied"));
+        assert!(!is_not_tool_fault_kind("internal"));
+        assert!(!is_not_tool_fault_kind("timeout"));
+        assert!(!is_not_tool_fault_kind("not_found"));
+        assert!(!is_not_tool_fault_kind("unknown-kind"));
     }
 }

@@ -309,18 +309,54 @@ impl Sensor for TestCoverageSensor {
 
 /// Senses tool reliability from the Regulation runtime's outcome tracker.
 ///
-/// Data source: `RegulationLedger::outcome_success_rate`. Returns the aggregate
+/// Data source: `RegulationLedger::outcome_breakdown`. Returns the aggregate
 /// success rate across domains with current samples, including healthy readings.
 /// This closes the feedback loop that was
 /// blind to systematic tool failures (e.g. MCP server timeouts looping for
 /// minutes without the regulation loop sensing the deviation).
 ///
-/// Returns `None` when no outcomes have been recorded yet (the legitimate
-/// "no data" state) — not a signal with value 1.0, which would mask a
-/// broken sensor as "healthy" (the `.rules` `unwrap_or(0)` trap).
+/// Returns `None` when no outcomes have been recorded yet, or when every
+/// tracked domain is below `TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES` (the
+/// legitimate "no data" states) — not a signal with value 1.0, which would
+/// mask a broken sensor as "healthy" (the `.rules` `unwrap_or(0)` trap).
 pub(crate) struct ToolReliabilitySensor {
     ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
     set_point: f64,
+}
+
+/// Minimum in-window operations a domain must have before its success rate
+/// counts toward the aggregate — the same five-operation minimum
+/// `RegulationLedger::check_outcome` applies to its outcome alerts. Below
+/// it, a domain's rate is small-sample noise: the live-observed
+/// `tool_reliability` deviations at 0.5 (one success in two calls), 0.6667
+/// (two in three), and 0.75 (three in four) all came from quiet windows
+/// where a couple of failures were the entire sample, and each fired a
+/// `ToolReliabilityDegraded` escalation. A domain below the floor is
+/// excluded from the aggregate; when every domain is below it, the sensor
+/// returns no data.
+pub(crate) const TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES: u64 = 5;
+
+/// The equal-weighted aggregate success rate across domains meeting the
+/// minimum-sample floor — the single aggregation both
+/// `ToolReliabilitySensor::observe` and `verify_impact`'s after-value
+/// re-sense use, so the sensed deviation and the before/after impact
+/// values stay comparable. Returns `None` when no domain meets the floor
+/// (the no-data state, not 0% — the `.rules` `unwrap_or(0)` trap).
+pub(crate) fn aggregate_tool_reliability(
+    breakdown: &[super::runtime::DomainOutcomeSnapshot],
+) -> Option<f64> {
+    let mut sum = 0.0;
+    let mut count = 0;
+    for snapshot in breakdown {
+        if snapshot.total_operations < TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+            continue;
+        }
+        if let Some(rate) = snapshot.success_rate {
+            sum += rate;
+            count += 1;
+        }
+    }
+    (count > 0).then(|| sum / count as f64)
 }
 
 impl ToolReliabilitySensor {
@@ -335,24 +371,16 @@ impl ToolReliabilitySensor {
 #[async_trait::async_trait]
 impl Sensor for ToolReliabilitySensor {
     async fn observe(&self) -> Option<Signal> {
-        let ledger = self.ledger.read().await;
-        // Aggregate success rate across all tracked domains. Each domain's
-        // success rate is weighted equally (not by call count) so a single
-        // high-volume domain doesn't dominate the signal. A domain with
-        // zero operations is excluded (no data, not 0% success).
-        let domains = ledger.tracked_outcome_domains().await;
-        let mut sum = 0.0;
-        let mut count = 0;
-        for domain in &domains {
-            if let Some(rate) = ledger.outcome_success_rate(domain).await {
-                sum += rate;
-                count += 1;
-            }
-        }
-        if count == 0 {
-            return None;
-        }
-        let aggregate = sum / count as f64;
+        let breakdown = {
+            let ledger = self.ledger.read().await;
+            ledger.outcome_breakdown().await
+        };
+        // Equal-weighted aggregate across domains meeting the minimum-sample
+        // floor (small-sample domains are noise, not signal); a domain with
+        // zero operations falls out by the same floor (no data, not 0%
+        // success). The aggregation itself is shared with `verify_impact`'s
+        // re-sense via `aggregate_tool_reliability`.
+        let aggregate = aggregate_tool_reliability(&breakdown)?;
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::ToolReliability,
@@ -993,7 +1021,11 @@ mod tests {
     #[tokio::test]
     async fn tool_reliability_sensor_returns_none_when_set_point_zero() {
         let ledger = RegulationLedger::default();
-        ledger.record_outcome("media", false, None).await;
+        // Enough failures to meet the minimum-sample floor, so it is the
+        // set-point (not the floor) that silences the sensor here.
+        for _ in 0..TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+            ledger.record_outcome("media", false, None).await;
+        }
         let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.0);
         assert!(
             sensor.sense().await.is_none(),
@@ -1019,7 +1051,12 @@ mod tests {
     #[tokio::test]
     async fn tool_reliability_alert_pair_preserves_threshold_magnitude() {
         let ledger = RegulationLedger::default();
-        ledger.record_outcome("media", false, None).await;
+        // Five failures: the sensor's minimum-sample floor. A single failure
+        // is the small-sample noise class the floor excludes, so the 0%
+        // reading must come from a sample the floor admits.
+        for _ in 0..TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+            ledger.record_outcome("media", false, None).await;
+        }
         let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.80);
         let signal = sensor
             .sense()
@@ -1036,6 +1073,53 @@ mod tests {
             Some((0, 80)),
             "0% reliability vs the 0.80 floor must extract as (0, 80) percent — \
              the truncated (0, 0) is the live-observed false-positive appearance"
+        );
+    }
+
+    /// The minimum-sample floor: a quiet window where one or two failures
+    /// are the entire sample produces NO signal — the live-observed
+    /// 0.5/0.6667/0.75 deviations that fired `tool_reliability` escalations
+    /// during idle periods. This is the small-sample noise class the floor
+    /// eliminates.
+    #[tokio::test]
+    async fn tool_reliability_sensor_excludes_small_sample_domains() {
+        let ledger = RegulationLedger::default();
+        ledger.record_outcome("media", true, None).await;
+        ledger
+            .record_outcome("media", false, Some("internal"))
+            .await;
+        let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.80);
+        assert!(
+            sensor.sense().await.is_none(),
+            "a 2-call domain (1 success, 1 failure) is below the 5-sample floor — \
+             no signal, not a 0.5 deviation"
+        );
+    }
+
+    /// Domains below the floor are excluded from the aggregate, not merged
+    /// into it: a healthy-volume domain's rate must not be dragged by a
+    /// quiet neighbor's small sample.
+    #[tokio::test]
+    async fn tool_reliability_sensor_aggregates_only_domains_meeting_the_floor() {
+        let ledger = RegulationLedger::default();
+        // Domain "busy": 5 operations, 3 successes → 0.6 (meets the floor).
+        for outcome in [true, true, true, false, false] {
+            ledger.record_outcome("busy", outcome, None).await;
+        }
+        // Domain "quiet": 2 operations, 1 success → 0.5, below the floor —
+        // must not dilute the aggregate.
+        ledger.record_outcome("quiet", true, None).await;
+        ledger
+            .record_outcome("quiet", false, Some("internal"))
+            .await;
+        let sensor = ToolReliabilitySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 0.80);
+        let signal = sensor
+            .sense()
+            .await
+            .expect("busy domain meets the floor — signal required");
+        assert_eq!(
+            signal.value, 0.6,
+            "only the busy domain's rate aggregates; the quiet domain is excluded"
         );
     }
 

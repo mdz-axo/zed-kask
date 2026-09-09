@@ -144,7 +144,7 @@ impl super::CyberneticsLoop {
     /// native Escalate actions. The field is included in the `error_context`
     /// JSON so the Curator's `curator_escalations` tool sees the recommended
     /// action as structured data, not just free-text in the message.
-    fn persist_alert_to_queue(
+    async fn persist_alert_to_queue(
         &self,
         alert: &RuntimeAlert,
         efferent_action: Option<&str>,
@@ -161,7 +161,7 @@ impl super::CyberneticsLoop {
             return;
         }
         let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
-        let error_context = serde_json::json!({
+        let mut error_context = serde_json::json!({
             "domain": alert.domain,
             "deficit": alert.deficit,
             "threshold": alert.threshold,
@@ -170,17 +170,52 @@ impl super::CyberneticsLoop {
             "efferent_action": efferent_action,
             "recovery_signal": recovery_signal,
             "timestamp": alert.timestamp.to_rfc3339(),
-        })
-        .to_string();
-        sink.persist_alert(&alert.message, confidence, &error_context);
+        });
+        // Tool-reliability alerts carry the per-domain outcome breakdown so
+        // triage can name the failing domain from the escalation row itself —
+        // the queue is the one surface the Curator reviews, and the aggregate
+        // success rate in the message cannot name a domain. Covers both
+        // alert shapes: the degradation alert (identified by its recovery
+        // signal's metric) and the plateau alert (domain
+        // "regulatory_plateau:tool_reliability", which carries no recovery
+        // signal).
+        let tool_reliability_related = recovery_signal
+            .is_some_and(|signal| signal.metric == SignalMetric::ToolReliability)
+            || alert.domain.contains("tool_reliability");
+        if tool_reliability_related {
+            let breakdown = self.ledger.read().await.outcome_breakdown().await;
+            if !breakdown.is_empty() {
+                error_context["outcome_breakdown"] = serde_json::json!(breakdown);
+            }
+        }
+        sink.persist_alert(&alert.message, confidence, &error_context.to_string());
+    }
+
+    /// Emit the per-domain tool-outcome breakdown span
+    /// (`reg.outcome.tool_domains`) — the diagnosis surface that names the
+    /// failing domain(s) with per-kind error tallies, retrievable from the
+    /// algedonic log via the curator MCP tools. Called when a
+    /// tool-reliability alert fires (degradation or plateau) and on the
+    /// hourly heartbeat, so the breakdown is available both at deviation
+    /// time and as a periodic snapshot while healthy.
+    pub(super) async fn emit_tool_outcome_breakdown(&self) {
+        let breakdown = self.ledger.read().await.outcome_breakdown().await;
+        if breakdown.is_empty() {
+            return;
+        }
+        self.emit_regulation_span(
+            SpanKind::ToolOutcomeBreakdown,
+            serde_json::json!({ "domains": breakdown }),
+        )
+        .await;
     }
 
     /// Check regulation coherence — flag contradictory or suspicious action pairs.
     ///
     /// Runs after verify_impact. Scans the action set from this tick and logs
-    /// warnings for patterns that suggest inconsistent regulation (e.g.,
+    /// warnings for patterns that suggest inconsistent regulation (e.g.
     /// Throttle + CircuitBreak on same loop, AdjustEnergyBudget + OverrideEnergyBudget).
-    pub(super) fn check_coherence(&self, actions: &[RegulatoryAction]) {
+    pub(super) async fn check_coherence(&self, actions: &[RegulatoryAction]) {
         use ActionType::*;
         let has = |t: ActionType| actions.iter().any(|a| a.action_type == t);
         let has_target = |t: ActionType, target: LoopId| {
@@ -241,7 +276,7 @@ impl super::CyberneticsLoop {
                     actions.len()
                 ),
             };
-            self.persist_alert_to_queue(&alert, None, None);
+            self.persist_alert_to_queue(&alert, None, None).await;
             if let Some(ref tx) = self.alerts_tx {
                 if tx.send(CurationInput::Alert(alert)).is_err() {
                     tracing::warn!(target: "reg.alert", "Coherence alert send failed — channel closed");
@@ -476,7 +511,7 @@ impl super::CyberneticsLoop {
                 // the queue is the primary durable path for alert review, not
                 // a fallback (the RegulationArchive below is the fallback for
                 // restart durability when the live channel is down).
-                self.persist_alert_to_queue(&alert, None, None);
+                self.persist_alert_to_queue(&alert, None, None).await;
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -639,7 +674,17 @@ impl super::CyberneticsLoop {
             .as_deref()
             .and_then(SignalMetric::from_str_name)
             .and_then(|metric| self.observations.lock().get(&metric).cloned());
-        self.persist_alert_to_queue(&alert, efferent_action, observation.as_ref());
+        // Tool-reliability alerts also emit the per-domain breakdown span so
+        // the algedonic log names the failing domain at alert time — the
+        // escalation row carries the same breakdown in its error_context.
+        if observation
+            .as_ref()
+            .is_some_and(|signal| signal.metric == SignalMetric::ToolReliability)
+        {
+            self.emit_tool_outcome_breakdown().await;
+        }
+        self.persist_alert_to_queue(&alert, efferent_action, observation.as_ref())
+            .await;
 
         // Primary path: live channel to Curator's inbox
         let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
@@ -849,30 +894,27 @@ impl super::CyberneticsLoop {
                     SignalMetric::VarietyDeficit => current_deficit,
                     SignalMetric::ToolReliability => {
                         // Re-sense the aggregate success rate from the ledger
-                        // using the same equal-weighted domain aggregation as
-                        // `ToolReliabilitySensor::sense` so the before/after
-                        // values are comparable. Zero tracked domains is no
-                        // data — warn and skip rather than reporting 0.0,
-                        // which would read as "fully degraded" (the .rules
-                        // unwrap_or(0) trap).
-                        let ledger = self.ledger.read().await;
-                        let domains = ledger.tracked_outcome_domains().await;
-                        let mut sum = 0.0;
-                        let mut tracked = 0;
-                        for domain in &domains {
-                            if let Some(rate) = ledger.outcome_success_rate(domain).await {
-                                sum += rate;
-                                tracked += 1;
+                        // using the same floored, equal-weighted aggregation
+                        // as `ToolReliabilitySensor::observe`
+                        // (`aggregate_tool_reliability`) so the before/after
+                        // values are comparable. No domain meeting the
+                        // minimum-sample floor is no data — warn and skip
+                        // rather than reporting 0.0, which would read as
+                        // "fully degraded" (the .rules unwrap_or(0) trap).
+                        let breakdown = {
+                            let ledger = self.ledger.read().await;
+                            ledger.outcome_breakdown().await
+                        };
+                        match crate::sensor_provider::aggregate_tool_reliability(&breakdown) {
+                            Some(aggregate) => aggregate,
+                            None => {
+                                tracing::warn!(
+                                    target: "reg.cybernetics",
+                                    "verify_impact: no tracked tool-outcome domain meets the minimum-sample floor — cannot re-sense reliability, skipping"
+                                );
+                                continue;
                             }
                         }
-                        if tracked == 0 {
-                            tracing::warn!(
-                                target: "reg.cybernetics",
-                                "verify_impact: ledger has no tracked tool-outcome domains — cannot re-sense reliability, skipping"
-                            );
-                            continue;
-                        }
-                        sum / tracked as f64
                     }
                     SignalMetric::ContextServerHealth => {
                         // Re-sense fleet health from the source stored on the loop.
@@ -972,15 +1014,6 @@ impl super::CyberneticsLoop {
                                 .threshold_for_metric(metric.as_str())
                         })
                 };
-                self.emit_regulation_span(
-                    SpanKind::RegulatoryPlateauDetected,
-                    serde_json::json!({
-                        "metric": metric.as_str(),
-                        "action_type": action_type_str,
-                        "consecutive_cycles": threshold,
-                    }),
-                )
-                .await;
                 let alert = RuntimeAlert {
                     domain: format!("regulatory_plateau:{}", metric.as_str()),
                     deficit: 1,
@@ -994,19 +1027,55 @@ impl super::CyberneticsLoop {
                         action.action_type,
                     ),
                 };
-                // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert, None, None);
-                if let Some(ref tx) = self.alerts_tx {
-                    if tx.send(CurationInput::Alert(alert)).is_err() {
-                        tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
+                // Latch: while a pending escalation for this plateau condition
+                // sits in the review queue, suppress the entire re-detection
+                // routing (span, queue persist, live channel) — the same
+                // source-level dedup `route_action_as_alert` applies. Without
+                // it, a persistent plateau re-fired every cycle: the queue
+                // row superseded on each detection (live-observed retry_count
+                // 37 and climbing), the `plateau_detected` span flooded the
+                // algedonic log (log-cap breach), and the Curator inbox
+                // received the same alert every 10s. The operator reviews the
+                // first one; when they resolve or dismiss it, the next
+                // detection re-fires with fresh data.
+                let latched = self
+                    .alert_escalation_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.has_pending_alert(&alert.message));
+                if latched {
+                    tracing::debug!(
+                        target: "reg.cybernetics",
+                        metric = metric.as_str(),
+                        action_type = ?action.action_type,
+                        "Plateau alert latched — pending escalation already in queue"
+                    );
+                } else {
+                    self.emit_regulation_span(
+                        SpanKind::RegulatoryPlateauDetected,
+                        serde_json::json!({
+                            "metric": metric.as_str(),
+                            "action_type": action_type_str,
+                            "consecutive_cycles": threshold,
+                        }),
+                    )
+                    .await;
+                    if metric == SignalMetric::ToolReliability {
+                        self.emit_tool_outcome_breakdown().await;
                     }
+                    // Persist to the reviewable escalation queue unconditionally.
+                    self.persist_alert_to_queue(&alert, None, None).await;
+                    if let Some(ref tx) = self.alerts_tx {
+                        if tx.send(CurationInput::Alert(alert)).is_err() {
+                            tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
+                        }
+                    }
+                    tracing::warn!(
+                        target: "reg.cybernetics",
+                        metric = metric.as_str(),
+                        action_type = ?action.action_type,
+                        "Regulatory plateau detected"
+                    );
                 }
-                tracing::warn!(
-                    target: "reg.cybernetics",
-                    metric = metric.as_str(),
-                    action_type = ?action.action_type,
-                    "Regulatory plateau detected"
-                );
             }
 
             // Blocked actions: escalate as Critical to Curation + emit Regulation span.
@@ -1037,7 +1106,7 @@ impl super::CyberneticsLoop {
                     ),
                 };
                 // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert, None, None);
+                self.persist_alert_to_queue(&alert, None, None).await;
                 if let Some(ref tx) = self.alerts_tx {
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
@@ -1505,6 +1574,9 @@ mod tests {
     /// can be asserted byte-identical.
     struct RecordingEscalationSink {
         persisted: Mutex<Vec<String>>,
+        /// The error_context JSON each persist carried — the breakdown test
+        /// asserts on its contents.
+        contexts: Mutex<Vec<String>>,
         auto_resolved: Mutex<Vec<String>>,
     }
 
@@ -1512,23 +1584,62 @@ mod tests {
         fn new() -> Self {
             Self {
                 persisted: Mutex::new(Vec::new()),
+                contexts: Mutex::new(Vec::new()),
                 auto_resolved: Mutex::new(Vec::new()),
             }
         }
     }
 
     impl crate::AlertEscalationSink for RecordingEscalationSink {
-        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+        fn persist_alert(&self, output: &str, _confidence: f64, error_context: &str) {
             self.persisted
                 .lock()
                 .expect("persisted lock")
                 .push(output.to_string());
+            self.contexts
+                .lock()
+                .expect("contexts lock")
+                .push(error_context.to_string());
         }
         fn auto_resolve_cleared(&self, output: &str, _resolution_note: &str) {
             self.auto_resolved
                 .lock()
                 .expect("auto_resolved lock")
                 .push(output.to_string());
+        }
+    }
+
+    /// An `AlertEscalationSink` whose `has_pending_alert` flips on demand —
+    /// pins the plateau latch: while the queue holds a pending escalation
+    /// for the plateau condition, re-detections must suppress the span, the
+    /// queue persist, and the live-channel send.
+    struct LatchingEscalationSink {
+        pending: Mutex<bool>,
+        persisted: Mutex<Vec<String>>,
+    }
+
+    impl LatchingEscalationSink {
+        fn new() -> Self {
+            Self {
+                pending: Mutex::new(false),
+                persisted: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn set_pending(&self, pending: bool) {
+            *self.pending.lock().expect("pending lock") = pending;
+        }
+    }
+
+    impl crate::AlertEscalationSink for LatchingEscalationSink {
+        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+            self.persisted
+                .lock()
+                .expect("persisted lock")
+                .push(output.to_string());
+        }
+        fn has_pending_alert(&self, _output: &str) -> bool {
+            *self.pending.lock().expect("pending lock")
         }
     }
 
@@ -1677,6 +1788,163 @@ mod tests {
                 },
             ),
         )
+    }
+
+    /// The plateau latch: while a pending escalation for the plateau
+    /// condition sits in the review queue, re-detections suppress the
+    /// entire routing (span, queue persist, live channel). Before the
+    /// latch, a persistent plateau re-fired every cycle — the
+    /// live-observed retry_count 37 on the queue row, the
+    /// `plateau_detected` span flood behind the algedonic log-cap breach,
+    /// and the same alert in the Curator inbox every 10s. The stagnation
+    /// detector keeps counting while latched, so resolving the escalation
+    /// re-fires on the next detection.
+    #[tokio::test]
+    async fn plateau_alert_latches_while_pending() {
+        let source = Arc::new(MockRolloutEventSource::answering(0.2, 0.2));
+        let mut regulation = loop_with_source(source.clone());
+        let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let escalation = Arc::new(LatchingEscalationSink::new());
+        regulation.set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_alert_escalation_sink(Some(escalation.clone()));
+
+        let action = rollout_impact_check("trace", "tool_reliability");
+        // Constant before/after — every cycle is ineffective, so the
+        // stagnation detector reaches its threshold and the plateau fires.
+        *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.2)));
+        let stagnation_threshold = regulation
+            .stagnation_detector
+            .threshold_for_metric("tool_reliability");
+        for _ in 0..stagnation_threshold {
+            regulation
+                .verify_impact(std::slice::from_ref(&action))
+                .await;
+        }
+        let plateau_spans = || {
+            archive
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter(|(path, _)| path == "reg.outcome.plateau_detected")
+                .count()
+        };
+        assert_eq!(
+            escalation.persisted.lock().expect("persisted").len(),
+            1,
+            "the first plateau detection persists one escalation"
+        );
+        assert_eq!(plateau_spans(), 1, "the first detection emits one span");
+
+        // The operator now has a pending escalation — further detections
+        // must be latched: no new persist, no new span.
+        escalation.set_pending(true);
+        for _ in 0..3 {
+            regulation
+                .verify_impact(std::slice::from_ref(&action))
+                .await;
+        }
+        assert_eq!(
+            escalation.persisted.lock().expect("persisted").len(),
+            1,
+            "latched re-detections must not re-persist"
+        );
+        assert_eq!(
+            plateau_spans(),
+            1,
+            "latched re-detections must not re-emit the plateau span"
+        );
+        assert!(
+            regulation
+                .stagnation_detector
+                .ineffective_count("tool_reliability", "Notify")
+                >= stagnation_threshold,
+            "the stagnation detector keeps counting while latched — resolving \
+             the escalation re-fires the next detection"
+        );
+    }
+
+    /// Tool-reliability alerts carry the per-domain outcome breakdown in
+    /// both durable surfaces: the escalation row's error_context (what the
+    /// Curator reviews via `curator_escalations`) and the
+    /// `reg.outcome.tool_domains` span (what the algedonic log serves via
+    /// `curator_algedonic_log`). Before this, the escalation carried only
+    /// the aggregate success rate — triage could see THAT tools were
+    /// failing but never WHICH domain or with what error kinds.
+    #[tokio::test]
+    async fn tool_reliability_alert_carries_outcome_breakdown() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+        {
+            let ledger_guard = ledger.read().await;
+            for _ in 0..crate::sensor_provider::TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
+                ledger_guard
+                    .record_outcome("media", false, Some("internal"))
+                    .await;
+            }
+        }
+        let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+        regulation_loop
+            .set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
+        // The sense phase records the observation the alert routing looks
+        // up; seed it directly so the test exercises the routing, not the bus.
+        regulation_loop.observations.lock().insert(
+            SignalMetric::ToolReliability,
+            Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::ToolReliability,
+                0.0,
+                0.80,
+            ),
+        );
+
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "tool_reliability_degraded",
+                RegulationData::ToolReliabilityDegraded {
+                    reliability: 0.0,
+                    threshold: 0.8,
+                },
+            ),
+            "tool_reliability".into(),
+        );
+        regulation_loop.route_action_as_alert(&action).await;
+
+        let contexts = escalation.contexts.lock().expect("contexts");
+        assert_eq!(contexts.len(), 1, "the degradation alert persists once");
+        let context: serde_json::Value =
+            serde_json::from_str(&contexts[0]).expect("error_context is JSON");
+        let breakdown = context
+            .get("outcome_breakdown")
+            .expect("tool-reliability alerts carry the breakdown");
+        assert!(
+            breakdown.to_string().contains("media"),
+            "the breakdown names the failing domain: {breakdown}"
+        );
+        assert!(
+            breakdown.to_string().contains("internal"),
+            "the breakdown carries the error kind: {breakdown}"
+        );
+
+        let spans = archive.0.lock().unwrap_or_else(|e| e.into_inner());
+        let tool_domains: Vec<_> = spans
+            .iter()
+            .filter(|(path, _)| path == "reg.outcome.tool_domains")
+            .collect();
+        assert_eq!(tool_domains.len(), 1, "one breakdown span at alert time");
+        assert!(
+            tool_domains[0]
+                .1
+                .get("domains")
+                .expect("domains field")
+                .to_string()
+                .contains("media"),
+            "the span names the failing domain"
+        );
     }
 
     /// expect: "Accepted constant degradation/noise accumulates stagnation; only observed progress resets it" [P9]
@@ -1840,11 +2108,13 @@ mod tests {
             let reports = regulation_loop.verify_impact(&[reliability_action()]).await;
             assert!(reports.is_empty(), "no tracked domains → no report");
 
-            // Seed one domain to 100% success (4/4). The re-sensed
-            // after-value (1.0) improves over the before-value (0.6667).
+            // Seed one domain to 100% success (5/5 — the sensor's
+            // minimum-sample floor; 4/4 would be below it and re-sensing
+            // would skip). The re-sensed after-value (1.0) improves over the
+            // before-value (0.6667).
             {
                 let ledger_guard = ledger.read().await;
-                for _ in 0..4 {
+                for _ in 0..crate::sensor_provider::TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
                     ledger_guard
                         .record_outcome("reliability_verify_test", true, None)
                         .await;

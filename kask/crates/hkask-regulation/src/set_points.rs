@@ -246,7 +246,8 @@ pub struct SetPoints {
     /// Default: 0.50.
     pub mutation_score_floor: f64,
     /// Minimum tool reliability (success rate) before the Cybernetics Loop
-    /// escalates. Sensed from `RegulationLedger::outcome_success_rate`.
+    /// escalates. Sensed from `RegulationLedger::outcome_breakdown` via the
+    /// minimum-sample-floored aggregate (`aggregate_tool_reliability`).
     /// Default: 0.80.
     pub tool_reliability_threshold: f64,
     // ── History retention (v0.33.0) ──

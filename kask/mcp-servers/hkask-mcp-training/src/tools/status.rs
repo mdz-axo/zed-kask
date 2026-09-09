@@ -126,91 +126,8 @@ impl TrainingServer {
                             }
                         }
 
-                        let adapter: crate::adapter::TrainedLoRAAdapter = match self
-                            .adapter_store
-                            .get_by_id(uuid::Uuid::parse_str(&job_id).unwrap_or_default())
-                            .map_err(map_adapter_store_error)?
-                        {
-                            Some(existing) => {
-                                result["adapter_registered"] = json!(true);
-                                result["adapter_note"] = json!("Already registered (pre-registered by retrain)");
-                                existing
-                            }
-                            None => {
-                                if let Some(ref manifest) = manifest {
-                                    let base_model = manifest.base_model.clone().unwrap_or_default();
-                                    let adapter_name = format!("adapter-{}", &job_id[..8.min(job_id.len())]);
-                                    let weight_path = manifest.adapter.repository.clone();
-                                    let adapter = Self::build_trained_adapter(
-                                        job_id.clone(),
-                                        adapter_name,
-                                        base_model.clone(),
-                                        String::new(),
-                                        job_id.clone(),
-                                        chrono::Utc::now().timestamp(),
-                                        0,
-                                        String::new(),
-                                        1,
-                                        Some(AdapterMetrics {
-                                            loss: manifest.loss.map(|v| v as f32),
-                                            perplexity: None,
-                                            training_duration_secs: manifest.training_duration_secs,
-                                            tokens_processed: None,
-                                        }),
-                                        Some(std::path::Path::new(&weight_path)),
-                                    );
-                                    match self.adapter_store.store(&adapter)
-                                        .map_err(map_adapter_store_error)
-                                    {
-                                        Ok(()) => {
-                                            result["adapter_registered"] = json!(true);
-                                            result["adapter_name"] = json!(adapter.expertise.name);
-                                            result["base_model"] = json!(base_model);
-                                            result["adapter_repository"] = json!(manifest.adapter.repository);
-                                            result["adapter_path"] = json!(manifest.adapter.path);
-                                            tracing::info!(
-                                                target: "hkask.training.adapter.created",
-                                                adapter_id = %job_id,
-                                                "Adapter auto-registered from completion manifest"
-                                            );
-                                            adapter
-                                        }
-                                        Err(e) => {
-                                            result["adapter_registered"] = json!(false);
-                                            result["adapter_error"] = json!(e.to_string());
-                                            return Ok(result);
-                                        }
-                                    }
-                                } else {
-                                    result["adapter_registered"] = json!(false);
-                                    result["adapter_note"] = json!("No completion manifest available");
-                                    return Ok(result);
-                                }
-                            }
-                        };
-
-                        // A/B comparison (skill retraining only)
-                        let adapter_skill = adapter.skill_name.clone().unwrap_or_default();
-                        if !adapter_skill.is_empty() {
-                            let current_loss = Self::metrics_from_trained(&adapter).and_then(|m| m.loss);
-                            if let Some(prev) = self.adapter_store
-                                .get_previous_by_skill_name(&adapter_skill, adapter.id)
-                                .map_err(map_adapter_store_error)?
-                                && let (Some(new_loss), Some(prev_loss)) = (
-                                    current_loss,
-                                    Self::metrics_from_trained(&prev).and_then(|m| m.loss),
-                                ) {
-                                    let improved = new_loss < prev_loss;
-                                    result["ab_comparison"] = json!({
-                                        "skill_name": adapter_skill,
-                                        "previous_version": prev.version,
-                                        "previous_loss": prev_loss,
-                                        "new_loss": new_loss,
-                                        "loss_improved": improved,
-                                        "auto_promoted": improved,
-                                    });
-                                }
-                        }
+                        self.finalize_completed_job(&job_id, manifest.as_ref(), &mut result)
+                            .await?;
                     }
 
                     Ok(result)
@@ -219,5 +136,115 @@ impl TrainingServer {
             }
         })
         .await
+    }
+
+    /// T13 seam: the completion finalization — adapter registration from
+    /// the completion manifest plus the skill-retrain A/B comparison.
+    /// Extracted from `training_status` so the manifest path is testable
+    /// without a live HuggingFace fetch (tests pass a fixture manifest
+    /// directly).
+    pub(crate) async fn finalize_completed_job(
+        &self,
+        job_id: &str,
+        manifest: Option<&crate::huggingface::CompletionManifest>,
+        result: &mut serde_json::Value,
+    ) -> Result<(), McpToolError> {
+        // A malformed job id is a caller error — never a silent nil-UUID
+        // lookup miss (pre-fix, `unwrap_or_default` made the
+        // pre-registration check silently miss and proceed to register
+        // under the malformed id).
+        let adapter_uuid = uuid::Uuid::parse_str(job_id).map_err(|error| {
+            McpToolError::invalid_argument(format!("malformed job id {job_id:?}: {error}"))
+        })?;
+        let adapter: crate::adapter::TrainedLoRAAdapter = match self
+            .adapter_store
+            .get_by_id(adapter_uuid)
+            .map_err(map_adapter_store_error)?
+        {
+            Some(existing) => {
+                result["adapter_registered"] = json!(true);
+                result["adapter_note"] = json!("Already registered (pre-registered by retrain)");
+                existing
+            }
+            None => {
+                if let Some(manifest) = manifest {
+                    let base_model = manifest.base_model.clone().unwrap_or_default();
+                    let adapter_name = format!("adapter-{}", &job_id[..8.min(job_id.len())]);
+                    let weight_path = manifest.adapter.repository.clone();
+                    let adapter = Self::build_trained_adapter(
+                        job_id.to_string(),
+                        adapter_name,
+                        base_model.clone(),
+                        String::new(),
+                        job_id.to_string(),
+                        chrono::Utc::now().timestamp(),
+                        0,
+                        String::new(),
+                        1,
+                        Some(AdapterMetrics {
+                            loss: manifest.loss.map(|v| v as f32),
+                            perplexity: None,
+                            training_duration_secs: manifest.training_duration_secs,
+                            tokens_processed: None,
+                        }),
+                        Some(std::path::Path::new(&weight_path)),
+                    );
+                    match self
+                        .adapter_store
+                        .store(&adapter)
+                        .map_err(map_adapter_store_error)
+                    {
+                        Ok(()) => {
+                            result["adapter_registered"] = json!(true);
+                            result["adapter_name"] = json!(adapter.expertise.name);
+                            result["base_model"] = json!(base_model);
+                            result["adapter_repository"] = json!(manifest.adapter.repository);
+                            result["adapter_path"] = json!(manifest.adapter.path);
+                            tracing::info!(
+                                target: "hkask.training.adapter.created",
+                                adapter_id = %job_id,
+                                "Adapter auto-registered from completion manifest"
+                            );
+                            adapter
+                        }
+                        Err(e) => {
+                            result["adapter_registered"] = json!(false);
+                            result["adapter_error"] = json!(e.to_string());
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    result["adapter_registered"] = json!(false);
+                    result["adapter_note"] = json!("No completion manifest available");
+                    return Ok(());
+                }
+            }
+        };
+
+        // A/B comparison (skill retraining only)
+        let adapter_skill = adapter.skill_name.clone().unwrap_or_default();
+        if !adapter_skill.is_empty() {
+            let current_loss = Self::metrics_from_trained(&adapter).and_then(|m| m.loss);
+            if let Some(prev) = self
+                .adapter_store
+                .get_previous_by_skill_name(&adapter_skill, adapter.id)
+                .map_err(map_adapter_store_error)?
+                && let (Some(new_loss), Some(prev_loss)) = (
+                    current_loss,
+                    Self::metrics_from_trained(&prev).and_then(|m| m.loss),
+                )
+            {
+                let improved = new_loss < prev_loss;
+                result["ab_comparison"] = json!({
+                    "skill_name": adapter_skill,
+                    "previous_version": prev.version,
+                    "previous_loss": prev_loss,
+                    "new_loss": new_loss,
+                    "loss_improved": improved,
+                    "auto_promoted": improved,
+                });
+            }
+        }
+        Ok(())
     }
 }

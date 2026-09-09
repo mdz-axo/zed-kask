@@ -791,7 +791,7 @@ impl CyberneticsLoop {
         let impact_reports = self.verify_impact(&actions).await;
 
         // Check regulation coherence.
-        self.check_coherence(&actions);
+        self.check_coherence(&actions).await;
 
         // Feed per-metric outcomes into strategy evaluator.
         // Collect promoted metrics in a locked scope; emit spans outside
@@ -916,6 +916,15 @@ impl CyberneticsLoop {
             }
             self.emit_regulation_span(SpanKind::LoopMetricsTelemetry, observation)
                 .await;
+            // The hourly heartbeat also carries the per-domain tool-outcome
+            // breakdown when any domain has samples, so the breakdown is
+            // retrievable from the algedonic log even while tool reliability
+            // is healthy and no alert fires. One span per hour — the
+            // alert-time emission is what needs guarding against floods,
+            // and it is latched separately in `verify_impact`.
+            if is_heartbeat {
+                self.emit_tool_outcome_breakdown().await;
+            }
         }
     }
 }

@@ -644,6 +644,132 @@ mod smoke {
             .unwrap_or_else(|| panic!("tool output must have a 'content' key, got: {parsed}"))
     }
 
+    /// T13 fixture: a successful completion manifest as the status tool
+    /// would fetch from HuggingFace.
+    fn fixture_manifest(job_id: &str) -> crate::huggingface::CompletionManifest {
+        crate::huggingface::CompletionManifest {
+            job_id: job_id.to_string(),
+            status: "success".to_string(),
+            dataset_sha256: "abc123".to_string(),
+            adapter: crate::huggingface::TrainingArtifact {
+                repository: "acme/test-adapter".to_string(),
+                revision: "main".to_string(),
+                path: "adapter_model.safetensors".to_string(),
+                sha256: "def456".to_string(),
+            },
+            finished_at: "2026-09-09T00:00:00Z".to_string(),
+            base_model: Some("Qwen/Qwen3-4B".to_string()),
+            harness: Some("axolotl".to_string()),
+            training_duration_secs: Some(120),
+            loss: Some(0.42),
+            grad_norm: None,
+            current_step: None,
+            total_steps: None,
+            alerts: Vec::new(),
+            output_dir: None,
+        }
+    }
+
+    /// T13: a malformed job id is a typed error, never a silent nil-UUID
+    /// lookup miss (pre-fix, `unwrap_or_default` made the pre-registration
+    /// check silently miss and proceed to register under the malformed id).
+    #[tokio::test]
+    async fn malformed_job_id_is_rejected_not_silently_registered() {
+        let server = make_server();
+        let mut result = serde_json::json!({});
+        let error = server
+            .finalize_completed_job(
+                "not-a-uuid",
+                Some(&fixture_manifest("not-a-uuid")),
+                &mut result,
+            )
+            .await
+            .expect_err("a malformed job id must be an error");
+        assert!(
+            error.to_string().to_lowercase().contains("job id"),
+            "the error must name the job id: {error}"
+        );
+        assert_eq!(
+            result.get("adapter_registered"),
+            None,
+            "nothing may be registered for a malformed job id"
+        );
+    }
+
+    /// T13: repeated finalization is idempotent — the first poll registers
+    /// the adapter with the manifest's durable metrics; the second poll
+    /// finds it pre-registered and registers nothing new.
+    #[tokio::test]
+    async fn repeated_finalization_is_idempotent_with_durable_metrics() {
+        let server = make_server();
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let manifest = fixture_manifest(&job_id);
+
+        let mut first = serde_json::json!({});
+        server
+            .finalize_completed_job(&job_id, Some(&manifest), &mut first)
+            .await
+            .expect("first finalization registers");
+        assert_eq!(first["adapter_registered"], serde_json::json!(true));
+        assert_eq!(first["base_model"], serde_json::json!("Qwen/Qwen3-4B"));
+        assert_eq!(
+            first["adapter_repository"],
+            serde_json::json!("acme/test-adapter")
+        );
+
+        // The registered adapter carries the manifest's durable metrics.
+        let adapter = server
+            .adapter_store
+            .get_by_id(uuid::Uuid::parse_str(&job_id).expect("valid uuid"))
+            .expect("store read")
+            .expect("registered");
+        let metrics = TrainingServer::metrics_from_trained(&adapter)
+            .expect("metrics")
+            .loss
+            .expect("loss");
+        assert!(
+            (metrics - 0.42).abs() < 1e-6,
+            "loss must be durable: {metrics}"
+        );
+
+        // The second poll finds it pre-registered — no duplicate.
+        let mut second = serde_json::json!({});
+        server
+            .finalize_completed_job(&job_id, Some(&manifest), &mut second)
+            .await
+            .expect("second finalization is a no-op");
+        assert_eq!(second["adapter_registered"], serde_json::json!(true));
+        assert_eq!(
+            second["adapter_note"],
+            serde_json::json!("Already registered (pre-registered by retrain)")
+        );
+    }
+
+    /// T13 control: no manifest → nothing finalizes.
+    #[tokio::test]
+    async fn missing_manifest_does_not_finalize() {
+        let server = make_server();
+        let job_id = uuid::Uuid::new_v4().to_string();
+        let mut result = serde_json::json!({});
+        server
+            .finalize_completed_job(&job_id, None, &mut result)
+            .await
+            .expect("no manifest is not an error");
+        assert_eq!(result["adapter_registered"], serde_json::json!(false));
+        assert_eq!(
+            result["adapter_note"],
+            serde_json::json!("No completion manifest available")
+        );
+        assert!(
+            server
+                .adapter_store
+                .get_by_id(uuid::Uuid::parse_str(&job_id).expect("uuid"))
+                .expect("store read")
+                .is_none(),
+            "nothing may be registered without a manifest"
+        );
+    }
+
     #[tokio::test]
     async fn validate_config_returns_valid_json_envelope() {
         let server = make_server();

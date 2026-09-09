@@ -1,4 +1,4 @@
-use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput, ToolInputPayload};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -640,6 +640,28 @@ fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, 
     }
 }
 
+/// Build the error output for a model-caused invalid-JSON tool call — the
+/// typed `{"error", "kind": "invalid_argument"}` envelope so
+/// `mcp_run_outcome` classifies the failure structurally. The ledger then
+/// excludes it from the tool-reliability success rate
+/// (`hkask_types::tool_response::is_not_tool_fault_kind`) while keeping it
+/// in the per-kind breakdown: the tool never received usable input, so the
+/// failure is the caller's (the truncation signature — see `Thread::
+/// handle_tool_use_json_parse_error_event`), not the tool's. The
+/// `llm_output` keeps the parse-error message the model sees.
+fn invalid_json_tool_output(error_message: String) -> AgentToolOutput {
+    let llm_output = vec![LanguageModelToolResultContent::Text(
+        error_message.clone().into(),
+    )];
+    AgentToolOutput {
+        raw_output: serde_json::json!({
+            "error": error_message,
+            "kind": hkask_types::McpErrorKind::InvalidArgument.to_string(),
+        }),
+        llm_output,
+    }
+}
+
 /// zed-kask: D-seam — whether a failed context-server tool call is a
 /// request timeout (server alive but slow) rather than a transport death
 /// (connection reset, process death). Timeouts must NOT enter the
@@ -794,10 +816,29 @@ impl ContextServerTool {
         let server_id = self.server_id.clone();
 
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // zed-kask: D-seam — classify model-caused input failures before
+            // dispatch. `ToolInput::recv` collapses the typed `InvalidJson`
+            // payload (the model's tool-call arguments were unparseable — the
+            // truncation signature) into an anyhow error, which
+            // `mcp_run_outcome` would classify as raw error text and the
+            // ledger would count against tool reliability. Consuming the
+            // payload stream directly lets the invalid-JSON case return a
+            // typed `invalid_argument` envelope instead: the tool never
+            // received usable input, so the failure is caller-caused —
+            // excluded from the success-rate math
+            // (`hkask_types::tool_response::is_not_tool_fault_kind`) but
+            // visible in the per-kind breakdown.
+            let mut input = input;
+            let input = loop {
+                match input.next().await {
+                    Ok(ToolInputPayload::Full(value)) => break value,
+                    Ok(ToolInputPayload::Partial(_)) => continue,
+                    Ok(ToolInputPayload::InvalidJson { error_message }) => {
+                        return Err(invalid_json_tool_output(error_message));
+                    }
+                    Err(error) => return Err(anyhow::anyhow!(error.to_string()).into()),
+                }
+            };
 
             authorize
                 .await
@@ -1278,6 +1319,36 @@ mod tests {
         let (success, error_kind) = mcp_run_outcome(&Err(output));
         assert!(!success);
         assert_eq!(error_kind.as_deref(), Some("unavailable"));
+    }
+
+    /// Pins the invalid-JSON classification: a model-caused unparseable
+    /// tool-call (the truncation signature — arguments cut mid-JSON at
+    /// stream end) returns the typed `invalid_argument` envelope, so the
+    /// ledger excludes the failure from the tool-reliability success rate
+    /// while the per-kind breakdown keeps it visible. The LLM-visible text
+    /// keeps the parse-error message (pinned end-to-end by
+    /// `test_streaming_tool_json_parse_error_is_forwarded_to_running_tool`).
+    #[test]
+    fn test_invalid_json_input_classifies_as_invalid_argument() {
+        let parse_error =
+            "Error parsing input JSON: EOF while parsing a string at line 1 column 17";
+        let output = invalid_json_tool_output(parse_error.to_string());
+        assert!(
+            matches!(
+                output.llm_output.first(),
+                Some(LanguageModelToolResultContent::Text(text)) if text.contains(parse_error)
+            ),
+            "the model still sees the parse-error message: {:?}",
+            output.llm_output
+        );
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(
+            error_kind.as_deref(),
+            Some("invalid_argument"),
+            "a model-caused input failure must classify as caller-caused, \
+             not as raw error text counting against tool reliability"
+        );
     }
 
     // ── zed-kask pinning tests (KaskToolSource D-seam, I1) ──────────────
