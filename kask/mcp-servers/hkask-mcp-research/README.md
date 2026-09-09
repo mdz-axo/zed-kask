@@ -38,18 +38,27 @@ Web search, extraction, and feed-based research MCP server.
 | `HKASK_BRAVE_API_KEY`         | Brave search API key                              |
 | `HKASK_SERPAPI_API_KEY`       | SerpAPI key (YouTube transcript search)           |
 | `HKASK_FIRECRAWL_API_KEY`     | Firecrawl extraction API key                      |
-| `HKASK_RSS_DB`                | RSS SQLite DB path (optional — defaults to `<data-dir>/mcp/research/rss.db`) |
-| `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS tools) |
+| `HKASK_RESEARCH_DB`                | Research SQLite DB path (optional — defaults to `<data-dir>/mcp/research/research.db`) |
+| `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS and research-run tools) |
 | `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 50)          |
 | `HKASK_RERANK_MODEL`          | Model for the deep strategy's rerank stage (default: `OpenRouter/qwen/qwen3-reranker-8b`, served via the provider's native rerank endpoint through the inference bridge) |
 | `HKASK_RERANK_MAX_CONCURRENCY` | Max concurrent rerank scoring calls per deep search (default: 8; the stage fans out one scoring call per candidate up to this cap) |
 
 Free providers (Semantic Scholar, arXiv) are always available — no API key
-required for basic web search. RSS tools require `HKASK_DB_PASSPHRASE`;
-the DB path defaults to `<data-dir>/mcp/research/rss.db` (databases are
+required for basic web search. RSS and research-run tools require
+`HKASK_DB_PASSPHRASE`; the DB path defaults to
+`<data-dir>/mcp/research/research.db` (databases are
 infrastructure and stay in the internal data dir — artifact files and
 outputs go to the visible artifacts dir under `{server}-mcp/`).
+
+**One-time data migration:** the default filename changed from
+`mcp/research/rss.db` to `mcp/research/research.db`. Before first launch of
+the renamed build, move the file
+(`mv <data-dir>/mcp/research/rss.db <data-dir>/mcp/research/research.db`);
+the renamed build never reads the old path, and the maintenance inventory
+will flag the stale old path until reconciled — that flag is the system
+working (the DB is operator-owned and is never silently orphaned).
 
 ## Quick Start
 

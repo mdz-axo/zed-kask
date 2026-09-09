@@ -11,7 +11,7 @@
 //!   not a silent fallback or empty result.
 //! - `web_extract` / `web_browse` invalid-argument paths (oversized URL,
 //!   oversized json_prompt / instruction) — checked before URL validation.
-//! - RSS tools without a DB → `permission_denied` (the `require_rss_db!` gate).
+//! - RSS tools without a DB → `permission_denied` (the `require_research_db!` gate).
 //! - RSS tools with an in-memory DB → happy path (empty list, zero unread)
 //!   and invalid-argument (malformed continuation token).
 //!
@@ -23,17 +23,18 @@
 
 use hkask_mcp_research::ResearchServer;
 use hkask_mcp_research::research::cache::ResponseCache;
-use hkask_mcp_research::research::db::RSS_SCHEMA_DDL;
+use hkask_mcp_research::research::db::RESEARCH_SCHEMA_DDL;
 use hkask_mcp_research::research::providers::{ProviderSearchOutput, WebSearchPort};
 use hkask_mcp_research::research::rss_types::{
     DiscoverRequest, GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest,
     UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
-    BrowseRequest, BrowseResult, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
-    ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, LatencyTier,
-    ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
-    RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
+    BeginResearchRunRequest, BrowseRequest, BrowseResult, CompoundSearchResult, EvaluateArtifact,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest,
+    GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
+    ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy,
+    WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -227,7 +228,7 @@ fn make_server_without_db() -> ResearchServer {
     )
 }
 
-fn make_server_with_rss_db() -> ResearchServer {
+fn research_db_pool() -> r2d2::Pool<hkask_storage::SqliteConnectionManager> {
     let manager = hkask_storage::SqliteConnectionManager::memory();
     let pool = r2d2::Pool::builder()
         .max_size(1)
@@ -236,15 +237,19 @@ fn make_server_with_rss_db() -> ResearchServer {
     {
         let connection = pool.get().expect("r2d2 pool get");
         connection
-            .execute_batch(RSS_SCHEMA_DDL)
-            .expect("RSS schema init");
+            .execute_batch(RESEARCH_SCHEMA_DDL)
+            .expect("research schema init");
     }
+    pool
+}
+
+fn make_server_with_research_db() -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
         Arc::new(NoCredentialsPool),
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
-        Some(pool),
+        Some(research_db_pool()),
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
@@ -321,6 +326,7 @@ async fn web_search_rejects_empty_query() {
             freshness: None,
             strategy: None,
             provider: None,
+            run_id: None,
             intent: None,
         }))
         .await);
@@ -344,6 +350,7 @@ async fn web_search_rejects_oversized_query() {
             freshness: None,
             strategy: None,
             provider: None,
+            run_id: None,
             intent: None,
         }))
         .await);
@@ -367,6 +374,7 @@ async fn web_search_rejects_unknown_strategy() {
             freshness: None,
             strategy: Some("bogus".to_string()),
             provider: None,
+            run_id: None,
             intent: None,
         }))
         .await);
@@ -385,6 +393,7 @@ async fn web_search_rejects_unknown_freshness() {
             freshness: Some("bogus".to_string()),
             strategy: None,
             provider: None,
+            run_id: None,
             intent: None,
         }))
         .await);
@@ -405,6 +414,7 @@ async fn web_search_surfaces_missing_credentials_as_permission_denied() {
             freshness: None,
             strategy: None,
             provider: None,
+            run_id: None,
             intent: None,
         }))
         .await);
@@ -425,6 +435,7 @@ async fn web_extract_rejects_oversized_url() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -446,6 +457,7 @@ async fn web_extract_rejects_oversized_json_prompt() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -469,6 +481,7 @@ async fn web_extract_surfaces_missing_credentials_as_permission_denied() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::PermissionDenied);
@@ -483,6 +496,7 @@ async fn web_find_similar_surfaces_missing_credentials_as_permission_denied() {
         .web_find_similar(Parameters(FindSimilarRequest {
             url: LITERAL_IP_URL.to_string(),
             num_results: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::PermissionDenied);
@@ -552,6 +566,7 @@ async fn web_extract_rejects_loopback_destination() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -577,6 +592,7 @@ async fn web_extract_rejects_unspecified_destination() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -601,6 +617,7 @@ async fn web_extract_rejects_nat64_loopback_destination() {
             json_schema: None,
             main_content_only: None,
             wait_for_ms: None,
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -704,7 +721,7 @@ async fn rss_mark_all_read_without_db_returns_permission_denied() {
 
 #[tokio::test]
 async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
-    let server = make_server_with_rss_db();
+    let server = make_server_with_research_db();
     let out = ok(server
         .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
         .await);
@@ -718,7 +735,7 @@ async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
 
 #[tokio::test]
 async fn rss_get_unread_count_with_empty_db_returns_zero() {
-    let server = make_server_with_rss_db();
+    let server = make_server_with_research_db();
     let out = ok(server
         .rss_get_unread_count(Parameters(UnreadCountRequest {
             stream_id: "feed/test".to_string(),
@@ -736,7 +753,7 @@ async fn rss_get_unread_count_with_empty_db_returns_zero() {
 
 #[tokio::test]
 async fn rss_get_entries_rejects_non_base64_continuation_token() {
-    let server = make_server_with_rss_db();
+    let server = make_server_with_research_db();
     let error = err(server
         .rss_get_entries(Parameters(GetEntriesRequest {
             stream_id: "feed/test".to_string(),
@@ -875,6 +892,7 @@ fn deep_search_request() -> SearchRequest {
         strategy: Some("deep".to_string()),
         intent: None,
         provider: None,
+        run_id: None,
     }
 }
 
@@ -1104,6 +1122,7 @@ async fn web_search_does_not_cache_provider_failures() {
         strategy: Some("quick".to_string()),
         intent: None,
         provider: None,
+        run_id: None,
     };
 
     // First call: the failure is surfaced (degradation contract)…
@@ -1269,6 +1288,7 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
             strategy: None,
             intent: Some("academic".to_string()),
             provider: None,
+            run_id: None,
         }))
         .await
         .expect("tool ok");
@@ -1477,5 +1497,252 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
             .as_array()
             .map(|urls| urls.len()),
         Some(3)
+    );
+}
+
+// ── Research-run ledger schema ─────────────────────────────────────────────
+
+#[test]
+fn research_schema_creates_run_tables() {
+    // The run ledger lives in the same encrypted DB as the feed substrate
+    // — one DB, one passphrase, one pool (essentialist G3). The run tables
+    // must exist after the schema DDL runs.
+    let manager = hkask_storage::SqliteConnectionManager::memory();
+    let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .expect("r2d2 pool build");
+    let connection = pool.get().expect("r2d2 pool get");
+    connection
+        .execute_batch(RESEARCH_SCHEMA_DDL)
+        .expect("schema init");
+
+    for table in ["research_runs", "run_sources"] {
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master query");
+        assert_eq!(count, 1, "table {table} must exist after the DDL");
+    }
+
+    // run_sources carries the audit copy (excerpt — what the server
+    // actually returned, capped) and the corpus composition seam
+    // (corpus_ref — the agent's entity_ref for the durable recall copy).
+    let mut statement = connection
+        .prepare("PRAGMA table_info(run_sources)")
+        .expect("pragma table_info");
+    let columns: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query_map columns")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("column rows");
+    for column in [
+        "run_id",
+        "url",
+        "provider",
+        "title",
+        "published",
+        "source",
+        "excerpt",
+        "corpus_ref",
+        "recorded_by",
+        "verification_state",
+        "verification_basis",
+        "recorded_at",
+    ] {
+        assert!(
+            columns.contains(&column.to_string()),
+            "column {column} missing: {columns:?}"
+        );
+    }
+
+    // Cross-run audit queries ("was this URL ever consulted?") need only
+    // the index now; a lookup tool waits for a named consumer.
+    let index_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_run_sources_url'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("index query");
+    assert_eq!(index_count, 1, "idx_run_sources_url must exist");
+}
+
+// ── Research-run ledger tools ──────────────────────────────────────────────
+
+fn make_server_with_pool_and_db(
+    pool: Arc<dyn WebSearchPort>,
+    database: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
+) -> ResearchServer {
+    ResearchServer::new(
+        WebID::new(),
+        pool,
+        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
+        RateLimiter::new(10000, 60),
+        database,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        Arc::new(FailingInferencePort),
+        None,
+    )
+}
+
+#[tokio::test]
+async fn begin_research_run_requires_db() {
+    let server = make_server_without_db();
+    let error = err(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "what supports the claim?".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
+    assert!(
+        error.message.contains("HKASK_RESEARCH_DB"),
+        "message names the env var: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn begin_research_run_rejects_empty_question() {
+    let server = make_server_with_research_db();
+    let error = err(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "   ".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+}
+
+#[tokio::test]
+async fn begin_and_get_research_run_roundtrip() {
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "is the wire story corroborated?".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+    assert_eq!(begun["status"].as_str(), Some("planned"));
+    assert_eq!(run_id.len(), 16, "run_id is blake3[..16] hex: {run_id}");
+
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest {
+            run_id: run_id.clone(),
+        }))
+        .await));
+    assert_eq!(manifest["run_id"].as_str(), Some(run_id.as_str()));
+    assert_eq!(
+        manifest["question"].as_str(),
+        Some("is the wire story corroborated?")
+    );
+    assert_eq!(manifest["status"].as_str(), Some("planned"));
+    assert!(
+        manifest["sources"]
+            .as_array()
+            .is_some_and(|sources| sources.is_empty()),
+        "a fresh run has no sources: {manifest}"
+    );
+}
+
+#[tokio::test]
+async fn get_research_run_unknown_id_is_not_found() {
+    let server = make_server_with_research_db();
+    let error = err(server
+        .get_research_run(Parameters(GetResearchRunRequest {
+            run_id: "deadbeefdeadbeef".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn web_search_with_run_id_records_sources_server_side() {
+    // The non-repudiation path: a run-scoped search records what the tool
+    // actually returned (recorded_by='server'), visibly in the search
+    // output (run_ledger note) and in the manifest (with server-side
+    // recomputed confidence).
+    let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
+
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "stub results".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    let output = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "stub query".to_string(),
+            num_results: Some(10),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: Some("deep".to_string()),
+            intent: None,
+            provider: None,
+            run_id: Some(run_id.clone()),
+        }))
+        .await));
+    assert_eq!(
+        output["run_ledger"]["recorded"].as_u64(),
+        Some(3),
+        "three stub results recorded: {output}"
+    );
+
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
+        .await));
+    let sources = manifest["sources"].as_array().expect("sources array");
+    assert_eq!(sources.len(), 3);
+    for source in sources {
+        assert_eq!(source["recorded_by"].as_str(), Some("server"));
+        assert!(
+            source["url"]
+                .as_str()
+                .is_some_and(|url| url.contains("example.com")),
+            "stub url recorded: {source}"
+        );
+        assert!(
+            source["confidence"].as_f64().is_some(),
+            "server-side recomputed confidence present: {source}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn web_search_with_unknown_run_id_surfaces_ledger_note() {
+    // A run_id the ledger does not know fails the append — surfaced as a
+    // run_ledger note in the output (the search itself succeeded), never
+    // swallowed and never an error return.
+    let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
+
+    let output = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "stub query".to_string(),
+            num_results: Some(10),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            intent: None,
+            provider: None,
+            run_id: Some("deadbeefdeadbeef".to_string()),
+        }))
+        .await));
+    let note = &output["run_ledger"];
+    assert_eq!(note["recorded"].as_u64(), Some(0), "note: {note}");
+    assert!(
+        note["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()),
+        "failure surfaced: {note}"
     );
 }

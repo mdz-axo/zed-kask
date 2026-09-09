@@ -1752,9 +1752,10 @@ pub struct KaskCondenserSettingsContent {
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskResearchSettingsContent {
-    /// RSS database path for persistent feed storage. When empty, the server
-    /// resolves a default path under the hKask data directory.
-    pub rss_db: Option<String>,
+    /// Research database path (feed substrate + research-run ledger). When
+    /// empty, the server resolves a default path under the hKask data
+    /// directory.
+    pub research_db: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

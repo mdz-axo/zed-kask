@@ -204,12 +204,22 @@ pub struct SearchRequest {
     /// (quick = best-scored single keyword provider; web/news/deep = fan out
     /// with RRF fusion).
     pub provider: Option<String>,
+    /// Optional research-run identifier (from `begin_research_run`): when
+    /// set, the returned results are appended to that run's ledger with
+    /// `recorded_by='server'` — the non-repudiation path. A run-scoped
+    /// search bypasses the response-cache read so the ledger records what
+    /// THIS request returned; a ledger write failure is surfaced in the
+    /// output as a `run_ledger` note, never swallowed.
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindSimilarRequest {
     pub url: String,
     pub num_results: Option<u32>,
+    /// Optional research-run identifier: when set, the returned results
+    /// are appended to that run's ledger (see `web_search.run_id`).
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -226,6 +236,9 @@ pub struct ExtractRequest {
     pub json_schema: Option<AnyJsonValue>,
     pub main_content_only: Option<bool>,
     pub wait_for_ms: Option<u64>,
+    /// Optional research-run identifier: when set, the extracted content
+    /// is appended to that run's ledger (see `web_search.run_id`).
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -233,6 +246,18 @@ pub struct BrowseRequest {
     pub url: String,
     pub instruction: Option<String>,
     pub timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BeginResearchRunRequest {
+    /// The research question the run addresses.
+    pub question: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetResearchRunRequest {
+    /// The run identifier returned by `begin_research_run`.
+    pub run_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

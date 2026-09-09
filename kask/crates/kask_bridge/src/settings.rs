@@ -314,9 +314,10 @@ impl Default for KaskCondenserSettings {
 /// Research MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskResearchSettings {
-    /// RSS database path for persistent feed storage. When empty, the server
-    /// resolves a default path under the hKask data directory.
-    pub rss_db: String,
+    /// Research database path (feed substrate + research-run ledger). When
+    /// empty, the server resolves a default path under the hKask data
+    /// directory.
+    pub research_db: String,
 }
 
 /// Companies MCP server configuration.
@@ -870,7 +871,7 @@ impl From<KaskResearchSettingsContent> for KaskResearchSettings {
     fn from(c: KaskResearchSettingsContent) -> Self {
         let default = Self::default();
         Self {
-            rss_db: c.rss_db.unwrap_or(default.rss_db),
+            research_db: c.research_db.unwrap_or(default.research_db),
         }
     }
 }

@@ -374,8 +374,8 @@ pub(crate) fn kask_string_input(
                             ("kask", "artifacts_dir") => {
                                 kask.artifacts_dir = Some(parsed.clone());
                             }
-                            ("research", "rss_db") => {
-                                kask.research.get_or_insert_default().rss_db = Some(parsed.clone());
+                            ("research", "research_db") => {
+                                kask.research.get_or_insert_default().research_db = Some(parsed.clone());
                             }
                             ("companies", "chronic_staleness_days") => {
                                 if let Ok(v) = parsed.parse::<u32>() {

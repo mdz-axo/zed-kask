@@ -125,8 +125,11 @@ pub(crate) fn emit_research_env(
     research: &KaskResearchSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    if !research.rss_db.is_empty() {
-        env.insert("HKASK_RSS_DB".to_string(), research.rss_db.clone());
+    if !research.research_db.is_empty() {
+        env.insert(
+            "HKASK_RESEARCH_DB".to_string(),
+            research.research_db.clone(),
+        );
     }
 }
 

@@ -172,12 +172,26 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_BRAVE_API_KEY` | Brave search API key |
 | `HKASK_SERPAPI_API_KEY` | SerpAPI key (YouTube transcript search) |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl extraction API key |
-| `HKASK_RSS_DB` | RSS SQLite DB path (defaults to `<data-dir>/mcp/research/rss.db`) |
-| `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS tools) |
+| `HKASK_RESEARCH_DB` | Research SQLite DB path (feed substrate + run ledger; defaults to `<data-dir>/mcp/research/research.db`) |
+| `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS and research-run tools) |
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
 | `HKASK_RERANK_MODEL` | Rerank model override (default `OpenRouter/qwen/qwen3-reranker-8b`) |
 
+## One-time data migration — `rss.db` → `research.db`
+
+The default DB filename changed with the research-run ledger landing in
+the same database. **Before first launch of the renamed build, move the
+file**: `mv <data-dir>/mcp/research/rss.db <data-dir>/mcp/research/research.db`
+(keep the same `HKASK_DB_PASSPHRASE`). The renamed build never reads the
+old path — an unmoved file is not an error, but the feed substrate and run
+ledger start empty. The passphrase-rotation layout and the maintenance
+inventory cover the new path; the inventory will flag the old `rss.db` path
+as stale until reconciled — **that flag is the system working, not a
+failure** (Magna Carta P1: an existing encrypted DB is operator-owned and
+is never silently orphaned). Operators who set `HKASK_RESEARCH_DB` to an
+explicit path are unaffected (the env var continues to point wherever it
+pointed; only the default filename changed).
 
 ## References
 

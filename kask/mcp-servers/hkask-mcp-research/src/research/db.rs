@@ -18,7 +18,7 @@ use hkask_types::time::now_rfc3339;
 /// `journal_mode = WAL`. See `hkask_storage::database::init_wal_pragmas` for the
 /// shared helper (not used here because this is a const DDL string, not
 /// a function call, and the PRAGMAs are embedded in the DDL).
-pub const RSS_SCHEMA_DDL: &str = "
+pub const RESEARCH_SCHEMA_DDL: &str = "
     PRAGMA busy_timeout=5000;
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
@@ -105,6 +105,45 @@ pub const RSS_SCHEMA_DDL: &str = "
     );
 
     CREATE INDEX IF NOT EXISTS idx_synthetic_source ON synthetic_feeds(source_url);
+
+    -- Research-run ledger: the server's non-repudiable record of what its
+    -- tools actually returned under a run, and the agent's declared
+    -- verification states against that record. Same DB, same passphrase,
+    -- same pool as the feed substrate (essentialist G3).
+    CREATE TABLE IF NOT EXISTS research_runs (
+        run_id     TEXT PRIMARY KEY,  -- blake3(question || began_at)[..16]
+        question   TEXT NOT NULL,
+        status     TEXT NOT NULL,    -- planned|running|completed|partial|blocked|failed
+        began_at   TEXT NOT NULL,    -- RFC 3339
+        updated_at TEXT NOT NULL
+    );
+
+    -- run_sources: one row per (run, url). `excerpt` is the audit copy of
+    -- what the server actually returned (capped); `corpus_ref` is the
+    -- agent's entity_ref for the durable recall copy ingested via the
+    -- corpus server (the composition seam — different job, different
+    -- owner). `recorded_by` distinguishes server-observed rows from
+    -- agent-declared ones; `verified` requires a server-recorded row
+    -- (Commit 3's validation gate).
+    CREATE TABLE IF NOT EXISTS run_sources (
+        run_id             TEXT NOT NULL REFERENCES research_runs(run_id),
+        url                TEXT NOT NULL,
+        provider           TEXT,
+        title              TEXT,
+        published          TEXT,
+        source             TEXT,
+        excerpt            TEXT,
+        corpus_ref         TEXT,
+        recorded_by        TEXT NOT NULL,
+        verification_state TEXT,
+        verification_basis TEXT,
+        recorded_at        TEXT NOT NULL,
+        PRIMARY KEY (run_id, url)
+    );
+
+    -- Cross-run audit queries (was a URL ever consulted?) need only
+    -- the index now; a lookup tool waits for a named consumer.
+    CREATE INDEX IF NOT EXISTS idx_run_sources_url ON run_sources(url);
 
 ";
 

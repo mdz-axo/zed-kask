@@ -11,6 +11,7 @@ pub(crate) mod feed;
 pub(crate) mod performance;
 pub mod providers;
 pub mod rss_types;
+pub(crate) mod runs;
 pub(crate) mod strip_html;
 pub(crate) mod synthetic;
 pub mod types;
@@ -35,15 +36,17 @@ pub(crate) use rss_types::{
     GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MarkReadRequest,
     SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
 };
+pub(crate) use runs::{NewResearchRun, RunSourceRecord};
 pub(crate) use types::RateLimiter;
 pub(crate) use types::{
-    BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES,
-    DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
-    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
-    MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
-    MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput, ProviderRecommendation,
-    RerankInfo, RerankOutcome, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, WebError, llm_rerank, provider_profile,
+    BeginResearchRunRequest, BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle,
+    DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions,
+    ExtractOutput, ExtractRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
+    GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput,
+    ProviderProfileOutput, ProviderRecommendation, RerankInfo, RerankOutcome, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, WebError,
+    llm_rerank, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.

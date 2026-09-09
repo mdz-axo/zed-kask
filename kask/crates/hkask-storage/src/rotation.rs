@@ -472,7 +472,7 @@ pub(crate) mod tests {
         // Read the actual server DDL without introducing a storage → server dependency.
         let source = include_str!("../../../mcp-servers/hkask-mcp-research/src/research/db.rs");
         let schema = source
-            .split_once("pub const RSS_SCHEMA_DDL: &str = \"")
+            .split_once("pub const RESEARCH_SCHEMA_DDL: &str = \"")
             .expect("RSS DDL declaration")
             .1
             .split_once("\";")

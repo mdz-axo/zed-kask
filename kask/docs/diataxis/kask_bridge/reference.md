@@ -347,7 +347,7 @@ defaults.
 | `HKASK_MCP_SERVER_IDS` | `emit_mcp_server_ids_env` (`mcp_env.rs:64-72`) | Always (joined `builtin_mcp_server_ids()`) |
 | `HKASK_TRANSACTIONS_DIR` | `emit_portfolio_env` (`mcp_env.rs`) | Always (D28; `portfolio-mcp/transactions/` under the artifacts dir) |
 | `HKASK_ARTIFACTS_DIR` | `mcp_env()` root resolution (`settings.rs` `resolve_root_dir`) | Always (settings → env → resolved default; visible artifacts root) |
-| `HKASK_RSS_DB` | `emit_research_env` (`mcp_env.rs:95`) | Non-empty |
+| `HKASK_RESEARCH_DB` | `emit_research_env` (`mcp_env.rs:95`) | Non-empty |
 | `HKASK_CHRONIC_STALENESS_DAYS` / `HKASK_FERMI_DEFAULTS` | `emit_companies_env` (`mcp_env.rs:104`) | `> 0` / non-empty |
 | `HKASK_EMBEDDING_DIM` / `HKASK_EMBEDDING_MODEL` | `emit_corpus_embedding_env` (`mcp_env.rs:141`) | `!= default` |
 | `HKASK_OCR_*` | `emit_corpus_ocr_env` / triage vars (`mcp_env.rs:166`) | `!= default` |

@@ -330,9 +330,9 @@ pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::pa
             mcp_server_db("kata-kanban", "kanban"),
         ),
         (
-            "research_rss",
-            "HKASK_RSS_DB",
-            mcp_server_db("research", "rss"),
+            "research",
+            "HKASK_RESEARCH_DB",
+            mcp_server_db("research", "research"),
         ),
         (
             "training",

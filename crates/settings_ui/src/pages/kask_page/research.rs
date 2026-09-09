@@ -1,4 +1,4 @@
-//! Research sub-page — RSS database path for persistent feed storage.
+//! Research sub-page — research database path (feed substrate + run ledger).
 
 use super::*;
 
@@ -13,15 +13,15 @@ pub(crate) fn render_research_page(
         .and_then(|c| c.research)
         .map(Into::into)
         .unwrap_or_default();
-    let rss_db = research.rss_db;
+    let research_db = research.research_db;
 
-    let rss_db_input = kask_string_input(
-        "kask-research-rss-db",
-        "RSS Database Path",
-        "(server default: <data-dir>/mcp/research/rss.db)",
-        rss_db,
+    let research_db_input = kask_string_input(
+        "kask-research-research-db",
+        "Research Database Path",
+        "(server default: <data-dir>/mcp/research/research.db)",
+        research_db,
         "research",
-        "rss_db",
+        "research_db",
     );
 
     v_flex()
@@ -40,10 +40,10 @@ pub(crate) fn render_research_page(
                 .child(
                     Label::new(
                         "The research server provides web search, extraction, and RSS feed \
-                         management. Configure the RSS database path for persistent feed \
-                         storage. When empty, the server defaults to \
-                         <data-dir>/mcp/research/rss.db (databases stay in the \
-                         internal data dir; artifact files go to \
+                         management. Configure the research database path for the feed \
+                         substrate and the research-run ledger. When empty, the server \
+                         defaults to <data-dir>/mcp/research/research.db (databases stay in \
+                         the internal data dir; artifact files go to \
                          ~/Documents/zk-data/).",
                     )
                     .size(LabelSize::Small)
@@ -54,17 +54,17 @@ pub(crate) fn render_research_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("RSS Database Path"))
+                .child(Label::new("Research Database Path"))
                 .child(
                     Label::new(
-                        "SQLite database path for persistent RSS feed storage. Leave empty \
-                         to use the server default \
-                         (<data-dir>/mcp/research/rss.db).",
+                        "SQLite database path for the feed substrate and research-run \
+                         ledger. Leave empty to use the server default \
+                         (<data-dir>/mcp/research/research.db).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
-                .child(rss_db_input),
+                .child(research_db_input),
         )
         .into_any_element()
 }

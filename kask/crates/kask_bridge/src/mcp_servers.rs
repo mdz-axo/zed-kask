@@ -245,7 +245,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `run()` for the SQLCipher store. `HKASK_KANBAN_DB` is a
             // non-secret DB path — moved to `config_env` and read via
             // `std::env::var` to match every other DB-path env var
-            // (`HKASK_CURATOR_DB`, `HKASK_RSS_DB`, etc.).
+            // (`HKASK_CURATOR_DB`, `HKASK_RESEARCH_DB`, etc.).
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
@@ -279,23 +279,24 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
             // DB encryption passphrase — read by resolve_db_credential() for
-            // the RSS SQLite DB. Without this, RSS tools are silently
-            // unavailable under governed launch.
+            // the research SQLite DB. Without this, RSS and research-run
+            // tools are silently unavailable under governed launch.
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
             // Data dir — needed so the research server's fallback
-            // (`resolve_under_data_dir(mcp_server_db("research", "rss"))`)
+            // (`resolve_under_data_dir(mcp_server_db("research", "research"))`)
             // resolves under the same root as the parent process when
-            // `HKASK_RSS_DB` is unset. The RSS DB is a database — it stays
-            // in the internal data dir; only artifact files and outputs
+            // `HKASK_RESEARCH_DB` is unset. The research DB is a database — it
+            // stays in the internal data dir; only artifact files and outputs
             // go to the visible artifacts dir.
             "HKASK_DATA_DIR",
             "HKASK_WEB_CACHE_TTL_SECS",
             "HKASK_WEB_CACHE_MAX_ENTRIES",
-            // RSS DB path — read by open_database_with_extensions(). Without
-            // this, RSS tools return "not configured" despite the env being set.
-            "HKASK_RSS_DB",
+            // Research DB path — read at server open. Without this, RSS and
+            // research-run tools return "not configured" despite the env
+            // being set.
+            "HKASK_RESEARCH_DB",
             // Deep-strategy rerank model — read by
             // `hkask_inference::model_constants::rerank_model()` at call
             // time. Without this, an operator override is silently stripped
@@ -1290,12 +1291,12 @@ mod tests {
             );
         }
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_RSS_DB"),
-            "research reads HKASK_RSS_DB via std::env::var but it is not allowlisted"
+            s.config_env.unwrap().contains(&"HKASK_RESEARCH_DB"),
+            "research reads HKASK_RESEARCH_DB via std::env::var but it is not allowlisted"
         );
         assert!(
             s.config_env.unwrap().contains(&"HKASK_DATA_DIR"),
-            "research resolves its default RSS DB via resolve_under_data_dir \
+            "research resolves its default research DB via resolve_under_data_dir \
              but HKASK_DATA_DIR is not allowlisted — an operator override \
              would be silently dropped"
         );
@@ -1460,7 +1461,7 @@ mod tests {
             "HKASK_SMTP_USERNAME".to_string(),
             "curator@example.com".to_string(),
         );
-        full_config.insert("HKASK_RSS_DB".to_string(), "/rss.db".to_string());
+        full_config.insert("HKASK_RESEARCH_DB".to_string(), "/research.db".to_string());
         // A credential-shaped key that lives in `credentials`, not `config_env`.
         let credential_keys = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"];
 

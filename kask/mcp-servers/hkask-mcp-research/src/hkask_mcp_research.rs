@@ -21,18 +21,19 @@ use rusqlite::Connection;
 
 use crate::research::db::*;
 use crate::research::{
-    ArtifactScore, BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle, Continuation,
-    DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE, DeleteSyntheticRequest,
-    DiscoverRequest, EditTagRequest, EvaluateEvidenceRequest, EvidenceReport, ExtractOptions,
-    ExtractOutput, ExtractRequest, FetchRequest, FindSimilarOutput, FindSimilarRequest,
-    FindSimilarResultOutput, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
-    ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome,
-    ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput,
-    SearchStrategy, SensitivityStatus, SubscribeRequest, SynthesizeRequest, UnreadCountRequest,
-    UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed,
-    llm_rerank, provider_profile, score_evidence_set, validated_fetch_client,
+    ArtifactScore, BeginResearchRunRequest, BrowseOutput, BrowseRequest, CiteSourcesRequest,
+    CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE,
+    DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, EvaluateEvidenceRequest,
+    EvidenceReport, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest, FindSimilarOutput,
+    FindSimilarRequest, FindSimilarResultOutput, GetEntriesRequest, GetResearchRunRequest,
+    ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS,
+    MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH,
+    MAX_URL_LENGTH, MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput,
+    ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResponseCache, RunSourceRecord,
+    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    SensitivityStatus, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
+    WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank,
+    provider_profile, score_evidence_set, validated_fetch_client,
 };
 
 // ── Constants ──
@@ -53,7 +54,7 @@ hkask_mcp_server::mcp_server!(
         pub pool: Arc<dyn WebSearchPort>,
         pub cache: Arc<ResponseCache>,
         pub rate_limiter: RateLimiter,
-        pub rss_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
+        pub research_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
         pub rss_client: Client,
         /// Strict-policy fetch client for `rss_discover_feeds`: every redirect
         /// hop re-validated, every connect-time DNS resolution gated, proxies
@@ -133,14 +134,14 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
     McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
 }
 
-/// Require RSS database, returning an Err if not configured.
-macro_rules! require_rss_db {
+/// Require the research database, returning an Err if not configured.
+macro_rules! require_research_db {
     ($self:expr) => {
-        match &$self.rss_db {
+        match &$self.research_db {
             Some(db) => db.clone(),
             None => {
                 return Err(McpToolError::permission_denied(
-                    "RSS database not configured. Set HKASK_RSS_DB and HKASK_DB_PASSPHRASE.",
+                    "Research database not configured. Set HKASK_RESEARCH_DB and HKASK_DB_PASSPHRASE.",
                 ));
             }
         }
@@ -233,7 +234,12 @@ impl ResearchServer {
                 &fingerprint,
             );
 
-            if let Some(cached) = self.cache.get(&ckey).await {
+            // A run-scoped search bypasses the response-cache read so the
+            // run ledger records what THIS request returned; the recording
+            // happens on the fresh path below.
+            if req.run_id.is_none()
+                && let Some(cached) = self.cache.get(&ckey).await
+            {
                 return Ok(cached);
             }
 
@@ -399,6 +405,30 @@ impl ResearchServer {
                 self.cache.insert(ckey, output.clone()).await;
             }
 
+            // Server-side ledger append (the non-repudiation path): record
+            // what this tool actually returned under the run. Best-effort —
+            // the outcome is surfaced as a run_ledger note, never swallowed.
+            let mut output = output;
+            if let Some(run_id) = req.run_id.as_deref() {
+                let records: Vec<RunSourceRecord> = search_output
+                    .results
+                    .iter()
+                    .map(|result| RunSourceRecord {
+                        url: result.url.clone(),
+                        provider: result.providers.first().cloned(),
+                        title: Some(result.title.clone()),
+                        published: result.published.clone(),
+                        source: result.source.clone(),
+                        excerpt: result
+                            .content_preview
+                            .clone()
+                            .or_else(|| result.description.clone()),
+                    })
+                    .collect();
+                let note = self.append_run_ledger(run_id, records).await;
+                output["run_ledger"] = note;
+            }
+
             Ok(output)
         })
         .await
@@ -407,7 +437,11 @@ impl ResearchServer {
     #[tool(description = "Find pages similar to a given URL using Exa findSimilar")]
     pub async fn web_find_similar(
         &self,
-        Parameters(FindSimilarRequest { url, num_results }): Parameters<FindSimilarRequest>,
+        Parameters(FindSimilarRequest {
+            url,
+            num_results,
+            run_id,
+        }): Parameters<FindSimilarRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "web_find_similar", async {
             self.rate_limiter.check("web_find_similar")?;
@@ -421,37 +455,61 @@ impl ResearchServer {
             // to the source URL's evolving neighbourhood and stale quickly.
             tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
 
-            self.pool
+            let similar = self
+                .pool
                 .find_similar(&url, num)
                 .await
-                .map(|output| {
-                    let results: Vec<FindSimilarResultOutput> = output
-                        .results
-                        .into_iter()
-                        .map(|r| {
-                            let key = r.url.to_lowercase();
-                            FindSimilarResultOutput {
-                                title: r.title,
-                                url: r.url,
-                                description: r.description,
-                                source: r.source,
-                                published: r.published,
-                                semantic_score: output.semantic_scores.get(&key).copied(),
-                                content_preview: output.content_previews.get(&key).cloned(),
-                            }
-                        })
-                        .collect();
+                .map_err(McpToolError::from)?;
 
-                    let fs_output = FindSimilarOutput {
-                        source_url: url,
-                        count: results.len(),
-                        results,
-                    };
-
-                    serde_json::to_value(&fs_output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
+            let results: Vec<FindSimilarResultOutput> = similar
+                .results
+                .into_iter()
+                .map(|r| {
+                    let key = r.url.to_lowercase();
+                    FindSimilarResultOutput {
+                        title: r.title,
+                        url: r.url,
+                        description: r.description,
+                        source: r.source,
+                        published: r.published,
+                        semantic_score: similar.semantic_scores.get(&key).copied(),
+                        content_preview: similar.content_previews.get(&key).cloned(),
+                    }
                 })
-                .map_err(McpToolError::from)
+                .collect();
+
+            let fs_output = FindSimilarOutput {
+                source_url: url,
+                count: results.len(),
+                results,
+            };
+
+            let mut output = serde_json::to_value(&fs_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+
+            // Server-side ledger append (see web_search.run_id). The origin
+            // is Exa's findSimilar API — that is the server-observed origin.
+            if let Some(run_id) = run_id.as_deref() {
+                let records: Vec<RunSourceRecord> = fs_output
+                    .results
+                    .iter()
+                    .map(|result| RunSourceRecord {
+                        url: result.url.clone(),
+                        provider: Some("exa".to_string()),
+                        title: Some(result.title.clone()),
+                        published: result.published.clone(),
+                        source: result.source.clone(),
+                        excerpt: result
+                            .content_preview
+                            .clone()
+                            .or_else(|| result.description.clone()),
+                    })
+                    .collect();
+                let note = self.append_run_ledger(run_id, records).await;
+                output["run_ledger"] = note;
+            }
+
+            Ok(output)
         })
         .await
     }
@@ -466,6 +524,7 @@ impl ResearchServer {
             json_schema,
             main_content_only,
             wait_for_ms,
+            run_id,
         }): Parameters<ExtractRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "web_extract", async {
@@ -537,31 +596,45 @@ impl ResearchServer {
                 wait_for_ms: wait_for_ms_val,
             };
 
-            if let Some(cached) = self.cache.get(&ckey).await {
+            // A run-scoped extract bypasses the response-cache read so the
+            // run ledger records what THIS request returned.
+            if run_id.is_none()
+                && let Some(cached) = self.cache.get(&ckey).await
+            {
                 return Ok(cached);
             }
 
-            let json_result = self
+            let extracted = self
                 .pool
                 .extract(&url, &opts)
                 .await
-                .map(|result| {
-                    let output = ExtractOutput {
-                        url: result.url,
-                        format: result.format,
-                        content: result.content,
-                        metadata: result.metadata,
-                    };
-                    serde_json::to_value(&output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
-                })
-                .map_err(McpToolError::from);
+                .map_err(McpToolError::from)?;
+            let extract_output = ExtractOutput {
+                url: extracted.url,
+                format: extracted.format,
+                content: extracted.content,
+                metadata: extracted.metadata,
+            };
+            let mut output = serde_json::to_value(&extract_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+            self.cache.insert(ckey, output.clone()).await;
 
-            if let Ok(ref json) = json_result {
-                self.cache.insert(ckey, json.clone()).await;
+            // Server-side ledger append (see web_search.run_id): the audit
+            // copy is the extracted content, capped by the ledger.
+            if let Some(run_id) = run_id.as_deref() {
+                let record = RunSourceRecord {
+                    url: extract_output.url.clone(),
+                    provider: None,
+                    title: None,
+                    published: None,
+                    source: None,
+                    excerpt: Some(extract_output.content.clone()),
+                };
+                let note = self.append_run_ledger(run_id, vec![record]).await;
+                output["run_ledger"] = note;
             }
 
-            json_result
+            Ok(output)
         })
         .await
     }
@@ -631,7 +704,7 @@ impl ResearchServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_subscribe", async {
             self.rate_limiter.check("rss_subscribe")?;
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
 
             // Use permissive SSRF config: RSS feeds may be self-hosted on
             // local networks (e.g., http://localhost:4000/feed.xml). The user
@@ -680,7 +753,7 @@ impl ResearchServer {
         Parameters(UnsubscribeRequest { stream_id }): Parameters<UnsubscribeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_unsubscribe", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
 
             let sid = stream_id.clone();
             let result = spawn_db(db, move |conn| {
@@ -701,7 +774,7 @@ impl ResearchServer {
         Parameters(ListSubscriptionsRequest { folder }): Parameters<ListSubscriptionsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_list_subscriptions", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let result = spawn_db(db, move |conn| list_subscriptions(conn, folder.as_deref())).await;
             handle_db_result!(
                 result,
@@ -717,7 +790,7 @@ impl ResearchServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_fetch", async {
             self.rate_limiter.check("rss_fetch")?;
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let sid = stream_id.clone();
             let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
 
@@ -748,7 +821,7 @@ impl ResearchServer {
             // networks — the user explicitly subscribed to them.
             hkask_mcp_server::server::validate_tool_url_permissive(&feed_url)?;
 
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let fetch_result = fetch_feed(
                 &self.rss_client,
                 &feed_url,
@@ -807,7 +880,7 @@ impl ResearchServer {
         }): Parameters<GetEntriesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_get_entries", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
             let offset = match continuation_token.as_ref() {
                 None => 0,
@@ -871,7 +944,7 @@ impl ResearchServer {
         Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_mark_all_read", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let sid = stream_id.clone();
             let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
             handle_db_result!(
@@ -888,7 +961,7 @@ impl ResearchServer {
         Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_get_unread_count", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let sid = stream_id.clone();
             let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
             handle_db_result!(
@@ -907,7 +980,7 @@ impl ResearchServer {
         >,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_search", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let limit = (limit.unwrap_or(10) as usize).min(MAX_PAGE_SIZE);
             let q = query.clone();
             let result = spawn_db(db, move |conn| search_entries(conn, &q, limit)).await;
@@ -921,7 +994,7 @@ impl ResearchServer {
     #[tool(description = "Export subscriptions as OPML 2.0")]
     pub async fn rss_export_opml(&self) -> Result<String, McpToolError> {
         execute_tool(self, "rss_export_opml", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let result = spawn_db(db, export_opml).await;
             handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
         })
@@ -934,7 +1007,7 @@ impl ResearchServer {
         Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_import_opml", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
             handle_db_result!(result, |v| v)
         })
@@ -965,7 +1038,7 @@ impl ResearchServer {
         Parameters(req): Parameters<EditTagRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_edit_tag", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
             handle_db_result!(result, |v| v)
         })
@@ -983,7 +1056,7 @@ impl ResearchServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "rss_synthesize", async {
             self.rate_limiter.check("rss_synthesize")?;
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
 
             // Parse the extractor kind.
             let kind: crate::research::synthetic::ExtractorKind =
@@ -1206,7 +1279,7 @@ impl ResearchServer {
         stream_id: &str,
         feed_url: String,
     ) -> Result<serde_json::Value, McpToolError> {
-        let db = require_rss_db!(self);
+        let db = require_research_db!(self);
 
         // Look up the synthetic feed binding.
         let feed_url_for_lookup = feed_url.clone();
@@ -1372,7 +1445,7 @@ impl ResearchServer {
     #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
     pub async fn rss_list_synthetic(&self) -> Result<String, McpToolError> {
         execute_tool(self, "rss_list_synthetic", async {
-            let db = require_rss_db!(self);
+            let db = require_research_db!(self);
             let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
             handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
                 "count": feeds.len(),
@@ -1393,7 +1466,7 @@ impl ResearchServer {
             self,
             "rss_delete_synthetic",
             async {
-                let db = require_rss_db!(self);
+                let db = require_research_db!(self);
 
                 // Resolve feed_url from stream_id.
                 let sid = req.stream_id.clone();
@@ -1434,6 +1507,109 @@ impl ResearchServer {
             },
         )
         .await
+    }
+
+    // ═══════════════════ Research-run ledger ═══════════════════
+
+    #[tool(
+        description = "Begin a research run: opens a server-side ledger that records what the research tools actually return under this run. Returns {run_id, status}. Pass the run_id to web_search / web_extract / web_find_similar to record their results non-repudiably (recorded_by='server'); read the manifest via get_research_run."
+    )]
+    pub async fn begin_research_run(
+        &self,
+        Parameters(BeginResearchRunRequest { question }): Parameters<BeginResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "begin_research_run", async {
+            if question.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("question must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let question_for_task = question.clone();
+            let result = spawn_db(database, move |connection| {
+                crate::research::runs::begin_research_run(connection, &question_for_task)
+            })
+            .await;
+            handle_db_result!(result, |run: NewResearchRun| serde_json::json!({
+                "run_id": run.run_id,
+                "status": "planned",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Get a research run's manifest: question, status, every recorded source (server-observed and agent-declared), and per-source confidence recomputed server-side from the ledger's own excerpt copies — deterministic, not the agent's claim."
+    )]
+    pub async fn get_research_run(
+        &self,
+        Parameters(GetResearchRunRequest { run_id }): Parameters<GetResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "get_research_run", async {
+            if run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let run_id_for_task = run_id.clone();
+            let result = spawn_db(database, move |connection| {
+                crate::research::runs::get_research_run(connection, &run_id_for_task)
+            })
+            .await;
+            match result {
+                Ok(Ok(Some(manifest))) => Ok(manifest),
+                Ok(Ok(None)) => Err(McpToolError::not_found(format!(
+                    "research run '{run_id}' not found"
+                ))),
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    /// Append server-observed records to a run's ledger (the
+    /// non-repudiation path). Best-effort by design: the outcome is
+    /// returned as a `run_ledger` note for the tool's output —
+    /// `{"recorded": n}` on success, `{"recorded": 0, "error": ...}` on
+    /// failure or when the DB is not configured. Never silent in either
+    /// direction (the T01 reliability pattern: the public response
+    /// surfaces persistence outcomes).
+    async fn append_run_ledger(
+        &self,
+        run_id: &str,
+        records: Vec<RunSourceRecord>,
+    ) -> serde_json::Value {
+        let Some(database) = self.research_db.clone() else {
+            return serde_json::json!({
+                "recorded": 0,
+                "error": "research database not configured — set HKASK_RESEARCH_DB and \
+                          HKASK_DB_PASSPHRASE to record runs",
+            });
+        };
+        let run_id_for_task = run_id.to_string();
+        let append = spawn_db(database, move |connection| {
+            crate::research::runs::append_run_sources(connection, &run_id_for_task, &records)
+        })
+        .await;
+        match append {
+            Ok(Ok(inserted)) => serde_json::json!({ "recorded": inserted }),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "hkask.research.runs",
+                    run_id,
+                    error = %error,
+                    "run ledger append failed"
+                );
+                serde_json::json!({ "recorded": 0, "error": error.to_string() })
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.research.runs",
+                    run_id,
+                    error = %error,
+                    "run ledger append task failed"
+                );
+                serde_json::json!({ "recorded": 0, "error": error.to_string() })
+            }
+        }
     }
 
     // ═══════════════════ Evidence evaluation ═══════════════════
@@ -1728,15 +1904,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 }
             })?;
 
-            let rss_db = {
+            let research_db = {
                 // Databases live in the internal data dir (the ONLY thing that
                 // lives there — artifact files and outputs go to the visible
                 // artifacts dir under {server}-mcp/{artifact-type}/). Default
-                // DB path is `{kask_data_dir}/mcp/research/rss.db`, resolved
-                // via `resolve_under_data_dir`. Override via `HKASK_RSS_DB`.
-                let rss_db_path = std::env::var("HKASK_RSS_DB").ok().unwrap_or_else(|| {
+                // DB path is `{kask_data_dir}/mcp/research/research.db`, resolved
+                // via `resolve_under_data_dir`. Override via `HKASK_RESEARCH_DB`.
+                let research_db_path = std::env::var("HKASK_RESEARCH_DB").ok().unwrap_or_else(|| {
                     let default_path = hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("research", "rss"),
+                        &hkask_types::agent_paths::mcp_server_db("research", "research"),
                     );
                     if let Some(parent) = default_path.parent() {
                         if let Err(error) = std::fs::create_dir_all(parent) {
@@ -1744,7 +1920,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                 target: "hkask.research.init",
                                 path = %default_path.display(),
                                 %error,
-                                "Failed to create default RSS DB directory \
+                                "Failed to create default research DB directory \
                                  — the subsequent DB open will surface the failure"
                             );
                         }
@@ -1752,7 +1928,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     tracing::info!(
                         target: "hkask.research.init",
                         path = %default_path.display(),
-                        "Using default RSS database path (HKASK_RSS_DB not set)"
+                        "Using default research database path (HKASK_RESEARCH_DB not set)"
                     );
                     default_path.to_string_lossy().to_string()
                 });
@@ -1765,7 +1941,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         tracing::warn!(
                             target = "hkask.research.init",
                             %error,
-                            "Falling back to no RSS database. RSS tools will be unavailable."
+                            "Falling back to no research database. RSS and research-run tools will be unavailable."
                         );
                         None
                     }
@@ -1774,9 +1950,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 match passphrase {
                     Some(passphrase) => {
                         match hkask_storage::Database::open_with_extensions(
-                            &rss_db_path,
+                            &research_db_path,
                             &passphrase,
-                            db::RSS_SCHEMA_DDL,
+                            db::RESEARCH_SCHEMA_DDL,
                         ) {
                             Ok(db) => db
                                 .sqlite_pool()
@@ -1787,9 +1963,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                     tracing::warn!(
                                         target = "hkask.research.init",
                                         error = %e,
-                                        path = %rss_db_path,
-                                        "RSS database opened but pool extraction failed — \
-                                         RSS tools will be unavailable"
+                                        path = %research_db_path,
+                                        "Research database opened but pool extraction failed — \
+                                         RSS and research-run tools will be unavailable"
                                     );
                                     e
                                 })
@@ -1798,9 +1974,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                 tracing::warn!(
                                     target = "hkask.research.init",
                                     error = %e,
-                                    path = %rss_db_path,
-                                    "Failed to open RSS database — RSS tools will be \
-                                     unavailable. Check HKASK_RSS_DB path and \
+                                    path = %research_db_path,
+                                    "Failed to open research database — RSS and research-run tools will be \
+                                     unavailable. Check HKASK_RESEARCH_DB path and \
                                      HKASK_DB_PASSPHRASE."
                                 );
                                 None
@@ -1840,7 +2016,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     Duration::from_secs(cache_ttl),
                 )),
                 RateLimiter::new(RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECS),
-                rss_db,
+                research_db,
                 rss_client,
                 discover_client,
                 inference_port.clone(),
@@ -1865,7 +2041,7 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
         opt("HKASK_EXA_API_KEY", "Exa API key"),
         opt(
             "HKASK_DB_PASSPHRASE",
-            "Passphrase for SQLCipher encryption (required if HKASK_RSS_DB is set)",
+            "Passphrase for SQLCipher encryption (required if HKASK_RESEARCH_DB is set)",
         ),
     ]
 }
