@@ -1301,8 +1301,7 @@ impl super::CyberneticsLoop {
                 ))
             }
             // -- Observational metrics → Notify (no substitution ladder) --
-            RegulationReason::StorageUsageObserved
-            | RegulationReason::TripleCountObserved
+            RegulationReason::TripleCountObserved
             | RegulationReason::LowConfidenceCountObserved
             | RegulationReason::ConsolidationCandidatesObserved
             | RegulationReason::PendingEscalationsObserved => Some(RegulatoryAction::with_metric(
@@ -1772,7 +1771,6 @@ mod tests {
             use SignalMetric::*;
             let cases: &[(SignalMetric, DeviationDirection, f64, f64)] = &[
                 // Category A: Observational (Notify, AboveSetPoint)
-                (StorageUsage, AboveSetPoint, 1.0, 0.0),
                 (TripleCount, AboveSetPoint, 1.0, 0.0),
                 (LowConfidenceCount, AboveSetPoint, 1.0, 0.0),
                 (ConsolidationCandidates, AboveSetPoint, 1.0, 0.0),
@@ -1830,10 +1828,10 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         runtime.block_on(async {
             let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
-            // StorageUsage AboveSetPoint triggers a Notify rule.
-            let signal = Signal::new(LoopId::Cybernetics, SignalMetric::StorageUsage, 1.0, 0.0);
+            // TripleCount AboveSetPoint triggers a Notify rule.
+            let signal = Signal::new(LoopId::Cybernetics, SignalMetric::TripleCount, 1.0, 0.0);
             let deviation = Deviation::from_signal(&signal)
-                .expect("StorageUsage 1.0 vs set_point 0.0 should deviate");
+                .expect("TripleCount 1.0 vs set_point 0.0 should deviate");
             let actions = regulation_loop.compute(&[deviation]).await;
             assert!(
                 actions.iter().all(|a| a.action_type != ActionType::Notify),
@@ -1883,9 +1881,6 @@ mod tests {
         async fn low_confidence_count(&self, _: f64) -> Option<usize> {
             self.h_mem_count().await
         }
-        async fn storage_budget(&self) -> usize {
-            10_000
-        }
         async fn memory_life_days(&self) -> f64 {
             if self.0.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 0.0
@@ -1905,7 +1900,6 @@ mod tests {
         let metrics = [
             SignalMetric::MemoryLife,
             SignalMetric::TripleCount,
-            SignalMetric::StorageUsage,
             SignalMetric::LowConfidenceCount,
             SignalMetric::ConsolidationCandidates,
         ];

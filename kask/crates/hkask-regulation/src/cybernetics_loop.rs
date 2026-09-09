@@ -111,7 +111,7 @@ pub trait RolloutEventSource: Send + Sync {
 use crate::energy::{CallCapManager, CallMeterOutcome};
 use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, VarietySensor};
 
-use crate::runtime::{RegulationCycleEntry, RegulationLedger};
+use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
@@ -311,7 +311,6 @@ impl CyberneticsLoop {
                 SignalMetric::TripleCount,
                 SignalMetric::LowConfidenceCount,
                 SignalMetric::ConsolidationCandidates,
-                SignalMetric::StorageUsage,
                 SignalMetric::MemoryLife,
             ];
             const ALL_METRICS: &[SignalMetric] = &[
@@ -320,7 +319,6 @@ impl CyberneticsLoop {
                 SignalMetric::ErrorRate,
                 SignalMetric::ConnectorLatency,
                 SignalMetric::CommunicationQueueDepth,
-                SignalMetric::StorageUsage,
                 SignalMetric::MemoryLife,
                 SignalMetric::TripleCount,
                 SignalMetric::LowConfidenceCount,
@@ -592,7 +590,6 @@ impl CyberneticsLoop {
         for metric in [
             SignalMetric::MemoryLife,
             SignalMetric::TripleCount,
-            SignalMetric::StorageUsage,
             SignalMetric::LowConfidenceCount,
             SignalMetric::ConsolidationCandidates,
         ] {
@@ -859,20 +856,7 @@ impl CyberneticsLoop {
                 .filter(|r| r.decision == ActionDecision::Block)
                 .count() as u64;
             let ledger = self.ledger.read().await;
-            let cumulative = ledger.regulation_health().await.acceptance_rate();
-            ledger
-                .record_regulation_cycle(RegulationCycleEntry {
-                    timestamp: chrono::Utc::now(),
-                    signals: signals.len() as u64,
-                    deviations: deviations.len() as u64,
-                    actions: actions.len() as u64,
-                    verified: impact_reports.len() as u64,
-                    accepted,
-                    staged,
-                    blocked,
-                    cumulative_acceptance_rate: cumulative,
-                })
-                .await;
+            ledger.record_cycle_outcome(accepted, staged, blocked).await;
         }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;

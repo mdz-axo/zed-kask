@@ -192,7 +192,6 @@ impl CompaniesServer {
                 McpToolError::internal(format!("serialize acquisition: {error}"))
             })?;
             cache.store_raw(symbol, tool, &params_hash, &cached, &provider);
-            cache.extract_and_store_concepts(symbol, tool, &response.value, &provider);
         }
         Ok(response)
     }

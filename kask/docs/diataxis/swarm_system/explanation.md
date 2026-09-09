@@ -54,7 +54,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-030
 verified_date: 2026-08-28
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:473-519; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169-480; kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:71-133; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1954-2216; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md (local budget removed 2026-09-08, operator ruling 2026-09-04)
 status: VERIFIED
 -->
 
@@ -89,12 +89,14 @@ fidelity) are healthy. The swarm's four loops each have one weak property:
 
 ## Why local mode has no funding gate
 
-The local ledger is **accounting, not authorization**
-(`ledger_tools.rs:4-13`). Local agents run on the operator's own substrate
-(their machine, their inference credentials), so there is nothing for the
-server to withhold: refusing to run costs the operator the work while saving
-them nothing. Funding gates belong on *cloud* delegation, where credits buy
-someone else's compute (`local_runtime.rs:492-497`).
+There is no local budget — not even accounting. Local agents run on the
+operator's own substrate (their machine, their inference credentials), so
+there is nothing for the server to withhold or reconcile: refusing to run
+costs the operator the work while saving them nothing, and pricing a run
+records a fiction. Funding gates belong on *cloud* delegation, where credits
+buy someone else's compute. The former ledger/cost/balance machinery was
+removed entirely (operator ruling 2026-09-04: the budget concept is
+deprecated; timeouts are the enforcement/kill mechanism).
 
 The per-dispatch ceiling IS retained: it bounds a single runaway dispatch (a
 cost-amplification limit), which is a different concern from whether an
@@ -104,14 +106,8 @@ spend, not a fault.
 
 ## Why `cost_uncapped` is carried alongside `cost`
 
-`cost` stays capped at `credits_authorized` — that is the operator's declared
-budget and what the ledger charges (`local_runtime.rs:544-545`). But the cap
-makes the recorded figure under-state real spend whenever a delegation
-overruns it, and the local ledger is purely a reconciliation surface, so a
-silent understatement corrupts the only data that surface exists to provide.
-`cost_uncapped` is carried alongside so the gap is visible, and a bounded
-overrun is warned about rather than swallowed (`local_runtime.rs:525-535`,
-warn at `:546-558`).
+Real measurements remain: tokens used, latency, model, tool-call and
+reasoning summaries. Those are the run's measurable facts.
 
 ## Why the consent store is shared SQLite
 
@@ -153,27 +149,14 @@ with a loud error — same-process consent still works; cross-process flows
 startup-failure-signal rule requires this so an operator reading logs can
 distinguish "not configured" from "configured but broken."
 
-## Why the executor does not debit the ledger
+## Why the executor does not price the run
 
 `AgentExecutor::run` returns a `RawDelegateResult` carrying the raw output
-text, model, token usage, and tool/reasoning summaries — it does NOT debit
-the ledger (`agent_executor.rs:9-12`). The caller
-(`LocalSwarmRuntime::delegate` → `debit_and_build`) computes the cost and
-debits (`local_runtime.rs:536-600`). This separation keeps the agent-run
-policy (skill cascade, tool-loop orchestration) ledger-unaware, so the
-executor can be unit-tested with stubbed ports and the runtime owns the
-single spending seam (`local_runtime.rs:130-134`).
-
-## Why a failed balance measurement is not 0
-
-`swarm_balance_local` returns an error, not 0, when the ledger query fails
-(`ledger_tools.rs:85-95`). The `.rules` trap is explicit: `unwrap_or(0)` on
-regulation-loop sense inputs is a broken feedback loop — a DB outage returns
-0, which the loop reads as "no deviation." `LocalDelegateResult::balance`
-is `Option<i64>` and stays `None` on a failed measurement, serializing as
-`null` (`local_runtime.rs:531-535`, `:561-583`). SENSE reads this as the
-Onto4MAT `energy` property and DECIDE branches on it, so a fabricated value
-would be read as a real measurement.
+text, model, token usage, and tool/reasoning summaries. The caller
+(`LocalSwarmRuntime::delegate` → `build_result`) stamps the contract checks
+and records the measured stats. This separation keeps the agent-run policy
+(skill cascade, tool-loop orchestration) free of accounting concerns, so the
+executor can be unit-tested with stubbed ports.
 
 ## Why port labels are type references, not free strings
 
@@ -268,14 +251,9 @@ cross-machine communication — the types are already wire-compatible
 | Planner/actuator separation      | `.agents/skills/swarm-intelligence/SKILL.md`; `.agents/skills/swarm-steering/SKILL.md` |
 | `steer_system_prompt` (curator)  | `crates/swarm_panel/src/swarm_panel.rs:155`                             |
 | Steer advertisement verification | `crates/swarm_panel/src/swarm_panel.rs:1303-1309`                       |
-| Local ledger = accounting        | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:4-13`              |
 | No balance gate (local)          | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:492-507`         |
-| `cost_uncapped` rationale        | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:525-558`         |
 | Shared SQLite consent store      | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:368-394`       |
 | DELETE-affected-rows single-use  | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:462-470`               |
-| Executor does not debit          | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:9-12`           |
-| `balance` is `Option<i64>`       | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:531-535,561-583` |
-| `swarm_balance_local` error path | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:85-95`            |
 | Typing admission gate            | `kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs:46-63`          |
 | `check_bind` (classification deleted) | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:708-729`     |
 | `BUILTIN_PORT_TYPES` / `task_result_schema` | `kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs:41,53-63` |

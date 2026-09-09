@@ -48,18 +48,13 @@ use tracing;
 /// the structured payload so `query_skill_feedback` can return it to the
 /// next skill invocation.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct StoredSkillSpan {
-    /// Full namespace: `reg.skill.<skill-id>.<phase>`
-    pub namespace: String,
-    /// Skill ID extracted from the namespace (e.g., "lora-training").
+    /// Skill ID extracted from the invocation (e.g., "lora-training").
     pub skill_id: String,
     /// Phase: `outcome` or `operator_feedback`.
     pub phase: String,
-    /// Structured field payload (e.g., {"training_completed": true, "loss": 0.3}).
+    /// Structured field payload (e.g., {"success": true, "error": "..."}).
     pub payload: serde_json::Value,
-    /// When the span was recorded.
-    pub recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Bounded storage for skill feedback spans, keyed by (skill_id, phase).
@@ -403,39 +398,12 @@ impl Default for VarietyMonitor {
     }
 }
 
-/// A single regulation cycle's full pipeline record for historical querying.
-///
-/// Captures the input/output of every phase: signals sensed, deviations
-/// detected, actions produced, impact verified, decisions classified.
-/// Enables post-hoc analysis of regulation effectiveness.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct RegulationCycleEntry {
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    /// Count of afferent signals from sense phase.
-    pub signals: u64,
-    /// Count of deviations from compare phase.
-    pub deviations: u64,
-    /// Count of actions produced by compute phase.
-    pub actions: u64,
-    /// Count of actions verified by verify_impact.
-    pub verified: u64,
-    /// Decision counts from impact verification.
-    pub accepted: u64,
-    pub staged: u64,
-    pub blocked: u64,
-    /// Accumulated regulation health at this point.
-    pub cumulative_acceptance_rate: Option<f64>,
-}
-
 /// Regulation state shared between threads
 struct RegState {
     algedonic: Arc<ParkingRwLock<AlgedonicManager>>,
     tracker: VarietyMonitor,
     outcome: HashMap<String, OutcomeTracker>,
     regulation_health: RegulationHealth,
-    regulation_history: VecDeque<RegulationCycleEntry>,
-    max_regulation_history: usize,
     skill_spans: SkillSpanStore,
 }
 
@@ -443,18 +411,12 @@ impl RegState {
     fn new(threshold: u64) -> Self {
         Self::with_history_caps(
             threshold,
-            crate::set_points::DEFAULT_MAX_REGULATION_HISTORY,
             crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY,
             crate::set_points::DEFAULT_MAX_ALERTS,
         )
     }
 
-    fn with_history_caps(
-        threshold: u64,
-        max_regulation_history: usize,
-        max_skill_span_history: usize,
-        max_alerts: usize,
-    ) -> Self {
+    fn with_history_caps(threshold: u64, max_skill_span_history: usize, max_alerts: usize) -> Self {
         let algedonic = Arc::new(ParkingRwLock::new(AlgedonicManager::with_max_alerts(
             threshold,
             DEFAULT_EXPECTED_VARIETY,
@@ -463,7 +425,6 @@ impl RegState {
         let tracker = VarietyMonitor::new();
         let outcome = HashMap::new();
         let regulation_health = RegulationHealth::default();
-        let regulation_history = VecDeque::with_capacity(max_regulation_history);
         let skill_spans = SkillSpanStore::with_capacity(max_skill_span_history);
 
         Self {
@@ -471,8 +432,6 @@ impl RegState {
             tracker,
             outcome,
             regulation_health,
-            regulation_history,
-            max_regulation_history,
             skill_spans,
         }
     }
@@ -511,7 +470,6 @@ impl RegulationLedger {
     pub fn with_set_points(threshold: u64, set_points: &crate::set_points::SetPoints) -> Self {
         let state = RegState::with_history_caps(
             threshold,
-            set_points.max_regulation_history,
             set_points.max_skill_span_history,
             set_points.max_alerts,
         );
@@ -563,18 +521,14 @@ impl RegulationLedger {
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — cycle recording enables metacognitive feedback
     /// \[P8\] Constraining: Semantic Grounding — Accept/Stage/Block counts are measured, not guessed
-    /// pre:  entry signals and actions are non-empty
-    /// post: regulation health counters updated, history appended
-    pub(crate) async fn record_regulation_cycle(&self, entry: RegulationCycleEntry) {
+    /// pre:  counts come from this tick's impact verification
+    /// post: regulation health counters updated
+    pub(crate) async fn record_cycle_outcome(&self, accepted: u64, staged: u64, blocked: u64) {
         let mut state = self.state.write().await;
         state.regulation_health.total_cycles += 1;
-        state.regulation_health.accepted += entry.accepted;
-        state.regulation_health.staged += entry.staged;
-        state.regulation_health.blocked += entry.blocked;
-        state.regulation_history.push_back(entry);
-        if state.regulation_history.len() > state.max_regulation_history {
-            state.regulation_history.pop_front();
-        }
+        state.regulation_health.accepted += accepted;
+        state.regulation_health.staged += staged;
+        state.regulation_health.blocked += blocked;
     }
 
     /// Get regulation health summary for metacognition.
@@ -591,7 +545,7 @@ impl RegulationLedger {
         state.regulation_health.clone()
     }
 
-    /// Get the last N regulation cycle entries for detailed analysis.
+    /// Get the active runtime alerts.
     ///
     /// expect: "I can retrieve all active runtime alerts for loop response"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — alert retrieval enables loop response
@@ -775,11 +729,9 @@ impl RegulationLedger {
     /// post: span stored in SkillSpanStore, bounded to the configured max_skill_span_history per key
     pub async fn record_skill_span(&self, skill_id: &str, phase: &str, payload: serde_json::Value) {
         let span = StoredSkillSpan {
-            namespace: format!("reg.skill.{skill_id}.{phase}"),
             skill_id: skill_id.to_string(),
             phase: phase.to_string(),
             payload,
-            recorded_at: chrono::Utc::now(),
         };
         let mut state = self.state.write().await;
         state.skill_spans.record(span);

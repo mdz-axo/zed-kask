@@ -733,16 +733,17 @@ mod smoke_tests {
 // unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
 // `pub(crate) async fn swarm_*` signatures): 48 cloud (swarm_update_agent
 // added 2026-09-03, fermi API alignment) + 26 local (swarm_get_local_agent
-// added 2026-09-03, local parity with swarm_get_agent) + 3 ledger +
-// 4 knowledge + 3 a2a + 1 workflow = 85.
+// added 2026-09-03, local parity with swarm_get_agent) +
+// 4 knowledge + 3 a2a + 1 workflow = 82 (the 3 local-ledger tools were
+// removed with the local budget system, operator ruling 2026-09-04).
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_85_registered_tools() {
+    fn tool_surface_is_exactly_82_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 85, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 82, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree by NAME — a `name =`

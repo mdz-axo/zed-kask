@@ -913,13 +913,6 @@ impl hkask_regulation::MemoryHealthSource for RealMemoryPort {
         }
     }
 
-    async fn storage_budget(&self) -> usize {
-        self.curator_store
-            .get()
-            .map(|s| s.storage_budget())
-            .unwrap_or(0)
-    }
-
     async fn memory_life_days(&self) -> f64 {
         RealMemoryPort::memory_life_days(self)
     }

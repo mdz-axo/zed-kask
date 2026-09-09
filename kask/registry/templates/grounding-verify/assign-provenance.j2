@@ -18,6 +18,7 @@
 {#     claimed_value: number | null,  # platform_derived only — the value the report states #}
 {#     unit: number | null,  # platform_derived only — unit of the claim's last decimal place (0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer) #}
 {#     inputs: array | null,  # platform_derived only — [{name: string, origin: string}] where origin is "source:<tool>:<field>" or "claim:<claim_id>" of an EARLIER claim #}
+{#     library_form: string | null,  # platform_derived only — the canonical library form selected ("ev", "ev_ebitda", "pe", "ps", "growth_pct", "discount_pct", "median"), null when authored #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
@@ -59,6 +60,32 @@ Select and bind inputs — do not author your own form when one of these fits. E
 (define insert-sorted (lambda (x lst) (cond ((is_null lst) (list x)) ((<= x (car lst)) (cons x lst)) (t (cons (car lst) (insert-sorted x (cdr lst))))))) (define isort (lambda (lst) (cond ((is_null lst) '()) (t (insert-sorted (car lst) (isort (cdr lst))))))) (define drop-last (lambda (lst) (cond ((is_null (cdr lst)) '()) (t (cons (car lst) (drop-last (cdr lst))))))) (define middle-of (lambda (s) (cond ((= (length s) 1) (car s)) ((= (length s) 2) (/ (+ (car s) (car (cdr s))) 2)) (t (middle-of (cdr (drop-last s))))))) (let ((computed (middle-of (isort values)))) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))
 ```
 
+- Data-driven batch drivers — each runs ONE call for the whole family, taking all claims as data and returning per-claim results. Pass `max_depth` >= 8 x record count.
+
+Cited-number membership checks — env: `{ "records": [{ "claim_id", "value", "values" }, ...] }`:
+
+```
+(define check-num (lambda (c) (member (assoc "value" c) (assoc "values" c)))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-num (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
+Cited-quote substring checks — env: `{ "records": [{ "claim_id", "quote", "source_text" }, ...] }`:
+
+```
+(define check-quote (lambda (c) (string-contains (assoc "quote" c) (assoc "source_text" c)))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-quote (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
+Origins checks — env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...], "allowed": [...] }`:
+
+```
+(define bad-count (lambda (inputs) (cond ((is_null inputs) 0) ((member (assoc "origin" (car inputs)) allowed) (bad-count (cdr inputs))) (t (+ 1 (bad-count (cdr inputs))))))) (define check-claim (lambda (c) (list (assoc "claim_id" c) (bad-count (assoc "inputs" c))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-claim (car lst)) (check-all (cdr lst))))))) (check-all claims)
+```
+
+Consistency comparisons — env: `{ "rules": [{ "quantity", "primary", "cross", "tolerance" }, ...] }`, one record per rule × cross-check pair:
+
+```
+(define check-rule (lambda (r) (let ((diff (abs (- (assoc "primary" r) (assoc "cross" r))))) (list (assoc "quantity" r) (if (> diff (* (assoc "primary" r) (assoc "tolerance" r))) 'conflict 'consistent))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-rule (car lst)) (check-all (cdr lst))))))) (check-all rules)
+```
+
 ## The provenance lattice
 
 Every claim is classified into one of these tiers:
@@ -82,7 +109,7 @@ A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `
    - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
      - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
      - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
-   - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states), `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer), and `inputs` — each input value's name and origin (`source:<tool>:<field>`, or `claim:<claim_id>` for the output of an EARLIER claim in this run; forward references are rejected by Step 3's origins check). Prefer a canonical form from the library above when one fits — select and bind instead of authoring. Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check. Arithmetic without a falsifiable derivation is `model_inference`.
+   - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states), `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer), and `inputs` — each input value's name and origin (`source:<tool>:<field>`, or `claim:<claim_id>` for the output of an EARLIER claim in this run; forward references are rejected by Step 3's origins check). Prefer a canonical form from the library above when one fits — select and bind instead of authoring, and record the selection in `library_form` (null when authored; library forms skip Step 3's empty-env check). Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check. Arithmetic without a falsifiable derivation is `model_inference`.
    - If the claim synthesizes or interprets source data (e.g., "the margin expansion was driven by mix shift"), classify as `model_inference`.
    - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
    - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
@@ -133,6 +160,7 @@ Produce a JSON object:
         { "name": "market_cap", "origin": "source:stock_quote:marketCap" },
         { "name": "net_debt", "origin": "source:balance_sheet:netDebt" }
       ],
+      "library_form": "ev",
       "why": "Enterprise value is market cap plus balance-sheet net debt; the canonical library form re-derives it so Step 3 can grade the difference."
     }
   ],

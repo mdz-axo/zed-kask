@@ -143,10 +143,6 @@ pub(crate) const DEFAULT_TOOL_RELIABILITY_THRESHOLD: f64 = 0.80;
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
-/// long autonomous swarm may want more history; one on a memory-constrained
-/// box may want less.
-pub(crate) const DEFAULT_MAX_REGULATION_HISTORY: usize = 100;
-
 /// Default maximum skill feedback spans retained per skill+phase.
 ///
 /// Bounds memory growth for skill self-improvement signal storage.
@@ -172,8 +168,6 @@ pub(crate) const DEFAULT_LOW_CONFIDENCE_THRESHOLD: f64 = 0.3;
 pub(crate) const DEFAULT_CONSOLIDATION_FLOOR: f64 = 0.1;
 /// Default max consolidation candidates before `ConsolidationCandidates` fires.
 pub(crate) const DEFAULT_CONSOLIDATION_CANDIDATES_MAX: usize = 50;
-/// Default storage usage ratio (h_mem_count / storage_budget).
-pub(crate) const DEFAULT_STORAGE_USAGE_MAX_RATIO: f64 = 0.8;
 /// Default minimum memory life in days.
 pub(crate) const DEFAULT_MEMORY_LIFE_MIN_DAYS: f64 = 30.0;
 
@@ -256,9 +250,6 @@ pub struct SetPoints {
     /// Default: 0.80.
     pub tool_reliability_threshold: f64,
     // ── History retention (v0.33.0) ──
-    /// Maximum regulation cycles retained for history queries.
-    /// Default: 100.
-    pub max_regulation_history: usize,
     /// Maximum skill feedback spans retained per skill+phase.
     /// Default: 50.
     pub max_skill_span_history: usize,
@@ -268,7 +259,9 @@ pub struct SetPoints {
     pub max_alerts: usize,
     // ── Memory health set-points (v0.34.0) ──
     /// Maximum h_mem count before `TripleCount` fires. Default: 10_000
-    /// (matches `DEFAULT_STORAGE_BUDGET`).
+    /// (the count-based monitoring reference; nothing enforces on it —
+    /// forgetting is time-based and distillation-gated, operator ruling
+    /// 2026-09-04).
     pub triple_count_max: usize,
     /// Maximum low-confidence h_mem count before `LowConfidenceCount` fires.
     /// Default: 100.
@@ -284,9 +277,6 @@ pub struct SetPoints {
     /// Maximum consolidation candidates before `ConsolidationCandidates` fires.
     /// Default: 50.
     pub consolidation_candidates_max: usize,
-    /// Maximum storage usage ratio (h_mem_count / storage_budget) before
-    /// `StorageUsage` fires. 0.0–1.0. Default: 0.8 (80% full).
-    pub storage_usage_max_ratio: f64,
     /// Minimum memory life in days. Below this, `MemoryLife` fires.
     /// Default: 30.0 (a memory life shorter than 30 days is too aggressive).
     pub memory_life_min_days: f64,
@@ -317,7 +307,6 @@ pub(crate) struct SetPointsConfig {
     pub coverage_floor: Option<f64>,
     pub mutation_score_floor: Option<f64>,
     pub tool_reliability_threshold: Option<f64>,
-    pub max_regulation_history: Option<usize>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
     pub triple_count_max: Option<usize>,
@@ -325,7 +314,6 @@ pub(crate) struct SetPointsConfig {
     pub low_confidence_threshold: Option<f64>,
     pub consolidation_floor: Option<f64>,
     pub consolidation_candidates_max: Option<usize>,
-    pub storage_usage_max_ratio: Option<f64>,
     pub memory_life_min_days: Option<f64>,
 }
 
@@ -369,7 +357,6 @@ impl Default for SetPoints {
             coverage_floor: DEFAULT_COVERAGE_FLOOR,
             mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
-            max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
             triple_count_max: DEFAULT_TRIPLE_COUNT_MAX,
@@ -377,7 +364,6 @@ impl Default for SetPoints {
             low_confidence_threshold: DEFAULT_LOW_CONFIDENCE_THRESHOLD,
             consolidation_floor: DEFAULT_CONSOLIDATION_FLOOR,
             consolidation_candidates_max: DEFAULT_CONSOLIDATION_CANDIDATES_MAX,
-            storage_usage_max_ratio: DEFAULT_STORAGE_USAGE_MAX_RATIO,
             memory_life_min_days: DEFAULT_MEMORY_LIFE_MIN_DAYS,
         }
     }
@@ -448,9 +434,6 @@ impl SetPoints {
             tool_reliability_threshold: config
                 .tool_reliability_threshold
                 .unwrap_or(defaults.tool_reliability_threshold),
-            max_regulation_history: config
-                .max_regulation_history
-                .unwrap_or(defaults.max_regulation_history),
             max_skill_span_history: config
                 .max_skill_span_history
                 .unwrap_or(defaults.max_skill_span_history),
@@ -468,9 +451,6 @@ impl SetPoints {
             consolidation_candidates_max: config
                 .consolidation_candidates_max
                 .unwrap_or(defaults.consolidation_candidates_max),
-            storage_usage_max_ratio: config
-                .storage_usage_max_ratio
-                .unwrap_or(defaults.storage_usage_max_ratio),
             memory_life_min_days: config
                 .memory_life_min_days
                 .unwrap_or(defaults.memory_life_min_days),

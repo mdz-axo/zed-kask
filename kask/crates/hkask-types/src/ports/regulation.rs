@@ -3,8 +3,10 @@
 pub struct ConsolidationRequest {
     pub limit: usize,
     pub confidence_floor: Option<f64>,
-    /// Maximum h_mem count after pruning. When `None`, the store's
-    /// `storage_budget` acts as the default cap.
+    /// Maximum h_mem count after pruning — an explicit caller instruction.
+    /// When `None`, there is no count cap (count-based pruning is deprecated,
+    /// operator ruling 2026-09-04: forgetting is time-based and
+    /// distillation-gated).
     pub max_h_mems: Option<usize>,
 }
 

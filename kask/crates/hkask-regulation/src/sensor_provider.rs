@@ -705,9 +705,9 @@ impl Sensor for OcrHealthSensor {
 /// cycle), so the bridge implements this trait and passes an
 /// `Arc<dyn MemoryHealthSource>` to `CyberneticsLoop::set_memory_health_source`.
 ///
-/// Without this sensor, 5 memory regulation loops are blind — their policy
+/// Without this sensor, 4 memory regulation loops are blind — their policy
 /// rules (`TripleCount`, `LowConfidenceCount`, `ConsolidationCandidates`,
-/// `StorageUsage`, `MemoryLife`) can never fire because no signal is produced.
+/// `MemoryLife`) can never fire because no signal is produced.
 /// This is the `.rules` broken-feedback-loop pattern at structural scale.
 #[async_trait::async_trait]
 pub trait MemoryHealthSource: Send + Sync {
@@ -719,21 +719,17 @@ pub trait MemoryHealthSource: Send + Sync {
     /// Count of h_mems at or below the given confidence threshold.
     async fn low_confidence_count(&self, threshold: f64) -> Option<usize>;
 
-    /// Configured storage budget (max h_mems before consolidation prunes).
-    async fn storage_budget(&self) -> usize;
-
     /// Configured memory life in days (the retention half-life parameter).
     async fn memory_life_days(&self) -> f64;
 }
 
 /// Senses memory health metrics from the memory store.
 ///
-/// Emits signals for 5 `SignalMetric` variants that previously had policy
+/// Emits signals for 4 `SignalMetric` variants that previously had policy
 /// rules but no sensor:
 /// - `TripleCount` — h_mem count above the set-point (too many h_mems)
 /// - `LowConfidenceCount` — low-confidence h_mem count above the set-point
 /// - `ConsolidationCandidates` — same count using the consolidation floor
-/// - `StorageUsage` — h_mem count / storage budget ratio above the set-point
 /// - `MemoryLife` — configured memory life days below the set-point (too short)
 ///
 /// One registered sensor per metric reports both healthy and degraded states.
@@ -753,9 +749,6 @@ pub(crate) struct MemoryHealthSensor {
     consolidation_floor: f64,
     /// Set-point: max consolidation candidates before `ConsolidationCandidates` fires.
     consolidation_candidates_max: usize,
-    /// Set-point: storage usage ratio (h_mem_count / storage_budget) above
-    /// which `StorageUsage` fires. 0.0–1.0.
-    storage_usage_max_ratio: f64,
     /// Set-point: minimum memory life in days. Below this, `MemoryLife` fires.
     memory_life_min_days: f64,
 }
@@ -774,7 +767,6 @@ impl MemoryHealthSensor {
             low_confidence_threshold: points.low_confidence_threshold,
             consolidation_floor: points.consolidation_floor,
             consolidation_candidates_max: points.consolidation_candidates_max,
-            storage_usage_max_ratio: points.storage_usage_max_ratio,
             memory_life_min_days: points.memory_life_min_days,
         }
     }
@@ -793,16 +785,6 @@ impl Sensor for MemoryHealthSensor {
                 self.source.h_mem_count().await? as f64,
                 self.triple_count_max as f64,
             ),
-            SignalMetric::StorageUsage => {
-                let budget = self.source.storage_budget().await;
-                if budget == 0 {
-                    return None;
-                }
-                (
-                    self.source.h_mem_count().await? as f64 / budget as f64,
-                    self.storage_usage_max_ratio,
-                )
-            }
             SignalMetric::LowConfidenceCount => (
                 self.source
                     .low_confidence_count(self.low_confidence_threshold)

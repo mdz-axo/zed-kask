@@ -98,13 +98,6 @@ fn normalize_value(value: &str) -> String {
 /// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
 pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
 
-/// Default per-agent storage reference point (h_mems) for the regulation
-/// loop's storage-usage-ratio sensor, exposed via `storage_budget()`. This is
-/// a monitoring set-point only — the count-based enforcement/consolidation it
-/// once fed was deprecated by the operator ruling 2026-09-04 (forgetting is
-/// time-based and distillation-gated, never count-based).
-pub(crate) const DEFAULT_STORAGE_BUDGET: usize = 10_000;
-
 /// Unified memory store — one store for all h_mems.
 ///
 /// The ontology blob on each h_mem carries dual-axis anchoring. `store()`
@@ -124,7 +117,6 @@ pub struct MemoryStore {
     h_mem_store: HMemStore,
     embedding: Arc<EmbeddingStore>,
     memory_life_days: f64,
-    storage_budget: usize,
 }
 
 impl MemoryStore {
@@ -143,7 +135,6 @@ impl MemoryStore {
             embedding: Arc::new(embedding_store),
             event_sink: None,
             memory_life_days: DEFAULT_MEMORY_LIFE_DAYS,
-            storage_budget: DEFAULT_STORAGE_BUDGET,
         }
     }
 
@@ -197,14 +188,6 @@ impl MemoryStore {
 
     pub fn memory_life_days(&self) -> f64 {
         self.memory_life_days
-    }
-
-    /// The storage reference point reported to the regulation loop's
-    /// storage-usage-ratio sensor. Monitoring only — count-based
-    /// enforcement was deprecated by the operator ruling 2026-09-04;
-    /// there is deliberately no writer path gated on this value.
-    pub fn storage_budget(&self) -> usize {
-        self.storage_budget
     }
 
     /// Access the underlying `EmbeddingStore` for direct operations.

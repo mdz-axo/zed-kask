@@ -132,8 +132,8 @@ const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 /// `'abw'` when the context lacks it (`{{ mode | default('abw') }}`). A
 /// prompt-injected curator could omit `mode` to force ABW, or pass
 /// `mode: "local"` to switch backends. This is a wrong-result risk, not a
-/// security violation: both backends have their own spending gates (consent
-/// tokens for ABW, ledger balance for local), so a wrong-mode cascade cannot
+/// security violation: cloud delegation is consent-gated and local
+/// delegation has no spend to gate, so a wrong-mode cascade cannot
 /// bypass spending controls. Hard enforcement (declaring `mode` as a required
 /// manifest input) would change the schema and break
 /// existing callers. The prompt instruction is the pragmatic tradeoff.
@@ -179,16 +179,11 @@ fn steer_system_prompt(
          \n\
          **Local tools** (`mode: local`): {local_tools}. \
          These run on the local \
-         substrate (`hkask-inference` + `hkask-ledger`) with no \
-         ABW round-trips. Local delegation needs NO funding and NO consent — it \
-         runs on the operator's own substrate, so there is nothing to authorize: \
-         omit `credits_authorized` entirely on local delegations (the \
-         per-dispatch ceiling alone bounds a runaway call). \
-         The local ledger is accounting only: it records spend so \
-         `swarm_balance_local` and `swarm_local_history` can reconcile it, and a \
-         negative balance is accumulated local spend, not an error. Do NOT call \
-         `swarm_fund_local` before delegating and do NOT treat a low balance as a \
-         blocker. Funding and consent gates apply to the CLOUD tools \
+         substrate (`hkask-inference`) with no \
+         ABW round-trips. Local delegation has NO budget and needs NO consent — it \
+         runs on the operator's own substrate, so there is nothing to authorize \
+         or price (timeouts are the enforcement mechanism). \
+         Funding and consent gates apply to the CLOUD tools \
          (`swarm_hire`, `swarm_delegate`), where credits buy someone else's \
          compute. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
          cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
@@ -501,16 +496,16 @@ pub(crate) struct AppCard {
 
 // ── Panel ──────────────────────────────────────────────────────────────────
 
-/// R2: the algedonic + consent surface — wallet/ledger balances, in-flight
-/// spend, the pending hire consent, and hire-flow errors. Grouped so the
+/// R2: the algedonic + consent surface — wallet balance, in-flight spend,
+/// the pending hire consent, and hire-flow errors. Grouped so the
 /// spend/consent concern is one cohesive state object.
 struct SpendState {
     in_flight: Option<String>,
     pending_hire: Option<PendingHire>,
     /// The operator's ABW credit wallet — the only spendable balance. Hires
     /// on cloud swarms draw from it, so it is tracked and always visible
-    /// when known. Local swarms have no credit concept (the local ledger is
-    /// accounting-only and is not surfaced here).
+    /// when known. Local swarms have no credit concept (no local budget,
+    /// operator ruling 2026-09-04).
     wallet_balance: Option<i64>,
     hire_error: Option<SharedString>,
 }
@@ -2597,9 +2592,6 @@ mod tests {
         let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
         for tool in [
             "swarm_list_local_agents",
-            "swarm_balance_local",
-            "swarm_local_history",
-            "swarm_fund_local",
             "swarm_delegate_local",
             "swarm_fanout_local",
             "swarm_pipeline_local",
@@ -2620,17 +2612,12 @@ mod tests {
             prompt.contains("kask.swarm.mode"),
             "steer prompt must name the kask.swarm.mode setting"
         );
-        // Local delegation needs no funding: the local ledger records spend, it
-        // does not authorize it (`LocalSwarmRuntime::delegate` has no balance
-        // gate). The prompt must say so, or the Curator wastes a turn funding a
-        // ledger that was never blocking it — and may refuse to delegate at all
-        // when it reads a low or negative balance.
-        //
-        // This inverts the previous assertion, which required the prompt to
-        // promise a `PaymentRequired` that local mode no longer returns.
+        // Local delegation has no budget (operator ruling 2026-09-04): the
+        // prompt must say so, or the Curator wastes a turn looking for a
+        // funding gate that does not exist.
         assert!(
-            prompt.contains("NO funding") || prompt.contains("needs NO funding"),
-            "steer prompt must tell the curator local delegation needs no funding"
+            prompt.contains("NO budget"),
+            "steer prompt must tell the curator local delegation has no budget"
         );
         assert!(
             prompt.contains("Do NOT call `swarm_fund_local` before delegating"),

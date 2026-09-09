@@ -2,7 +2,6 @@
 //! portfolios, CMP index storage, and rebuild-from-ledger.
 
 use super::*;
-use chrono::Datelike;
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
 fn sample_tx(
@@ -1024,15 +1023,6 @@ fn cached_resolver_resolves_as_of_and_seed_invalidates_views() {
         .daily_returns("test", "2024-01-05", "2024-01-08")
         .unwrap();
     assert!(remaining.iter().all(|row| row.date.as_str() < "2024-01-06"));
-}
-
-// Silence unused-import warnings for the test helper's Datelike import
-// (used by the returns formula test's date arithmetic in future expansions).
-#[allow(dead_code)]
-fn _datelike_used(_: &chrono::NaiveDate) -> i32 {
-    chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
-        .unwrap()
-        .num_days_from_ce()
 }
 
 /// expect: [P1] Portfolio-only legacy data remains disposable without blocking startup.

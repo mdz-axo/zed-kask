@@ -7,7 +7,7 @@
 //! is for consolidated knowledge, not counters. The local analog is the same
 //! shape: a dedicated per-agent `stats.json` beside the card
 //! (`agents/local/curated/<id>/stats.json`), updated at the one point where
-//! the numbers are known (`LocalSwarmRuntime::debit_and_build` — the
+//! the numbers are known (`LocalSwarmRuntime::build_result` — the
 //! sequential debit path, so updates are single-writer by construction),
 //! and surfaced on `swarm_get_local_agent` / `swarm_list_local_agents`.
 //!

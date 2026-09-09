@@ -41,7 +41,7 @@ loop:
 flowchart TD
     Panel[Swarm Panel<br/>crates/swarm_panel] -->|tool calls via shared_tool_invoker| Server[hkask-mcp-swarm<br/>82 tools]
     Server -->|mode: abw| ABW[Agent Bestiary World<br/>REST API]
-    Server -->|mode: local| Local[Local runtime<br/>ledger + inference]
+    Server -->|mode: local| Local[Local runtime<br/>inference + measured stats]
     Local --> IPC[zed IPC bridge<br/>inference + tool dispatch]
     Skills[swarm-intelligence<br/>swarm-steering] -.->|steer mode prompt| Panel
 ```
@@ -81,8 +81,9 @@ The swarm server has two substrates, selected by `kask.swarm.mode`
   compute. Spend is gated by consent tokens (`consent.rs:21-30`) and a
   per-dispatch ceiling (`spend_gate.rs:1-22`).
 - **`local`** — your machine, your inference credentials. No consent
-  token, no funding gate; the ledger records spend rather than authorizing
-  it (`local_runtime.rs:492-507`).
+  token and no budget: local agents run on the operator's own substrate,
+  so there is nothing to authorize or reconcile (the local ledger was
+  removed with the budget system, operator ruling 2026-09-04).
 
 Pick `local` for this tutorial — it works without an ABW API key and lets
 you see the loop end-to-end. Set `kask.swarm.mode` in your settings file;
@@ -157,55 +158,45 @@ sequenceDiagram
     participant Curator as Steer curator
     participant Server as hkask-mcp-swarm
     participant Runtime as LocalSwarmRuntime
-    participant Ledger as mcp/swarm/ledger.db
-    Curator->>Server: swarm_delegate_local(agent, task, credits)
-    Server->>Runtime: delegate(agent, task, ceiling)
+    Curator->>Server: swarm_delegate_local(agent, task)
+    Server->>Runtime: delegate(agent, task)
     Runtime->>Runtime: skill cascade + tool loop (AgentExecutor)
-    Runtime->>Ledger: record_spend(cost, reference)
-    Runtime-->>Server: LocalDelegateResult{response, cost, balance}
+    Runtime-->>Server: LocalDelegateResult{response, tokens, latency}
     Server->>Server: card-declared evaluators stamp task_success
     Server-->>Curator: result JSON
-    Curator->>Server: swarm_balance_local / swarm_local_history (SENSE)
-    Server->>Ledger: balance / history read
-    Ledger-->>Server: balance (may be negative)
-    Server-->>Curator: sense input
+    Curator->>Server: swarm_task_board (SENSE)
+    Server-->>Curator: durable per-task progress
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-003
 verified_date: 2026-08-28
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:176-282; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:473-519,536-600; kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29-133; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:269-280
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (local budget removed 2026-09-08)
 status: VERIFIED
 -->
 
 The delegation returns a `LocalDelegateResult` carrying `agent_id`,
-`response`, `model`, `tokens_used`, `cost`, `cost_uncapped`, `balance`
-(`None` on a failed measurement — never fabricated to 0,
-`local_runtime.rs:531-535`), `latency_ms`, `tool_calls`, `task_success`,
-`bind_matched`, `rollout_id`, and `reasoning_steps`
-(`local_runtime.rs:740-815`). When the agent's card declares evaluators,
-the server runs them and stamps `task_success` with
-`provenance: DeterministicEvaluator` (`local_tools.rs:214-240`) — the card
-carries its own oracle. The SENSE phase reads `swarm_balance_local`
-(`ledger_tools.rs:71`) and `swarm_local_history` (`ledger_tools.rs:109`)
-as the sense inputs for the next PDCA iteration, and `swarm_task_board`
-(`local_tools.rs:2176`) reads durable per-task progress written by
+`response`, `model`, `tokens_used`, `latency_ms`, `tool_calls`,
+`task_success`, `bind_matched`, `rollout_id`, and `reasoning_steps` —
+pure measurements. When the agent's card declares evaluators, the server
+runs them and stamps `task_success` with `provenance:
+DeterministicEvaluator` — the card carries its own oracle. The SENSE phase
+reads `swarm_task_board` for durable per-task progress written by
 `swarm_execute_plan_local`.
 
 ## Step 7: Reconcile spend
 
-In `local` mode the ledger is accounting, not authorization
-(`ledger_tools.rs:4-13`). A negative balance is normal — it is the
-operator's unreconciled local spend, not a fault. `swarm_fund_local`
-(`ledger_tools.rs:29`) deposits credits so the balance reads as "remaining"
-rather than "consumed"; it does not gate delegation.
+In `local` mode there is nothing to reconcile: no budget, no balance
+(operator ruling 2026-09-04 — the local ledger was removed with the
+budget system).
 
 In `abw` mode the spend gate is structural: `authorize_hire` /
-`authorize_delegate` (`spend_gate.rs:169` / `:377`) consume the consent
-token, re-verify the cost against ABW, and enforce the per-dispatch
-ceiling; `complete_hire` / `complete_delegate` (`spend_gate.rs:317` /
-`:452`) execute the spend and refund the authorization on transient
-failure.
+`authorize_delegate` take the reservation (single-use token consumed /
+session cost atomically deducted), re-verify the cost against ABW, and
+enforce the per-dispatch ceiling; `complete_hire` / `complete_delegate`
+execute the spend and settle by outcome class — proven pre-dispatch
+rejection releases the reservation, an ambiguous outcome holds it and
+surfaces the uncertainty (operator-ratified T05 policy, 2026-09-08).
 
 ## Source citations
 
@@ -227,9 +218,7 @@ failure.
 | `LocalSwarm`                 | `kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs:35-52`            |
 | `LocalSwarmRuntime::delegate` | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:473-519`       |
 | `LocalDelegateResult`        | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:740-815`         |
-| `swarm_fund_local` / `swarm_balance_local` / `swarm_local_history` | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29` / `:71` / `:109` |
 | `ConsentGrant`               | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:21-30`                 |
 | `SpendAuth` / `Settlement`   | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:35-38` / `:74-77`   |
 | `authorize_hire` / `complete_hire` | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169` / `:317` |
-| Ledger path default (D28)    | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:269-280`       |
 | Consent store path (D28)     | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:186-199`       |

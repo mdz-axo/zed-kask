@@ -22,8 +22,10 @@ pub enum SignalMetric {
     ConnectorLatency,
     /// Communication queue depth (backpressure signal)
     CommunicationQueueDepth,
-    /// Storage usage fraction (Memory Loop 2)
-    StorageUsage,
+    // StorageUsage removed 2026-09-08 with the budget teardown (operator
+    // ruling 2026-09-04): it was h_mem_count / storage_budget — a budget-framed
+    // duplicate of TripleCount (h_mem_count vs an absolute set-point), and the
+    // budget constant backed deprecated count-based enforcement.
     /// Memory life S in days (Memory Loop 2).
     /// Wozniak-Gorzelanczyk (1995) forgetting curve: R(t) = exp(-t/S).
     /// Default 180 days. Configurable via HKASK_MEMORY_LIFE_DAYS.
@@ -114,7 +116,6 @@ impl SignalMetric {
             SignalMetric::ErrorRate => "error_rate",
             SignalMetric::ConnectorLatency => "connector_latency",
             SignalMetric::CommunicationQueueDepth => "communication_queue_depth",
-            SignalMetric::StorageUsage => "storage_usage",
             SignalMetric::MemoryLife => "memory_life",
             SignalMetric::TripleCount => "triple_count",
             SignalMetric::LowConfidenceCount => "low_confidence_count",
@@ -147,7 +148,6 @@ impl SignalMetric {
             SignalMetric::ErrorRate,
             SignalMetric::ConnectorLatency,
             SignalMetric::CommunicationQueueDepth,
-            SignalMetric::StorageUsage,
             SignalMetric::MemoryLife,
             SignalMetric::TripleCount,
             SignalMetric::LowConfidenceCount,
@@ -291,7 +291,6 @@ mod tests {
             "error_rate",
             "connector_latency",
             "communication_queue_depth",
-            "storage_usage",
             "memory_life",
             "triple_count",
             "low_confidence_count",
@@ -437,8 +436,7 @@ impl Deviation {
             | SignalMetric::OcrSilentFailures
             | SignalMetric::TripleCount
             | SignalMetric::LowConfidenceCount
-            | SignalMetric::ConsolidationCandidates
-            | SignalMetric::StorageUsage => diff <= 0.0,
+            | SignalMetric::ConsolidationCandidates => diff <= 0.0,
             _ => false,
         };
         if healthy || diff.abs() < f64::EPSILON {

@@ -629,7 +629,7 @@ fn main() {
         // subscriber bus with zero subscribers).
         // zed-kask: D3/D6/D8 — F3: alert channel + regulation ledger + event sink.
         // The ledger is constructed after `set_points` is loaded (below) so that
-        // history caps (`max_regulation_history`, `max_skill_span_history`) are
+        // history caps (`max_skill_span_history`) are
         // wired from YAML config. See `RegulationLedger::with_set_points`.
         // Create the alert channel: CyberneticsLoop sends alerts →
         // MetacognitionLoop receives them. This closes the feedback loop.
@@ -776,7 +776,7 @@ fn main() {
         let scaled = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - algedonic_threshold);
         set_points.variety_max_deficit = scaled.max(1.0);
         // zed-kask: D3/D6/D8 — F3: regulation ledger constructed with set_points
-        // so history caps (max_regulation_history, max_skill_span_history) are
+        // so history caps (max_skill_span_history) are
         // configurable via YAML. Previously constructed with `::default()` which
         // used hardcoded caps.
         let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -1918,12 +1918,12 @@ fn main() {
 
                                 // Wire the memory health source into the cybernetics
                                 // loop so it can sense memory growth, low-confidence
-                                // accumulation, and storage budget pressure. Without
-                                // this, 5 memory regulation loops are blind — their
+                                // accumulation, and memory-life configuration. Without
+                                // this, 4 memory regulation loops are blind — their
                                 // policy rules (`TripleCount`, `LowConfidenceCount`,
-                                // `ConsolidationCandidates`, `StorageUsage`,
-                                // `MemoryLife`) can never fire because no signal is
-                                // produced. This closes the dead-policy gap.
+                                // `ConsolidationCandidates`, `MemoryLife`) can never fire
+                                // because no signal is produced. This closes the
+                                // dead-policy gap.
                                 //
                                 // The health source is the `RealMemoryPort` itself —
                                 // it implements `MemoryHealthSource` by reading from

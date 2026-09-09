@@ -245,11 +245,12 @@ fn open_curator_store(
         }
     };
     let store = Arc::new({
-        // Budgets are deprecated (operator ruling 2026-09-04): nothing gates
-        // on the storage count — forgetting is time-based
+        // Budgets are gone entirely (operator ruling 2026-09-04, completed
+        // 2026-09-08): forgetting is time-based
         // (`kask.memory.forgetting_days`) and distillation-gated, never
-        // count-based. The store's capacity constant remains only as the
-        // regulation loop's storage-usage-ratio reference point.
+        // count-based — no storage budget, no count-based pruning, no
+        // usage-ratio sensor. The h_mem count is still monitored against an
+        // absolute set-point (`TripleCount`).
         //
         // The decay constant comes from the caller (the operator's
         // `kask.memory.memory_life_days` setting) — recall-time decay must

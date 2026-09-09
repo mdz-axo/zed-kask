@@ -20,8 +20,9 @@ The count is grounded in the build script: `build.rs` scans `src/*.rs` for
 `pub const TOOL_NAMES` (`build.rs:30-31`, emitted at `build.rs:52-56`),
 included at `hkask_mcp_swarm.rs:113`. Replicating the build-script regex
 against the current tree yields exactly 82 names:
-`cloud_swarm_tools.rs` 47, `local_tools.rs` 25, `ledger_tools.rs` 3,
-`knowledge_tools.rs` 4, `a2a_tools.rs` 3.
+`cloud_swarm_tools.rs` 48, `local_tools.rs` 26, `knowledge_tools.rs` 4,
+`a2a_tools.rs` 3, `workflow.rs` 1 (the 3 local-ledger tools were removed
+with the local budget system — operator ruling 2026-09-04).
 
 **Enforcement status (IS vs OUGHT):** the build-script doc comment
 (`build.rs:5-6`) and the panel's test comment
@@ -70,7 +71,7 @@ classDiagram
         +embedding_dim: usize
     }
     class LazyLocalSwarmRuntime {
-        -ledger_path: String
+        -agent_stats: Arc~AgentStatsStore~
         -inner: OnceCell~LocalSwarmRuntime~
         +lazy() Self
         +get_or_init() Result~LocalSwarmRuntime~
@@ -82,14 +83,10 @@ classDiagram
         +get_or_init() Result~Arc~EventStore~~
     }
     class LocalSwarmRuntime {
-        -ledger: Arc~Ledger~
         -executor: AgentExecutor
-        -operator_account: String
-        -asset: String
-        +balance() Option~i64~
-        +fund(credits) i64
-        +delegate(agent, task, credits, ceiling) LocalDelegateResult
-        +delegate_batch(delegations, ceiling) Vec~Result~
+        -stats: Arc~AgentStatsStore~
+        +delegate(agent, task) LocalDelegateResult
+        +delegate_batch(delegations) Vec~Result~
     }
     class AgentExecutor {
         -inference: Arc~InferencePort~
@@ -131,7 +128,6 @@ classDiagram
     SwarmServer --> LazyEventStore
     LazyLocalSwarmRuntime --> LocalSwarmRuntime
     LocalSwarmRuntime --> AgentExecutor
-    LocalSwarmRuntime --> Ledger : mcp/swarm/ledger.db
     LocalAgentRegistry --> PortRegistry
 ```
 
@@ -231,7 +227,7 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 
 | Tool                          | Purpose                                              | Definition |
 | ----------------------------- | ---------------------------------------------------- | ---------- |
-| `swarm_delegate_local`        | delegate (skill cascade + tool loop, debits ledger; runs card-declared evaluators, `:214-240`) | `:176` |
+| `swarm_delegate_local`        | delegate (skill cascade + tool loop; runs card-declared evaluators, `:214-240`) | `:176` |
 | `swarm_fanout_local`          | fan-out; default sequential, `parallel=true` runs inference concurrently with batched debit (`:322-345`); cap `MAX_FANOUT = 10` (`local_runtime.rs:736`) | `:294` |
 | `swarm_pipeline_local`        | sequential pipeline (`{{prev_output}}` substitution; cap `MAX_PIPELINE_STEPS = 10`, `:524`) | `:509` |
 | `swarm_execute_plan_local`    | execute a plan with per-step evaluators (cap `MAX_FANOUT`, `:1966`); writes the task board | `:1954` |
@@ -267,14 +263,6 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_push_local_swarm`       | push local swarm to ABW as a workspace     | `:1453` |
 | `swarm_pull_swarm_to_local`   | pull an ABW workspace roster to local      | `:1596` |
 
-**Ledger — `ledger_tools.rs` (router at `:20`)**
-
-| Tool                          | Purpose                                    | Definition |
-| ----------------------------- | ------------------------------------------ | ---------- |
-| `swarm_fund_local`            | deposit local credits (optional)           | `:29` |
-| `swarm_balance_local`         | read balance (may be negative; error, not 0, on failed measurement `:85-95`) | `:71` |
-| `swarm_local_history`         | read recent transactions (default 50, cap 500, `:119`) | `:109` |
-
 **Knowledge — `knowledge_tools.rs` (router at `:12`)**
 
 | Tool                              | Purpose                                        | Definition |
@@ -293,7 +281,7 @@ the consent/session spend gate (`spend_gate.rs:1-22`).
 | `swarm_a2a_broadcast`      | broadcast a message to a swarm's members   | `:135` |
 
 The combined router is
-`cloud_swarm_router + ledger_router + local_router + a2a_router + knowledge_router`
+`cloud_swarm_router + local_router + a2a_router + knowledge_router`
 (`hkask_mcp_swarm.rs:165-171`). Both tool sets are always registered in
 either mode — `kask.swarm.mode` selects the substrate, not the surface.
 
@@ -398,7 +386,6 @@ status: VERIFIED
 
 | Artifact              | Default path                                    | Env override                       |
 | --------------------- | ----------------------------------------------- | ---------------------------------- |
-| Local ledger          | `mcp/swarm/ledger.db` (under hKask data dir)    | `HKASK_SWARM_LEDGER_PATH`          |
 | Consent store         | `mcp/swarm/consent.db` (under hKask data dir)  | `HKASK_SWARM_CONSENT_STORE`        |
 | Rollout event store   | `mcp/swarm/events.db` (under hKask data dir)   | `HKASK_SWARM_EVENTS_PATH`          |
 | Local agent cards     | `mcp/swarm/agents/curated/<id>/agent_card.json` | `HKASK_LOCAL_AGENTS_DIR`          |
@@ -407,7 +394,7 @@ status: VERIFIED
 | Per-swarm task board  | `mcp/swarm/swarms/<id>/task_board.json`         | — (lives in the swarms dir)        |
 | Local semantic memory | `mcp/swarm/memory.db` (under hKask data dir)   | `HKASK_SWARM_MEMORY_DB`            |
 
-The ledger, consent, and events paths are resolved via
+The consent and events paths are resolved via
 `hkask_types::agent_paths::mcp_server_db("swarm", …)` +
 `resolve_under_data_dir` (`hkask_mcp_swarm.rs:269-280`, `:290-300`,
 `:186-199`) and pinned by `default_db_paths_follow_standardized_layout`
@@ -500,17 +487,17 @@ drop guard (`cloud_swarm/curator.rs:23-24`) instead of a single
 ## Local runtime
 
 `LocalSwarmRuntime` (`local_runtime.rs:135-150`) owns the spending policy
-(ceiling check `:484-490`, cost computation `:544-545`, spend recording —
+(ceiling check, cost re-verification, reservation —
 no balance gate, `:492-507`). The agent-run policy (skill cascade,
 tool-loop orchestration) lives in `AgentExecutor`
 (`agent_executor.rs:200+`). The executor returns a `RawDelegateResult` —
-it does NOT debit the ledger (`agent_executor.rs:9-12`); the runtime
+it does not price the run; the runtime
 debits after the agent run succeeds (`debit_and_build`,
 `local_runtime.rs:536-600`).
 
 Constants:
 
-- `MAX_TOOL_ROUNDS = 4` (`agent_executor.rs:22`) — bounds cost
+- `MAX_TOOL_ROUNDS = 4` (`agent_executor.rs:22`) — bounds run length
   amplification; each round is a full inference call.
 - `MAX_FANOUT = 10` (`local_runtime.rs:736`) — local fan-out and
   plan-execution cap.
@@ -518,17 +505,15 @@ Constants:
 - `MAX_FANOUT_ABW = 10` (`cloud_swarm_tools.rs:1393`).
 
 `delegate_batch` (`local_runtime.rs:612-706`) runs inference concurrently
-via a tokio `JoinSet` and debits the ledger sequentially after all
+via a tokio `JoinSet` and builds the results after all
 completions — the TOCTOU-safe parallel path behind
 `swarm_fanout_local(parallel=true)`.
 
-`LocalDelegateResult` (`local_runtime.rs:740-815`) carries `agent_id`,
-`response`, `model`, `tokens_used`, `cost` (capped at
-`credits_authorized`), `cost_uncapped`, `balance` (`Option<i64>` — `None`
-on a failed measurement, never fabricated), `latency_ms`, `tool_calls`,
-`task_success` (a `TaskSuccessVerdict` with `provenance`,
-`local_runtime.rs:875-890`), `bind_matched`, `rollout_id`, and
-`reasoning_steps`.
+`LocalDelegateResult` (`local_runtime.rs`) carries `agent_id`,
+`response`, `model`, `tokens_used`, `latency_ms`, `tool_calls`,
+`task_success` (a `TaskSuccessVerdict` with `provenance`),
+`bind_matched`, `rollout_id`, and `reasoning_steps` — pure measurements,
+no budget fields (removed with the local budget system).
 
 ## Panel components
 
@@ -590,7 +575,6 @@ on a failed measurement, never fabricated), `latency_ms`, `tool_calls`,
 | `swarm_fanout_local` / `swarm_pipeline_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:294` / `:509` |
 | `swarm_execute_plan_local` / `swarm_task_board` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1954` / `:2176` |
 | `swarm_eval_suite_local` / `swarm_eval_agent_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2218` / `:2473` |
-| `swarm_fund_local` / `swarm_balance_local` / `swarm_local_history` | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29` / `:71` / `:109` |
 | `swarm_recall_local`               | `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:73`             |
 | `swarm_a2a_send` / `swarm_a2a_broadcast` | `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30` / `:135`    |
 | A2A in-process transport            | `kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:1-12`                       |

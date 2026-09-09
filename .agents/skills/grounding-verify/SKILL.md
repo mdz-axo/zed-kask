@@ -159,7 +159,9 @@ cited.
      or an earlier claim's id) — Step 3 evaluates the form, grades the
      difference, and checks the origins. Prefer the canonical derivation
      forms from the template's library over authoring your own —
-     selection over authoring shrinks the gaming surface.
+     selection over authoring shrinks the gaming surface — and record
+     the selection in `library_form` (null when authored); library
+     forms skip Step 3's empty-env check.
    - `model_inference`: the LLM synthesized the claim from source outputs.
      This is the extraction ceiling — legitimate, but not a retrieval.
    - `unavailable`: no source the pipeline called can supply this claim.
@@ -199,31 +201,40 @@ cited.
 
 ### Step 3 — Mechanically verify citations
 
-Batch the checks: the `lisp_eval` calls in this step are independent of
-each other — emit them in parallel in a single turn (every claim's
-verification call, every empty-env check, every origins check, every
-consistency comparison). Do not serialize one claim's checks behind
-another claim's results. The only sequential rule is item 4's cascade,
-which applies after the batch returns.
+Minimize the calls: `lisp_eval` executes locally (a sandboxed
+in-process interpreter — no LLM, no API cost per execution), but every
+call is an emission the model must write and a result it must read.
+So each data-driven check family runs as ONE call — the canonical
+library's drivers take all claims as data and return per-claim results.
+The derive+grade wrapper (item 2) is the one per-claim call: iterate it
+and emit all wrappers in parallel in a single turn. The only per-form
+exception is the empty-env check (item 3), which cannot batch — a
+combined empty-env call errors on the first unbound symbol and masks
+constant derivations. If a driver call errors, fall back to per-claim
+calls for that family to isolate the malformed entry. The only
+sequential rule is item 4's cascade, which applies after the batch
+returns.
 
-1. For each claim provisionally classified as `tool_verified` in Step 2,
-   perform the mechanical verification:
-   - **Cited quotes**: call `lisp_eval` for each cited quote:
-     - form: `"(string-contains quote source_text)"`
-     - env: `{ "quote": <the cited substring>, "source_text": <the text of the referenced source chunk> }`
+1. For all claims provisionally classified as `tool_verified` in Step 2,
+   run the mechanical verification as one call per family, using the
+   canonical library's data-driven drivers:
+   - **Cited quotes**: one call with the quote driver over all quoted
+     claims — env: `{ "records": [{ "claim_id", "quote", "source_text" }, ...] }`.
      This is a mechanical substring match — not model-mediated. The LLM
      found the quote and pointed to it; the process verifies the pointer.
      An empty `quote` errors the call — an empty needle would verify
      anything, and a check that fires on correct output is worse than no
      check. For stored transcripts, `educt_locate` is the deterministic
-     word-aligned locator — prefer it when the source is an
-     educt-stored transcript.
-   - **Cited numbers**: call `lisp_eval` for each numeric cross-check:
-     - form: the `cross_check` form from Step 2
-     - env: the source output values
-   A failed match reclassifies the claim as `rejected` (strength 0) and
-   records it in `hallucination_findings` with the source mismatch
-   details.
+     word-aligned locator — prefer it per quote when the source is an
+     educt-stored transcript (it cannot batch).
+   - **Cited numbers**: one call with the number driver over all cited
+     numbers — env: `{ "records": [{ "claim_id", "value", "values" }, ...] }`
+     where `values` is the referenced source output's value list. A
+     claim whose `cross_check` form is not a plain membership check
+     runs individually with its own form.
+   A failed match (position i in the driver's result) reclassifies that
+   claim as `rejected` (strength 0) and records it in
+   `hallucination_findings` with the source mismatch details.
 
 2. For each claim provisionally classified as `platform_derived`, verify
    the derivation — the deterministic arithmetic audit. The interpreter,
@@ -251,37 +262,43 @@ which applies after the batch returns.
      corrected (computed) values.
 
 3. Run the empty-env dependency check on every `platform_derived`
-   `cross_check` form — the anti-gaming falsifier:
-   - Call `lisp_eval` with the form and env `{}`.
-   - The call MUST fail with an unbound-symbol error: a real derivation
-     references its input values, and against an empty env those
-     references are unbound. A form that returns a value without the
-     input env embeds its answer as a literal — a constant masquerading
-     as a derivation. Reclassify the claim as `model_inference` and
-     record the finding: the derivation is not falsifiable against the
-     inputs.
+   `cross_check` form that was NOT copied verbatim from the canonical
+   library — the anti-gaming falsifier:
+   - A library form references its inputs by construction; the
+     assignment's `library_form` field records which one was selected,
+     and the registry makes a false declaration visible in review.
+     Skip the check for these.
+   - For every authored form: call `lisp_eval` with the form and
+     env `{}`. The call MUST fail with an unbound-symbol error: a real
+     derivation references its input values, and against an empty env
+     those references are unbound. A form that returns a value without
+     the input env embeds its answer as a literal — a constant
+     masquerading as a derivation. Reclassify the claim as
+     `model_inference` and record the finding: the derivation is not
+     falsifiable against the inputs.
    - Run the check on the bare `cross_check` form, not the grading
      wrapper — the wrapper's own `claimed`/`unit` bindings error
-     against an empty env and would mask a constant derivation.
+     against an empty env and would mask a constant derivation. This
+     is also why the check cannot batch: a combined call errors on the
+     first unbound symbol and masks the rest.
    - This check is what decouples the arithmetic audit: the derivation
      is stated once, and the interpreter — which has no incentive to
      confirm the report — both evaluates it and proves it depends on
      the cited inputs.
 
-4. Run the origins check on every `platform_derived` claim — the
-   anchoring falsifier. Dependency is not anchoring: two forms can
+4. Run the origins check on all `platform_derived` claims in ONE call —
+   the anchoring falsifier. Dependency is not anchoring: two forms can
    reference each other's outputs and pass every check above while
    grounded in no source at all (counterexample probed live
    2026-09-08: `x = value_b + 1`, `y = value_a + 1`). Each claim's
    `inputs` (from Step 2) name their origin — a source output key or
    an earlier claim's id:
-   - Call `lisp_eval` once per claim:
-     - form: `"(let ((bad (lambda (lst) (cond ((is_null lst) 0) ((member (assoc "origin" (car lst)) allowed) (bad (cdr lst))) (t (+ 1 (bad (cdr lst)))))))) (bad inputs))"`
-     - env: `{ "inputs": <the claim's inputs with origins>, "allowed": <the origin strings of all source outputs, plus "claim:<id>" for earlier platform_derived claims> }`
-   - Count > 0: an input is anchored in neither a source nor an
-     earlier claim — a forward reference or an unanchored loop.
-     Reclassify as `model_inference` with a `why` naming the
-     unanchored input.
+   - Call `lisp_eval` once with the library's origins driver:
+     - env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...], "allowed": <the origin strings of all source outputs, plus "claim:<id>" for earlier platform_derived claims> }`
+   - A claim whose bad-origin count > 0 has an input anchored in
+     neither a source nor an earlier claim — a forward reference or an
+     unanchored loop. Reclassify as `model_inference` with a `why`
+     naming the unanchored input.
    - No-forward-references makes the derivation graph acyclic by
      construction — a cycle must cross the id order somewhere.
    - Cascade rule: when a claim grades `fail`, every later claim whose
@@ -293,10 +310,11 @@ which applies after the batch returns.
    cross_check_sources, tolerance, resolution }`:
    - Locate the primary value and each cross-check value in the source
      outputs (the location is model-mediated; the comparison is not).
-   - Call `lisp_eval` for each cross-check source:
-     - form: `"(let ((diff (abs (- primary cross)))) (if (> diff (* primary tolerance)) 'conflict 'consistent))"`
-     - env: `{ "primary": <value from primary_source>, "cross": <value from the cross-check source>, "tolerance": <the rule's relative tolerance> }`
-   - On `conflict`, emit a `source_conflicts` finding: both values, both
+   - Call `lisp_eval` once with the library's consistency driver over
+     every rule × cross-check pair:
+     - env: `{ "rules": [{ "quantity", "primary", "cross", "tolerance" }, ...] }`
+   - On `conflict` (per record in the driver's result), emit a
+     `source_conflicts` finding: both values, both
      sources, both periods/definitions, the relative difference, and the
      precedence disposition. The default hierarchy is `primary source
      (audited filing) > live market quote > derived metric > model
@@ -499,7 +517,7 @@ this skill is the verifier, not the generator.
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, and origin-tagged `inputs`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, origin-tagged `inputs`, and `library_form`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) plus data-driven batch drivers (cited numbers, cited quotes, origins, consistency) that run each check family as ONE call — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, library_form, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
 | `compile-error-log.j2` | Compile the graduated-sanctions error log from all findings — `hallucination_findings` (class E), `rounding_notes` (class W), `source_conflicts` (class N) — into one append-only table with ID, class, claim, description, prior value, corrected value, severity, disposition, and a materiality `why`. |
 
@@ -618,11 +636,18 @@ single-pass by design and verifies against provided sources only.
   fact score covers factuality, not completeness or reasoning quality.
 - When composed as a `spawn_agent` call, the verifier has no shared
   conversation history with the generator (self-improvement §9.1).
-- The empty-env dependency check: a `platform_derived` cross_check form
-  evaluated against env `{}` must fail with an unbound-symbol error. A
-  form that returns a value without the input env embeds its answer as
-  a literal — reclassify the claim as `model_inference` and record the
-  finding. Run it on the bare form, never the grading wrapper.
+- The empty-env dependency check applies to authored `platform_derived`
+  cross_check forms only — a form copied verbatim from the canonical
+  library (recorded in `library_form`) references its inputs by
+  construction. An authored form evaluated against env `{}` must fail
+  with an unbound-symbol error; a form that returns a value without
+  the input env embeds its answer as a literal — reclassify the claim
+  as `model_inference` and record the finding. Run it on the bare
+  form, never the grading wrapper; it cannot batch.
+- Each data-driven check family (cited numbers, cited quotes, origins,
+  consistency) executes as ONE `lisp_eval` call via a canonical library
+  driver; the derive+grade wrapper is the only per-claim call. A driver
+  error falls back to per-claim calls for that family.
 - The warn boundary carries a `1.001`×unit slack: binary64
   representation error at the boundary (`18.0 − 17.9` computes to
   `0.10000000000000142`) must not turn a rounding difference into a

@@ -34,7 +34,6 @@ and the feedback path that closes the loop. Read the
 | Spend gate (hire/delegate)          | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169` / `:377`      |
 | `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:529` / `:583` |
 | `swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:176` / `:294` / `:509` |
-| `swarm_fund_local` / `swarm_balance_local` | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29` / `:71` |
 | Planner PDCA                        | `.agents/skills/swarm-intelligence/SKILL.md`                            |
 | Actuator directive                  | `.agents/skills/swarm-steering/SKILL.md`                               |
 
@@ -52,7 +51,7 @@ flowchart TD
     F --> G
     S --> R[swarm-steering emits delegate sequence]
     R --> L
-    H --> REC[reconcile via swarm_run_status / swarm_local_history]
+    H --> REC[reconcile via swarm_run_status]
     L --> REC
 ```
 
@@ -145,36 +144,28 @@ a session with a total budget upfront.
 
 ## How-to: Delegate to a local agent (no gate)
 
-Local mode has no consent token and no funding gate — the ledger records
-spend rather than authorizing it (`local_runtime.rs:492-507`).
+Local mode has no consent token and no budget — local agents run on the
+operator's own substrate, so there is nothing to authorize, price, or
+reconcile (operator ruling 2026-09-04: the budget concept is deprecated;
+the local ledger was removed with it).
 
 1. Ensure the agent exists in the local registry
    (`mcp/swarm/agents/curated/<id>/agent_card.json`, default
    `config.rs:151`).
-2. Call `swarm_delegate_local` (`local_tools.rs:176`) with `agent_name`,
-   `task`, and `credits_authorized`. The per-dispatch ceiling
-   (`max_credits_per_dispatch`, default 50, `config.rs:148`) still bounds a
-   single runaway dispatch (`local_runtime.rs:484-490`).
-3. The runtime runs the skill cascade + tool loop (`AgentExecutor`),
-   computes cost (1 credit / 1000 tokens, capped at `credits_authorized`,
-   `local_runtime.rs:544-545`), and debits the ledger. `cost_uncapped` is
-   carried alongside so a capped overrun is visible
-   (`local_runtime.rs:525-535`).
-4. Read the result's `balance` (may be negative — unreconciled local spend,
-   not a fault) and `task_success`. If the agent's card declares
+2. Call `swarm_delegate_local` (`local_tools.rs:176`) with `agent_name`
+   and `task`.
+3. The runtime runs the skill cascade + tool loop (`AgentExecutor`) and
+   measures the result (tokens, latency, model).
+4. Read the result's `task_success`. If the agent's card declares
    `capabilities.evaluators`, the server runs them and stamps the verdict
-   with `provenance: DeterministicEvaluator` (`local_tools.rs:214-240`);
-   with no declared evaluators it stays `null` and the curator can stamp it
-   via `swarm_evaluate_local` (`local_tools.rs:1907`).
+   with `provenance: DeterministicEvaluator`; with no declared evaluators
+   it stays `null` and the curator can stamp it via `swarm_evaluate_local`.
 
 ## How-to: Fan out to N agents
 
 - **Local:** `swarm_fanout_local` (`local_tools.rs:294`) defaults to
   sequential dispatch; set `parallel=true` to run the inference calls
-  concurrently and debit the ledger sequentially after all completions
-  (`delegate_batch`, `local_runtime.rs:612-706` — the TOCTOU concern is
-  resolved by deferring the debit, not by serializing inference). Capped
-  at `MAX_FANOUT = 10` (`local_runtime.rs:736`).
+  concurrently (`delegate_batch`). Capped at `MAX_FANOUT = 10`.
 - **ABW:** `swarm_fanout` (`cloud_swarm_tools.rs:1373`) dispatches in
   parallel against ABW. Capped at `MAX_FANOUT_ABW = 10`
   (`cloud_swarm_tools.rs:1393`). Each dispatch carries its own consent or
@@ -223,8 +214,8 @@ trajectories are recorded to the event store (`mcp/swarm/events.db`,
    produces the `swarm_delegate_local` sequence plus the re-invoke
    instruction.
 4. The curator's tool calls dispatch through the governed MCP server; local
-   delegations hit `swarm_delegate_local` and record spend in
-   `mcp/swarm/ledger.db`.
+   delegations hit `swarm_delegate_local` and return measured results
+   (tokens, latency, model).
 
 ## How-to: Clone an ABW agent to local
 
@@ -250,11 +241,8 @@ analogous pair: `swarm_push_local_swarm` (`local_tools.rs:1453`) and
 
 ## How-to: Reconcile local spend
 
-1. Call `swarm_balance_local` (`ledger_tools.rs:71`). A failed measurement
-   returns an error, not 0 (`ledger_tools.rs:85-95` — the `.rules`
-   `unwrap_or(0)` trap).
-2. Call `swarm_local_history` (`ledger_tools.rs:109`) for the recent
-   fund/debit entries (newest first, default 50, cap 500 at `:119`).
-3. If you want the balance to read as "remaining" rather than "consumed",
-   call `swarm_fund_local` (`ledger_tools.rs:29`). This is optional — local
-   delegation never refuses for lack of funds.
+There is nothing to reconcile: the local budget system (ledger, balance,
+history, fund) was removed entirely — local agents run on the operator's
+own substrate and no local spend is priced or recorded (operator ruling
+2026-09-04; removal executed 2026-09-08). Cloud (ABW) spend remains
+consent-gated and reconciled through the ABW wallet.

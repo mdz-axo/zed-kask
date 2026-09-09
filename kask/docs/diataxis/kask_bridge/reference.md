@@ -284,7 +284,7 @@ status: VERIFIED
 | `research` | `hkask-mcp-research` | 6 | 4 |
 | `scenarios` | `hkask-mcp-scenarios` | 0 | 2 |
 | `prediction-markets` | `hkask-mcp-prediction-markets` | 1 | 4 |
-| `swarm` | `hkask-mcp-swarm` | 2 | 18 unique (19 literals — `HKASK_SWARM_LEDGER_PATH` appears twice, `mcp_servers.rs:318,350`) |
+| `swarm` | `hkask-mcp-swarm` | 2 | 16 unique (`HKASK_SWARM_LEDGER_PATH` removed with the local budget system, 2026-09-08) |
 | `training` | `hkask-mcp-training` | 5 | 18 |
 | `media` | `hkask-mcp-media` | 2 | 8 |
 

@@ -34,7 +34,6 @@ struct InputChunk {
     source: String,
     text: String,
     #[serde(default)]
-    #[allow(dead_code)]
     word_count: usize,
 }
 

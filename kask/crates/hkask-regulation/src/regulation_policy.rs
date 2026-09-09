@@ -24,7 +24,6 @@ pub(crate) enum RegulationReason {
     ConnectorLatencyExceeded,
     CommunicationBackpressure,
     ToolReliabilityDegraded,
-    StorageUsageObserved,
     TripleCountObserved,
     LowConfidenceCountObserved,
     ConsolidationCandidatesObserved,
@@ -57,7 +56,6 @@ impl RegulationReason {
             Self::ConnectorLatencyExceeded => "connector_latency_exceeded",
             Self::CommunicationBackpressure => "communication_backpressure",
             Self::ToolReliabilityDegraded => "tool_reliability_degraded",
-            Self::StorageUsageObserved => "storage_usage_observed",
             Self::TripleCountObserved => "triple_count_observed",
             Self::LowConfidenceCountObserved => "low_confidence_count_observed",
             Self::ConsolidationCandidatesObserved => "consolidation_candidates_observed",
@@ -213,15 +211,6 @@ impl RegulationPolicy {
                     }],
                 },
                 // ── Category A: Observational metrics → Notify (no regulation needed) ──
-                RegulationRule {
-                    metric: StorageUsage,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Notify,
-                        reason: StorageUsageObserved,
-                    }],
-                },
                 RegulationRule {
                     metric: TripleCount,
                     direction: AboveSetPoint,
@@ -761,8 +750,7 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::ContextServerHealth => &[Escalate, Calibrate],
         SignalMetric::OcrSilentFailures => &[Escalate, Calibrate],
         // ── Observational (no substitution — Notify is terminal) ──
-        SignalMetric::StorageUsage
-        | SignalMetric::TripleCount
+        SignalMetric::TripleCount
         | SignalMetric::LowConfidenceCount
         | SignalMetric::ConsolidationCandidates
         | SignalMetric::PendingEscalations
