@@ -170,11 +170,13 @@ pub(crate) fn forget_distilled_threads(
         let (deleted_rows, deleted_embeddings) = if uncovered.is_empty() {
             // Everything the thread holds is proven distilled (including
             // legacy embeddings no passage text can attribute) — the whole
-            // entity can go.
-            (
-                memory.delete_h_mems_by_entity_prefix(&shared_entity)?,
-                memory.delete_embeddings_by_entity(&shared_entity)?,
-            )
+            // entity can go. Embeddings are deleted first so the count is
+            // captured here; the prefix delete is self-cleaning (it sweeps
+            // emptied entities' references itself) and would find nothing
+            // left to remove.
+            let deleted_embeddings = memory.delete_embeddings_by_entity(&shared_entity)?;
+            let deleted_rows = memory.delete_h_mems_by_entity_prefix(&shared_entity)?;
+            (deleted_rows, deleted_embeddings)
         } else {
             // Delete only the rows READ as covered — per id, never a blind
             // prefix delete. A turn racing in (observed_at > through) is

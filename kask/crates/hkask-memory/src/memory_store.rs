@@ -21,6 +21,7 @@
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
 //! at recall time.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use hkask_storage::database::value::DbValue;
@@ -543,13 +544,25 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Delete every h_mem under an entity prefix, in one statement.
-    /// Returns the number deleted. The forgetting pass uses this to forget
-    /// a distilled thread's shared-copy turns — forgotten rows are
-    /// removed from the database (operator ruling 2026-09-04: there is no
-    /// "expired" state).
+    /// Delete every h_mem under an entity prefix, in one statement,
+    /// then remove the emptied entities' embeddings and memory_links
+    /// rows. Returns the number of h_mems deleted. The forgetting pass
+    /// uses this to forget a distilled thread's shared-copy turns —
+    /// forgotten rows are removed from the database (operator ruling
+    /// 2026-09-04: there is no "expired" state).
     pub fn delete_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
+        // Collect the affected entities before deleting — after the
+        // delete there is nothing left to enumerate.
+        let affected: HashSet<String> = self
+            .h_mem_store
+            .query_by_entity_prefix(prefix, 100_000)?
+            .into_iter()
+            .map(|h_mem| h_mem.entity)
+            .collect();
         let count = self.h_mem_store.delete_by_entity_prefix(prefix)?;
+        for entity in &affected {
+            self.cleanup_orphaned_references_for_entity(entity);
+        }
         if count > 0 {
             tracing::debug!(
                 target: "hkask.memory",
@@ -584,10 +597,34 @@ impl MemoryStore {
             .delete_by_entity_ref_and_passages(entity_ref, passages)?)
     }
 
-    /// Delete vector rows orphaned from their metadata rows. KNN's
-    /// inner join already ignores orphans; this reclaims the space.
+    /// Delete orphaned rows in all three coupled stores: embeddings whose
+    /// entity has no h_mem (the entity_ref join key is broken — KNN
+    /// silently drops them, so they are dead weight and a false "memory
+    /// exists" signal), vector rows orphaned from their metadata rows,
+    /// and memory_links rows referencing entities with no h_mems.
+    /// Deletion sites clean their own orphans (`delete_h_mem`, the prune
+    /// valve, `delete_h_mems_by_entity_prefix`); this sweep is the
+    /// belt-and-suspenders backstop that also catches rows predating the
+    /// site-level cleanup (the 57 entity-ref orphans found by the
+    /// 2026-09-09 therapy scan) and anything a failed site-level cleanup
+    /// left behind. Returns the total number of rows removed.
     pub fn delete_orphaned_embeddings(&self) -> Result<usize, MemoryStoreError> {
-        Ok(self.embedding.delete_orphaned_vectors()?)
+        let driver = self.h_mem_store.driver();
+        let mut deleted = driver
+            .execute(
+                "DELETE FROM embeddings WHERE entity_ref NOT IN (SELECT DISTINCT entity FROM hmems)",
+                &[],
+            )
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        deleted += driver
+            .execute(
+                "DELETE FROM memory_links WHERE entity_a NOT IN (SELECT DISTINCT entity FROM hmems) \
+                 OR entity_b NOT IN (SELECT DISTINCT entity FROM hmems)",
+                &[],
+            )
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        deleted += self.embedding.delete_orphaned_vectors()?;
+        Ok(deleted)
     }
 
     // ── Budget / cleanup ──────────────────────────────────────────────────
@@ -596,9 +633,70 @@ impl MemoryStore {
         Ok(self.h_mem_store.count()?)
     }
 
+    /// Delete an h_mem and, when this was the entity's last row, the
+    /// entity's embeddings and memory_links rows. The entity_ref is the
+    /// join key between embeddings and h_mems (README: "One entity_ref
+    /// string links each embedding vector to its relational h_mem row"),
+    /// so rows left behind after the entity empties are orphans. The
+    /// operator's 2026-09-09 ruling: deletions must clean up what they
+    /// orphan — no orphan piles, no compatibility states.
     pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
+        let entity = self.h_mem_store.get_by_id(id)?.map(|h_mem| h_mem.entity);
         self.h_mem_store.delete_by_id(id)?;
+        if let Some(entity) = entity {
+            self.cleanup_orphaned_references_for_entity(&entity);
+        }
         Ok(())
+    }
+
+    /// Remove the embeddings and memory_links rows of an entity whose
+    /// h_mems were all deleted. Failures are logged, not propagated:
+    /// callers have already deleted the h_mems (the primary operation
+    /// succeeded), and the periodic orphan sweep in
+    /// [`Self::delete_orphaned_embeddings`] is the backstop that catches
+    /// anything a failed cleanup leaves behind.
+    fn cleanup_orphaned_references_for_entity(&self, entity: &str) {
+        let remaining = match self.h_mem_store.query_by_entity(entity) {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to check for orphaned references after deletion — periodic sweep will retry"
+                );
+                return;
+            }
+        };
+        if !remaining.is_empty() {
+            return;
+        }
+        match self.embedding.delete_all_by_entity_ref(entity) {
+            Ok(count) if count > 0 => tracing::debug!(
+                target: "hkask.memory",
+                entity,
+                count,
+                "Deleted orphaned embeddings of emptied entity"
+            ),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                target: "hkask.memory",
+                %error,
+                entity,
+                "Failed to delete orphaned embeddings of emptied entity — periodic sweep will retry"
+            ),
+        }
+        if let Err(error) = self.h_mem_store.driver().execute(
+            "DELETE FROM memory_links WHERE entity_a = ?1 OR entity_b = ?1",
+            &[DbValue::Text(entity.to_string())],
+        ) {
+            tracing::warn!(
+                target: "hkask.memory",
+                %error,
+                entity,
+                "Failed to delete orphaned memory_links of emptied entity — periodic sweep will retry"
+            );
+        }
     }
 
     pub fn lowest_confidence_h_mems(&self, limit: usize) -> Result<Vec<HMem>, MemoryStoreError> {
@@ -678,8 +776,11 @@ impl MemoryStore {
     }
 
     /// Delete each prune candidate, sparing ones recalled more recently
-    /// than `spare_cutoff`. Individual delete failures are counted, not
-    /// propagated — one stuck row must not block pruning of the rest.
+    /// than `spare_cutoff`, then remove the emptied entities' embeddings
+    /// and memory_links rows (deletions must clean up what they orphan —
+    /// operator ruling 2026-09-09). Individual delete failures are
+    /// counted, not propagated — one stuck row must not block pruning of
+    /// the rest.
     fn prune_candidates(
         &self,
         max_age_days: i64,
@@ -689,6 +790,7 @@ impl MemoryStore {
         let mut deleted_count = 0usize;
         let mut spared_count = 0usize;
         let mut failed_count = 0usize;
+        let mut deleted_entities: HashSet<String> = HashSet::new();
 
         for h_mem in &candidates {
             // Spare actively-recalled memories when the caller requested it.
@@ -699,7 +801,10 @@ impl MemoryStore {
                 }
             }
             match self.h_mem_store.delete_by_id(&h_mem.id) {
-                Ok(()) => deleted_count += 1,
+                Ok(()) => {
+                    deleted_count += 1;
+                    deleted_entities.insert(h_mem.entity.clone());
+                }
                 Err(error) => {
                     failed_count += 1;
                     tracing::warn!(
@@ -710,6 +815,10 @@ impl MemoryStore {
                     );
                 }
             }
+        }
+
+        for entity in &deleted_entities {
+            self.cleanup_orphaned_references_for_entity(entity);
         }
 
         tracing::info!(
@@ -1289,5 +1398,142 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    /// Pin the 2026-09-09 orphan-cleanup ruling (operator: "changes can
+    /// orphan things if they delete them — you can't orphan things and
+    /// leave them"): deleting the last h_mem of an entity must remove the
+    /// entity's embedding and memory_links rows. The entity_ref is the
+    /// join key between embeddings and h_mems; once no h_mem backs it,
+    /// the remaining rows are orphans KNN silently drops.
+    #[test]
+    fn delete_h_mem_cleans_references_when_entity_emptied() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:a", "turn", "one", webid);
+        store_h_mem(&store, "thread:a", "turn", "two", webid);
+        store
+            .store_embedding(
+                "thread:a",
+                &vec![0.1; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("turn text"),
+            )
+            .expect("seed embedding");
+        store
+            .record_co_occurrence(&["thread:a".to_string(), "thread:b".to_string()])
+            .expect("seed link");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:a")
+            .expect("query first")
+            .remove(0);
+        store.delete_h_mem(&first.id).expect("delete one");
+        // The entity still holds a row — its references must survive.
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:a")
+                .expect("embeddings survive")
+                .len(),
+            1
+        );
+        assert!(store.connectedness("thread:a").expect("link survives") > 0);
+
+        let second = store
+            .h_mem_store
+            .query_by_entity("thread:a")
+            .expect("query second")
+            .remove(0);
+        store.delete_h_mem(&second.id).expect("delete last");
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:a")
+                .expect("embeddings swept")
+                .len(),
+            0,
+            "deleting the last h_mem of an entity must remove its embeddings"
+        );
+        assert_eq!(
+            store.connectedness("thread:a").expect("links swept"),
+            0,
+            "deleting the last h_mem of an entity must remove its memory_links"
+        );
+    }
+
+    /// Pin the prune valve to the same orphan-cleanup ruling: pruning the
+    /// aged rows of an entity must not leave its embeddings behind.
+    #[test]
+    fn prune_by_age_cleans_references_of_emptied_entities() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let mut aged = hkask_storage::HMem::new(
+            "thread:old",
+            "turn",
+            serde_json::Value::String("aged".to_string()),
+            webid,
+        );
+        aged.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store.h_mem_store.insert(&aged).expect("insert aged h_mem");
+        store
+            .store_embedding(
+                "thread:old",
+                &vec![0.1; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("aged turn text"),
+            )
+            .expect("seed embedding");
+
+        let outcome = store.prune_by_age(50, None).expect("prune succeeds");
+        assert!(outcome.deleted_count >= 1, "aged row must be pruned");
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:old")
+                .expect("embeddings swept")
+                .len(),
+            0,
+            "pruning the last h_mem of an entity must remove its embeddings"
+        );
+    }
+
+    /// Pin the periodic sweep: embeddings whose entity has no h_mem row
+    /// (broken join key) and links referencing h_mem-less entities are
+    /// removed — the backstop that also catches rows predating the
+    /// site-level cleanup (the 57 entity-ref orphans of the 2026-09-09
+    /// therapy scan).
+    #[test]
+    fn delete_orphaned_embeddings_sweeps_entity_ref_and_link_orphans() {
+        let store = test_store();
+        // An embedding whose entity has no h_mem — the join key is broken.
+        store
+            .store_embedding(
+                "goal:ghost",
+                &vec![0.2; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("ghost text"),
+            )
+            .expect("seed orphan embedding");
+        // A link whose endpoints have no h_mems.
+        store
+            .record_co_occurrence(&["goal:ghost".to_string(), "goal:missing".to_string()])
+            .expect("seed orphan link");
+
+        let deleted = store.delete_orphaned_embeddings().expect("sweep succeeds");
+        assert!(
+            deleted >= 2,
+            "sweep must remove the orphaned embedding and link rows, got {deleted}"
+        );
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("goal:ghost")
+                .expect("embeddings swept")
+                .len(),
+            0
+        );
+        assert_eq!(store.connectedness("goal:ghost").expect("links swept"), 0);
     }
 }

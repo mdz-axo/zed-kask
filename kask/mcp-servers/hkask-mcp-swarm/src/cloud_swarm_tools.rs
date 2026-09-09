@@ -1302,15 +1302,18 @@ impl SwarmServer {
             // task content. Per the plan's §3.7, sending content to it requires
             // explicit opt-in. The gate lives in `cloud_swarm::curator::authorize`
             // (wraps `spend_gate::authorize_curate`); it returns `Some(auth)`
-            // when a token was consumed (refundable) or `None` when the
-            // operator has globally opted in (`curator_consent_default`).
+            // when a token was consumed or `None` when the operator has
+            // globally opted in (`curator_consent_default`).
             //
-            // The refund invariant is structural: `CuratorSession` owns the
-            // `Option<DelegateAuthorization>` and refunds it on `Drop` unless
-            // `send` succeeds (which calls `disarm` internally). The prior
-            // inline ladder had four `auth.take().refund()` sites; the guard
-            // removes that footgun — a new failure path cannot forget the
-            // refund because `Drop` covers it.
+            // The settlement invariant is structural: `CuratorSession` owns
+            // the `Option<DelegateAuthorization>` and settles it on `Drop`
+            // unless `send` succeeds (which calls `disarm` internally).
+            // Settlement follows the T05 policy: proven pre-dispatch
+            // rejection releases the token; an ambiguous outcome holds it
+            // and surfaces the uncertainty. The prior inline ladder had four
+            // `auth.take().refund()` sites; the guard removes that footgun —
+            // a new failure path cannot forget settlement because `Drop`
+            // covers it.
             let auth = cloud_swarm::curator::authorize(
                 &self.client,
                 &self.consent,

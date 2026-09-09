@@ -229,7 +229,7 @@ pub(crate) fn spawn_distillation_timer(
 /// Cross-pass state for the distillation timer: the scan cursor plus the
 /// threads whose un-distilled turns fell behind it.
 ///
-/// `last_pass` bounds the next scan (turns stored at or after it are
+/// `last_pass` bounds the next scan (turns observed at or after it are
 /// visible). Threads skipped as active, or failing before the watermark
 /// advanced, are carried in `pending` and re-examined explicitly — their
 /// turns are older than the cursor, so the scan alone would never see
@@ -1282,7 +1282,7 @@ mod tests {
             failures: std::sync::atomic::AtomicUsize::new(0),
         };
         let mut cursor = DistillationCursor::new();
-        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let pass1_now = chrono::Utc::now();
         let first = run_pass(
             &db,
             &port,
@@ -1293,16 +1293,16 @@ mod tests {
         )
         .await;
         assert_eq!(first.threads_distilled, 1);
-        // A new turn arrives AFTER pass 1 (store time after the cursor).
+        // A new turn is OBSERVED after pass 1 — ahead of the cursor.
         turn_h_mem(
             &store,
             "t2",
             "second thread",
             "response",
-            chrono::Utc::now() - chrono::Duration::seconds(600),
+            pass1_now + chrono::Duration::seconds(60),
             webid,
         );
-        let pass2_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let pass2_now = pass1_now + chrono::Duration::seconds(400);
         let second = run_pass(
             &db,
             &port,
@@ -1409,11 +1409,13 @@ mod tests {
         };
         let mut cursor = DistillationCursor::new();
         // Fill the pending set: MAX_PENDING_THREADS active threads.
-        let pass1_now = chrono::Utc::now() + chrono::Duration::seconds(1);
+        let pass1_now = chrono::Utc::now();
+        // Zero-padded ids: the watermark and turn reads are entity-PREFIX
+        // queries, so unpadded t1 would collide with t10..t127.
         for index in 0..MAX_PENDING_THREADS {
             turn_h_mem(
                 &store,
-                &format!("t{index}"),
+                &format!("t{index:03}"),
                 "active",
                 "response",
                 chrono::Utc::now() - chrono::Duration::seconds(10),
@@ -1431,13 +1433,13 @@ mod tests {
         .await;
         assert_eq!(first.threads_pending.len(), MAX_PENDING_THREADS);
         assert_eq!(cursor.pending.len(), MAX_PENDING_THREADS);
-        // One more active thread overflows the set.
+        // One more active thread, observed after pass 1, overflows the set.
         turn_h_mem(
             &store,
             "t-new",
             "active",
             "response",
-            chrono::Utc::now() - chrono::Duration::seconds(10),
+            pass1_now + chrono::Duration::seconds(30),
             webid,
         );
         let pass2_now = pass1_now + chrono::Duration::seconds(60);
@@ -1450,6 +1452,9 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
         )
         .await;
+        // All 129 examined threads are still active: the pass reports one
+        // more pending thread than the bound before the cursor evicts.
+        assert_eq!(second.threads_pending.len(), MAX_PENDING_THREADS + 1);
         assert_eq!(
             cursor.pending.len(),
             MAX_PENDING_THREADS,
@@ -1459,8 +1464,8 @@ mod tests {
             cursor.pending.contains_key("t-new"),
             "the newest pending thread survives eviction"
         );
-        // The survivor is still distilled once idle — eviction did not
-        // silently drop it.
+        // The survivors (including t-new) are distilled once idle — the
+        // eviction dropped exactly one thread of the oldest cohort.
         let pass3_now = pass2_now + chrono::Duration::seconds(400);
         let third = run_pass(
             &db,
@@ -1471,8 +1476,15 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
         )
         .await;
-        assert_eq!(third.threads_distilled, 1);
+        assert_eq!(third.threads_distilled, MAX_PENDING_THREADS);
         assert_eq!(third.threads_pending.len(), 0);
+        assert!(
+            !store
+                .h_mems_by_entity_prefix("curator:distilled:t-new")
+                .expect("query t-new watermarks")
+                .is_empty(),
+            "the newest pending thread must be distilled once idle"
+        );
     }
 
     /// T04 control: the first pass scans the bounded startup lookback —

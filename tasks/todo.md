@@ -65,10 +65,10 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
 
 ## Phase B — Make completion and retry states reliable
 
-- [ ] **T04 — Revisit pending distillation work** (T03 for integrated safety checkpoint) — **in progress 2026-09-08** (Checkpoint A ratified; spec recovery underway)
-  - [ ] Active-at-scan work distills when later idle without a new turn or restart.
-  - [ ] Transient pre-watermark inference failure retries; successful work is not unnecessarily replayed.
-  - [ ] Watermark-before-insert/startup bounds preserved; pending-work policy resolved; real cursor progression tested.
+- [x] **T04 — Revisit pending distillation work** (T03 for integrated safety checkpoint) — **verified 2026-09-08**
+  - [x] Active-at-scan work distills when later idle without a new turn or restart. (`later_pass_distills_thread_that_went_idle_without_a_new_turn`; RED pre-fix observed)
+  - [x] Transient pre-watermark inference failure retries; successful work is not unnecessarily replayed. (`transient_inference_failure_is_retried_on_the_next_pass` RED pre-fix; `cursor_progresses_and_successful_work_is_not_replayed` control)
+  - [x] Watermark-before-insert/startup bounds preserved; pending-work policy resolved; real cursor progression tested. (Pending set bounded at 128 with warn-on-eviction — surfaced to operator for ratification at Checkpoint B; `scan_failure_does_not_advance_the_cursor`, `first_pass_scan_is_bounded_to_the_startup_lookback`, timer-firing and >1h-cadence tests; obsolete 3600s poll clamp removed per the T17 ruling. Suite 26/26, check/clippy/rustfmt clean. Evidence in plan.md T04.)
 - [ ] **T05 — Reserve session authorization before external dispatch** (no technical dependency; settlement policy gate)
   - [ ] Concurrent shared-store authorization cannot oversubscribe the session or dispatch beyond capacity.
   - [ ] Success settles once; proven pre-dispatch rejection releases only its reservation; existing ceilings/single-use controls pass.

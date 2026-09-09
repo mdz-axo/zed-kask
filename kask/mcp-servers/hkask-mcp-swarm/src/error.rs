@@ -43,6 +43,50 @@ pub enum SwarmError {
     /// Network/transport failure.
     #[error("ABW request failed: {0}")]
     Unavailable(String),
+    /// The request provably never reached ABW — a connection-phase failure
+    /// (DNS resolution, connection refused, TLS handshake) or a request
+    /// construction failure. No external effect is possible, so a held spend
+    /// reservation may be released (operator-ratified T05 settlement policy,
+    /// 2026-09-08).
+    #[error("ABW request never sent: {0}")]
+    DispatchNotSent(String),
+    /// The request was sent but no definitive answer arrived — a timeout or
+    /// connection reset mid-request/response, or a response body lost after
+    /// ABW accepted the request. The external outcome is UNKNOWN: the spend
+    /// may or may not have taken effect. A held reservation must be retained
+    /// and the uncertainty surfaced; never auto-released (operator-ratified
+    /// T05 settlement policy, 2026-09-08: retain + surface, option A).
+    #[error("ABW dispatch outcome uncertain: {0}")]
+    DispatchAmbiguous(String),
+}
+
+impl SwarmError {
+    /// Whether this error PROVES the external dispatch never took effect,
+    /// permitting release of a held spend reservation.
+    ///
+    /// Proven rejections (operator-ratified 2026-09-08): connection-phase /
+    /// construction failures (the request never left), and every HTTP error
+    /// response — ABW answered and rejected the request, including the
+    /// 200-envelope upstream-error case where ABW itself reports the
+    /// operation failed. NOT proven (the reservation must be held):
+    /// `DispatchAmbiguous` (no definitive answer) and `ApiVersionMismatch`
+    /// (ABW accepted the request — HTTP 2xx — but the response was
+    /// unparseable; external acceptance followed by a local failure).
+    /// `ConsentDenied`/`CuratorUnavailable` never arise from a dispatch
+    /// POST and are conservatively excluded.
+    #[must_use]
+    pub(crate) fn is_proven_rejection(&self) -> bool {
+        matches!(
+            self,
+            Self::DispatchNotSent(_)
+                | Self::Auth(_)
+                | Self::PaymentRequired(_)
+                | Self::RateLimited(_)
+                | Self::AgentNotFunded { .. }
+                | Self::UpstreamModelError { .. }
+                | Self::Unavailable(_)
+        )
+    }
 }
 
 impl SwarmError {
@@ -58,6 +102,8 @@ impl SwarmError {
             Self::ApiVersionMismatch(m) => McpToolError::internal(m), // rr0044-ok: mapper-internal-arm
             Self::ConsentDenied(m) => McpToolError::permission_denied(m),
             Self::Unavailable(m) => McpToolError::unavailable(m),
+            Self::DispatchNotSent(m) => McpToolError::unavailable(m),
+            Self::DispatchAmbiguous(m) => McpToolError::unavailable(m),
         }
     }
 }

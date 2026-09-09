@@ -651,6 +651,22 @@ so lessons survive the session without anyone choosing to save them.
   startup looks back 6 hours; turns older than that which were never
   distilled are missed (raw transcript remains; therapy can still
   distill them).
+- **Pending-work revisit** (T04, 2026-09-08): a thread skipped as
+  active, or failing before its watermark advances (inference, parse,
+  or watermark-store failure), is carried in the timer's in-memory
+  pending set and re-examined on every later pass — its turns were
+  observed before the scan cursor, so the window scan alone would never
+  see it again. The set is bounded (`MAX_PENDING_THREADS = 128`);
+  overflow evicts the longest-pending thread with a `warn!` naming it
+  and its re-discovery paths (a new turn, or the restart lookback). A
+  pass that cannot read the store does not advance the cursor, so
+  turns observed during an outage stay visible to the healed pass.
+  Pending state is in-memory only: a restart clears it, and the bounded
+  first-pass lookback re-discovers recent undistilled work (the
+  older-than-lookback miss boundary above is unchanged). The timer
+  polls at the configured cadence with a 60s floor — no upper clamp
+  (the obsolete 3600s cap silently shortened longer cadences; removed
+  with the same T17 ruling that removed the consolidation cap).
 - **Configuration.** `kask.memory.distillation_cadence_secs` (default
   600, 0 = disabled) and `kask.memory.distillation_idle_secs` (default
   300) — `settings.rs:241`, defaults in `Default` (`:257`), emitted to

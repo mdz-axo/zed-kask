@@ -64,18 +64,38 @@ impl SwarmClient {
             Some(key) => builder.bearer_auth(key),
             None => builder,
         };
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| SwarmError::Unavailable(e.to_string()))?;
+        let resp = builder.send().await.map_err(|e| {
+            // Settlement classification (operator-ratified T05 policy,
+            // 2026-09-08): connection-phase and construction failures prove
+            // the request never left — releasable. Everything else (timeout
+            // mid-request, connection reset after send) leaves the external
+            // outcome unknown — the reservation must be held.
+            if e.is_connect() || e.is_builder() {
+                SwarmError::DispatchNotSent(e.to_string())
+            } else {
+                SwarmError::DispatchAmbiguous(e.to_string())
+            }
+        })?;
         let status = resp.status();
         // A failed body read must not become a fake success — an empty body
         // on a 200 is treated as a legitimate null result below, so a
         // network failure mid-body would silently masquerade as one.
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| SwarmError::Unavailable(format!("failed to read response body: {e}")))?;
+        let body = resp.text().await.map_err(|e| {
+            if status.is_success() {
+                // ABW accepted the request (2xx) but the body was lost —
+                // external acceptance followed by a transport failure:
+                // the dispatch landed, the response content is unknown.
+                // Hold, never release.
+                SwarmError::DispatchAmbiguous(format!(
+                    "accepted (HTTP {status}) but the response body was lost: {e}"
+                ))
+            } else {
+                // The error status already arrived — ABW answered and
+                // rejected the request; only the body text is missing.
+                // Proven rejection.
+                SwarmError::Unavailable(format!("HTTP {status} (response body lost): {e}"))
+            }
+        })?;
 
         match status.as_u16() {
             200..=299 => {
@@ -193,5 +213,136 @@ impl SwarmClient {
             );
         }
         value
+    }
+}
+
+/// Bounded local HTTP fixture for spend-gate settlement tests — the
+/// "barrier-controlled bounded HTTP fixture" the reliability plan requires.
+/// Serves a fixed sequence of behaviors, one per connection, then stops.
+/// Never contacts any real provider.
+#[cfg(test)]
+pub(crate) mod test_http {
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// What the fixture does with one request.
+    #[derive(Debug, Clone)]
+    pub(crate) enum Behavior {
+        /// Respond with the given status and body.
+        Respond(u16, String),
+        /// Read the request, then close WITHOUT responding — the client sees
+        /// a sent request and no answer (the ambiguous-outcome trigger).
+        Ambiguous,
+    }
+
+    /// Read the full request (headers + content-length body) so the server
+    /// can respond (or close) without leaving unread data that would turn a
+    /// clean close into a connection reset.
+    fn read_request(stream: &mut TcpStream) {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        let mut buf = [0u8; 8192];
+        let mut received: Vec<u8> = Vec::new();
+        let header_end = loop {
+            if let Some(pos) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => return,
+                Ok(n) => received.extend_from_slice(&buf[..n]),
+            }
+        };
+        let headers = String::from_utf8_lossy(&received[..header_end]).to_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        while received.len() < header_end + content_length {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => received.extend_from_slice(&buf[..n]),
+            }
+        }
+    }
+
+    pub(crate) struct FixtureServer {
+        port: u16,
+        requests_served: Arc<AtomicUsize>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl FixtureServer {
+        /// Start a server serving the given behaviors, one per connection;
+        /// it stops accepting once the queue is empty.
+        pub(crate) fn start(behaviors: Vec<Behavior>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+            let port = listener.local_addr().expect("fixture addr").port();
+            let behaviors: Arc<Mutex<VecDeque<Behavior>>> =
+                Arc::new(Mutex::new(VecDeque::from(behaviors)));
+            let requests_served = Arc::new(AtomicUsize::new(0));
+            let queue = Arc::clone(&behaviors);
+            let served = Arc::clone(&requests_served);
+            let handle = std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    let behavior = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
+                    let Some(behavior) = behavior else { break };
+                    served.fetch_add(1, Ordering::SeqCst);
+                    match behavior {
+                        Behavior::Respond(status, body) => {
+                            read_request(&mut stream);
+                            let response = format!(
+                                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            );
+                            let _ = stream.write_all(response.as_bytes());
+                            let _ = stream.flush();
+                        }
+                        Behavior::Ambiguous => {
+                            // Read the request fully, then close WITHOUT a
+                            // response — reqwest sees a completed send and a
+                            // connection that ended before any answer.
+                            read_request(&mut stream);
+                        }
+                    }
+                }
+            });
+            Self {
+                port,
+                requests_served,
+                handle: Some(handle),
+            }
+        }
+
+        /// The base URL a test `SwarmClient` should use.
+        pub(crate) fn base_url(&self) -> String {
+            format!("http://127.0.0.1:{}", self.port)
+        }
+
+        /// How many requests the fixture actually served.
+        pub(crate) fn requests_served(&self) -> usize {
+            self.requests_served.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for FixtureServer {
+        fn drop(&mut self) {
+            // Wake the blocked accept loop with a self-connect; the empty
+            // queue then stops the thread. Best-effort — a leaked thread is
+            // harmless in a test process.
+            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", self.port)) {
+                let _ = stream.write_all(
+                    b"GET /api/shutdown HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n",
+                );
+                let _ = stream.flush();
+            }
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
     }
 }

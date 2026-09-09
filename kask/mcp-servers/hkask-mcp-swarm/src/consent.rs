@@ -358,19 +358,31 @@ impl ConsentStore {
         }
     }
 
-    /// Read the remaining credits on a session. Returns None if
-    /// unknown/expired.
-    pub(crate) fn session_balance(&self, token: &str) -> Option<u32> {
+    /// Release a session reservation: credit `cost` back to the session's
+    /// remaining balance. Called only on PROVEN pre-dispatch rejection — the
+    /// atomic deduction at `authorize_*` time reserved the credits, and a
+    /// proven rejection proves the external spend cannot have occurred
+    /// (operator-ratified T05 settlement policy, 2026-09-08). Never called
+    /// for an ambiguous outcome: those credits stay held. Best-effort with
+    /// a loud warn on store failure or unknown session (the dispatch
+    /// already failed; the operator re-mints or opens a new session).
+    pub(crate) fn release_session(&self, token: &str, cost: u32) {
         match &self.inner {
             ConsentInner::Memory(_) => {
-                let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-                let grant = sessions.get(token)?;
-                if is_expired(grant.created_at) {
-                    return None;
+                let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+                match sessions.get_mut(token) {
+                    Some(grant) => {
+                        grant.remaining_credits = grant.remaining_credits.saturating_add(cost)
+                    }
+                    None => tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        token,
+                        cost,
+                        "cannot release session reservation — session unknown (expired?)"
+                    ),
                 }
-                Some(grant.remaining_credits)
             }
-            ConsentInner::Sqlite(store) => store.session_balance(token),
+            ConsentInner::Sqlite(store) => store.release_session(token, cost),
         }
     }
 }
@@ -653,31 +665,38 @@ impl SqliteConsentStore {
         }
     }
 
-    fn session_balance(&self, token: &str) -> Option<u32> {
-        let row = match self.driver.query_optional(
-            "SELECT remaining_credits, created_at FROM consent_sessions WHERE token = ?1",
-            &[DbValue::Text(token.to_string())],
+    /// Release a session reservation — credit `cost` back. Best-effort with
+    /// a loud warn on store failure or unknown session (see
+    /// `ConsentStore::release_session` for the policy).
+    fn release_session(&self, token: &str, cost: u32) {
+        let updated = match self.driver.execute(
+            "UPDATE consent_sessions SET remaining_credits = remaining_credits + ?1 \
+             WHERE token = ?2",
+            &[
+                DbValue::Integer(i64::from(cost)),
+                DbValue::Text(token.to_string()),
+            ],
         ) {
-            Ok(row) => row,
+            Ok(updated) => updated,
             Err(e) => {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
                     error = %e,
-                    token = %token,
-                    "session balance query failed — returning None",
+                    token,
+                    cost,
+                    "failed to release session reservation — the credits stay held"
                 );
-                return None;
+                return;
             }
         };
-        let row = row?;
-        let created = row.get_str(1).ok()?;
-        let created = chrono::DateTime::parse_from_rfc3339(created)
-            .map(|d| d.with_timezone(&chrono::Utc))
-            .ok()?;
-        if is_expired(created) {
-            return None;
+        if updated == 0 {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                token,
+                cost,
+                "cannot release session reservation — session unknown (expired?)"
+            );
         }
-        u32::try_from(row.get_int(0).ok()?).ok()
     }
 }
 

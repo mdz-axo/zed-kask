@@ -38,6 +38,9 @@ regex = { workspace = true }
 a2a = { workspace = true }
 tiny_http = { workspace = true }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 
