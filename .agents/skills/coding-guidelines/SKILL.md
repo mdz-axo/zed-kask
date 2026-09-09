@@ -18,6 +18,12 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 - When the agent is about to touch code and must be constrained to minimum, surgical, goal-driven changes
 - When multiple interpretations of a task exist and silent selection would violate Think Before Coding
 
+## When NOT to Use
+
+- Reviewing a change against its stated spec — use `code-review`; it owns adjudication with severity, falsifiers, and file:line citations.
+- Non-coding work — the four principles and seven anti-patterns are defined over code.
+- When a task constraint outranks a principle — the task wins, the shape stays (the skill's own override logic).
+
 ## Instructions
 
 1. **Assess before implementing.** Analyze the coding task against the four Karpathy principles before any implementation begins. Surface every hidden assumption, flag every over-engineering risk, and define verifiable success criteria. State assumptions explicitly with confidence levels and alternative interpretations. Identify simplicity risks with severity and concrete simplifications. Flag scope creep. Transform vague tasks into 2–5 verifiable goals. Outline minimum implementation steps, each with a verification checkpoint. Do not implement anything — this step is purely diagnostic.

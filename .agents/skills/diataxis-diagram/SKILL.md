@@ -16,6 +16,12 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 - Diagrams must render natively in Zed's markdown preview
 - You want iterative quality convergence — diagrams are scored and refined until they meet a quality threshold (≤ 0.15 weighted total across six criteria)
 
+## When NOT to Use
+
+- Freeform whiteboarding — the output must be valid Mermaid that renders in Zed's preview.
+- Sankey flows from natural-language quantities — use `sankey-flow` (it owns the domain conservation rules and never fabricates weights).
+- Diagrams with no source to derive from — this skill generates from code, schemas, or docs; a diagram with no source is an illustration request.
+
 ## Instructions
 
 1. **Classify the target.** Determine which Mermaid diagram type is appropriate — ERD for SQL schemas and CREATE TABLE statements, flowchart for control flow and decision trees, state for enums with lifecycle variants and status transitions, sequence for message passing and request/response chains, class for traits, structs, and impl blocks, architecture for system topology and service boundaries, block for module boundaries and component composition, radar for multi-dimensional capability assessment, treemap for hierarchical quantity data, sankey for weighted flow between stages, kanban for task boards and work items, gantt for scheduled work and milestones, pie for proportional breakdowns, gitgraph for commit history, mindmap for hierarchical concept maps, timeline for chronological events, quadrant for 2×2 strategic matrices, xychart for quantitative x-y data, journey for user experience mapping. Classify which Diataxis quadrant the diagram will serve (reference by default, unless user intent suggests explanation, how-to, or tutorial). Identify which source files to read. Produce a classification verdict with a one-sentence rationale.

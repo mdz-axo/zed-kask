@@ -16,6 +16,12 @@ Multi-tool media generation pipelines that chain `hkask-mcp-media` server tools 
 - Create a meme video from a gallery template image.
 - Derive an NFT from a gallery image with style transfer, upscaling, and metadata caption.
 
+## When NOT to Use
+
+- Logo design — use `logo-builder` (its own formal gates and deliverable package).
+- Single-tool media operations — call the media tool directly; these workflows are fixed multi-tool pipelines.
+- Audio/transcript work — use `transcript-reel` (capture, correction, speaker passes, EDL rendering).
+
 ## Instructions
 
 ### Product Shot Pipeline

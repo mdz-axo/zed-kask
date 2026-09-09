@@ -9,6 +9,12 @@ Applies the MAIA v3 listening template to an earnings-call transcript. The
 template is a semantic evaluation procedure over text — it extracts claims,
 classifies them by horizon, and emits per-section verdicts with evidence.
 
+## When NOT to Use
+
+- Non-earnings-call transcripts — the MAIA v3 template (stance block + 7 sections + horizon model) is earnings-call-shaped; a generic interview needs a different frame.
+- Unverified summarization — the process enforces verbatim-evidence quotes; a summary without the retrieve-cite-verify loop is a different (weaker) artifact.
+- Live capture — use `transcript-reel` for record/transcribe; this skill consumes an existing transcript.
+
 ## Instructions
 
 The no-fabrication invariant is enforced by the process, not by the prompt:

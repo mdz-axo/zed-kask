@@ -15,6 +15,12 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 - When you want the forecast-to-outcome calibration loop (market_check_resolutions → KATA PDCA "check") that EFRA-AI's KATA agent describes but cannot close.
 - When you want the LENS five-framework consistency audit (The Loop, Superforecasting, Dunning-Kruger, Hidden Champions, Kauffman) as a convergence signal.
 
+## When NOT to Use
+
+- Deep initiation with the full 8-part company analysis — use `company-research-deep`.
+- No companies/prediction-markets MCP access — the pipeline's substrate is those tools' outputs; without them the early-exit gates fire and nothing downstream runs.
+- Post-thesis monitoring — a published flash note's lifecycle is PERSIST/CONDENSE; monitoring belongs to the portfolio-review loop.
+
 ## Instructions
 
 ### scout-alpha-score

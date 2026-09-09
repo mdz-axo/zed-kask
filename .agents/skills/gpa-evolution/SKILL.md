@@ -17,6 +17,12 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 - When the artifact type is `prompt` (v1 limitation — `manifest` and `template` paths are not yet implemented)
 - When you want to diagnose failure patterns and surface transferable high-level rules from execution trajectories
 
+## When NOT to Use
+
+- Gradient-based fine-tuning — `lora-training` / `adapter-lifecycle` own the training loop; this skill evolves text through reflection, not weights.
+- Non-prompt artifacts — v1 is prompt-only (`manifest` and `template` paths unimplemented).
+- Single-pass prompt tweaks — use `prompt-enhance`; evolution needs a trajectory of executions to reflect on.
+
 ## Instructions
 
 1. **Sample trajectories.** Execute the target artifact against its eval set and capture trajectories (input, output, reasoning, tool calls, outcome scores). On iteration 1, sample from `target_artifact`. On iteration 2+, sample from the current Pareto frontier members. For each eval input, execute the prompt and capture the full trajectory including per-objective scores.

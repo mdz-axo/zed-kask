@@ -18,6 +18,8 @@ Core generative process for interdisciplinary concept generation. Recasts a seed
 - For finding where to recast — use `gradient-seeded-recombination` (GSR finds sites, CFR recasts).
 - For evidence assembly or literature review — use a web-research tool or service (e.g. Elicit); CFR assumes evidence is already gathered.
 - For translational research (moving insights into the target vocabulary) — CFR keeps the mutant in the source vocabulary; translation moves it to the target. CFR operates within translational steps but does not constitute translation.
+- For investigating why one gradient exists — use `gradient-hunter`.
+- For ordinary analogies — a recast must satisfy the target ontology's axioms; a metaphor that breaks them is not a recast.
 
 ## Ontological Anchors
 
@@ -25,6 +27,7 @@ Core generative process for interdisciplinary concept generation. Recasts a seed
 - **Forcing operator**: minimal-satisfiability projection — `mutant(c, A, B) = argmin_{m ∈ Models(B)} Δ(c, m)`, where Δ is graph-edit distance. Not entailment (too strong — projection, not generation) and not bare satisfiability (too weak — doesn't discriminate M1 from M2). The minimality is what forces mutation.
 - **Weakened thesis T1'**: constraint-forces recasting is _a_ mechanism for interdisciplinary _concept generation_, distinct from retrieval-and-grounding (evidence assembly, e.g. Elicit) and analogy (communication). Does not claim to be the only interdisciplinary operation.
 
+## Ontological Anchors
 ## Instructions
 
 ```

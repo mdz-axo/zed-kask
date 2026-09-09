@@ -30,6 +30,12 @@ agent tool path.
 - The swarm-intelligence DECIDE phase proposes an `author_agent` move and needs
   canonical authoring guidance for field definitions and backend constraints.
 
+## When NOT to Use
+
+- Executing a composition — `swarm-intelligence` owns the PDCA loop; this skill is the read-only authoring aid behind the panel's suggest/validate buttons.
+- Local delegation mechanics — `swarm-steering` owns the execute-and-feed-back directive.
+- Authoring non-swarm prompts — the field definitions (agent_type, mission, agents) are swarm-surface-specific.
+
 ## Instructions
 
 The process is a single-step `select` that renders the

@@ -16,6 +16,12 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 - When you want IMAGINE's 5/10Y scenarios with digital transformation stage classification and falsifiable predictions persisted to the forecast-ledger.
 - When you want the THESIS three-pillar synthesis (Business Franchise, Management Quality, Valuation) with a cross-skill goal-analysis quality gate.
 
+## When NOT to Use
+
+- A quick take or initiation note — use `company-research-flash` (the flash pipeline; 23 steps vs this 13-step deep pipeline).
+- Subjects SCOUT gates out — the coverage/market-cap/valuation gates exist to spend deep-pipeline effort where it pays.
+- Live trading signals — the deliverable is an investment thesis with a falsifiable prediction set, not an execution signal.
+
 ## Instructions
 
 ### Data Provenance Hierarchy (applies to all steps)

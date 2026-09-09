@@ -32,6 +32,12 @@ Do NOT use for:
 - Reasoning-context ellipses (use `metacognition`)
 - Reproducing a known symptom (use `diagnose` — deserts are asymptomatic until you have a prior)
 
+## When NOT to Use
+
+- Absent features someone should simply build — the gradient is the *reason* for an absence, not a backlog; a known missing feature needs a plan, not an investigation.
+- Mapping the full recombination field — use `gradient-seeded-recombination`.
+- Performance profiling — use `gpui-bench` / `diagnose`; a slow path is a measurement question, not an information-field question.
+
 ## Instructions
 
 ```

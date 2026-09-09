@@ -61,6 +61,12 @@ Do NOT use for:
 - Curator (Xaman Ek) session management (that is a per-dispatch parameter of
   the ACT phase, not a separate skill)
 
+## When NOT to Use
+
+- Single-agent tasks — delegate directly; the SENSE→ORIENT→DECIDE→ACT→CHECK→CONVERGE loop buys nothing without a swarm to regulate.
+- Executing the plan yourself — `swarm-steering` closes the execute-and-feed-back loop; in steering mode the manifest's step 8 does it structurally.
+- Unbudgeted delegations — every delegation carries `credits_authorized` (its own constraint); no gate, no call.
+
 ## Instructions
 
 ```

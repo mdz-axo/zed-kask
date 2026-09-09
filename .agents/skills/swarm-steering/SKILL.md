@@ -58,6 +58,12 @@ Do NOT use for:
 - Cloud (ABW) swarms (Xaman Ek has steering built in — delegate via
   `swarm_xaman`; this skill is local-mode only).
 
+## When NOT to Use
+
+- Composing or re-planning — `swarm-intelligence` owns DECIDE; steering sequences and collects, it never re-plans (its own constraint).
+- Advisory-mode execution — in advisory mode the plan is the final output and the operator executes manually.
+- Stamping LLM-judged task success — deterministic evaluators or null only; the Go See loop covers open tasks.
+
 ## Instructions
 
 ```

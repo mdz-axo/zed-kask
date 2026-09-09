@@ -15,6 +15,12 @@ Use this skill when a user asks to benchmark GPUI code, reproduce a UI hang or f
 
 The primary goal is UI responsiveness. Throughput matters, but a UI that finishes work quickly while blocking input and frames is still regressed.
 
+## When NOT to Use
+
+- Non-GPUI benchmarks — the APIs, feature gates, and frame-data paths are GPUI-specific.
+- Running measured benchmarks concurrently — parallel benchmark processes contaminate each other's results (its own rule).
+- Performance claims without a reproducing benchmark — a fix should include or extend a benchmark that reproduces its problem, or explain why not.
+
 ## Instructions — start with the performance question
 
 Before editing, establish or derive:

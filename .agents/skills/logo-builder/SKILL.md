@@ -15,6 +15,12 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 - Generate multiple logo candidate descriptions, critique them across weighted dimensions, and iteratively refine the best candidate.
 - Produce a complete logo deliverables package, including a transparent PNG, monochrome variant, icon-only mark, and real-world context mockup.
 
+## When NOT to Use
+
+- Non-logo visual generation — product shots, stylized art, GIFs, collages are `media-workflow` pipelines.
+- Brand strategy without generation — this skill maps identity to design parameters and produces a logo; strategy alone is a different deliverable.
+- Raster image editing — it is a design-spec pipeline, not an editor.
+
 ## Instructions
 
 ### Phase 1 — Discovery

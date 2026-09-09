@@ -45,6 +45,12 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - Require `userpod_host` for every action and emit the corresponding registered
   `reg.lora.*` span.
 
+## When NOT to Use
+
+- Prompt optimization — use `gpa-evolution` / `prompt-enhance`; this skill governs weight-space training configs.
+- Executing the training run — the training server and `adapter-lifecycle` own execution; this skill recommends and audits configs.
+- Security findings — out of scope by its own template note; this skill owns training-config recommendation and contract evidence.
+
 ## Instructions
 
 ### `lora-training/preflight-dataset`

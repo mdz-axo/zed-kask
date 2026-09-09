@@ -15,6 +15,12 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 - When you want the enhanced prompt returned inline (default), saved to a file, or both.
 - When you want a decoupled critic to prevent the self-confirming loop (generator ≠ critic).
 
+## When NOT to Use
+
+- Evolving a prompt through execution feedback — use `gpa-evolution`; enhancement is a single typed rewrite, not an optimization loop.
+- Authoring new skill templates wholesale — use `create-skill`.
+- Training-config prompts — `lora-training` owns that domain.
+
 ## Inputs
 
 | Input           | Type                         | Default    | Description                                                                     |

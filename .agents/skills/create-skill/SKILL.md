@@ -140,6 +140,12 @@ Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
 |-------|------|-------------|
 | `skill-maintenance` | Validation | Phase 4 (validate) |
 
+## When NOT to Use
+
+- Validating an existing skill — use `skill-maintenance` (this skill's Phase 4 delegates there anyway).
+- Matching tasks to installed skills — use `skill-router`.
+- Auditing template/manifest logic — use `skill-logic-audit` (SKILL.md bodies are not its targets).
+
 ## Instructions
 
 ### Phase 1 — Research (find ontological anchors)

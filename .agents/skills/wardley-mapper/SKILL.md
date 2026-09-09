@@ -16,6 +16,12 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 - When identifying strategic movement, including what to commoditize, what to keep as a differentiator, what is missing, or how the system has drifted from a previous state.
 - When synthesizing actionable, prioritized strategic recommendations (invest, divest, commoditize, ecosystem) from a Wardley map.
 
+## When NOT to Use
+
+- Component inventory with no strategic question — a plain architecture list does not need an evolution map.
+- Executing the strategic moves it recommends — the map feeds planning; it does not run the invest/divest/commoditize decisions.
+- Non-visual strategy prose — the deliverable is the value-chain quadrant chart; a text-only strategy doc is a different artifact.
+
 ## Instructions
 
 ### inventory-components
