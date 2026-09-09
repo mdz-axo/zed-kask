@@ -165,7 +165,8 @@ env:  { "count_ok": <true|false>, "links_ok": <true|false>,
 ```
 
 If any gate is false, re-enter the failing phase. Do not end the pass with a
-known-failing gate; report the failure instead.
+known-failing gate; report the failure instead. Bound: max 2 re-entries per
+failing phase; a third failure ends the pass with the failure reported.
 
 ## Failure surfacing
 

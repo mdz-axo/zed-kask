@@ -92,7 +92,9 @@ ladder → context → indices → tree → coherence → duration matching.
     Every tenor in the report must have a probability or an explicit
     withheld reason, and the slope sign must reconcile with the
     accepted context direction. If not, re-run Phase 2 with an adjusted
-    context (with the operator) or report the discrepancy.
+    context (with the operator) or report the discrepancy. Bound: at
+    most one operator-negotiated context adjustment per run; a second
+    unreconciled slope reports the discrepancy and ends the run.
 
 ## Constraints
 

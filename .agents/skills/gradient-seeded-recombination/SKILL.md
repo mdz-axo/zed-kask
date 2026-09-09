@@ -26,7 +26,6 @@ Substrate-analysis process for interdisciplinary concept generation. Finds **whe
 - **Surface**: the gradient-hunter eight-shape taxonomy (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) + the seven-class reason taxonomy (Rubin MCAR/MAR/MNAR + spin glass metastable trap + allostery broken coupling).
 - **Domain supplement**: the project's 5 domain-supplement ontology namespaces (FIBO, SEPIO, GOLEM, ML-Schema, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core, extended via OBO Foundry / OntoBee / BioPortal.
 
-## Ontological Anchors
 ## Instructions
 
 ```
@@ -37,8 +36,8 @@ Do:     Phase 4 — Detect       → Classify gradients by 8-shape taxonomy + fr
 Check:  Phase 5 — Hypothesize  → Generate reason hypotheses (7-class taxonomy)
 Check:  Phase 6 — Prioritize   → Rank sites by reason class > fractal recurrence > magnitude
 Act:    Phase 7 — Select seeds → Pick most-central concept per high-priority site
-Check:  Phase 8 — Converge     → evaluate gradient map stability
-Act:    Phase 9 — Loop         → If not converged, re-enter at Phase 2 with refined prior
+Check:  Phase 8 — Converge     → gradient-map stability gate (`lisp_eval`: `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` — no new gradient shapes vs the prior map and the prioritized top-K unchanged)
+Act:    Phase 9 — Loop         → If not converged, re-enter at Phase 2 with refined prior (bound: max 2 prior refinements; then emit the map with lessons_learned)
 ```
 
 The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate ontologies) and Select-Seeds phase (pick most-central concept) have no analog in gradient-hunter, because the substrate is ontology namespaces, not code artifacts.

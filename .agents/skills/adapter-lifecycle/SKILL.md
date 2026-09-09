@@ -91,7 +91,9 @@ and no adapter ships without beating its baseline.
    exchanges into a feedback file, and re-enter Phase 3 with
    `training_submit` passing feedback_path (retrain mode merges the
    feedback, deduplicates by question, and increments the adapter
-   version).
+   version). Bound: max 2 retrain cycles per adapter version; a third
+   failure escalates to the operator with the diagnosis — budgets are
+   real.
 10. Persist the verdict — call `memory_insert` (curator server) with
     entity = the agent/skill name, attribute = "adapter_verdict",
     value = { adapter_id, baseline_pass_rate, pass_rate, promoted },

@@ -143,7 +143,9 @@ This skill does not train, load, initialize, merge, or evaluate models.
    `convergence_metric`, `blockers`, and `gate_results_summary` back as
    `prior_iteration`. The operator may also revise inputs and re-invoke. The
    loop converges when the convergence metric is ≤ 0.10 and no hard blockers
-   remain.
+   remain. Bound: max 3 refinement turns; a metric still > 0.10 after 3 turns
+   emits `undetermined` with blockers (the honest exit step 3 defines)
+   instead of iterating.
 9. Return separate `recommendation`, `readiness`, `justification`, and
    `authority` objects. Emit `reg.lora.select`.
 

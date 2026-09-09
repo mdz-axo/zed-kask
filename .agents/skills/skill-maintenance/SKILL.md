@@ -84,6 +84,26 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      iterations or a stability condition). A body with phases but no
      Check→Act feedback path, or a Check with no named signal, fails
      this check.
+     Loop vocabulary recognition (auditor guidance): the loop may be
+     carried in any of these forms — (a) explicit PDCA phases; (b) a
+     convergence gate (lisp_eval or otherwise) plus a named re-entry
+     point; (c) bounded rounds or escalation (max rounds, max
+     attempts, escalate-after-N); (d) cycle vocabulary
+     (red-green-refactor with routing re-entry, zero-delta abort,
+     per-turn gate with a revision bound, elimination-to-survivor with
+     a materiality guard). In every form the auditor requires the four
+     anatomy parts: a named Check signal, a threshold or convergence
+     criterion, a bound (max iterations or a stability/abort
+     condition), and an Act re-entry (the phase that re-enters, or an
+     explicit terminal action: escalate/halt/report). A loop whose
+     Check→Act lives only in a template's purpose text fails — the
+     loop lives in the body (composition law).
+     Exempt classes (operator ratification 2026-09-09, DR-S13a): role
+     guides (product-manager), documented single-pass skills
+     (skill-bundler, sankey-flow, prompt-enhance, swarm-steering,
+     swarm-compose-guide), and doc-style handbooks (gpui-bench) are
+     exempt. An exempt body must carry a one-line marker naming the
+     exemption so future audits do not re-litigate the design.
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)
@@ -177,7 +197,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 | Template | Purpose |
 |----------|---------|
-| `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S12 / T1–T5 with per-check evidence and fix suggestions. |
+| `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | Staleness audit: dead tool references, missing templates, removed vocabulary, vague instructions; health scores and retirement recommendations. |
 | `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
 | `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |

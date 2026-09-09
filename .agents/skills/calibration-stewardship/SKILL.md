@@ -100,6 +100,9 @@ this skill manages.
    The loop is healthy when no bucket of interest is stale and the
    too-late rate is under 20%. Otherwise, recommend (or schedule, if
    the operator asks) a more frequent scan and re-run Phase 1.
+   Bound: one cadence adjustment per stewardship run; if the next scan
+   still shows `without_snapshot_rate` ≥ 0.2, report the cadence
+   problem to the operator instead of re-running.
 
 ## Constraints
 

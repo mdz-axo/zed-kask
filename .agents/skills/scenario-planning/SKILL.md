@@ -70,9 +70,12 @@ this skill is the operating procedure for that pipeline.
    propagation journal is the audit record — report the deltas.
 9. When multiple independent perspectives exist, collect them and call
    `scenario_synthesize` (dragonfly-eye, inverse-Brier weighting).
-10. Call `scenario_cross_validate` comparing your estimate against the
-    server-computed one. If divergence exceeds 0.15, activate the
+10. Call `scenario_cross_validate` comparing your estimate against
+    the server-computed one. If divergence exceeds 0.15, activate the
     `grill-me` skill on the diverging sub-questions before proceeding.
+    Bound: one grill-me pass per diverging sub-question set;
+    divergence > 0.15 that persists after one pass is recorded with
+    both estimates and flagged for operator adjudication.
 
 ### Phase 4 — Resolve and learn (the Brier loop)
 

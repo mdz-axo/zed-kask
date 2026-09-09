@@ -67,10 +67,14 @@ from live quotes and interpreting the results honestly.
    - form: `(and (> start_value 0) (eq (length missing_start) 0) (eq (length missing_end) 0))`
    - env: `{ "start_value": <returns.start_value>, "missing_start": <attribution.missing_prices.start>, "missing_end": <attribution.missing_prices.end> }`
    If false, return to Phase 2 and seed what is missing. Do not report
-   numbers that fail this gate.
+   numbers that fail this gate. Bound: if a seeding pass leaves the
+   missing set unchanged (a quote failed), stop and ask the operator —
+   do not loop.
 10. Cross-check: the sum of `contribution_bps` across rows should be
-    close to `total_return × 10000` when no prices are missing. Report
-    the top contributors by absolute `contribution_bps`.
+    within 10 bps of `total_return × 10000` when no prices are missing
+    (rounding and cash-flow timing); a larger residual is reported as an
+    attribution discrepancy, not passed silently. Report the top
+    contributors by absolute `contribution_bps`.
 11. Call `note_add` (companies server) with portfolio, date = `to`,
     a title like "Portfolio review {from}..={to}", and a body carrying
     total_return, modified_dietz, top-3 contributors, and any

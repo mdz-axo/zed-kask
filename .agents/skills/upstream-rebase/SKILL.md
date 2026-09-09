@@ -95,7 +95,9 @@ closes a fast loop (seconds) instead of waiting for the CI round-trip.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh`
 2. If it fails, it names the offending path — re-delete that path and re-run.
-3. Repeat until it passes. (`check-desktop-no-collision.sh` is a one-line alias
+3. Repeat until it passes. Bound: max 3 sweep rounds; a fourth failure means
+   the merge restored something structural — halt and report instead of
+   re-deleting. (`check-desktop-no-collision.sh` is a one-line alias
    for the same script — running either is sufficient; do not run both.)
 
 Do not re-list the forbidden paths here — the script is the authority and its

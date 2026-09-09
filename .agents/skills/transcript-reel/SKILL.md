@@ -90,7 +90,9 @@ layers.
               "rejection_rate": <paragraph pass rejection_rate> }`
     If the reel is empty or the passes rejected heavily, re-enter at
     the failing phase (sharper highlight request, or corrections
-    first) rather than shipping a broken reel.
+    first) rather than shipping a broken reel. Bound: at most 2
+    re-entries per failing phase; a third failure ships the best
+    available reel with the failure noted.
 
 ## Constraints
 
