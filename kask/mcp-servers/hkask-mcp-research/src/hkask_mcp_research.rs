@@ -21,19 +21,20 @@ use rusqlite::Connection;
 
 use crate::research::db::*;
 use crate::research::{
-    ArtifactScore, BeginResearchRunRequest, BrowseOutput, BrowseRequest, CiteSourcesRequest,
-    CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE,
-    DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, EvaluateEvidenceRequest,
-    EvidenceReport, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest, FindSimilarOutput,
-    FindSimilarRequest, FindSimilarResultOutput, GetEntriesRequest, GetResearchRunRequest,
-    ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS,
-    MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH,
-    MAX_URL_LENGTH, MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput,
-    ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResponseCache, RunSourceRecord,
-    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
-    SensitivityStatus, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
-    WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank,
-    provider_profile, score_evidence_set, validated_fetch_client,
+    AnnotateResearchRunRequest, ArtifactScore, BeginResearchRunRequest, BrowseOutput,
+    BrowseRequest, CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES,
+    DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest,
+    EditTagRequest, EvaluateEvidenceRequest, EvidenceReport, ExtractOptions, ExtractOutput,
+    ExtractRequest, FetchRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
+    GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest, ListSubscriptionsRequest,
+    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
+    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
+    PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
+    RerankOutcome, ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery,
+    SearchRequest, SearchResultOutput, SearchStrategy, SensitivityStatus, SubscribeRequest,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
+    cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile, score_evidence_set,
+    validated_fetch_client,
 };
 
 // ── Constants ──
@@ -1558,6 +1559,63 @@ impl ResearchServer {
                 Ok(Ok(None)) => Err(McpToolError::not_found(format!(
                     "research run '{run_id}' not found"
                 ))),
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Annotate a research run's source with an agent-declared verification state (not_checked, inferred, partial, verified, blocked, failed). `verified` is accepted ONLY for sources the server itself recorded under this run (pass run_id to web_search/web_extract/web_find_similar) and requires a basis — the server refuses verification claims about sources it never served. Annotations are upsert-idempotent; annotating an unseen URL records it as an agent-declared row."
+    )]
+    pub async fn annotate_research_run(
+        &self,
+        Parameters(AnnotateResearchRunRequest {
+            run_id,
+            url,
+            verification_state,
+            basis,
+        }): Parameters<AnnotateResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "annotate_research_run", async {
+            if run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            if url.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("url must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let run_id_for_task = run_id.clone();
+            let url_for_task = url.clone();
+            let state_for_task = verification_state.clone();
+            let basis_for_task = basis.clone();
+            let result = spawn_db(database, move |connection| {
+                Ok(crate::research::runs::annotate_run_source(
+                    connection,
+                    &run_id_for_task,
+                    &url_for_task,
+                    &state_for_task,
+                    basis_for_task.as_deref(),
+                ))
+            })
+            .await;
+            match result {
+                Ok(Ok(Ok(()))) => Ok(serde_json::json!({
+                    "run_id": run_id,
+                    "url": url,
+                    "verification_state": verification_state,
+                    "recorded_by": "agent",
+                })),
+                Ok(Ok(Err(crate::research::runs::AnnotateError::RunNotFound))) => Err(
+                    McpToolError::not_found(format!("research run '{run_id}' not found")),
+                ),
+                Ok(Ok(Err(crate::research::runs::AnnotateError::Invalid(rule)))) => {
+                    Err(McpToolError::invalid_argument(rule))
+                }
+                Ok(Ok(Err(crate::research::runs::AnnotateError::Db(error)))) => {
+                    Err(map_db_error(error))
+                }
                 Ok(Err(error)) => Err(map_db_error(error)),
                 Err(error) => Err(map_join_error(error, "db task failed")),
             }

@@ -30,11 +30,11 @@ use hkask_mcp_research::research::rss_types::{
     UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
-    BeginResearchRunRequest, BrowseRequest, BrowseResult, CompoundSearchResult, EvaluateArtifact,
-    EvaluateEvidenceRequest, ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest,
-    GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
-    ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest, SearchStrategy,
-    WebError,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult,
+    CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, ExtractOptions,
+    ExtractRequest, ExtractedContent, FindSimilarRequest, GetResearchRunRequest, LatencyTier,
+    ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
+    RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -1744,5 +1744,230 @@ async fn web_search_with_unknown_run_id_surfaces_ledger_note() {
             .as_str()
             .is_some_and(|error| !error.is_empty()),
         "failure surfaced: {note}"
+    );
+}
+
+// ── Research-run annotation and validation gate ────────────────────────────
+
+#[tokio::test]
+async fn annotate_verified_requires_server_recorded_source() {
+    // The fail-closed gate (Decision 4, strict): an annotation about a
+    // source the server never served under this run is invalid_argument —
+    // the server refuses verification claims about its own output it
+    // cannot check.
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "never-served sources".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    let error = err(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id,
+            url: "https://never-served.example/1".to_string(),
+            verification_state: "verified".to_string(),
+            basis: Some("I checked it elsewhere".to_string()),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("server"),
+        "message names the violated rule: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn annotate_verified_without_basis_is_invalid_argument() {
+    let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "basis required".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    // Record a source the server actually served.
+    let search = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "stub query".to_string(),
+            num_results: Some(10),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            intent: None,
+            provider: None,
+            run_id: Some(run_id.clone()),
+        }))
+        .await));
+    let served_url = search["results"][0]["url"]
+        .as_str()
+        .expect("stub result url")
+        .to_string();
+
+    let error = err(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id: run_id.clone(),
+            url: served_url,
+            verification_state: "verified".to_string(),
+            basis: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("basis"),
+        "message names the basis requirement: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn annotate_verified_on_server_recorded_source_roundtrips() {
+    let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "roundtrip".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    let search = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "stub query".to_string(),
+            num_results: Some(10),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            intent: None,
+            provider: None,
+            run_id: Some(run_id.clone()),
+        }))
+        .await));
+    let served_url = search["results"][0]["url"]
+        .as_str()
+        .expect("stub result url")
+        .to_string();
+
+    // Annotating twice is idempotent (PRIMARY KEY (run_id, url) upsert —
+    // re-annotating after a crash is safe).
+    for _ in 0..2 {
+        let annotated = parse(&ok(server
+            .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+                run_id: run_id.clone(),
+                url: served_url.clone(),
+                verification_state: "verified".to_string(),
+                basis: Some("cross-checked against the primary source".to_string()),
+            }))
+            .await));
+        assert_eq!(annotated["run_id"].as_str(), Some(run_id.as_str()));
+    }
+
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest {
+            run_id: run_id.clone(),
+        }))
+        .await));
+    let sources = manifest["sources"].as_array().expect("sources");
+    assert_eq!(
+        sources.len(),
+        3,
+        "idempotent — no duplicate rows: {manifest}"
+    );
+    let annotated_row = sources
+        .iter()
+        .find(|source| source["url"].as_str() == Some(served_url.as_str()))
+        .expect("annotated row");
+    assert_eq!(
+        annotated_row["verification_state"].as_str(),
+        Some("verified")
+    );
+    assert_eq!(
+        annotated_row["verification_basis"].as_str(),
+        Some("cross-checked against the primary source")
+    );
+    // The validation block: a manifest with a legitimate verified
+    // annotation is valid.
+    assert_eq!(
+        manifest["validation"]["valid"].as_bool(),
+        Some(true),
+        "{manifest}"
+    );
+}
+
+#[tokio::test]
+async fn annotate_unknown_run_is_not_found() {
+    let server = make_server_with_research_db();
+    let error = err(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id: "deadbeefdeadbeef".to_string(),
+            url: "https://a.example/1".to_string(),
+            verification_state: "inferred".to_string(),
+            basis: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn annotate_external_source_as_agent_declared_row() {
+    // An agent may declare an EXTERNAL source (one the server never
+    // served) with a non-verified state — recorded recorded_by='agent',
+    // excluded from verified eligibility, visible in the manifest.
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "external sources".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    let annotated = parse(&ok(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id: run_id.clone(),
+            url: "https://external.example/1".to_string(),
+            verification_state: "inferred".to_string(),
+            basis: Some("prior knowledge".to_string()),
+        }))
+        .await));
+    assert_eq!(annotated["recorded_by"].as_str(), Some("agent"));
+
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest {
+            run_id: run_id.clone(),
+        }))
+        .await));
+    let sources = manifest["sources"].as_array().expect("sources");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["recorded_by"].as_str(), Some("agent"));
+    assert_eq!(sources[0]["verification_state"].as_str(), Some("inferred"));
+    // An agent-declared inferred row does not violate the manifest.
+    assert_eq!(manifest["validation"]["valid"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+async fn annotate_rejects_unknown_verification_state() {
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "enum check".to_string(),
+        }))
+        .await));
+    let error = err(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id: begun["run_id"].as_str().expect("run_id").to_string(),
+            url: "https://a.example/1".to_string(),
+            verification_state: "double-checked".to_string(),
+            basis: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("verification_state"),
+        "message names the enum: {}",
+        error.message
     );
 }

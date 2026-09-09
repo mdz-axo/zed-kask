@@ -261,6 +261,20 @@ pub struct GetResearchRunRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnnotateResearchRunRequest {
+    /// The run identifier returned by `begin_research_run`.
+    pub run_id: String,
+    /// The source URL to annotate. `verified` is accepted only for URLs
+    /// the server itself recorded under this run (via a run-scoped
+    /// web_search / web_extract / web_find_similar).
+    pub url: String,
+    /// One of: not_checked, inferred, partial, verified, blocked, failed.
+    pub verification_state: String,
+    /// Why the state was declared — required when `verified`.
+    pub basis: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvaluateEvidenceRequest {
     /// The research question to evaluate evidence against.
     pub question: String,
