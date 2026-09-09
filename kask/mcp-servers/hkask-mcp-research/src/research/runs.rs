@@ -345,6 +345,7 @@ pub(crate) fn validate_research_run(record: &ResearchRunRecord) -> Result<(), Ve
 
 /// Typed failures for annotation — the tool maps each to its MCP error
 /// kind (not_found / invalid_argument / db classification).
+#[derive(Debug)]
 pub(crate) enum AnnotateError {
     RunNotFound,
     Invalid(String),
@@ -405,15 +406,9 @@ pub(crate) fn annotate_run_source(
     let recorded_at = now_rfc3339();
     let updated = connection
         .execute(
-            "UPDATE run_sources SET verification_state = ?1, verification_basis = ?2, \
-             recorded_at = ?3 WHERE run_id = ?4 AND url = ?5",
-            rusqlite::params![
-                verification_state,
-                verification_basis,
-                recorded_at,
-                run_id,
-                url
-            ],
+            "UPDATE run_sources SET verification_state = ?1, verification_basis = ?2 \
+             WHERE run_id = ?3 AND url = ?4",
+            rusqlite::params![verification_state, verification_basis, run_id, url],
         )
         .map_err(|error| AnnotateError::Db(error.into()))?;
     if updated == 0 {
@@ -595,6 +590,58 @@ mod run_validation_tests {
                         .iter()
                         .any(|violation| violation.contains("verification_state"))
                 })
+        );
+    }
+}
+
+#[cfg(test)]
+mod annotate_timestamp_tests {
+    use super::*;
+
+    /// An annotation must not rewrite history: `recorded_at` is when the
+    /// row was first recorded (server observation or agent declaration) —
+    /// the annotation updates the verification fields only. Overwriting it
+    /// would destroy the audit trail's original timestamp.
+    #[test]
+    fn annotation_preserves_the_original_recorded_at() {
+        let manager = hkask_storage::SqliteConnectionManager::memory();
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("r2d2 pool build");
+        let connection = pool.get().expect("r2d2 pool get");
+        connection
+            .execute_batch(crate::research::db::RESEARCH_SCHEMA_DDL)
+            .expect("research schema init");
+
+        let run = begin_research_run(&connection, "audit trail").expect("begin run");
+        connection
+            .execute(
+                "INSERT INTO run_sources (run_id, url, recorded_by, recorded_at) \
+                 VALUES (?1, ?2, 'server', '2020-01-01T00:00:00Z')",
+                rusqlite::params![run.run_id, "https://a.example/1"],
+            )
+            .expect("seed server row");
+
+        annotate_run_source(
+            &connection,
+            &run.run_id,
+            "https://a.example/1",
+            "verified",
+            Some("cross-checked against the primary source"),
+        )
+        .expect("annotate");
+
+        let recorded_at: String = connection
+            .query_row(
+                "SELECT recorded_at FROM run_sources WHERE run_id = ?1 AND url = ?2",
+                rusqlite::params![run.run_id, "https://a.example/1"],
+                |row| row.get(0),
+            )
+            .expect("select recorded_at");
+        assert_eq!(
+            recorded_at, "2020-01-01T00:00:00Z",
+            "annotation must preserve the original recorded_at"
         );
     }
 }
