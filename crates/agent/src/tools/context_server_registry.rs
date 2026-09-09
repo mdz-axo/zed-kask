@@ -874,7 +874,21 @@ impl ContextServerTool {
                     Ok(ToolInputPayload::InvalidJson { error_message }) => {
                         return Err(invalid_json_tool_output(error_message));
                     }
-                    Err(error) => return Err(anyhow::anyhow!(error.to_string()).into()),
+                    Err(error) => {
+                        // `ToolInput::recv` used to log this case with its
+                        // likely cause; consuming the payload stream directly
+                        // bypasses that, so warn here: a dropped sender means
+                        // the LLM stream ended (MaxTokens, error, or refusal)
+                        // before the tool_use input was complete — the same
+                        // stream-end family as the invalid-JSON truncation
+                        // signature above.
+                        log::warn!(
+                            "Tool '{}' input was not fully received — the LLM stream likely ended before the tool_use input was complete: {}",
+                            tool_name,
+                            error
+                        );
+                        return Err(anyhow::anyhow!(error.to_string()).into());
+                    }
                 }
             };
 
