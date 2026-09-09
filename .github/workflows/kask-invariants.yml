@@ -35,6 +35,12 @@
 #   zed-side breakage — the kanban_panel class (a removed field still
 #   constructed at a panel call site) that kask-scoped checks cannot see.
 #   PRs skip it to bound minutes; a red main run is the fix-forward signal.
+#
+# Both build jobs install mold first: .cargo/config.toml forces
+# -fuse-ld=mold for x86_64-unknown-linux-gnu (dev-box link-speed seam, see
+# the config's own comment), and the ubuntu-latest image ships neither
+# ld.mold nor a fallback the collect2 search accepts — every build-script
+# link dies with "collect2: fatal error: cannot find 'ld'" without it.
 name: Kask invariants
 
 on:
@@ -74,6 +80,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: kask-tests
+      - name: Install mold linker (forced by .cargo/config.toml on x86_64-linux)
+        run: sudo apt-get update && sudo apt-get install -y mold
       - name: Kask subtree — cargo test (hkask-* + kask_bridge)
         run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
 
@@ -86,5 +94,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: zed-check
+      - name: Install mold linker (forced by .cargo/config.toml on x86_64-linux)
+        run: sudo apt-get update && sudo apt-get install -y mold
       - name: Full workspace — cargo check -p zed
         run: cargo check -p zed
