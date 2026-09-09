@@ -1,11 +1,12 @@
-# zed-kask invariant gates. These are the cheap guards that were
-# previously convention-enforced only (run by hand or from the DIVERGENCE.md
-# runbook) — an upstream merge that reintroduces a guarded surface used to
-# fail nothing automated. The bash/grep scripts finish in seconds; the
-# formatting step additionally resolves the pinned toolchain from
-# rust-toolchain.toml on first use (rustup auto-install) and parses the
-# workspace without compiling.
+# zed-kask invariant gates. These are the guards that were previously
+# convention-enforced only (run by hand or from the DIVERGENCE.md runbook) —
+# an upstream merge that reintroduces a guarded surface, a formatting drift,
+# or a broken build used to fail nothing automated. The bash/grep scripts
+# finish in seconds; the build jobs take minutes and are tiered (see below).
+# Every cargo invocation resolves the pinned toolchain from
+# rust-toolchain.toml on first use (rustup auto-install).
 #
+# check (seconds, every push + PR):
 # - check-hkask-no-zed-deps.sh: the §13.1 governing invariant (no hKask
 #   crate depends on a zed-kask crate). DIVERGENCE.md advertises this as
 #   "wired into CI" — this workflow is that wiring.
@@ -23,12 +24,29 @@
 #   struct-level allow even masked never-read fields). Adding an allow
 #   requires bumping the baseline in the same commit, which makes the
 #   addition a visible, reviewable act.
+#
+# kask-tests (minutes, every push + PR): the runbook's verification gate —
+#   cargo test over every hkask-* crate plus the kask_bridge seam. Serial
+#   execution per the .rules live-mutation trap: deterministic beats fast.
+#   Catches kask-side breakage before it lands.
+#
+# zed-check (minutes, main pushes only): the full workspace build. zed
+#   depends on every panel and the bridge, so this is the gate that catches
+#   zed-side breakage — the kanban_panel class (a removed field still
+#   constructed at a panel call site) that kask-scoped checks cannot see.
+#   PRs skip it to bound minutes; a red main run is the fix-forward signal.
 name: Kask invariants
 
 on:
   push:
     branches: [main]
   pull_request:
+
+# Agent-heavy sessions push in rapid bursts; a newer push supersedes the
+# in-progress run for the same ref instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -47,3 +65,26 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Dead-code allows — no net-new beyond the committed baseline
         run: bash kask/scripts/check-no-new-dead-code-allows.sh
+
+  kask-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: kask-tests
+      - name: Kask subtree — cargo test (hkask-* + kask_bridge)
+        run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+
+  zed-check:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: zed-check
+      - name: Full workspace — cargo check -p zed
+        run: cargo check -p zed
