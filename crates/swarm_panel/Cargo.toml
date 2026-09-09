@@ -39,23 +39,23 @@ kask_bridge.workspace = true
 log.workspace = true
 marketplace_ui_common.workspace = true
 project.workspace = true
+# Feature-propagation-only dep: not `use`d in source, but it must be a
+# NORMAL dependency (not a dev-dep) so the `test-support` feature's
+# `remote_connection/test-support` request reaches the normal-dependency
+# unit that `cargo check --all-features` builds. As a dev-dep the request
+# reached only the dev unit, and plain `cargo check --all-features
+# -p swarm_panel` failed E0004 (`remote/test-support` on via
+# `workspace/test-support`, `remote_connection`'s Mock match arm off).
+# The feature still gates when it is on, so `cargo test -p swarm_panel`
+# (without `--all-features`) does not leak `remote/test-support` into
+# the graph.
+remote_connection.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
 anyhow.workspace = true
-
-[dev-dependencies]
-# Feature-propagation-only dev-dep: not `use`d in source, but its
-# `test-support` feature must be enabled (via the `test-support` feature above)
-# to keep `remote_connection`'s cfg-gated `Mock` match arm in sync with
-# `remote`'s `Mock` variant. No features are hardcoded here — the `test-support`
-# feature controls when `remote_connection/test-support` is on, so
-# `cargo test -p swarm_panel` (without `--all-features`) does not leak
-# `remote/test-support` into the graph and break other crates' cfg-gated
-# matches.
-remote_connection.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["remote_connection"]

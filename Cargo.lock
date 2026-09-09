@@ -12105,11 +12105,8 @@ name = "media_panel"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
- "agent",
  "agent-client-protocol",
- "agent_ui",
  "anyhow",
- "editor",
  "fs",
  "gpui",
  "hkask-mcp-media",
@@ -12120,8 +12117,6 @@ dependencies = [
  "hkask-viz-core",
  "marketplace_ui_common",
  "project",
- "remote_connection",
- "serde",
  "serde_json",
  "settings",
  "theme",
@@ -24995,7 +24990,6 @@ dependencies = [
  "collections",
  "command_palette",
  "component_preview",
- "context_server",
  "copilot",
  "copilot_chat",
  "copilot_ui",
