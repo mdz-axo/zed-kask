@@ -281,7 +281,10 @@ mod tests {
         let mut session = CuratorSession::create(&client, &store, auth, "free")
             .await
             .expect("session created");
-        let error = session.send("plan my swarm").await.expect_err("ambiguous send");
+        let error = session
+            .send("plan my swarm")
+            .await
+            .expect_err("ambiguous send");
         assert!(
             error.to_string().contains("uncertain"),
             "the uncertainty must be surfaced: {error}"

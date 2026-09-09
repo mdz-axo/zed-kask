@@ -279,6 +279,8 @@ status: VERIFIED
 - **Scope-bound** — a token for hiring agent A cannot hire agent B, or delegate.
 - **Ceiling-enforced** — the spend re-fetches the real cost and refuses if it exceeds the authorized ceiling (the gate validates the _spend_, not just the _token_).
 - **Auth-gated mint** — `swarm_request_consent` requires the API key, so a prompt-injected agent cannot self-authorize a spend.
+- **Reserved before dispatch** — the authorization IS the reservation: a single-use token is consumed, and a session spend's cost is atomically deducted (the store's conditional-UPDATE) at `authorize` time. Two overlapping authorizations against one session — including from separate server processes sharing the consent DB — admit at most one dispatch.
+- **Settled by outcome class** (operator-ratified T05 policy, 2026-09-08) — a PROVEN pre-dispatch rejection (connection-phase/construction failure: the request never left; or any ABW error response: ABW answered and rejected) releases the reservation. An AMBIGUOUS outcome (sent, no definitive answer — timeout, connection reset, lost response; or external acceptance followed by a local failure like an unparseable 2xx body) HOLDS the reservation — the token stays consumed / the credits stay deducted — and surfaces the uncertainty to the caller; a retry cannot reuse the held capacity, and no automatic refund of uncertain external acceptance ever occurs. Success needs no further settlement: the reservation IS the spend. No external exactly-once delivery is promised — a retry after an ambiguous outcome may duplicate the @mention if the first landed; inspect the ABW workspace first.
 
 ## Error model
 

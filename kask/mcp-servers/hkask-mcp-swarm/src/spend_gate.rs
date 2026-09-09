@@ -303,10 +303,9 @@ pub(crate) async fn authorize_hire(
             // the session balance and reserves the credits — the former
             // non-atomic `session_balance` read plus post-dispatch deduction
             // admitted two overlapping authorizations against one session.
-            // RED-observation mutation B: pre-fix validate-only, no reserve
-            let cost = 0;
+            let cost = u32::try_from(actual_cost).unwrap_or(u32::MAX);
             consent
-                .consume_session(&token, "hire", 0)
+                .consume_session(&token, "hire", cost)
                 .map_err(SwarmError::into_tool_error)?;
             Settlement::Session { token, cost }
         }
@@ -484,13 +483,12 @@ pub fn authorize_delegate(
                 ))
                 .into_tool_error());
             }
-            // RED-observation mutation B: pre-fix validate-only, no reserve
             consent
-                .consume_session(token, "delegate", 0)
+                .consume_session(token, "delegate", credits_authorized)
                 .map_err(SwarmError::into_tool_error)?;
             Settlement::Session {
                 token: token.to_string(),
-                cost: 0,
+                cost: credits_authorized,
             }
         }
     };
@@ -646,37 +644,20 @@ mod tests {
         let dir = tempfile::tempdir().expect("dir");
         let store_a = sqlite_store(&dir);
         let store_b = sqlite_store(&dir);
-        eprintln!("PROBE: stores built");
         let session = store_a.open_session(10, &[]).expect("session");
-        eprintln!("PROBE: session opened");
         let server =
             FixtureServer::start(vec![Behavior::Respond(200, "{\"ok\":true}".to_string())]);
         let client = test_client(&server.base_url());
-        eprintln!("PROBE: authorizing first");
         let first = authorize_delegate(&client, &store_a, SpendAuth::Session(&session), "ws", 10);
-        eprintln!("PROBE: first done");
         let second = authorize_delegate(&client, &store_b, SpendAuth::Session(&session), "ws", 10);
-        eprintln!("PROBE: second done");
-        match (first, second) {
+        let winner = match (first, second) {
+            (Ok(auth), Err(_)) => auth,
+            (Err(_), Ok(auth)) => auth,
             (Ok(_), Ok(_)) => {
-                // Teardown bisect: drop in explicit order to find the hang.
-                drop(client);
-                eprintln!("PROBE: client dropped");
-                drop(server);
-                eprintln!("PROBE: server dropped");
-                drop(store_b);
-                eprintln!("PROBE: store_b dropped");
-                drop(store_a);
-                eprintln!("PROBE: store_a dropped");
                 panic!("both authorizations succeeded — the session was oversubscribed")
             }
-            _ => panic!("unexpected: pre-fix both must succeed"),
-        }
-        #[allow(unreachable_code)]
-        {
-            let winner = unreachable!();
-            let _ = winner;
-        }
+            (Err(first), Err(second)) => panic!("both authorizations failed: {first}; {second}"),
+        };
         let data = complete_delegate(&client, &store_a, winner, "ws", "agent", "task")
             .await
             .expect("the single authorized dispatch succeeds");
@@ -723,8 +704,7 @@ mod tests {
             "the hold survives reopen"
         );
         assert!(
-            authorize_delegate(&client, &reopened, SpendAuth::Session(&session), "ws", 10)
-                .is_err(),
+            authorize_delegate(&client, &reopened, SpendAuth::Session(&session), "ws", 10).is_err(),
             "a retry cannot reserve the held credits"
         );
     }

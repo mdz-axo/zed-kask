@@ -220,6 +220,11 @@ impl AgentTool for SkillTool {
                     .map(|s| s.as_str())
                     .collect();
                 if !missing.is_empty() {
+                    crate::record_skill_outcome(
+                        &skill.name,
+                        false,
+                        Some("declared dependencies not installed"),
+                    );
                     return Err(SkillToolOutput::Error {
                         error: format!(
                             "Skill '{}' depends on {} that are not installed: {}. \
@@ -253,13 +258,20 @@ impl AgentTool for SkillTool {
                 })?;
             }
 
-            let body = agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
+            let body = match agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
                 .await
-                .map_err(|e| SkillToolOutput::Error {
-                    error: e.to_string(),
-                })?;
+            {
+                Ok(body) => body,
+                Err(e) => {
+                    crate::record_skill_outcome(&skill.name, false, Some(&e.to_string()));
+                    return Err(SkillToolOutput::Error {
+                        error: e.to_string(),
+                    });
+                }
+            };
             let rendered = render_skill_envelope(&skill, &body);
 
+            crate::record_skill_outcome(&skill.name, true, None);
             Ok(SkillToolOutput::Found { rendered })
         })
     }
@@ -930,5 +942,96 @@ mod tests {
             }
             Err(_) => unreachable!("SkillTool::run only yields SkillToolOutput"),
         }
+    }
+
+    /// The skill tool records an outcome for the regulation loop's per-skill
+    /// feedback drift sensing: success on a rendered envelope, failure on
+    /// missing dependencies. Not-found and authorization-denied are request
+    /// errors, not skill outcomes — neither is recorded (see the
+    /// `SkillOutcomeRecorder` doc in `agent.rs`). All assertions in ONE test:
+    /// the recorder is a process-global slot parallel tests could race.
+    #[gpui::test]
+    async fn test_skill_tool_records_outcome(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        crate::set_skill_outcome_recorder(std::sync::Arc::new(move |skill_id, success, error| {
+            captured.lock().expect("captured lock").push((
+                skill_id.to_string(),
+                success,
+                error.map(str::to_string),
+            ));
+        }));
+
+        // Success path: the envelope renders → (name, true, None).
+        let (skill, fs) = create_test_skill(
+            cx,
+            "outcome-skill",
+            "Records its outcome",
+            "# Body\n\nDo the thing.",
+        )
+        .await;
+        let skills = Arc::new(vec![skill]);
+        let tool = Arc::new(SkillTool::new(
+            move |_cx| skills.clone(),
+            fs.clone() as Arc<dyn Fs>,
+        ));
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "outcome-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        assert!(
+            task.await
+                .is_ok_and(|out| matches!(out, SkillToolOutput::Found { .. }))
+        );
+
+        // Missing-dependency path: the skill was found and attempted →
+        // (name, false, Some(reason)).
+        let (mut parent, fs) = create_test_skill(
+            cx,
+            "outcome-parent",
+            "Depends on a missing skill",
+            "# Body\n\nDo the thing.",
+        )
+        .await;
+        parent.dependencies = vec!["no-such-dep".to_string()];
+        let skills = Arc::new(vec![parent]);
+        let tool = Arc::new(SkillTool::new(
+            move |_cx| skills.clone(),
+            fs.clone() as Arc<dyn Fs>,
+        ));
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "outcome-parent" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        assert!(task.await.is_err());
+
+        // Not-found path: no skill to attribute → NOT recorded.
+        let (skill, fs) = create_test_skill(cx, "real-skill", "Exists", "# Body").await;
+        let skills = Arc::new(vec![skill]);
+        let tool = Arc::new(SkillTool::new(
+            move |_cx| skills.clone(),
+            fs.clone() as Arc<dyn Fs>,
+        ));
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "no-such-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        assert!(task.await.is_err());
+
+        let recorded = recorded.lock().expect("recorded lock");
+        assert_eq!(
+            *recorded,
+            vec![
+                ("outcome-skill".to_string(), true, None),
+                (
+                    "outcome-parent".to_string(),
+                    false,
+                    Some("declared dependencies not installed".to_string())
+                ),
+            ],
+            "exactly the found-and-attempted skills are recorded — not-found is not a skill outcome"
+        );
     }
 }

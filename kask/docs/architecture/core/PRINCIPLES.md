@@ -178,22 +178,11 @@ The system must remain observable and self-correcting through cybernetic feedbac
 
 Regulation (Cybernetic Nervous System) spans are the primary observability primitive. Every subsystem must emit canonical `reg.*` spans for every security-sensitive, resource-sensitive, and correctness-sensitive operation. Essential domains carry typed `RegulationSpan` enum variants (P8 — Semantic Grounding), are registered in `CANONICAL_NAMESPACES`, mapped to a `SpanCategory`, and connected to a cybernetic loop via ν-events. The `reg.*` prefix is reserved for these canonical spans — every `reg.*` tracing target MUST be registered. Performative telemetry (CLI, API middleware, and other observability logs) uses `hkask.*` tracing targets, NOT `reg.*`; those are deliberately NOT registered, NOT categorized, and NOT loop-connected — they are observability logs, not regulated variables. The two are distinguished by registry presence: `SpanNamespace::new` accepts only canonical spans.
 
-**§9.2 — Unified Skill Feedback Standard (v0.31.0)**
+**§9.2 — Skill Outcome Measurement (supersedes the v0.31.0 six-span convention, 2026-09-08)**
 
-Every skill emits cybernetic feedback through exactly one regulated namespace: `reg.skill.<skill-id>.*`. This is the single channel from skills to the Curator and the Regulation nervous system — variety-counted, algedonic-escalated, and comparable across the corpus. The `reg.skill` prefix is registered in `CANONICAL_NAMESPACES`; the hierarchical `is_canonical` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
+Skills are measured by execution outcome, recorded at runtime: `SkillTool::run` fires `agent::record_skill_outcome(skill_id, success, error)` at its outcome points (rendered envelope → success; missing dependencies or unreadable body → failure). Not-found and authorization-denial are request errors, not skill outcomes — neither is recorded. The composition root (`crates/zed/src/main.rs`) wires the hook to `RegulationLedger::record_skill_span(skill_id, "outcome", payload)`, stored in the bounded `SkillSpanStore` (`kask/crates/hkask-regulation/src/runtime.rs`); the metacognition loop's `sense_feedback_drift` reads the store for per-skill success-rate decline and escalates drift. Pinned by `skill_outcome_recorder_records_and_is_replaceable` + `test_skill_tool_records_outcome` (agent crate).
 
-Every skill emits six semantic spans, one per PDCA phase, mapped to the cybernetic loop:
-
-| Span | Phase | Cybernetic role |
-|---|---|---|
-| `reg.skill.<id>.classify` | Sense | What is this? |
-| `reg.skill.<id>.gather` | Sense | What's missing? |
-| `reg.skill.<id>.draft` | Act | Produce artifact |
-| `reg.skill.<id>.evaluate` | Check | How good is it? |
-| `reg.skill.<id>.convergence` | Check | Are we done? |
-| `reg.skill.<id>.write` | Act | Commit artifact |
-
-These six spans are the same for every skill, regardless of domain. They are a **convention**, not a typed enum — no `SkillFeedbackSpan` type exists (zero hits in `kask/` as of 2026-08-28). The live surface is stringly-typed: `RegulationRuntime::record_skill_span` stores `reg.skill.<skill_id>.<phase>` payloads in the bounded `SkillSpanStore` (`kask/crates/hkask-regulation/src/runtime.rs:765-805`). Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated). CI gate: `kask/scripts/check-skill-span-namespace.sh`.
+The v0.31.0 design — six semantic spans per PDCA phase (`classify/gather/draft/evaluate/convergence/write`), declared per-manifest and CI-gated by `kask/scripts/check-skill-span-namespace.sh` — never landed: no emitter existed for any phase, no manifest declared a `ledger.span_namespace`, and the gate validated a manifests directory that did not exist (vacuous pass, flagged by its own selftest). It is superseded by the runtime outcome loop above; the gate and its selftest are deleted. The `operator_feedback` phase (acceptance-rate sensing in `sense_feedback_drift`) remains read-side-only with no recording source — a documented future wiring point, not an enforced surface.
 
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|

@@ -1,0 +1,84 @@
+{# goal: Compile the graduated-sanctions error log from all verification findings. #}
+{# #}
+{# This is the bookkeeping step of the grounding-verify process. It merges the #}
+{# three finding lists into one append-only log so a reader can see every error, #}
+{# note, and warning with its severity and disposition. The original error is #}
+{# never erased: a correction records both the prior and the corrected value. #}
+{# #}
+{# Input: #}
+{#   hallucination_findings — class E: the claim failed mechanical verification #}
+{#   rounding_notes — class W: passed within one unit of the last decimal #}
+{#   source_conflicts — class N: two sources disagree; both disclosed, neither rejected #}
+{# #}
+{# Output schema: #}
+{#   error_log: array of { #}
+{#     id: string,               # E1, E2... / W1... / N1... in encounter order #}
+{#     class: "E" | "W" | "N", #}
+{#     claim_id: string | null, #}
+{#     description: string, #}
+{#     prior_value: string | null,      # what the report stated #}
+{#     corrected_value: string | null,  # what the computation produced (class E only) #}
+{#     severity: "trivial" | "low" | "medium" | "high" | "critical", #}
+{#     disposition: string,            # what the calling pipeline should do #}
+{#     why: string                     # the materiality judgment, min 40 chars #}
+{#   } #}
+{#   totals: { corrected: int, data_notes: int, warnings: int } #}
+
+You are a verification log compiler. Merge the findings below into one graduated-sanctions error log.
+
+## Findings
+
+### Hallucination findings (class E — failed mechanical verification)
+
+{{ hallucination_findings | tojson }}
+
+### Rounding notes (class W — passed within one unit of the last decimal)
+
+{{ rounding_notes | tojson }}
+
+### Source conflicts (class N — two sources disagree; both disclosed, neither rejected)
+
+{{ source_conflicts | tojson }}
+
+## Severity and disposition
+
+Grade every finding:
+
+- trivial — rounding, no effect on any conclusion. Disposition: note only.
+- low — a single figure differs, no conclusion affected. Disposition: note; correction optional.
+- medium — changes a supporting figure. Disposition: the calling pipeline corrects inline with attribution.
+- high — changes the primary conclusion. Disposition: surface immediately; the pipeline must re-examine the conclusion.
+- critical — invalidates a section. Disposition: surface immediately; the pipeline must withdraw the section.
+
+Class defaults: W findings are trivial unless the quantity is load-bearing (then low). N findings are low, or medium when the difference is material and unresolved. E findings are medium by default, high when the corrected value changes the primary conclusion, critical when it invalidates the section. When you cannot tell whether a figure is load-bearing, say so in the `why` and grade down, not up — a graduated system that overcalls destroys its own signal.
+
+## Instructions
+
+1. Assign IDs in encounter order within each class: E1, E2...; W1...; N1...
+2. Every entry carries `prior_value` (what the report stated). Class E entries also carry `corrected_value` (what the computation produced). Class N entries name both conflicting values with their sources and periods in the description — there is no single corrected value.
+3. Every entry carries a `why` of at least 40 characters stating the materiality judgment.
+4. The log is append-only: nothing is removed, reordered after assignment, or merged away.
+5. Emit the totals.
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+  "error_log": [
+    {
+      "id": "E1",
+      "class": "E",
+      "claim_id": "claim_007",
+      "description": "Bucket B P/S median averaged the wrong pair",
+      "prior_value": "1.43x",
+      "corrected_value": "1.29x",
+      "severity": "medium",
+      "disposition": "correct inline with attribution",
+      "why": "The median feeds the peer-comparison table; the wrong pair shifts the bucket multiple but not the discount conclusion."
+    }
+  ],
+  "totals": { "corrected": 1, "data_notes": 0, "warnings": 0 }
+}
+```

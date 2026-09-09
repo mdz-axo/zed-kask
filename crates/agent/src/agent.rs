@@ -4653,6 +4653,51 @@ mod internal_tests {
         );
     }
 
+    #[test]
+    fn skill_outcome_recorder_records_and_is_replaceable() {
+        // Same process-global Mutex slot discipline as the MCP recorder test
+        // above — all skill-recorder assertions stay in ONE test so parallel
+        // tests cannot race the shared slot.
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        set_skill_outcome_recorder(std::sync::Arc::new(move |skill_id, success, error| {
+            captured.lock().expect("captured lock").push((
+                skill_id.to_string(),
+                success,
+                error.map(str::to_string),
+            ));
+        }));
+        record_skill_outcome("bug-hunt", true, None);
+        record_skill_outcome("tdd", false, Some("declared dependencies not installed"));
+        {
+            let recorded = recorded.lock().expect("recorded lock");
+            assert_eq!(recorded.len(), 2);
+            assert_eq!(recorded[0], ("bug-hunt".to_string(), true, None));
+            assert_eq!(
+                recorded[1],
+                (
+                    "tdd".to_string(),
+                    false,
+                    Some("declared dependencies not installed".to_string())
+                )
+            );
+        }
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        set_skill_outcome_recorder(std::sync::Arc::new(move |_, _, _| {
+            *flag.lock().expect("flag lock") = true;
+        }));
+        record_skill_outcome("media-workflow", true, None);
+        assert!(*replaced_called.lock().expect("replaced lock"));
+        assert_eq!(
+            recorded.lock().expect("recorded lock").len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
+    }
+
     /// An injector that recalls nothing. Wiring it must be observationally
     /// inert for the turn loop — `inject_context` returns no messages, so the
     /// `!injected.is_empty()` guard in `run_turn_internal` splices nothing.

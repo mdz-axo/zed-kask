@@ -14,7 +14,9 @@
 {#     strength: 0 | 1 | 2, #}
 {#     source_reference: string | null, #}
 {#     response_field: string | null,  # which field in the source output #}
-{#     cross_check: string | null,  # lisp_eval form for mechanical verification (string-contains for quotes; numeric/derivation forms for numbers) #}
+{#     cross_check: string | null,  # lisp_eval form for mechanical verification (string-contains for quotes; value-returning derivation forms for arithmetic) #}
+{#     claimed_value: number | null,  # platform_derived only — the value the report states #}
+{#     unit: number | null,  # platform_derived only — unit of the claim's last decimal place (0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer) #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
@@ -33,6 +35,10 @@ You are a provenance analyst. Your job is to assign a provenance tier to each fa
 ## Pipeline tool log (which tools were actually called)
 
 {{ pipeline_tool_log | tojson }}
+
+## Congruence rules (optional — which source is authoritative for which quantity)
+
+{{ congruence_rules | default([]) | tojson }}
 
 ## The provenance lattice
 
@@ -57,13 +63,13 @@ A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `
    - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
      - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
      - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
-     - For derived numbers: a `lisp_eval` form like `"(let ((growth (/ (- 15450000000.0 13800000000.0) 13800000000.0))) (>= (abs (- growth 0.1196)) 0.001))"`
-   - If the claim was computed by platform code (e.g., GORILLA scoring via `lisp_eval`), classify as `platform_derived`.
+     - For derived numbers (arithmetic on input values): a value-returning `lisp_eval` form that computes the claim from named input values — e.g. `"(let ((growth (/ (- revenue_current revenue_prior) revenue_prior))) growth)"`. The form MUST reference its inputs by name (source values, or values already verified in this run) and MUST return the computed value, not a boolean — Step 3 grades the difference between the computed value and `claimed_value`. Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check.
+   - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states) and `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer). Arithmetic without a falsifiable derivation is `model_inference`.
    - If the claim synthesizes or interprets source data (e.g., "the margin expansion was driven by mix shift"), classify as `model_inference`.
    - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
    - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
 
-2. For each `tool_verified` claim, the `cross_check` specification is MANDATORY. A `tool_verified` claim with no cross-check is a claim nobody can falsify. If you cannot construct a cross-check, reclassify as `model_inference` with a `why` explaining why it cannot be mechanically verified.
+2. For each `tool_verified` or `platform_derived` claim, the `cross_check` specification is MANDATORY. A strength-2 claim with no cross-check is a claim nobody can falsify. If you cannot construct a cross-check, reclassify as `model_inference` with a `why` explaining why it cannot be mechanically verified.
 
 3. Each claim entry MUST carry a `why` field with at least 40 characters explaining its provenance status. "n/a" and "tool" do not pass. The next person to read this registry cannot tell a considered `unavailable` from a lazy one without the explanation.
 
@@ -95,6 +101,17 @@ Produce a JSON object:
       "response_field": null,
       "cross_check": null,
       "why": "The causal claim about mix shift driving margin expansion is synthesized by the LLM from revenue and segment data — it is a judgment, not a retrieval."
+    },
+    {
+      "claim_id": "claim_003",
+      "provenance": "platform_derived",
+      "strength": 2,
+      "source_reference": "stock_quote:marketCap + balance_sheet:netDebt",
+      "response_field": null,
+      "cross_check": "(let ((ev (+ market_cap net_debt))) ev)",
+      "claimed_value": 49300000000.0,
+      "unit": 100000000.0,
+      "why": "Enterprise value is market cap plus balance-sheet net debt; the form re-derives it so Step 3 can grade the difference."
     }
   ],
   "sourced_blocks": [

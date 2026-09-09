@@ -270,6 +270,7 @@ pub(crate) mod test_http {
 
     pub(crate) struct FixtureServer {
         port: u16,
+        shutdown: Arc<std::sync::atomic::AtomicBool>,
         requests_served: Arc<AtomicUsize>,
         handle: Option<std::thread::JoinHandle<()>>,
     }
@@ -283,10 +284,19 @@ pub(crate) mod test_http {
             let behaviors: Arc<Mutex<VecDeque<Behavior>>> =
                 Arc::new(Mutex::new(VecDeque::from(behaviors)));
             let requests_served = Arc::new(AtomicUsize::new(0));
+            let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let queue = Arc::clone(&behaviors);
             let served = Arc::clone(&requests_served);
+            let shutdown_flag = Arc::clone(&shutdown);
             let handle = std::thread::spawn(move || {
                 for stream in listener.incoming() {
+                    // Checked AFTER accept returns: a Drop-time wake-up
+                    // connection must not consume a queued behavior (a test
+                    // that fails before serving all behaviors would
+                    // otherwise hang teardown instead of failing cleanly).
+                    if shutdown_flag.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let Ok(mut stream) = stream else { break };
                     let behavior = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
                     let Some(behavior) = behavior else { break };
@@ -313,6 +323,7 @@ pub(crate) mod test_http {
             });
             Self {
                 port,
+                shutdown,
                 requests_served,
                 handle: Some(handle),
             }
@@ -331,15 +342,12 @@ pub(crate) mod test_http {
 
     impl Drop for FixtureServer {
         fn drop(&mut self) {
-            // Wake the blocked accept loop with a self-connect; the empty
-            // queue then stops the thread. Best-effort — a leaked thread is
-            // harmless in a test process.
-            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", self.port)) {
-                let _ = stream.write_all(
-                    b"GET /api/shutdown HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n",
-                );
-                let _ = stream.flush();
-            }
+            // Set the shutdown flag, then wake a blocked accept with a
+            // self-connect. The flag (checked after accept returns) stops the
+            // loop WITHOUT consuming a queued behavior, so a test that ends
+            // early — failure or otherwise — cannot wedge teardown.
+            self.shutdown.store(true, Ordering::SeqCst);
+            let _ = TcpStream::connect(("127.0.0.1", self.port));
             if let Some(handle) = self.handle.take() {
                 let _ = handle.join();
             }

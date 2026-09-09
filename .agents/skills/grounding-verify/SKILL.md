@@ -1,15 +1,18 @@
 ---
 name: grounding-verify
-description: "Verify that factual claims in a text are grounded in provided source data. Extracts claims, classifies provenance on a strength lattice (tool_verified > model_inference > unavailable), mechanically verifies citations via retrieve-cite-verify, scans narrative fields for leak rules, and computes a composite fact_score with nil-propagation. Usable standalone or as a composed component in analysis pipelines."
+description: "Verify that factual claims in a text are grounded in provided source data. Extracts claims, classifies provenance on a strength lattice (tool_verified > model_inference > unavailable), mechanically verifies citations and derived arithmetic via lisp_eval cross-checks, detects cross-source conflicts via congruence rules with a precedence hierarchy, grades finding severity, scans narrative fields for leak rules, computes a composite fact_score with nil-propagation, and emits a decoupling field so an in-thread self-check cannot masquerade as a decoupled audit. Usable standalone or as a composed component in analysis pipelines."
 ---
 
 # Grounding Verify
 
 Verify that factual claims in a text are grounded in provided source data.
 Anchored to Fermi's four-contract trust system (grounding_trust, schema_trust,
-rollup_trust, port_trust) and the listening skill's retrieve-cite-verify
-process. The skill is domain-general — it works on any text + source pair —
-but accepts domain-specific leak rules via context for narrative scanning.
+rollup_trust, port_trust), the listening skill's retrieve-cite-verify
+process, and the Verification Commons Protocol (Ostrom institutional design:
+bounded provenance, decoupled monitoring, graduated sanctions, conflict
+precedence, nested verification layers). The skill is domain-general — it
+works on any text + source pair — but accepts domain-specific leak rules and
+congruence rules via context.
 
 ## The provenance lattice
 
@@ -19,6 +22,13 @@ the LLM synthesizes from tool outputs is `model_inference` (strength 1),
 never `tool_verified` (strength 2). Only direct citations — verbatim quotes
 found via mechanical substring match, exact numbers found via `lisp_eval`
 numeric match — can be `tool_verified`.
+
+The extraction ceiling applies to arithmetic too. Derived numbers (EV from
+market cap + net debt, medians, discount percentages) are `platform_derived`
+— strength 2 only when the derivation is stated as a `cross_check` form the
+interpreter evaluates against input values. Arithmetic presented without a
+falsifiable derivation is `model_inference`: legitimate, but unverified,
+and the provenance floor will price it accordingly.
 
 | Strength | Provenance Value | Meaning |
 |----------|-----------------|---------|
@@ -64,6 +74,10 @@ cited.
   each.
 - When you need to scan narrative (prose) fields for claims that exceed
   what the sourced blocks can support (narrative leak detection).
+- When two sources in the same pipeline supply conflicting values for the
+  same quantity (a live quote vs. a derived metric, TTM vs. annual periods)
+  and the report must disclose and resolve the conflict by precedence
+  rather than silently pick one.
 
 ## When NOT to Use
 
@@ -122,7 +136,13 @@ cited.
 
 1. Call `render_template` to render the provenance assignment template:
    - template_ref: `grounding-verify/assign-provenance`
-   - context: `{ "claims": {{ step_1_result.claims }}, "source_outputs": {{ source_outputs }}, "pipeline_tool_log": {{ pipeline_tool_log }} }`
+   - context: `{ "claims": {{ step_1_result.claims }}, "source_outputs": {{ source_outputs }}, "pipeline_tool_log": {{ pipeline_tool_log }}, "congruence_rules": {{ congruence_rules }} }`
+   - `congruence_rules` (optional, pass `[]` when none): an array of
+     `{ quantity, primary_source, cross_check_sources, tolerance, resolution }`
+     objects declaring which source is authoritative for which quantity and
+     what relative tolerance applies (e.g., 0.05 for 5%). When empty, the
+     Step 3 consistency pass is skipped — a scope limitation to disclose in
+     Step 7, not a data gap.
 
 2. Following the template's output schema, assign a provenance tier to each
    factual claim:
@@ -131,7 +151,11 @@ cited.
      response field. (Elevation to this tier requires Step 3 — the
      mechanical check must pass.)
    - `platform_derived`: the claim's value was computed by a `lisp_eval`
-     call from sourced values.
+     call from sourced values (or values already verified in this run).
+     The assignment must carry the derivation as a value-returning
+     `cross_check` form, plus `claimed_value` (the number the report
+     states) and `unit` (the unit of the claim's last decimal place) —
+     Step 3 evaluates the form and grades the difference.
    - `model_inference`: the LLM synthesized the claim from source outputs.
      This is the extraction ceiling — legitimate, but not a retrieval.
    - `unavailable`: no source the pipeline called can supply this claim.
@@ -142,14 +166,14 @@ cited.
      subject.
    - `pending_check`: a check exists but has not run yet.
 
-3. For each `tool_verified` claim, the template must also emit a
-   `cross_check` specification — the `lisp_eval` form that will verify
-   the cited value against the source output (`string-contains` for
-   quotes, numeric/derivation forms for numbers). A
-   `tool_verified` claim with no `cross_check` is a claim nobody can
-   falsify. If no cross-check is possible, the claim must be classified
-   as `model_inference` with a `why` explaining why it cannot be
-   mechanically verified.
+3. For each `tool_verified` or `platform_derived` claim, the template
+   must also emit a `cross_check` specification — the `lisp_eval` form
+   that will verify the cited value against the source output
+   (`string-contains` for quotes, value-returning derivation forms for
+   arithmetic). A strength-2 claim with no `cross_check` is a claim
+   nobody can falsify. If no cross-check is possible, the claim must be
+   classified as `model_inference` with a `why` explaining why it cannot
+   be mechanically verified.
 
 4. Each claim entry carries a `why` field (minimum 40 characters)
    explaining its provenance status. Short justifications are rejected.
@@ -183,23 +207,73 @@ cited.
      check. For stored transcripts, `educt_locate` is the deterministic
      word-aligned locator — prefer it when the source is an
      educt-stored transcript.
-   - **Cited numbers**: call `lisp_eval` to verify that the numeric value
-     appears in the referenced source output. For derived numbers (e.g.,
-     "revenue growth of 12%"), the `cross_check` form states the
-     derivation and `lisp_eval` checks it against source values.
+   - **Cited numbers**: call `lisp_eval` for each numeric cross-check:
+     - form: the `cross_check` form from Step 2
+     - env: the source output values
+   A failed match reclassifies the claim as `rejected` (strength 0) and
+   records it in `hallucination_findings` with the source mismatch
+   details.
 
-2. Call `lisp_eval` for each numeric cross-check:
-   - form: the `cross_check` form from Step 2
-   - env: the source output values
+2. For each claim provisionally classified as `platform_derived`, verify
+   the derivation — the deterministic arithmetic audit. The interpreter,
+   not an LLM, re-derives every computed number in the report:
+   - Call `lisp_eval` with the `cross_check` form from Step 2 and
+     env = the input values it derives from. The form returns the
+     computed value, not a boolean — e.g.
+     `"(let ((ev (+ market_cap net_debt))) (/ ev ebitda))"`.
+   - Grade the difference between computed and claimed values with one
+     `lisp_eval` call:
+     - form: `"(let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff unit) 'warn) (t 'fail)))"`
+     - env: `{ "computed": <form result>, "claimed": <the value the report states>, "unit": <from Step 2> }`
+   - `pass`: the claim stays `platform_derived` (strength 2).
+   - `warn`: the difference is at most one unit of the claim's last
+     decimal — a rounding difference. The claim stays `platform_derived`;
+     record a `rounding_notes` entry (class W, severity trivial) with
+     both values.
+   - `fail`: reclassify as `rejected` (strength 0); record in
+     `hallucination_findings` (class E) with the prior (claimed) and
+     corrected (computed) values.
 
-3. If the mechanical check passes, the claim stays `tool_verified`
-   (strength 2). If it fails, the claim is reclassified as `rejected`
-   (strength 0) and recorded in `hallucination_findings` with the source
-   mismatch details.
+3. Run the empty-env dependency check on every `platform_derived`
+   `cross_check` form — the anti-gaming falsifier:
+   - Call `lisp_eval` with the form and env `{}`.
+   - The call MUST fail with an unbound-symbol error: a real derivation
+     references its input values, and against an empty env those
+     references are unbound. A form that returns a value without the
+     input env embeds its answer as a literal — a constant masquerading
+     as a derivation. Reclassify the claim as `model_inference` and
+     record the finding: the derivation is not falsifiable against the
+     inputs.
+   - This check is what decouples the arithmetic audit: the derivation
+     is stated once, and the interpreter — which has no incentive to
+     confirm the report — both evaluates it and proves it depends on
+     the cited inputs.
 
-4. Claims classified as `model_inference`, `platform_derived`,
-   `unavailable`, or `tool_no_match` skip mechanical verification —
-   they are not claiming direct citation.
+4. Run the cross-source consistency pass when `congruence_rules` were
+   provided. For each rule `{ quantity, primary_source,
+   cross_check_sources, tolerance, resolution }`:
+   - Locate the primary value and each cross-check value in the source
+     outputs (the location is model-mediated; the comparison is not).
+   - Call `lisp_eval` for each cross-check source:
+     - form: `"(let ((diff (abs (- primary cross)))) (if (> diff (* primary tolerance)) 'conflict 'consistent))"`
+     - env: `{ "primary": <value from primary_source>, "cross": <value from the cross-check source>, "tolerance": <the rule's relative tolerance> }`
+   - On `conflict`, emit a `source_conflicts` finding: both values, both
+     sources, both periods/definitions, the relative difference, and the
+     precedence disposition. The default hierarchy is `primary source
+     (audited filing) > live market quote > derived metric > model
+     inference`; a rule's `resolution` field overrides it for that
+     quantity. The disposition: prefer the more direct source, disclose
+     both values with their periods in the report appendix, and use the
+     more conservative value in the main analysis when the difference
+     is material and unresolved.
+   - A conflict is a data note, not a hallucination: neither claim is
+     `rejected`, the closed provenance vocabulary is unchanged, and the
+     finding surfaces through the confidence band (Step 6) and the
+     error log (Step 7) — never through the fact_score ratios.
+
+5. Claims classified as `model_inference`, `unavailable`, or
+   `tool_no_match` skip mechanical verification — they are not claiming
+   direct citation or a falsifiable derivation.
 
 ### Step 4 — Scan narrative fields for leak rules
 
@@ -242,6 +316,12 @@ cited.
      total_narrative_fields. A field is clean if no leak rule fires, or
      if every fired rule is backed by a sourced block (strength >= 2).
 
+   `source_conflicts` and `rounding_notes` do not enter these ratios —
+   a conflict is a data note, not a hallucination, and a rounding note
+   is not a rejection. They surface through the confidence band (Step 6)
+   and the error log (Step 7). Keeping them out of the ratios preserves
+   the fact_score's meaning: it measures grounding, not data hygiene.
+
 2. Call `lisp_eval` to compute the fact_score with nil-propagation:
    - form: `"(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"`
    - env: `{ "sar": <SAR value or nil>, "cvr": <CVR value or nil>, "hfr": <HFR value or nil>, "nlr": <NLR value or nil>, "claims_checked": <count> }`
@@ -277,30 +357,78 @@ cited.
    - Floor = 1 (weakest claim is model_inference): band = `medium`
    - Floor = 0 (weakest claim is unavailable/tool_no_match/rejected): band = `flagged`
 
-4. The confidence band is derived from the provenance floor — never
-   accepted from the LLM's self-assessed confidence. If the weakest
-   claim is `model_inference`, the band is `medium` regardless of what
-   the report says about its own confidence.
+4. Cap the band for unresolved source conflicts — graduated, not
+   uniform:
+   - Any unresolved `source_conflicts` finding on a quantity the report
+     cites: cap at `medium`.
+   - A `source_conflict` or `rejected` claim that the report's primary
+     conclusion depends on (load-bearing — flag it with a `why` in the
+     finding): cap at `flagged`.
+
+5. Cap the band for self-assessment. The report carries a `decoupling`
+   field: `spawn_agent` (the verifier ran as a separate agent with no
+   shared conversation history) or `in_thread` (the same agent that
+   produced the text ran this skill in its own conversation). An
+   `in_thread` run by the report's generator is a self-check — the
+   monitoring paradox applies — so its band caps at `medium` even when
+   every claim is strength 2. The party being monitored cannot be the
+   sole monitor; a `high` band requires decoupled execution.
+
+6. The confidence band is derived — from the provenance floor and the
+   caps above — never accepted from the LLM's self-assessed confidence.
+   If the weakest claim is `model_inference`, the band is `medium`
+   regardless of what the report says about its own confidence.
 
 ### Step 7 — Emit verification report
 
 1. Emit the verification report with:
    - `fact_score`: numeric or nil
    - `fact_score_breakdown`: { sar, cvr, hfr, nlr, claims_checked }
-   - `confidence_band`: high / medium / flagged (from Step 6)
+   - `confidence_band`: high / medium / flagged (from Step 6, after the
+     conflict and decoupling caps)
    - `confidence_adjustment`: numeric penalty (0 / -0.10 / -0.20)
+   - `decoupling`: spawn_agent | in_thread — mandatory. A consumer must
+     be able to tell a decoupled audit from a self-check.
    - `verified_claims`: append-only registry of all claims with
      provenance tier, source reference, `why`, cross_check result
-   - `hallucination_findings`: list of claims reclassified as `rejected`
-     with source mismatch details
+   - `hallucination_findings`: claims reclassified as `rejected`, with
+     source mismatch details, prior and corrected values, severity
+   - `rounding_notes`: (claim, claimed, computed) entries that passed
+     within one unit of the last decimal (class W)
+   - `source_conflicts`: cross-source findings with both values, both
+     sources/periods, relative difference, precedence disposition,
+     severity (class N)
    - `narrative_leaks`: list of (field, block, rule, matched_text)
    - `data_gaps`: list of failed verifications, missing sources, nil
      sub-metrics — never empty if anything failed
+   - `error_log`: the graduated-sanctions log compiled per item 3
    - `verification_scope_limitations`: honest disclosure of what the
      fact score does not cover (completeness, reasoning quality,
-     plausible fabrications, selective omission)
+     plausible fabrications, selective omission) — plus whether the
+     consistency pass ran (were `congruence_rules` provided?)
 
-2. The `verified_claims` registry is append-only within a verification
+2. Every finding carries a severity and a recommended disposition —
+   graduated sanctions, not uniform punishment:
+   - trivial (rounding): note in the error log; no correction
+   - low (single figure, conclusion unaffected): note; correction
+     optional
+   - medium (changes a supporting figure): the calling pipeline
+     corrects inline with attribution
+   - high (changes the primary conclusion): surface immediately — do
+     not hold it back for the full report; the pipeline must re-examine
+     the conclusion
+   - critical (invalidates a section): surface immediately; the pipeline
+     must withdraw the section
+   The skill emits severity and disposition; the calling pipeline
+   executes corrections. This skill is the verifier, not the generator.
+
+3. Compile the error log: call `render_template` with
+   - template_ref: `grounding-verify/compile-error-log`
+   - context: `{ "hallucination_findings": {{ hallucination_findings }}, "rounding_notes": {{ rounding_notes }}, "source_conflicts": {{ source_conflicts }} }`
+   The log is append-only within the run — a correction records both
+   the prior and the corrected value; it never erases the original.
+
+4. The `verified_claims` registry is append-only within a verification
    run. A claim verified as `tool_verified` stays `tool_verified`. A
    claim that failed verification stays `rejected` — it does not get
    re-classified when new sources are added. This prevents the
@@ -314,6 +442,10 @@ convergence signal is the fact_score itself:
 - `fact_score < 0.60` or `fact_score = nil`: verification fails, the
   calling pipeline re-enters with fact-check gaps injected.
 
+A finding with severity high or critical surfaces immediately,
+regardless of the fact_score — an error that changes the primary
+conclusion is not held back to keep the score presentable.
+
 The calling pipeline (not this skill) handles the convergence loop —
 this skill is the verifier, not the generator.
 
@@ -322,8 +454,9 @@ this skill is the verifier, not the generator.
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, numeric/derivation forms for numbers). Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value` and `unit` of its last decimal place. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
+| `compile-error-log.j2` | Compile the graduated-sanctions error log from all findings — `hallucination_findings` (class E), `rounding_notes` (class W), `source_conflicts` (class N) — into one append-only table with ID, class, claim, description, prior value, corrected value, severity, disposition, and a materiality `why`. |
 
 To render a template, call `render_template` with the template ref (e.g.,
 `grounding-verify/extract-claims`) and a context object with the required
@@ -348,6 +481,35 @@ The skill is also usable **standalone** — a user provides a text and its
 source outputs, and the skill produces a fact_score and verified_claims
 registry.
 
+**This skill is one layer of a nested verification stack, not the whole
+stack.** Each layer catches a different error type, and no single layer
+is expected to catch everything:
+
+- Inline arithmetic — the `platform_derived` cross_check forms ARE the
+  deterministic math audit: the derivation is stated once and the
+  interpreter evaluates it. No separate math-auditor agent is needed;
+  an LLM re-deriving LLM arithmetic is a weaker check than `lisp_eval`.
+- Claim grounding — this skill (fact_score, provenance floor).
+- Decoupled re-execution — composing this skill as a `spawn_agent` call
+  (no shared conversation history) for publication-grade reports.
+- User review — the operator is the final authority; `fact_score >= 0.80`
+  means "claims are grounded," never "the report is correct."
+
+**When composing as `spawn_agent`, pass the source outputs in the task.**
+Spawned agents do not reliably reach external MCP tools; a verifier
+asked to pull its own data will silently fall back to training-data
+estimates that look like tool output (observed 2026-09-07, VCP testing).
+A verifier that reports values absent from the passed source outputs is
+fabricating, not verifying.
+
+**Congruence rules live with the composing pipeline.** This skill is
+domain-general; the domain-specific table (which tool is authoritative
+for which quantity, what tolerance applies) is supplied via context by
+the pipeline that knows the domain — e.g., the equity table
+(`income_statement` over `key_metrics` back-calculation, `stock_quote`
+for market cap) belongs to company-research-deep/flash's context
+construction, not to this skill's body.
+
 ## Cross-Skill Composition
 
 - Step 1 reuses `structured-extraction` (claim extraction as
@@ -364,6 +526,10 @@ registry.
 - The confidence band from provenance floor is adapted from Fermi's
   `hud_contract.rs` (`confidence_for` derived from provenance verdict,
   never accepted from the model).
+- The conflict precedence hierarchy, graduated finding severity, and
+  decoupling observability are adapted from the Verification Commons
+  Protocol v1.0 (2026-09-07), which grounds research verification in
+  Ostrom's design principles for governing common-pool resources.
 
 ## Constraints
 
@@ -379,9 +545,10 @@ registry.
 - Citation verification is mechanical (`lisp_eval` `string-contains` for
   quotes, `lisp_eval` numeric match for numbers), not model-mediated. The
   LLM finds and points; the process verifies.
-- Every `tool_verified` claim must carry a `cross_check` specification.
-  A `tool_verified` claim with no cross-check is a claim nobody can
-  falsify — reclassify as `model_inference` with a `why`.
+- Every `tool_verified` and `platform_derived` claim must carry a
+  `cross_check` specification. A strength-2 claim with no cross-check
+  is a claim nobody can falsify — reclassify as `model_inference` with
+  a `why`.
 - Each claim entry carries a `why` field (minimum 40 characters). Short
   justifications are rejected by the Step 2 validation call (count > 0
   re-enters Step 2) — an unexplained disposition is how a contract rots.
@@ -400,6 +567,26 @@ registry.
   fact score covers factuality, not completeness or reasoning quality.
 - When composed as a `spawn_agent` call, the verifier has no shared
   conversation history with the generator (self-improvement §9.1).
+- The empty-env dependency check: a `platform_derived` cross_check form
+  evaluated against env `{}` must fail with an unbound-symbol error. A
+  form that returns a value without the input env embeds its answer as
+  a literal — reclassify the claim as `model_inference` and record the
+  finding.
+- `source_conflicts` are findings, not provenance values. The closed
+  vocabulary is unchanged; a conflict rejects neither claim. Conflicts
+  cap the confidence band and enter the error log; they never enter
+  the fact_score ratios.
+- The `decoupling` field is mandatory in the verification report. An
+  `in_thread` run by the report's generator is a self-check — its
+  confidence band caps at `medium` no matter how strong the claims
+  are.
+- The error log is append-only within a run: every correction records
+  both the prior and the corrected value. Findings carry severity
+  (trivial/low/medium/high/critical) and a recommended disposition;
+  the calling pipeline executes corrections — this skill emits
+  findings, it does not rewrite the report.
+- Findings with severity high or critical surface immediately,
+  regardless of the fact_score.
 - If any tool call fails (`render_template`, `lisp_eval`), call
   `curator_report_skill_use_issue` with `skill_name: "grounding-verify"`,
   the failed tool, and the error — then continue with the best available

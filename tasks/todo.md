@@ -69,10 +69,10 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Active-at-scan work distills when later idle without a new turn or restart. (`later_pass_distills_thread_that_went_idle_without_a_new_turn`; RED pre-fix observed)
   - [x] Transient pre-watermark inference failure retries; successful work is not unnecessarily replayed. (`transient_inference_failure_is_retried_on_the_next_pass` RED pre-fix; `cursor_progresses_and_successful_work_is_not_replayed` control)
   - [x] Watermark-before-insert/startup bounds preserved; pending-work policy resolved; real cursor progression tested. (Pending set bounded at 128 with warn-on-eviction — surfaced to operator for ratification at Checkpoint B; `scan_failure_does_not_advance_the_cursor`, `first_pass_scan_is_bounded_to_the_startup_lookback`, timer-firing and >1h-cadence tests; obsolete 3600s poll clamp removed per the T17 ruling. Suite 26/26, check/clippy/rustfmt clean. Evidence in plan.md T04.)
-- [ ] **T05 — Reserve session authorization before external dispatch** (no technical dependency; settlement policy gate)
-  - [ ] Concurrent shared-store authorization cannot oversubscribe the session or dispatch beyond capacity.
-  - [ ] Success settles once; proven pre-dispatch rejection releases only its reservation; existing ceilings/single-use controls pass.
-  - [ ] Ambiguous post-acceptance/persistence failure retains durable evidence across restart; recovery policy ratified before coding.
+- [x] **T05 — Reserve session authorization before external dispatch** (no technical dependency; settlement policy gate) — **verified 2026-09-08** (policy ratified by operator at task start: retain+surface on ambiguity; proven rejections = connect-phase/construction failures + all HTTP error responses; all three paths fixed; single-use under the same policy)
+  - [x] Concurrent shared-store authorization cannot oversubscribe the session or dispatch beyond capacity. (Two stores on one SQLite file; both race tests RED pre-fix "oversubscribed"; exactly one POST served.)
+  - [x] Success settles once; proven pre-dispatch rejection releases only its reservation; existing ceilings/single-use controls pass. (Reservation-at-authorize; `settle_success` deleted; connection-refused/HTTP-rejection controls.)
+  - [x] Ambiguous post-acceptance/persistence failure retains durable evidence across restart; recovery policy ratified before coding. (Hold across reopen; retry refused; uncertainty surfaced; 133/133 suite, clippy/rustfmt clean. Evidence in plan.md T05.)
 - [ ] **T06 — Preserve replay protection after agent creation** (no dependency)
   - [ ] Post-spawn failure plus retry produces one agent and an explicit replay/pending/partial outcome.
   - [ ] Concurrent same-key attempts and reopened durable claims remain protected within the existing TTL.

@@ -963,6 +963,41 @@ fn main() {
             ));
         }
 
+        // zed-kask: skill outcome recording — the write side of the per-skill
+        // feedback loop. `SkillTool::run` fires `agent::record_skill_outcome`
+        // at its outcome points; this closure stores each outcome as a
+        // `reg.skill.<id>.outcome` span payload in the shared RegulationLedger
+        // (`record_skill_span`), which the metacognition loop's
+        // `sense_feedback_drift` reads for per-skill success-rate decline.
+        // Until this wiring (2026-09-08) the read side shipped with no writer —
+        // the store was permanently empty and drift sensing could never fire.
+        // Same tokio-spawn shape as the MCP outcome recorder above
+        // (`record_skill_span` is a tokio-RwLock future).
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_skill_outcomes = regulation_ledger.clone();
+            agent::set_skill_outcome_recorder(std::sync::Arc::new(
+                move |skill_id, success, error| {
+                    let skill_id = skill_id.to_string();
+                    let error = error.map(str::to_string);
+                    // Clone per call — the closure is `Fn` (invoked for every
+                    // skill activation), so it cannot move the captured ledger
+                    // into the spawned future.
+                    let ledger = ledger_for_skill_outcomes.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        let mut payload = serde_json::json!({ "success": success });
+                        if let Some(error) = error {
+                            payload["error"] = serde_json::json!(error);
+                        }
+                        ledger
+                            .record_skill_span(&skill_id, "outcome", payload)
+                            .await;
+                    });
+                },
+            ));
+        }
+
         // zed-kask: single spawn authority (I1, 2026-08-29). The governed
         // McpRuntime is the agent's kask tool source: kask servers are no
         // longer registered with the per-project ContextServerStore (that
