@@ -579,7 +579,6 @@ impl KanbanServer {
             criteria,
             advances,
             idempotency_key,
-            rjoule_budget,
         }): Parameters<TaskCreateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(
@@ -599,9 +598,6 @@ impl KanbanServer {
                         spec = spec.with_criteria(
                             cs.into_iter().map(VerificationCriterion::new).collect(),
                         );
-                    }
-                    if let Some(rj) = rjoule_budget {
-                        spec.rjoule_budget = Some(rj);
                     }
                     let mut citations = Vec::with_capacity(advances.len());
                     for citation in advances {
@@ -739,7 +735,6 @@ impl KanbanServer {
                                 assignee: t.assignee.map(|a| a.to_string()),
                                 criteria_count: t.criteria.len(),
                                 advances_count: t.advances.len(),
-                                rjoule_remaining: t.rjoule_remaining,
                                 swarm_id: t.swarm_id,
                                 activity,
                                 ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
@@ -895,29 +890,6 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Add rJoules to a task's inference/API budget (250k ≈ $1 spend)")]
-    pub async fn kanban_task_add_rjoules(
-        &self,
-        Parameters(TaskAddRjoulesRequest { task_id, amount }): Parameters<TaskAddRjoulesRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_task_add_rjoules", async {
-            let tid = parse_task_id(&task_id)?;
-            if amount == 0 {
-                return Err(McpToolError::invalid_argument("amount must be > 0"));
-            }
-            match self.service.task_add_rjoules(tid, amount, self.webid) {
-                Ok(task) => Ok(serde_json::to_value(TaskAddRjoulesResponse {
-                    task_id: task.id.to_string(),
-                    new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
-                    ontology: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                Err(e) => Err(map_kanban_error(e)),
-            }
-        })
-        .await
-    }
-
     #[tool(
         description = "Add a comment to a task (feedback thread for subagent↔agent communication)"
     )]
@@ -1013,27 +985,16 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(
-        description = "Reopen a completed task (Done → InProgress) with optional new rJoule budgets"
-    )]
+    #[tool(description = "Reopen a completed task (Done → InProgress)")]
     pub async fn kanban_task_reopen(
         &self,
-        Parameters(TaskReopenRequest {
-            task_id,
-            rjoule_budget,
-        }): Parameters<TaskReopenRequest>,
+        Parameters(TaskReopenRequest { task_id }): Parameters<TaskReopenRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_reopen", async {
             let tid = parse_task_id(&task_id)?;
             self.service
                 .task_reopen(tid, self.webid)
                 .map_err(map_kanban_error)?;
-            // Apply new budgets if specified
-            if let Some(r) = rjoule_budget {
-                self.service
-                    .task_add_rjoules(tid, r, self.webid)
-                    .map_err(map_kanban_error)?;
-            }
             // Re-read to get final state
             let task = self
                 .service
@@ -1043,7 +1004,6 @@ impl KanbanServer {
             serde_json::to_value(TaskReopenResponse {
                 task_id: task.id.to_string(),
                 new_status: task.status.to_string(),
-                rjoule_remaining: task.rjoule_remaining,
                 ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
@@ -1111,7 +1071,7 @@ impl KanbanServer {
     /// on the task as a structured `LocalDelegateResult` + verdict. See
     /// `tasks/kanban-worktree-terminal-model.md` for the design (Option A:
     /// implemented).
-    #[tool(description = "Spawn a subagent for task execution with delegated skills and budgets")]
+    #[tool(description = "Spawn a subagent for task execution with delegated skills")]
     pub async fn kanban_task_spawn(
         &self,
         Parameters(TaskSpawnRequest {
@@ -1120,7 +1080,6 @@ impl KanbanServer {
             delegation_level,
             delegated_skills,
             memory_scope,
-            rjoule_budget,
             swarm_id,
         }): Parameters<TaskSpawnRequest>,
     ) -> Result<String, McpToolError> {
@@ -1136,7 +1095,6 @@ impl KanbanServer {
                         &task_id,
                         &delegation_level,
                         &memory_scope,
-                        &rjoule_budget,
                     )?;
                     let skills_for_agent = delegated_skills.clone();
                     let spec = crate::SpawnSpec::new(tid)
@@ -1204,7 +1162,6 @@ impl KanbanServer {
         task_id: &str,
         delegation_level: &str,
         memory_scope: &Option<String>,
-        _rjoule_budget: &Option<u64>,
     ) -> Result<hkask_types::TaskId, McpToolError> {
         let tid = parse_task_id(task_id)?;
         match delegation_level {

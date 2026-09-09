@@ -12,7 +12,6 @@
 //! - `types` — `KanbanError`
 //! - `comments` — Task-level comment threads
 //! - `decompose` — Task decomposition operations
-//! - `dejam` — Stuck-task detection and auto-fix
 //! - `kata` — Kata cycle execution on tasks
 //! - `phases` — Board phase management
 //! - `spawn` — Agent spawn from task specs
@@ -20,14 +19,13 @@
 // Imports needed by child submodules via `use super::*`
 #[allow(unused_imports)]
 use crate::kanban::{
-    Comment, KanbanPhase, Priority, SpawnSpec, SpendEntry, Task, TaskFilter, TaskSpec, TaskStatus,
+    Comment, KanbanPhase, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
     Verification, VerificationCriterion,
 };
 use hkask_types::WebID;
 use hkask_types::id::TaskId;
 
 pub(crate) mod comments;
-pub(crate) mod dejam;
 pub(crate) mod goals;
 pub(crate) mod kata;
 pub(crate) mod phases;

@@ -117,7 +117,6 @@ async fn create_task(
             description: None,
             criteria: None,
             advances: Vec::new(),
-            rjoule_budget: None,
             idempotency_key: key.map(str::to_string),
         }))
         .await?;
@@ -671,7 +670,6 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
             delegation_level: "standard".to_string(),
             delegated_skills: vec![],
             memory_scope: None,
-            rjoule_budget: None,
             swarm_id: None,
         }))
         .await

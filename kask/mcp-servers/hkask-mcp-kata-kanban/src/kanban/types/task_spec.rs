@@ -28,8 +28,6 @@ pub(crate) struct TaskSpec {
     pub priority: Option<Priority>,
     /// Optional phase grouping.
     pub phase_id: Option<PhaseId>,
-    /// Inference/API rJoule budget (250k rJoules ≈ $1 inference spend).
-    pub rjoule_budget: Option<u64>,
 }
 
 impl TaskSpec {
@@ -48,7 +46,6 @@ impl TaskSpec {
             labels: Vec::new(),
             priority: None,
             phase_id: None,
-            rjoule_budget: None,
         }
     }
 

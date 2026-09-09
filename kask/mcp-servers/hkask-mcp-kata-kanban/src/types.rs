@@ -242,10 +242,6 @@ pub struct TaskCreateRequest {
     /// [`BoardCreateRequest::idempotency_key`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
-
-    /// Inference/API rJoule budget (250k ≈ $1 spend).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rjoule_budget: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -303,8 +299,6 @@ pub struct TaskInfo {
     pub criteria_count: usize,
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rjoule_remaining: Option<u64>,
     /// The swarm this task belongs to, when coordinated via a local swarm.
     /// Mirrors `Task.swarm_id` so the kanban widget can render a visible
     /// swarm↔kanban link on the card (R1).
@@ -372,22 +366,6 @@ pub(crate) struct TaskVerifyResponse {
     pub ontology: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskAddRjoulesRequest {
-    pub task_id: String,
-    /// Amount of rJoules to add to the inference/API budget.
-    pub amount: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskAddRjoulesResponse {
-    pub task_id: String,
-    pub new_rjoule_remaining: u64,
-    /// Ontology concept: <https://www.w3.org/ns/prov#used>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
-}
-
 // ── Comments ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -447,16 +425,12 @@ pub(crate) struct TaskAddDeliverableResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskReopenRequest {
     pub task_id: String,
-    /// Optional new rJoule budget to grant on reopen.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rjoule_budget: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskReopenResponse {
     pub task_id: String,
     pub new_status: String,
-    pub rjoule_remaining: Option<u64>,
     /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -505,8 +479,8 @@ pub struct TaskSpawnRequest {
     pub task_id: String,
     /// Opaque client-generated key making this spawn replay-safe.
     ///
-    /// Load-bearing here beyond duplicate rows: a spawn burns rJoules and starts a
-    /// subagent, so a blind retry costs real budget. See
+    /// Load-bearing here beyond duplicate rows: a spawn starts a second
+    /// subagent, so a blind retry duplicates work. See
     /// [`BoardCreateRequest::idempotency_key`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
@@ -518,9 +492,6 @@ pub struct TaskSpawnRequest {
     /// Memory scope: "none", "episodic", or "full".
     #[serde(default)]
     pub memory_scope: Option<String>,
-    /// rJoule budget to grant on spawn.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rjoule_budget: Option<u64>,
     /// The swarm this task belongs to, when the task is coordinated via a
     /// local swarm. Written to `Task.swarm_id` by `KanbanService::spawn_task`
     /// so `kanban_task_delegate_result` returns the durable link. `None` when

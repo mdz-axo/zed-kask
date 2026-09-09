@@ -24,9 +24,9 @@
 // The vocabulary is the bridge crate's — re-exported so call sites that
 // reference `pko::<CONSTANT>` keep resolving unchanged.
 pub use hkask_bridge_ontology::pko::{
-    AGENT, CHANGE_OF_STATUS, ERROR, HAS_EXPECTED_DURATION, ISSUE_OCCURRENCE, PROCEDURE,
-    PROCEDURE_EXECUTION, PROCEDURE_EXECUTION_STATUS, STEP, STEP_EXECUTION, STEP_VERIFICATION, USED,
-    USER_FEEDBACK_OCCURRENCE, USER_QUESTION_OCCURRENCE, WAS_ASSOCIATED_WITH, WAS_GENERATED_BY,
+    AGENT, CHANGE_OF_STATUS, HAS_EXPECTED_DURATION, PROCEDURE, PROCEDURE_EXECUTION,
+    PROCEDURE_EXECUTION_STATUS, STEP, STEP_EXECUTION, STEP_VERIFICATION, USER_FEEDBACK_OCCURRENCE,
+    USER_QUESTION_OCCURRENCE, WAS_ASSOCIATED_WITH, WAS_GENERATED_BY,
 };
 
 /// A PKO concept curie — namespace-prefixed short form.
@@ -58,11 +58,8 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "kanban_task_verify" | "Verification" | "VerificationCriterion" => Some(STEP_VERIFICATION),
         "Comment" | "kanban_task_comment" => Some(USER_FEEDBACK_OCCURRENCE),
         "Comment.question" | "kanban_task_kata_prompt" => Some(USER_QUESTION_OCCURRENCE),
-        "UnjamItem" | "kanban_unjam" => Some(ISSUE_OCCURRENCE),
-        "UnjamItem.error" => Some(ERROR),
         "Assignee" | "kanban_task_assign" => Some(WAS_ASSOCIATED_WITH),
         "Deliverable" | "kanban_task_add_deliverable" => Some(WAS_GENERATED_BY),
-        "SpendEntry" | "kanban_task_add_rjoules" => Some(USED),
         "estimated_hours" => Some(HAS_EXPECTED_DURATION),
         "Agent" | "assignee" => Some(AGENT),
         _ => None,

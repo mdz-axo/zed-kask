@@ -47,10 +47,6 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     /// When the task was last updated.
     pub updated_at: DateTime<Utc>,
-    /// rJoules remaining for inference/API calls (250k ≈ $1 spend).
-    pub rjoule_remaining: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) spend_log: Vec<SpendEntry>,
     /// The swarm this task belongs to, when the task is coordinated via a
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable
@@ -103,8 +99,6 @@ impl Task {
             phase_id: None,
             created_at: now,
             updated_at: now,
-            rjoule_remaining: spec.rjoule_budget,
-            spend_log: Vec::new(),
             swarm_id: None,
             delegate_result: None,
             deterministic_verdict: None,

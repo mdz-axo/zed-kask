@@ -608,29 +608,6 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
     );
 }
 
-#[test]
-fn rjoule_exhaust_stamps_rjoule_reason() {
-    // rJoule exhaustion marks the task Done with an rJoule-specific
-    // verification reason.
-    let (svc, board, owner) = make_service_with_board();
-    let mut spec = TaskSpec::new("Inference-heavy task".into());
-    spec.rjoule_budget = Some(0);
-    let task = svc.task_create(board.id, spec, owner).unwrap();
-
-    let exhausted = svc.task_rjoule_exhaust(task.id).unwrap();
-    assert_eq!(exhausted.status, TaskStatus::Done);
-    let verification = exhausted.verification.expect("verification stamped");
-    assert!(!verification.passed, "exhaustion is a failed verification");
-    assert_eq!(
-        verification.verifier, task.owner,
-        "verifier is the task owner"
-    );
-    assert_eq!(
-        verification.reasoning,
-        "rJoules exhausted — inference budget consumed."
-    );
-}
-
 // ── Mermaid export/import round-trip integration tests ───────────────────
 //
 // These tests exercise the full round-trip through the kanban service layer:

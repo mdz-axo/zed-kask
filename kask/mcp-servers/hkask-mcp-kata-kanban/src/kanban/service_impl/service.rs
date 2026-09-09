@@ -21,8 +21,8 @@ use serde_json::Value;
 use super::types::KanbanError;
 
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, Priority, SpendEntry, Task, TaskFilter, TaskSpec,
-    TaskStatus, Verification, VerificationCriterion,
+    Board, ColumnDef, CriterionCitation, Priority, Task, TaskFilter, TaskSpec, TaskStatus,
+    Verification, VerificationCriterion,
 };
 
 /// Core kanban coordination service.
@@ -63,14 +63,10 @@ impl KanbanService {
         }
     }
 
-    /// Create a task-scoped rJoule accountant bound to a specific kanban task.
+    /// Authority check: the actor must be the task owner or assignee.
     ///
-    /// The accountant decrements `task.rjoule_remaining` via `task_consume_rjoules`
-    /// after each inference call. Attach it to skill execution
-    /// to close the per-task rJoule feedback loop.
-    ///
-    /// pre:  task_id refers to an existing task with an rJoule budget set
-    /// post: returns a callback that deducts from the task's rJoule budget
+    /// pre:  task refers to an existing task
+    /// post: returns Ok iff actor is the task owner or the current assignee
     pub(super) fn require_task_actor(task: &Task, actor: WebID) -> Result<(), KanbanError> {
         if task.owner == actor || task.assignee == Some(actor) {
             Ok(())
@@ -680,8 +676,7 @@ impl KanbanService {
     /// authority. This is consistent with kanban semantics where the task
     /// creator owns the task lifecycle. The assignee's consent is not required
     /// for unassignment because the owner bears the responsibility for the
-    /// task's completion. The `unjam_fix` auto-unassign uses the same path
-    /// with `task.owner` as the actor after a 24h idle timeout.
+    /// task's completion.
     ///
     /// pre:  task_id is valid; actor is the task owner
     /// post: task.assignee is set to None; task.updated_at refreshed
@@ -770,35 +765,6 @@ impl KanbanService {
         task.verification = None;
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
-        Ok(task)
-    }
-
-    /// Add rJoules to a task's inference/API budget.
-    ///
-    /// Called by the delegating agent to refill a subagent's rJoule budget
-    /// so it can continue work after exhausting its initial budget.
-    #[must_use = "result must be used"]
-    pub(crate) fn task_add_rjoules(
-        &self,
-        task_id: TaskId,
-        amount: u64,
-        actor: WebID,
-    ) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_owner(&task, actor)?;
-        let current = task.rjoule_remaining.unwrap_or(0);
-        task.rjoule_remaining = Some(current.saturating_add(amount));
-        task.spend_log.push(SpendEntry::rjoule_refill(amount));
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-        tracing::info!(
-            target: "hkask.kanban",
-            operation = "task_rjoules_added",
-            task_id = %task_id,
-            added = amount,
-            new_remaining = task.rjoule_remaining,
-            "REG"
-        );
         Ok(task)
     }
 
@@ -893,10 +859,6 @@ impl KanbanService {
 
         Ok(deleted_count)
     }
-
-    // ── De-jamming ────────────────────────────────────────────────────
-
-    // Moved to dejam.rs.
 
     // ── LLM Verification ──────────────────────────────────────────────
 

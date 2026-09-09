@@ -9,7 +9,7 @@
 //!
 //! The split is deliberate: the MCP tools return a sync `String` for immediate
 //! human display; the registry templates run skill execution with
-//! rJoule accounting and step chaining. This module gathers the task-specific
+//! step chaining. This module gathers the task-specific
 //! evidence (criteria, deliverables, comments, status) that makes the display
 //! useful, then points the learner to the canonical skill for the methodology.
 //!
