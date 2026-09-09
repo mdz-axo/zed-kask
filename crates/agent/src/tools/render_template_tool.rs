@@ -298,8 +298,8 @@ fn strip_frontmatter(content: &str) -> String {
 }
 
 /// Bind a loader that resolves `{% include %}` names against the registry
-/// templates base, so shared fragments (e.g. coding-guidelines/anti-patterns.j2)
-/// are reachable from the templates that include them. Included templates get
+/// templates base, so shared fragments are reachable from the templates
+/// that include them. Included templates get
 /// the same frontmatter stripping as the top-level render, so a fragment's
 /// `[inference]` header never leaks into the rendered prompt. Names that
 /// escape the base directory resolve to not-found — the same traversal
@@ -415,44 +415,6 @@ mod tests {
         let rendered = env.render_str(&result, &()).unwrap();
         assert!(rendered.contains("You are a kanban task management triage agent."));
         assert!(!rendered.contains("{#"));
-    }
-
-    #[test]
-    fn test_include_resolves_fragment_within_registry() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
-        let mut env = minijinja::Environment::new();
-        bind_registry_loader(&mut env, &base);
-        let rendered = env
-            .render_str(
-                "{% include \"coding-guidelines/anti-patterns.j2\" %}",
-                serde_json::json!({}),
-            )
-            .unwrap();
-        assert!(rendered.contains("Unsolicited docstring/formatting changes"));
-    }
-
-    #[test]
-    fn test_include_strips_included_template_header() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
-        let mut env = minijinja::Environment::new();
-        bind_registry_loader(&mut env, &base);
-        let rendered = env
-            .render_str(
-                "{% include \"kanban-task-management/triage.j2\" %}",
-                serde_json::json!({}),
-            )
-            .unwrap();
-        // The included template's [inference] header and contract are
-        // stripped exactly as a top-level render would.
-        assert!(!rendered.contains("[inference]"));
-        assert!(!rendered.contains("contract:"));
-        assert!(rendered.contains("You are a kanban task management triage agent."));
     }
 
     #[test]
@@ -692,6 +654,94 @@ mod corpus_sweep_tests {
             failed.len(),
             failed.join("\n  ")
         );
+    }
+
+    /// Generic, not a name list: every `{% include %}` directive in the
+    /// corpus must resolve through the registry loader and render without
+    /// leaking the included template's header. Include names are extracted
+    /// from the shipped templates at test time — file names belong to the
+    /// skills that own them, not to this crate.
+    #[test]
+    fn corpus_includes_resolve_and_strip() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates");
+        let base = base.canonicalize().expect("templates dir exists in repo");
+
+        let mut checked = 0usize;
+        let mut failed = Vec::new();
+        for entry in walkdir(&base) {
+            let content = std::fs::read_to_string(&entry).expect("read template");
+            for (line_idx, line) in content.lines().enumerate() {
+                let Some(include_name) = extract_include_name(line) else {
+                    continue;
+                };
+                checked += 1;
+                let mut env = minijinja::Environment::new();
+                bind_registry_loader(&mut env, &base);
+                match env.render_str(
+                    &format!("{{% include \"{include_name}\" %}}"),
+                    serde_json::json!({}),
+                ) {
+                    Ok(rendered) => {
+                        // Leading header markers must not survive — the same
+                        // leak convention as the strip sweep (first lines
+                        // only; mid-prose mentions are legitimate).
+                        for (idx, out_line) in rendered.lines().take(5).enumerate() {
+                            let trimmed = out_line.trim();
+                            if trimmed.starts_with("[inference]")
+                                || trimmed.starts_with("[contract]")
+                                || trimmed.starts_with("template_type:")
+                            {
+                                failed.push(format!(
+                                    "{} line {}: include `{include_name}` leaks `{trimmed}` at output line {}",
+                                    entry.display(),
+                                    line_idx + 1,
+                                    idx
+                                ));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        failed.push(format!(
+                            "{} line {}: include `{include_name}` failed: {err}",
+                            entry.display(),
+                            line_idx + 1
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no {{% include %}} directives found in the corpus — the scan is \
+             broken or includes were removed (delete this test with the last \
+             include; do not leave it vacuous)"
+        );
+        assert!(
+            failed.is_empty(),
+            "{} include failures across the corpus:\n  {}",
+            failed.len(),
+            failed.join("\n  ")
+        );
+    }
+
+    /// Extract the include target from a `{% include "name" %}` line, if any.
+    fn extract_include_name(line: &str) -> Option<String> {
+        let start = line.find("{%")?;
+        let rest = &line[start..];
+        let end = rest.find("%}")?;
+        let tag = &rest[..end];
+        if !tag
+            .trim_start_matches("{%")
+            .trim_start()
+            .starts_with("include")
+        {
+            return None;
+        }
+        let q1 = tag.find('"')?;
+        let after = &tag[q1 + 1..];
+        let q2 = after.find('"')?;
+        Some(after[..q2].to_string())
     }
 
     /// Recursive .j2 walk (mirrors agent_skills/build.rs's collector).

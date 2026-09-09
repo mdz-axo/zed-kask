@@ -102,9 +102,12 @@ fn main() {
         .expect("write generated embedded_global_skills.rs");
 
     // ── Template seed payload ──
-    // Scan kask/registry/templates/ recursively for .j2 files and embed them
-    // as (relative_path, content) pairs. Seeded to disk at startup by
-    // `agent_skills::seed_templates`.
+    // Scan kask/registry/templates/ recursively for .j2/.jinja templates
+    // and .yaml reference files, and embed them as (relative_path, content)
+    // pairs. Seeded to disk at startup by `agent_skills::seed_templates`.
+    // Reference YAMLs are cited by skills from the seeded tree; without
+    // seeding, production agents (no source checkout) follow those
+    // citations into files that were never written.
     let templates_dir = repo_root.join("kask/registry/templates");
     let mut template_entries = Vec::new();
     if templates_dir.is_dir() {
@@ -203,7 +206,10 @@ fn collect_template_files(base: &PathBuf, dir: &PathBuf, out: &mut Vec<(String, 
         let path = entry.path();
         if path.is_dir() {
             collect_template_files(base, &path, out);
-        } else if path.extension().is_some_and(|e| e == "j2" || e == "jinja") {
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "j2" || e == "jinja" || e == "yaml")
+        {
             let rel = path
                 .strip_prefix(base)
                 .expect("template path under base")

@@ -2627,18 +2627,28 @@ description: A skill with no body content
             "shipped_template_seed must not be empty — build.rs scans kask/registry/templates/"
         );
 
-        // C2(a): the training chat templates are runtime-consumed non-.j2
-        // assets — the harness reads them by exact path at fine-tune launch.
-        // If the collector drops .jinja, fresh installs launch fine-tunes
-        // with no chat_template (degraded, warn-only).
-        for required in [
-            "training/chat-templates/qwen3.jinja",
-            "training/chat-templates/gemma4.jinja",
-        ] {
+        // Category invariant, not a name list: every .j2/.jinja/.yaml
+        // file in the registry templates tree must be in the seed payload —
+        // the collector's contract is "nothing of a shipped category is
+        // dropped" (chat templates are read by exact path at fine-tune
+        // launch; reference YAMLs are cited by skills from the seeded
+        // tree). File names belong to the skills that cite them, not to
+        // this crate — a name list here breaks on every content rename
+        // and silently misses every addition.
+        let templates_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../kask/registry/templates");
+        let mut shipped_on_disk = Vec::new();
+        collect_seedable_files(&templates_dir, &templates_dir, &mut shipped_on_disk);
+        assert!(
+            !shipped_on_disk.is_empty(),
+            "no seedable files found under {} — scan path broken",
+            templates_dir.display()
+        );
+        for rel in &shipped_on_disk {
             assert!(
-                seed.iter().any(|(rel, _)| *rel == required),
-                "shipped_template_seed must include `{required}` — the training \
-                 harness reads it from the seeded tree at launch"
+                seed.iter().any(|(s, _)| *s == rel.as_str()),
+                "shipped_template_seed must include `{rel}` — the collector \
+                 dropped a file the registry tree ships"
             );
         }
 
@@ -2655,6 +2665,30 @@ description: A skill with no body content
                 "seeded template '{}' does not match the compiled-in source",
                 rel_path
             );
+        }
+    }
+
+    /// Collect .j2/.jinja/.yaml relative paths from the registry templates
+    /// tree — the same category contract `build.rs`'s collector enforces.
+    /// If either side's category list changes, the seed test fails until
+    /// both agree.
+    fn collect_seedable_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).expect("read templates dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_seedable_files(base, &path, out);
+            } else if path
+                .extension()
+                .is_some_and(|e| e == "j2" || e == "jinja" || e == "yaml")
+            {
+                out.push(
+                    path.strip_prefix(base)
+                        .expect("template path under base")
+                        .to_str()
+                        .expect("UTF-8 relative path")
+                        .to_string(),
+                );
+            }
         }
     }
 

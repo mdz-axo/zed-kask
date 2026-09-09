@@ -1678,23 +1678,23 @@ async fn screener_converts_usd_bounds_per_exchange() {
                 200,
                 json!([
                     {"Code": "US", "Currency": "USD"},
-                    {"Code": "LSE", "Currency": "GBP"}
+                    {"Code": "XETRA", "Currency": "EUR"}
                 ]),
             );
         }
-        if path.starts_with("/eodhd/eod/USDGBP.FOREX") {
+        if path.starts_with("/eodhd/eod/USDEUR.FOREX") {
             // Out of chronological order — the max-by-date row must win.
             return (
                 200,
                 json!([
-                    {"date": "2026-09-08", "close": 0.75},
-                    {"date": "2026-09-07", "close": 0.74}
+                    {"date": "2026-09-08", "close": 0.8},
+                    {"date": "2026-09-07", "close": 0.79}
                 ]),
             );
         }
         if path.starts_with("/eodhd/eod/USDJPY.FOREX") {
-            // Needed for the LSE ¥ line (a Japanese company — EODHD has no
-            // Japanese exchange, so London ¥ lines are the surface).
+            // Needed for the XETRA ¥ line (a Japanese company — EODHD has no
+            // Japanese exchange, so foreign ¥ lines are the surface).
             return (200, json!([{"date": "2026-09-08", "close": 150.0}]));
         }
         if path.starts_with("/eodhd/screener") {
@@ -1708,19 +1708,160 @@ async fn screener_converts_usd_bounds_per_exchange() {
                          "currency_symbol": "$", "market_capitalization": 9_000_000_000.0}
                     ] }),
                 ),
+                Some("XETRA") => (
+                    200,
+                    json!({ "data": [
+                        {"code": "EUR1", "name": "Euro One", "exchange": "XETRA",
+                         "currency_symbol": "€", "market_capitalization": 3_200_000_000.0},
+                        {"code": "JPY1", "name": "Japan One", "exchange": "XETRA",
+                         "currency_symbol": "¥", "market_capitalization": 450_000_000_000.0},
+                        {"code": "USD1", "name": "US on XETRA", "exchange": "XETRA",
+                         "currency_symbol": "$", "market_capitalization": 5_000_000_000.0},
+                        {"code": "KR1", "name": "Nordic One", "exchange": "XETRA",
+                         "currency_symbol": "kr", "market_capitalization": 10_000_000_000.0},
+                        {"code": "EUR2", "name": "Euro Huge", "exchange": "XETRA",
+                         "currency_symbol": "€", "market_capitalization": 900_000_000_000.0}
+                    ] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US and Germany listed companies with market capitalization between 2 billion and 200 billion",
+                "limit": 10
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+
+            // Per-exchange queries carry converted bounds: XETRA at 0.8
+            // EUR/USD (2e9×0.8 = 1.6e9, 2e11×0.8 = 1.6e11), US unchanged.
+            let mut xetra_bounds = Vec::new();
+            let mut us_bounds = Vec::new();
+            for request_path in fixture.requests() {
+                match decode_screener_exchange(&request_path).as_deref() {
+                    Some("XETRA") => xetra_bounds = decode_screener_cap_bounds(&request_path),
+                    Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
+                    _ => {}
+                }
+            }
+            assert!(
+                xetra_bounds.contains(&(">=".to_string(), 1_600_000_000.0)),
+                "XETRA lower bound converted: {xetra_bounds:?}"
+            );
+            assert!(
+                xetra_bounds.contains(&("<".to_string(), 160_000_000_000.0)),
+                "XETRA upper bound converted: {xetra_bounds:?}"
+            );
+            assert!(
+                us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
+                "US lower bound unchanged: {us_bounds:?}"
+            );
+            assert!(
+                us_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
+                "US upper bound unchanged: {us_bounds:?}"
+            );
+
+            // Row-currency rules, in order of USD cap: US rows (10e9, 9e9),
+            // the € row (3.2e9/0.8 = 4e9), the ¥ row (4.5e11/150 = 3e9),
+            // then the unconverted kr row last. The $-on-XETRA line is
+            // dropped (USD is also screened), and the €9e11 row is out of
+            // band.
+            let results = output["results"].as_array().expect("results");
+            assert_eq!(results.len(), 5);
+            let codes: Vec<&str> = results
+                .iter()
+                .map(|row| row["code"].as_str().expect("code"))
+                .collect();
+            assert_eq!(codes, ["US0", "US1", "EUR1", "JPY1", "KR1"]);
+            assert_eq!(
+                results[0]["market_capitalization_usd"],
+                json!(10_000_000_000.0)
+            );
+            assert_eq!(
+                results[2]["market_capitalization_usd"],
+                json!(4_000_000_000.0)
+            );
+            assert_eq!(
+                results[3]["market_capitalization_usd"],
+                json!(3_000_000_000.0)
+            );
+            assert!(results[4]["market_capitalization_usd"].is_null());
+
+            // Counters surface every drop.
+            assert_eq!(output["foreign_lines_dropped"], json!(1));
+            assert_eq!(output["out_of_band_dropped"], json!(1));
+            assert_eq!(output["unconverted_rows"], json!(1));
+            assert_eq!(output["exchange_match_counts"]["US"], json!(2));
+            assert_eq!(output["exchange_match_counts"]["XETRA"], json!(3));
+
+            // FX transparency: rates (including the pass-2 JPY rate), as-of
+            // date, and the currency map used.
+            assert_eq!(output["fx"]["as_of"], json!("2026-09-08"));
+            assert_eq!(output["fx"]["usd_rates"]["EUR"], json!(0.8));
+            assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
+            assert_eq!(
+                output["fx"]["exchange_currencies"]["XETRA"],
+                json!("EUR")
+            );
+            assert_eq!(output["fx"]["exchange_currencies"]["US"], json!("USD"));
+
+            // exchanges-list + USDEUR + two screener queries + pass-2 USDJPY
+            assert_eq!(fixture.count(), 5);
+        })
+        .await;
+}
+
+/// expect: [P5] A mixed-currency exchange (London's IOB hosts ¥ lines) is
+/// queried UNBOUNDED — server-side bounds in the exchange's currency would
+/// numerically exclude every foreign-currency row — and its rows are
+/// selected by the row-currency rules and client-side band enforcement.
+/// dcterms:identifier: CompaniesServer::company_screener / MIXED_CURRENCY_EXCHANGES
+#[tokio::test]
+async fn screener_mixed_currency_exchange_queries_unbounded() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (
+                200,
+                json!([
+                    {"Code": "US", "Currency": "USD"},
+                    {"Code": "LSE", "Currency": "GBP"}
+                ]),
+            );
+        }
+        if path.starts_with("/eodhd/eod/USDGBP.FOREX") {
+            return (200, json!([{"date": "2026-09-08", "close": 0.75}]));
+        }
+        if path.starts_with("/eodhd/eod/USDJPY.FOREX") {
+            return (200, json!([{"date": "2026-09-08", "close": 150.0}]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("US") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "US0", "name": "US Zero", "exchange": "US",
+                        "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
+                    }] }),
+                ),
                 Some("LSE") => (
                     200,
                     json!({ "data": [
                         {"code": "GBP1", "name": "UK One", "exchange": "LSE",
                          "currency_symbol": "£", "market_capitalization": 3_000_000_000.0},
-                        {"code": "JPY1", "name": "Japan One", "exchange": "LSE",
-                         "currency_symbol": "¥", "market_capitalization": 450_000_000_000.0},
-                        {"code": "USD1", "name": "US on London", "exchange": "LSE",
-                         "currency_symbol": "$", "market_capitalization": 5_000_000_000.0},
-                        {"code": "KR1", "name": "Nordic One", "exchange": "LSE",
-                         "currency_symbol": "kr", "market_capitalization": 10_000_000_000.0},
-                        {"code": "GBP2", "name": "UK Huge", "exchange": "LSE",
-                         "currency_symbol": "£", "market_capitalization": 900_000_000_000.0}
+                        {"code": "JPY1", "name": "Japan on London", "exchange": "LSE",
+                         "currency_symbol": "¥", "market_capitalization": 450_000_000_000.0}
                     ] }),
                 ),
                 _ => (200, json!({ "data": [] })),
@@ -1744,8 +1885,8 @@ async fn screener_converts_usd_bounds_per_exchange() {
                     .expect("screener tool"),
             );
 
-            // Per-exchange queries carry converted bounds: LSE at 0.75
-            // GBP/USD (2e9×0.75 = 1.5e9, 2e11×0.75 = 1.5e11), US unchanged.
+            // The LSE query carries NO cap bounds (unbounded — a GBP
+            // ceiling would exclude the ¥ line); the US query is bounded.
             let mut lse_bounds = Vec::new();
             let mut us_bounds = Vec::new();
             for request_path in fixture.requests() {
@@ -1755,63 +1896,23 @@ async fn screener_converts_usd_bounds_per_exchange() {
                     _ => {}
                 }
             }
-            assert!(
-                lse_bounds.contains(&(">=".to_string(), 1_500_000_000.0)),
-                "LSE lower bound converted: {lse_bounds:?}"
-            );
-            assert!(
-                lse_bounds.contains(&("<".to_string(), 150_000_000_000.0)),
-                "LSE upper bound converted: {lse_bounds:?}"
-            );
-            assert!(
-                us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
-                "US lower bound unchanged: {us_bounds:?}"
-            );
-            assert!(
-                us_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
-                "US upper bound unchanged: {us_bounds:?}"
-            );
+            assert!(lse_bounds.is_empty(), "LSE must be queried unbounded: {lse_bounds:?}");
+            assert!(us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)));
 
-            // Row-currency rules, in order of USD cap: US rows (10e9, 9e9),
-            // the £ row (3e9/0.75 = 4e9), the ¥ row (4.5e11/150 = 3e9), then
-            // the unconverted kr row last. The $-on-London line is dropped
-            // (USD is also screened), and the £9e11 row is out of band.
+            // Both the £ row (3e9/0.75 = $4B) and the ¥ row (4.5e11/150 =
+            // $3B) survive — the Japan path — ranked below the US row.
             let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 5);
+            assert_eq!(results.len(), 3);
             let codes: Vec<&str> = results
                 .iter()
                 .map(|row| row["code"].as_str().expect("code"))
                 .collect();
-            assert_eq!(codes, ["US0", "US1", "GBP1", "JPY1", "KR1"]);
-            assert_eq!(
-                results[0]["market_capitalization_usd"],
-                json!(10_000_000_000.0)
-            );
+            assert_eq!(codes, ["US0", "GBP1", "JPY1"]);
             assert_eq!(
                 results[2]["market_capitalization_usd"],
-                json!(4_000_000_000.0)
-            );
-            assert_eq!(
-                results[3]["market_capitalization_usd"],
                 json!(3_000_000_000.0)
             );
-            assert!(results[4]["market_capitalization_usd"].is_null());
-
-            // Counters surface every drop.
-            assert_eq!(output["foreign_lines_dropped"], json!(1));
-            assert_eq!(output["out_of_band_dropped"], json!(1));
-            assert_eq!(output["unconverted_rows"], json!(1));
-            assert_eq!(output["exchange_match_counts"]["US"], json!(2));
-            assert_eq!(output["exchange_match_counts"]["LSE"], json!(3));
-
-            // FX transparency: rates (including the pass-2 JPY rate), as-of
-            // date, and the currency map used.
-            assert_eq!(output["fx"]["as_of"], json!("2026-09-08"));
-            assert_eq!(output["fx"]["usd_rates"]["GBP"], json!(0.75));
             assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
-            assert_eq!(output["fx"]["exchange_currencies"]["LSE"], json!("GBP"));
-            assert_eq!(output["fx"]["exchange_currencies"]["US"], json!("USD"));
-
             // exchanges-list + USDGBP + two screener queries + pass-2 USDJPY
             assert_eq!(fixture.count(), 5);
         })

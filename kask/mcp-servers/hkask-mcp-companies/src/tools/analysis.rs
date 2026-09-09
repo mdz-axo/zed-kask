@@ -245,7 +245,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. USD-stated market-cap bounds are converted into each exchange's listing currency using EODHD FOREX daily closes (cached 24h): rows carry market_capitalization_usd and results rank by USD cap, with the band enforced client-side; lines quoted in a foreign currency are dropped when their home market is also screened, otherwise kept and converted at their own rate (Japanese companies enter via London ¥ lines — EODHD has no Japanese exchange). Exchanges without a currency mapping or FX rate are dropped and named in exchange_errors. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
+        description = "Company screener powered by the EODHD Screener API. Parses natural-language prompts into EODHD filter triples and returns a data table with all criteria values for each matching company. Keywords are field names in space or underscore form (market cap / market_capitalization, price, volume, average volume, eps, dividend yield, sector, industry, daily/weekly change). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes. Geography (US, Japan, Canada, Mexico, Europe, UK, Germany, ...) maps to EODHD exchange codes and fans out one query per exchange, interleaved round-robin so every exchange is represented; results are listings, so a cross-listed company appears once per exchange. USD-stated market-cap bounds are converted into each exchange's listing currency using EODHD FOREX daily closes (cached 24h): rows carry market_capitalization_usd and results rank by USD cap, with the band enforced client-side; lines quoted in a foreign currency are dropped when their home market is also screened, otherwise kept and converted at their own rate (Japanese companies enter via London ¥ lines — EODHD has no Japanese exchange, and London is queried unbounded so those lines are not lost). Exchanges without a currency mapping or FX rate are dropped and named in exchange_errors. Parsed criteria are echoed in parsed_criteria — verify them and correct with criteria_overrides (keys: market_capitalization_min/_max and the other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen criteria (revenue growth, ROIC, ROE, P/E, debt/equity, price/book, beta) require per-company fundamentals — use key_metrics for those. Paginates automatically beyond the 1,000-result offset limit."
     )]
     pub async fn company_screener(
         &self,
@@ -354,23 +354,39 @@ impl CompaniesServer {
                         for code in &exchange_codes {
                             match context.rate_for(code) {
                                 Ok(rate) => {
-                                    let mut filters = screener_filters.clone();
                                     // Mixed-currency exchanges (London's IOB
-                                    // hosts ¥/kr/Ft lines) are queried
-                                    // unbounded: cap bounds converted into
-                                    // the exchange's currency would
-                                    // numerically exclude every
-                                    // foreign-currency row (a ¥9.2T cap sits
-                                    // above any GBP ceiling), silently
-                                    // losing Japan. Selection for these
-                                    // exchanges happens entirely in the
-                                    // row-currency pass and the client-side
-                                    // band enforcement.
+                                    // hosts ¥/kr/Ft lines) are queried with
+                                    // NO cap bounds at all: bounds in the
+                                    // exchange's currency would numerically
+                                    // exclude every foreign-currency row (a
+                                    // ¥9.2T cap sits above any GBP
+                                    // ceiling), silently losing Japan — and
+                                    // unconverted USD bounds would be wrong
+                                    // in a different way. Selection for
+                                    // these exchanges happens entirely in
+                                    // the row-currency pass and the
+                                    // client-side band enforcement.
                                     let mixed = MIXED_CURRENCY_EXCHANGES
                                         .contains(&code.as_str());
-                                    if !mixed && rate != 1.0 {
-                                        filters = convert_cap_filters(&filters, rate);
-                                    }
+                                    let mut filters = if mixed {
+                                        screener_filters
+                                            .iter()
+                                            .filter(|filter| {
+                                                filter
+                                                    .as_array()
+                                                    .and_then(|parts| parts.first())
+                                                    .and_then(|field| field.as_str())
+                                                    != Some("market_capitalization")
+                                            })
+                                            .cloned()
+                                            .collect()
+                                    } else {
+                                        let mut converted = screener_filters.clone();
+                                        if rate != 1.0 {
+                                            converted = convert_cap_filters(&converted, rate);
+                                        }
+                                        converted
+                                    };
                                     filters.push(serde_json::json!(["exchange", "=", code]));
                                     queries.push((code.clone(), rate, filters));
                                 }
@@ -588,7 +604,7 @@ impl CompaniesServer {
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                 },
-                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap. Row currency follows the row's currency_symbol: lines quoted in another currency are dropped when that currency's home market is also screened (the company appears via its home exchange) and otherwise kept and converted at their own currency's rate — Japanese companies enter this way (EODHD has no Japanese exchange; their London ¥ lines are the surface). The requested band is enforced client-side (out_of_band_dropped counts rows EODHD returned outside it; foreign_lines_dropped counts dropped foreign lines; unconverted_rows counts rows without a USD conversion, sorted last). Without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
+                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap. Row currency follows the row's currency_symbol: lines quoted in another currency are dropped when that currency's home market is also screened (the company appears via its home exchange) and otherwise kept and converted at their own currency's rate — Japanese companies enter this way (EODHD has no Japanese exchange; their London ¥ lines are the surface). The requested band is enforced client-side (out_of_band_dropped counts rows EODHD returned outside it; foreign_lines_dropped counts dropped foreign lines; unconverted_rows counts rows without a USD conversion, sorted last). Mixed-currency exchanges (London) are queried unbounded — their foreign-currency lines (¥, kr, Ft) are selected by the row-currency rules instead of server-side bounds. Without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
                 "source": "EODHD Screener API"
             });
 
