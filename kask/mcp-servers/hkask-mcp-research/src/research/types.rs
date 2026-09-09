@@ -236,7 +236,7 @@ pub struct BrowseRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EvaluateEvidenceRequest {
+pub struct EvaluateEvidenceRequest {
     /// The research question to evaluate evidence against.
     pub question: String,
     /// Artifacts to evaluate (URLs + optional content/metadata from web_search/web_extract).
@@ -244,7 +244,7 @@ pub(crate) struct EvaluateEvidenceRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EvaluateArtifact {
+pub struct EvaluateArtifact {
     pub url: String,
     /// Title of the source (from SearchResultOutput.title).
     pub title: Option<String>,

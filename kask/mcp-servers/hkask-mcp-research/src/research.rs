@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod db;
+pub(crate) mod evidence;
 pub(crate) mod feed;
 pub(crate) mod performance;
 pub mod providers;
@@ -24,6 +25,9 @@ use providers::{
 // ── Re-exports ──
 
 pub(crate) use cache::{ResponseCache, cache_key};
+pub(crate) use evidence::{
+    ArtifactScore, DEFAULT_PROFILE, EvidenceReport, SensitivityStatus, score_evidence_set,
+};
 pub(crate) use feed::{discover_feeds, fetch_feed};
 pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort, validated_fetch_client};
 pub(crate) use rss_types::{

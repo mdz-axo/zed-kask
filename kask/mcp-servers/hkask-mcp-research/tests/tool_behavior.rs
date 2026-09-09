@@ -30,10 +30,10 @@ use hkask_mcp_research::research::rss_types::{
     UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
-    BrowseRequest, BrowseResult, CompoundSearchResult, ExtractOptions, ExtractRequest,
-    ExtractedContent, FindSimilarRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry,
-    ProviderInfo, ProviderRecommendation, RankedResult, RateLimiter, SearchQuery, SearchRequest,
-    SearchStrategy, WebError,
+    BrowseRequest, BrowseResult, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
+    ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, LatencyTier,
+    ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
+    RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -1287,5 +1287,195 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
         parsed["selected_provider"].as_str(),
         Some("arxiv"),
         "the top configured recommendation is the selected provider, got: {parsed}"
+    );
+}
+
+// ── evaluate_evidence (signal model) ───────────────────────────────────────
+
+fn evidence_artifact(
+    url: &str,
+    source: Option<&str>,
+    published: Option<&str>,
+    content: Option<&str>,
+) -> EvaluateArtifact {
+    EvaluateArtifact {
+        url: url.to_string(),
+        title: Some("title".to_string()),
+        source: source.map(str::to_string),
+        published: published.map(str::to_string),
+        content: content.map(str::to_string),
+    }
+}
+
+#[tokio::test]
+async fn evaluate_evidence_rejects_empty_question() {
+    let server = make_server_without_db();
+    let error = err(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "  ".to_string(),
+            artifacts: vec![evidence_artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                None,
+            )],
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+}
+
+#[tokio::test]
+async fn evaluate_evidence_rejects_empty_artifacts() {
+    let server = make_server_without_db();
+    let error = err(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "what is the evidence?".to_string(),
+            artifacts: Vec::new(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+}
+
+#[tokio::test]
+async fn evaluate_evidence_emits_signal_model() {
+    let server = make_server_without_db();
+    let out = ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "is the claim corroborated?".to_string(),
+            artifacts: vec![
+                evidence_artifact(
+                    "https://a.example/1",
+                    Some("a.example"),
+                    Some("not a date"),
+                    Some("alpha one two three four"),
+                ),
+                evidence_artifact("https://b.example/1", Some("b.example"), None, None),
+            ],
+        }))
+        .await);
+    let json = parse(&out);
+
+    let artifacts = json["artifacts"].as_array().expect("artifacts array");
+    assert_eq!(artifacts.len(), 2);
+
+    // The signal trail: four components with earned values and basis strings.
+    let signals = artifacts[0]["signals"].as_array().expect("signals array");
+    assert_eq!(signals.len(), 4);
+    let components: Vec<&str> = signals
+        .iter()
+        .filter_map(|signal| signal["component"].as_str())
+        .collect();
+    assert_eq!(components, ["base", "corroboration", "recency", "content"]);
+    for signal in signals {
+        assert!(
+            signal["basis"]
+                .as_str()
+                .is_some_and(|basis| !basis.is_empty()),
+            "basis string required: {signal}"
+        );
+    }
+
+    // The deleted flat booleans are gone — the signals carry the information.
+    assert!(
+        artifacts[0].get("has_published_date").is_none(),
+        "has_published_date deleted: {json}"
+    );
+    assert!(
+        artifacts[0].get("has_content").is_none(),
+        "has_content deleted: {json}"
+    );
+
+    // An unparseable date is stated in the recency basis, not a
+    // dual-meaning flag.
+    let recency = signals
+        .iter()
+        .find(|signal| signal["component"].as_str() == Some("recency"))
+        .expect("recency signal");
+    assert!(
+        recency["basis"]
+            .as_str()
+            .is_some_and(|basis| basis.contains("unparseable")),
+        "basis: {recency}"
+    );
+
+    // The set block: domains, clusters, sensitivity, duplication mode.
+    let set = &json["set"];
+    assert_eq!(set["distinct_domains"].as_u64(), Some(2));
+    assert_eq!(set["sourced_count"].as_u64(), Some(2));
+    assert!(
+        set["content_clusters"]
+            .as_array()
+            .is_some_and(|clusters| !clusters.is_empty()),
+        "content_clusters: {json}"
+    );
+    assert_eq!(set["duplication_mode"].as_str(), Some("shingles"));
+    assert!(
+        set["sensitivity"].get("status").is_some(),
+        "sensitivity status: {json}"
+    );
+
+    // The ontology labeling contract is retained (fixture-guarded keys).
+    assert!(
+        artifacts[0].get("SEPIO:0000167").is_some(),
+        "SEPIO confidence key: {json}"
+    );
+    assert!(
+        artifacts[0].get("SEPIO:0000440").is_some(),
+        "SEPIO supporting-evidence key: {json}"
+    );
+    assert_eq!(
+        json.get("pko:StepVerification")
+            .and_then(|value| value.as_str()),
+        Some("evidence_quality_assessed")
+    );
+}
+
+#[tokio::test]
+async fn evaluate_evidence_syndication_visible_in_clusters() {
+    let server = make_server_without_db();
+    let out = ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "did the wire story spread?".to_string(),
+            artifacts: vec![
+                evidence_artifact(
+                    "https://a.example/1",
+                    Some("a.example"),
+                    None,
+                    Some("wire story body text alpha beta gamma delta"),
+                ),
+                evidence_artifact(
+                    "https://b.example/1",
+                    Some("b.example"),
+                    None,
+                    Some("wire story body text alpha beta gamma delta"),
+                ),
+                evidence_artifact(
+                    "https://c.example/1",
+                    Some("c.example"),
+                    None,
+                    Some("wire story body text alpha beta gamma delta"),
+                ),
+            ],
+        }))
+        .await);
+    let json = parse(&out);
+    let artifacts = json["artifacts"].as_array().expect("artifacts array");
+    // One syndicated story: one unit, not three corroborations.
+    assert_eq!(artifacts[0]["corroboration_count"].as_u64(), Some(1));
+    let clusters = json["set"]["content_clusters"]
+        .as_array()
+        .expect("content_clusters");
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(
+        clusters[0]["domains"]
+            .as_array()
+            .map(|domains| domains.len()),
+        Some(3)
+    );
+    assert_eq!(
+        clusters[0]["artifact_urls"]
+            .as_array()
+            .map(|urls| urls.len()),
+        Some(3)
     );
 }
