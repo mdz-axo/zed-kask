@@ -132,7 +132,7 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 | `tdd-explore.j2` | Explore for code blind spots by dispatching to the bug-hunt skill with a charter scoped to the slice's code. bug-hunt finds bugs the spec did not name (Weinberg: absent tests = quality threat). Findings not covered by an existing tracer bullet become new code entities routing back to the plan. Dispatches only when coverage is thin OR the slice touches Trust (P0) code — not on every low-risk slice. |
 | `tdd-gap-check.j2` | Code gap analysis: compare code entities against tested behaviors including goal-principle alignment cross-reference against MDS category defaults, constraining principle completeness (Magna Carta P1-P4), and expectation quality scoring (0-3 scale). Identify uncovered requirements (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps MUST have tracer bullets. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `tdd/tdd-plan`) and a context object with the required variables.
 
 ## Constraints
 

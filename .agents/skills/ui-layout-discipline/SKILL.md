@@ -18,10 +18,28 @@ share a single root cause: **adding elements without measuring**.
 
 ## Instructions
 
-Before adding any element: **measure** the container, **count** the
-elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
-**match patterns** (grep sibling cards), **declare overflow**
-(PopoverMenu with `IconName::Ellipsis`, `truncate()`, `flex_shrink_0`).
+The loop lives in this body; the five templates are its step-leaves.
+
+1. **Measure** (`sense.j2`) — container width, each child's minimum
+   width, text-column residual width.
+2. **Count** (`orient.j2`) — interactive elements against the ≤5
+   primary budget (Hick's Law); sibling card conventions; congestion
+   score.
+3. **Gate** (`decide.j2`) — the five yes/no gates: no overflow,
+   primary action visible, text column ≥ min width, on-grid spacing,
+   action count ≤ budget. Call `lisp_eval` with:
+   - form: `(and (eq (length failed_gates) 0) (eq (length probe_failures) 0))`
+   - env: `{ "failed_gates": <failing gate names from decide>,
+            "probe_failures": <broken adversarial probes from step 5> }`
+4. **Remedy** (`act.j2`) — for each failing gate, apply the canonical
+   GPUI remedy (PopoverMenu with `IconName::Ellipsis`, `truncate()`,
+   `flex_shrink_0`, `min_w_0`).
+5. **Probe** (`review.j2`) — adversarial probes: a 40-character button
+   label, a localized German string (~30% longer), a 320px container,
+   7 actions. Any broken probe rejects the layout and re-enters step 4.
+   Bound: max 2 remedy rounds; a third failing gate set rejects the
+   layout change — hide the secondary actions permanently or defer,
+   and say so.
 
 ## GPUI patterns the skill checks
 
@@ -54,7 +72,7 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 | `act.j2` | For each failing gate, prescribe the canonical GPUI remedy: secondary actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen progressive disclosure), truncate() on text labels, flex_shrink_0 on fixed elements, min_w_0 on flexible text columns, or explicit hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern. |
 | `review.j2` | Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `ui-layout-discipline/sense`) and a context object with the required variables.
 
 ## Constraints
 

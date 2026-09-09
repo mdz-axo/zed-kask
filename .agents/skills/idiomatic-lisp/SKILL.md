@@ -49,6 +49,16 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 4. Find deeper connections to broader Lisp patterns, comparing the design to CLHS/SRFI functions, classic papers, and cross-dialect equivalents.
 5. Produce refinement directives for each gap or edge case, stating the specific change required, the principle addressed, and the expected improvement.
 
+### Convergence
+
+After the challenge pass, call `lisp_eval` with:
+- form: `(eq (length principle_violations) 0)`
+- env: `{ "principle_violations": <violations surviving the challenge pass> }`
+Bound: max 3 inquiry cycles — on a failing gate, re-enter
+idiomatic-lisp-inquiry with the ordered improvement targets (inquiry
+step 7); violations that survive the third cycle are reported as the
+design's ranked residual (the honest exit), not iterated past.
+
 ## Registry Templates
 
 | Template | Purpose |

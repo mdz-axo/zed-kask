@@ -32,6 +32,16 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 3. **Verify the implementation against all four principles.** Audit the implementation or proposed diff. Check that assumptions were stated explicitly, multiple interpretations were presented, unclear points were questioned, and simpler approaches were considered. Confirm every feature was explicitly requested, no single-use abstractions exist, the solution is minimum code, and no speculative features or impossible-scenario error handling remain. Verify every changed line traces to the user's request, adjacent code is untouched, existing style is matched, orphan imports from your changes are removed, and pre-existing dead code was left alone (mentioned, not deleted). Confirm success criteria are defined and verifiable, tests exist for stated goals, and each criterion can be verified independently. Produce a violations report with principle, severity, location, and correction. Score compliance per principle (1.0 = full compliance, 0.0 = severe violation); overall is the arithmetic mean. Mark passed only if there are zero critical violations and overall ≥ 0.7. Be strict — a 200-line solution that could be 50 lines is a critical violation.
 
+4. **Close the loop.** On a failing audit (any critical violation, or
+   overall < 0.7), apply the violations report's corrections to the
+   diff and re-run this audit step. Gate — call `lisp_eval` with:
+   - form: `(and (eq critical_violations 0) (>= overall_score 0.7))`
+   - env: `{ "critical_violations": <count from the violations report>,
+            "overall_score": <the arithmetic mean from step 3> }`
+   Bound: max 2 audit cycles (initial + one correction pass); a second
+   failing audit ships with the violations report and the score — the
+   failure is surfaced, never silently passed.
+
 ## Interaction with output-shaping skills
 
 When an output-shaping skill (e.g., adhd-mode) is active in the session:
@@ -57,7 +67,7 @@ When an output-shaping skill (e.g., adhd-mode) is active in the session:
 | `guidelines-apply.j2` | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
 | `guidelines-verify.j2` | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `coding-guidelines/anti-patterns`) and a context object with the required variables.
 
 ## Constraints
 

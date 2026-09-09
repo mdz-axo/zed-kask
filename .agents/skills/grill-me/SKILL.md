@@ -60,7 +60,7 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 | `grill-me-assess.j2` | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations. |
 | `grill-me-escalate.j2` | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `grill-me/grill-me-round`) and a context object with the required variables.
 
 ## Constraints
 

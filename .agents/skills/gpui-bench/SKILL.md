@@ -9,6 +9,8 @@ description: >-
 
 # GPUI Benchmarks
 
+Doc-style handbook by design (DR-S13a exempt class: doc-style handbooks) — reference guidance with no process loop.
+
 ## When to Use
 
 Use this skill when a user asks to benchmark GPUI code, reproduce a UI hang or frame drop, evaluate a performance fix, use `#[gpui::bench]`, interpret `BenchReport`, or review whether a GPUI benchmark represents production.

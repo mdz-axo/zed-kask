@@ -1,0 +1,53 @@
+# capability-ontology.yaml — reference data for capabilities-reasoner.
+# Consumed by capability-register.j2 (skill-composition registry source:
+# `skill_composition_capabilities`); cited by the SKILL.md template table.
+# Transcribed from capabilities-reasoner/SKILL.md and capability-register.j2
+# (Step 1, registry source 5). Thresholds formalize the SKILL.md
+# self-evaluation accounting; re-pin via operator decision — do not invent
+# values not traceable to those sources.
+
+# Substrate: WHY capability reasoning has limits (Nussbaum, OCAP, CMMI).
+limit_types:
+  floor:
+    source: nussbaum-2000
+    meaning: threshold below which → deprivation alarm (must expand)
+  ceiling:
+    source: aip-2026 / akselrod-2023
+    meaning: threshold above which → restriction warrant (authority only narrows — miller-2006)
+  maturity_gate:
+    source: cmmi
+    meaning: prerequisite DAG — level N requires level N−1 practices satisfied
+
+# Surface: HOW capability is measured. The definitions can disagree —
+# the reasoner must declare which it uses per query.
+capability_definitions:
+  task-performance: observed performance on a benchmark task
+  latent-variable: latent trait inferred from correlated observations
+  hierarchical-structural: node in a capability tree (evaltree-2025)
+  emergence-threshold: present only above a scale/emergence threshold
+  elicitation: elicited potential, not observed behavior (arditi-2024)
+
+# The five composition principles (capability-register.j2 Step 1, source 5).
+skill_composition_capabilities:
+  determinism_frontier:
+    limit_type: floor
+    threshold: at least one deterministic (lisp_eval) check in the skill's process
+    evaluation_method: count pinned lisp_eval forms in the SKILL.md body; zero deterministic checks is below floor
+  persistence_grounded_learning:
+    limit_type: floor
+    threshold: every learning claim traces to a persisted record (memory, ledger, journal)
+    evaluation_method: trace each learning claim to its durable store; untraceable claims are below floor
+  failure_surfacing:
+    limit_type: floor
+    threshold: failures surface (typed error, warn, or report) — never a silent fallback
+    evaluation_method: check prescribed tool usage for silent-fallback patterns (empty-result-as-success, .ok()?, unwrap_or(0))
+  lisp_scaffold:
+    limit_type: maturity_gate
+    threshold: deterministic scaffolding precedes or wraps each judgment step
+    prerequisites: [determinism_frontier]
+    evaluation_method: each judgment step names its deterministic pre/post check
+  co_evolution_loop:
+    limit_type: maturity_gate
+    threshold: the skill consumes its prior iteration's output (prior_iteration, lessons, feedback)
+    prerequisites: [persistence_grounded_learning]
+    evaluation_method: the process re-enters with a named prior-output input

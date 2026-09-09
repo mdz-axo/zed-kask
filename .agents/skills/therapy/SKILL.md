@@ -247,6 +247,17 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
      failure; an explicit `false` does not.
    - If the result is > 0, report the failures and suggest manual remediation.
 
+### Post-execute verification (the loop's Check)
+
+After Phase 5 and before the report: re-run the Phase 2 scan on the
+treated targets only. Gate — call `lisp_eval` with:
+- form: `(eq (length remaining_contradictions) 0)`
+- env: `{ "remaining_contradictions": <contradictions still present on treated targets> }`
+Bound: one re-scan per session — survivors are re-proposed (Phase 3)
+only if the operator approves in-session; otherwise they go into the
+report's follow-up recommendations. Fragmentation that remains because
+the operator approved only partial merges is expected, not a failure.
+
 ### Phase 6 — Report
 
 1. Call `render_template` to render the report template:

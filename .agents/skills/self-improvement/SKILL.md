@@ -222,7 +222,7 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-exec-scaffold-prompt.j2` | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
 | `si-exec-scaffold-tool.j2` | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `self-improvement/si-kata-direction`) and a context object with the required variables.
 
 ## Constraints
 

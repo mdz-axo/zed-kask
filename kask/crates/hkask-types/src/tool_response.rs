@@ -131,6 +131,16 @@ pub fn error_kind_from_display(text: &str) -> String {
         }
         search_from += open + 1;
     }
+    // rmcp's macro layer rejects schema-invalid arguments before the tool
+    // runs ("failed to deserialize parameters: …") — a caller-caused
+    // rejection with no typed kind, because it never reaches the kask
+    // server's `McpToolError` surface. Classify it as `invalid_argument`
+    // so the reliability math excludes it (`is_not_tool_fault_kind`) while
+    // the per-kind breakdown keeps it visible. Boundary contract like the
+    // agent's `is_context_server_timeout`: pinned to rmcp's error text.
+    if text.contains("failed to deserialize parameters") {
+        return McpErrorKind::InvalidArgument.to_string();
+    }
     text.to_string()
 }
 
@@ -336,5 +346,31 @@ mod tests {
         assert!(!is_not_tool_fault_kind("timeout"));
         assert!(!is_not_tool_fault_kind("not_found"));
         assert!(!is_not_tool_fault_kind("unknown-kind"));
+    }
+
+    /// rmcp's macro layer rejects schema-invalid arguments before the tool
+    /// runs — a caller-caused failure that never reaches the kask server's
+    /// typed error surface. Live-observed via the curator_memory_recall
+    /// missing-`entity` probe (2026-09-09): the dispatch wrapper carried
+    /// "Tool invocation failed: failed to deserialize parameters: …" and
+    /// the ledger recorded the raw text as the kind, counting a model-caused
+    /// failure against tool reliability.
+    #[test]
+    fn error_kind_from_display_classifies_rmcp_deserialization_rejection() {
+        assert_eq!(
+            error_kind_from_display(
+                "Tool invocation failed: failed to deserialize parameters: missing field `entity`"
+            ),
+            "invalid_argument"
+        );
+        assert_eq!(
+            error_kind_from_display("failed to deserialize parameters: invalid type: string"),
+            "invalid_argument"
+        );
+        // Unrelated untyped text still classifies as itself.
+        assert_eq!(
+            error_kind_from_display("some other failure"),
+            "some other failure"
+        );
     }
 }

@@ -56,6 +56,18 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 7. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
 8. Escalate to human review if two Prohibitions conflict or if all five tiers result in a genuine tie.
 
+### Convergence
+
+9. Gate — call `lisp_eval` with:
+   - form: `(and (eq (length unverifiable_gaps) 0) (>= chain_confidence 0.8))`
+   - env: `{ "unverifiable_gaps": <provenance-chain gaps that stayed unverifiable>,
+             "chain_confidence": <overall confidence from semantics-provenance-trace step 5> }`
+   Bound: one re-trace — apply the verification recommendations
+   (semantics-provenance-trace step 7) and re-run the trace; gaps that
+   survive the second pass are reported as unverifiable (the honest exit
+   semantics-provenance-trace step 5 defines). This gate is the convergence
+   check the Constraints require over all three analysis steps.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -64,7 +76,7 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 | `semantics-provenance-trace.j2` | Trace the provenance of a claim through hKask's data layers including ontology tier confidence modifiers. Identify evidence sources, confidence level, and verification recommendations. |
 | `semantics-conflict-resolve.j2` | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (FIBO > SUMO > unanchored). |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-semantics/semantics-classify-statement`) and a context object with the required variables.
 
 ## Constraints
 

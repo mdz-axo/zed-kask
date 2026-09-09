@@ -66,7 +66,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 | `present-briefing.j2` | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
 | `recommend-actions.j2` | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, direct_edit, or no_action. Recommendations, not autonomous actions. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `gemba-walk/synthesize-briefing`) and a context object with the required variables.
 
 ## Constraints
 

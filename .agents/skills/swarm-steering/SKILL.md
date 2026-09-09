@@ -127,11 +127,11 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 
 ## Registry
 
+Single-pass actuator by design (DR-S13a exempt class: documented single-pass) — the PDCA loop is owned by `swarm-intelligence`; this skill executes one emitted plan.
+
 This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
-- Template manifest: `kask/registry/templates/swarm-steering/manifest.yaml`
 - Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2` (prompt step — produce the local-swarm steering directive: delegation sequence + delegate_results collection shape + re-invoke instruction)
-- Process manifest: `kask/registry/manifests/swarm-steering.yaml` (1 step: DIRECT, single-pass — `max_iterations: 1`)
 - Span namespace: `reg.skill.swarm-steering`
 - Pairs with `swarm-intelligence` (the planner); this skill is the actuator's
   instructions (Cybernetic Swarm Plan `steering_mode`).
@@ -142,7 +142,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 |----------|---------|
 | `swarm-steering-direct.j2` | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `swarm-steering/swarm-steering-direct`) and a context object with the required variables.
 
 ## Constraints
 

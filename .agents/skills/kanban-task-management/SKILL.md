@@ -48,8 +48,25 @@ which phase to run:
 | `task_to_delegate` | delegate | configure-spawn → execute-task |
 | `board_id` | operate | monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate |
 
-Templates for non-active phases receive the triage phase and produce a
-skip result without meaningful work. This is necessary because skill execution processes all phases in order.
+Templates for non-active phases are not rendered — the model executing this
+skill runs only the active phase's templates; the triage result names it.
+
+### Operate-phase sweep loop
+
+When running the operate phase, close it with a board sweep:
+
+1. Re-run `kanban_task_list` — the Check signal is two lists: tasks in
+   Review without verification evidence, and InProgress tasks with no
+   activity since the last sweep (staleness threshold per the operator).
+2. Act per finding: `kanban_task_verify` for verified Review tasks,
+   `kanban_task_comment` to unblock stalled ones.
+3. Re-list to confirm the transitions took.
+4. Gate — call `lisp_eval` with:
+   - form: `(and (eq (length unverified_review) 0) (eq (length stalled_in_progress) 0))`
+   - env: `{ "unverified_review": <Review tasks without verification evidence>,
+            "stalled_in_progress": <stalled tasks> }`
+   Bound: one sweep per invocation; blockers that survive the sweep
+   escalate (the escalate phase) instead of looping.
 
 ## MCP Tools
 
@@ -106,7 +123,7 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 | `verify-completion.j2` | Evaluate deliverables against acceptance criteria. Includes post-step instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. |
 | `escalate.j2` | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables.
 
 ## Constraints
 

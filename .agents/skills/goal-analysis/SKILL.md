@@ -86,7 +86,7 @@ Goal specification and verification. Extracts structured goals from user intent,
 | `goal-activate.j2` | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |
 | `goal-resolve.j2` | Resolve a goal as completed or blocked. Produces a final resolution record with the verdict, confidence, and reason. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `goal-analysis/create`) and a context object with the required variables.
 
 ## Constraints
 

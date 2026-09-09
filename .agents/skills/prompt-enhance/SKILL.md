@@ -7,6 +7,8 @@ description: "General-purpose prompt enhancement for the zed-kask platform. Type
 
 General-purpose prompt enhancement skill for the zed-kask platform. Classifies prompts against a 7-type taxonomy, applies a typed rewrite with an inline audit (placeholders, semantic fragility, structural accretion), verifies via a decoupled grill-me critic, and delivers the result. Specialized leaf of the self-improvement family tree (Σ-pathway, p-component, intrinsic evaluative feedback).
 
+Single-pass by design (DR-S13a exempt class: documented single-pass) — the verify verdict is surfaced in the output change log, not re-entered.
+
 ## When to Use
 
 - When you have a prompt destined for zed-kask (skill `.j2` template, agent system prompt, chat/REPL prompt, infrastructure Jinja2 template) and want it enhanced.
@@ -92,7 +94,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `enhance-output-render.j2` | Render-only variant of enhance-output for programmatic delivery without an LLM round-trip. Formats the enhanced prompt per output_format. |
 | `enhance-audit.j2` | Audit the input prompt through three lenses: pragmatic-semantics (classify claims by IS/OUGHT, epistemic mode, constraint force), pragmatic-cybernetics (feedback loop properties), and essentialist (deletion test + surface count). Not referenced by the current process manifest — the audit is folded into enhance-rewrite.j2. Retained for potential future re-decomposition. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `prompt-enhance/enhance-classify`) and a context object with the required variables.
 
 ## Constraints
 

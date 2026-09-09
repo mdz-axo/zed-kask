@@ -85,7 +85,7 @@ Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the
 parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with
 `gate_defects` in context; there are no separate repair templates.
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `kask-seam-audit/seam-map`) and a context object with the required variables.
 
 ## Constraints
 

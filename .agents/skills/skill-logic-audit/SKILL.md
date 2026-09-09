@@ -64,7 +64,7 @@ Present the proposal to the user and capture accept/reject/counter-proposal.
 | `logic-compose-proposal.j2` | Compose a concrete revised artifact and unified diff from the calibrated concerns. |
 | `logic-user-choice.j2` | Present the proposal to the user and capture accept, reject, or counter-proposal choice. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `skill-logic-audit/logic-load-goal`) and a context object with the required variables.
 
 ## Constraints
 

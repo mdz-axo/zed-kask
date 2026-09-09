@@ -141,7 +141,7 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
 
 Between LLM steps, call `lisp_eval` for verification gates (cargo check/test, isolation script, marker density) after execute, `shell.exec` for collision-surface cleanup after document, and `lisp_eval` for a convergence signal before re-entering the cycle.
 

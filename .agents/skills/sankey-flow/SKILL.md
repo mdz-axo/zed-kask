@@ -43,6 +43,8 @@ The skill builds on these established resources. Cite them in the output descrip
 - **PKO** (Carriero et al. 2025): `https://w3id.org/pko` — the ontology for procedural knowledge, used for flow structure.
 - **Mermaid Sankey docs**: `https://mermaid.js.org/syntax/sankey.html` — the rendering target.
 
+Single-pass by design (DR-S13a exempt class: documented single-pass) — the adapt step self-corrects against the matched example's structure; no multi-iteration loop.
+
 ## When to Use
 
 - The user describes a system, process, budget, pipeline, funnel, or allocation and wants to **see the flow** as a Sankey diagram.
@@ -50,7 +52,7 @@ The skill builds on these established resources. Cite them in the output descrip
 - The user has partial data and you need to **ask incremental questions** to fill in nodes, links, or weights — not fabricate them.
 - The user references an external source (URL, financial statement, codebase, database) and you need to **delegate extraction** to a research skill rather than asking the user to transcribe.
 - The user wants the diagram to render natively in Zed's markdown preview (Mermaid `sankey-beta`).
-- You need iterative quality convergence — drafts are scored and refined until the flow is faithful, weighted, and readable.
+- You need example-anchored adaptation — the adapt step self-corrects the draft against the matched example's structure in a single pass.
 
 ## When NOT to Use
 
@@ -191,7 +193,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 | `sankey-adapt.j2` | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
 | `present-sankey.j2` | Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `sankey-flow/sankey-examples`) and a context object with the required variables.
 
 ## Examples
 

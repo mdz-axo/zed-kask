@@ -83,7 +83,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 | `improv-freestyling.j2` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
 | `improv-riffing.j2` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `improv/improv-select`) and a context object with the required variables.
 
 ## Constraints
 

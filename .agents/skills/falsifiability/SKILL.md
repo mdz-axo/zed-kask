@@ -50,7 +50,7 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 | `falsifiability-discriminate.j2` | Platt discriminating-test design. Design tests whose outcome rules out at least one hypothesis — not one test per hypothesis. Map each test to the hypotheses it can falsify. Flag hypothesis pairs no available test can discriminate as irreducible and surface them for the user. |
 | `falsifiability-eliminate.j2` | Apply evidence and eliminate. Hypotheses whose falsifiable predictions fail are ruled out — hard elimination, not Bayesian down-weighting (that is superforecasting's concern). Survivors are corroborated, never confirmed. Record which test eliminated which hypothesis and the falsifying observation. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `falsifiability/falsifiability-admit`) and a context object with the required variables.
 
 ## Composition
 

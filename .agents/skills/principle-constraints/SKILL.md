@@ -45,6 +45,16 @@ The skill calls `render_template` with only `principle-derive` (step 1); both `d
 4. **Flag gaps.** A gap means: the principle is asserted but the code doesn't enforce it, or the code enforces it but no test pins it. Gaps are the skill's highest-value output. For each gap, emit the principle asserted, the enforcement status, and a proposed remediation.
 5. **Emit the summary.** Counts: total, enforced, gaps, unverified. `human_review_required` is true if any gaps or unverified.
 
+### Enforcement-location gate (the loop's Check)
+
+After deriving the constraint set, call `lisp_eval` with:
+- form: `(eq (length unknown_enforcement) 0)`
+- env: `{ "unknown_enforcement": <constraints whose enforced_at is still UNKNOWN> }`
+Bound: one verification pass — for each UNKNOWN, grep/read for the
+enforcement point and re-derive its status; constraints that remain
+UNKNOWN after the pass keep status `gap` (the gap is the
+highest-value output, not a failure to hide).
+
 ### Verify mode (legacy — `principle-verify.j2` is registered in the crate but NOT invoked by the skill execution; verify mode runs through `principle-derive.j2` at step 1 via the `mode: verify` input)
 
 1. For each constraint in `existing_constraints`, read the file at `enforced_at` and confirm the enforcement logic is still there.
@@ -68,7 +78,7 @@ The skill calls `render_template` with only `principle-derive` (step 1); both `d
 | `principle-derive.j2` | Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep and read_file, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. The output is a proposal — a human reviews it before any constraint becomes permanent. |
 | `principle-verify.j2` | Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `principle-constraints/principle-derive`) and a context object with the required variables.
 
 ## Reference: Manual Pass on P1
 

@@ -77,7 +77,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 | `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable, time-bounded next target condition. |
 | `improvement-step4-experiment.j2` | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-selector`) and a context object with the required variables.
 
 ## Constraints
 

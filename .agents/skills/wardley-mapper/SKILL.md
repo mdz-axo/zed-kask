@@ -66,9 +66,19 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 5. Be specific in the recommended actions.
 6. Flag uncertainty and lower confidence for recommendations based on sparse data.
 
+### Convergence
+
+1. Gate — call `lisp_eval` with:
+   - form: `(and (eq (length unclassified_components) 0) (eq (length unresolved_dependencies) 0))`
+   - env: `{ "unclassified_components": <components still without an evolution class>,
+             "unresolved_dependencies": <dependency links naming components not in the inventory> }`
+   Bound: one re-entry — re-run classify-evolution for the named components;
+   a second pass that still leaves gaps notes them as assumptions in the map
+   (inventory-components step 4 already requires this) instead of iterating.
+
 ### present-map
 
-1. Rendering step (step 7, `render` action, `present-map.j2`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
+1. Rendering step (`present-map.j2` via `render_template`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
 2. This is the process's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
 3. Deterministic (no LLM call) — pure Jinja2 rendering via the `render` action.
 
@@ -83,7 +93,7 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 | `synthesize-recommendations.j2` | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
 | `present-map.j2` | Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `wardley-mapper/inventory-components`) and a context object with the required variables.
 
 ## Constraints
 

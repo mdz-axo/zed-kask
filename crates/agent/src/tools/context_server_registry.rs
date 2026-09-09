@@ -635,7 +635,17 @@ fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, 
             let kind = hkask_types::tool_response::parse_tool_error_value(&output.raw_output)
                 .and_then(|envelope| envelope.kind)
                 .map(|kind| kind.to_string());
-            (false, Some(kind.unwrap_or_else(|| mcp_error_text(output))))
+            // Untyped errors route through `error_kind_from_display` so the
+            // rmcp deserialization-rejection signature classifies as
+            // `invalid_argument` (caller-caused, excluded from the
+            // reliability rate) instead of counting raw error text against
+            // the tool.
+            (
+                false,
+                Some(kind.unwrap_or_else(|| {
+                    hkask_types::tool_response::error_kind_from_display(&mcp_error_text(output))
+                })),
+            )
         }
     }
 }
@@ -1463,6 +1473,30 @@ mod tests {
         assert_eq!(
             advice_apply_feedback_skill("curator_advice_mark_applied", &unparsable),
             None
+        );
+    }
+
+    /// Pins the untyped-fallback classification: an error output with no
+    /// typed envelope whose text carries rmcp's deserialization-rejection
+    /// signature classifies as `invalid_argument` (caller-caused) instead of
+    /// counting raw error text against tool reliability. Live-observed via
+    /// the curator_memory_recall missing-`entity` probe (2026-09-09).
+    #[test]
+    fn test_mcp_run_outcome_untyped_deserialization_rejection_classifies_invalid_argument() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::Null,
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "Tool invocation failed: failed to deserialize parameters: missing field `entity`"
+                    .into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(
+            error_kind.as_deref(),
+            Some("invalid_argument"),
+            "a schema-invalid call rejected below the server's typed error surface \
+             is caller-caused, not tool unreliability"
         );
     }
 

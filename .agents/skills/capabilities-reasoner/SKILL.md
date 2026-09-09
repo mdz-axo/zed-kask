@@ -219,7 +219,7 @@ given query, because they can disagree:
 | `capability-report.j2` | Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/ authorize/maintain), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). |
 | `capability-ontology.yaml` | Reference: three limit types (floor, ceiling, maturity gate) drawn from the capability approach (Nussbaum, object-capability security, CMMI), and five capability definitions drawn from ML capability evaluation (task-performance, latent-variable, hierarchical-structural, emergence-threshold, elicitation). The limit types are the substrate (WHY capability reasoning has limits); the definitions are the surface (HOW capability is measured). Each definition can disagree with the others — the reasoner must declare which it is using per query. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `capabilities-reasoner/capability-register`) and a context object with the required variables.
 
 ## Constraints
 

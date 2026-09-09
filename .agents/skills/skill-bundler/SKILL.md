@@ -8,6 +8,8 @@ description: "Run peer-level skills concurrently and merge their outputs into a 
 
 Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out dispatches each skill via the `skill` tool; this skill handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop — the bundler dispatches each skill in parallel, collects results (allSettled: partial results OK if a skill errors), and synthesizes them.
 
+Single-pass merge by design (DR-S13a exempt class: documented single-pass) — no iteration knob exists; the body runs the merge exactly once.
+
 ## When to Use
 
 - You have run 3+ peer-level skills concurrently on the same task and need their outputs merged into one coherent report.
@@ -36,7 +38,7 @@ Run peer-level skills concurrently and merge their outputs into a single unified
 |----------|---------|
 | `bundler-merge.j2` | Merge the outputs of N concurrently-executed skills into a single cohesive report with per-skill summaries, cross-skill insights, conflict surfacing, and prioritized recommendations. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `skill-bundler/bundler-merge`) and a context object with the required variables.
 
 ## Constraints
 

@@ -68,6 +68,18 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 7. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
 8. Provide a recommendation addressing whether to proceed, gather more data, or restructure criteria.
 
+### Convergence
+
+9. Gate — call `lisp_eval` with:
+   - form: `(eq rank_reversals 0)`
+   - env: `{ "rank_reversals": <count of ±10% perturbations that flipped the top choice> }`
+   Robust or moderate outcomes (no reversal at ±10%) close the loop. A
+   fragile outcome re-enters weight-and-score once with the critical-weight
+   findings — add the veto criterion rank-alternatives step 7 names, or
+   restructure the criteria sensitivity-analysis step 8 names. Bound: max 2
+   restructurings; a third fragile outcome is reported honestly with the
+   critical weights — the decision is the operator's, not the loop's.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -77,7 +89,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 | `sensitivity-analysis.j2` | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. |
 | `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. Context: `decision_question` (string), `criteria` (array of `{name, type}`), `alternatives` (array of `{name, scores}`), `weighting_method` (`direct` or `swing`). |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `mcda/identify-criteria`) and a context object with the required variables.
 
 ## Constraints
 

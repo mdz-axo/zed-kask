@@ -60,7 +60,7 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 | `cybernetics-variety-check.j2` | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. |
 | `cybernetics-vsm-map.j2` | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-cybernetics/cybernetics-analyze-loop`) and a context object with the required variables.
 
 ## Constraints
 

@@ -49,6 +49,8 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 - **The Toyota Improvement Kata**: the PM sets direction and target
   condition; the agent experiments; the PM's confirmation is the check.
 
+Single-pass role guide by design (DR-S13a exempt class: role guides) — the improvement loop lives in the goal tools this skill instructs, not in this body.
+
 ## When to Use
 
 - **Operator-facing**: starting a bit of work and handing over a

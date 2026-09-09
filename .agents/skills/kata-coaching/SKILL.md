@@ -66,7 +66,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 | `coaching-q4-experiment.j2` | Q4 — What is your Next Step? What do you expect? Drive action with prediction. |
 | `coaching-q5-learn.j2` | Q5 — How quickly can we go and see? Close the feedback loop. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `kata-coaching/coaching-q1-target`) and a context object with the required variables.
 
 ## Constraints
 

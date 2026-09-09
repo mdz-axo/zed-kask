@@ -100,6 +100,11 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 4. Run clippy and the test suite across the service, CLI, API, and workspace crates.
 5. Verify surface adapter thinness by ensuring CLI and API adapters contain only service calls, formatting, and error mapping.
 6. Produce a structured pass/fail report with evidence, including command outputs and file paths, for any failures.
+7. Close the loop: on any failing check, fix the failure and re-verify
+   (re-enter this phase). Bound: max 2 verify cycles per domain; a third
+   failure halts the domain with the failing evidence and surfaces it to
+   the operator. A passing report re-enters the cycle at ra-explore for
+   the next domain (one domain per commit).
 
 ## Registry Templates
 
@@ -113,7 +118,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 | `ra-strangle.j2` | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
 | `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `refactor-architecture/ra-explore`) and a context object with the required variables.
 
 ## Constraints
 

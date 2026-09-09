@@ -69,7 +69,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 | `deep-module-delete.j2` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
 | `deep-module-design.j2` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `deep-module/deep-module-assess`) and a context object with the required variables.
 
 ## Constraints
 

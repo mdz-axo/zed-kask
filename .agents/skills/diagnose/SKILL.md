@@ -87,7 +87,7 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 | `diagnose-instrument.j2` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `diagnose/diagnose-spec-anchor`) and a context object with the required variables.
 
 ## Constraints
 

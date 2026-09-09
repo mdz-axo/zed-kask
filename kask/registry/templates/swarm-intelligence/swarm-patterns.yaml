@@ -1,0 +1,41 @@
+# swarm-patterns.yaml — the swarm-algorithm tuning palette mapped onto ABW's
+# hire/fire/delegate vocabulary. Reference data for swarm-decide.j2 (Step 1)
+# and the swarm-intelligence SKILL.md template table; not sent to the LLM as
+# a prompt. Transcribed from swarm-intelligence/SKILL.md (the swarm-decide.j2
+# and swarm-patterns.yaml rows) and swarm-decide.j2 Step 1.
+
+pso:
+  c1: cognitive term — raise to strengthen attraction to an agent's own best position (hire a diverse agent)
+  c2: social term — raise to strengthen attraction to the swarm's best position (assign a coordinator compound agent)
+  omega: inertia — lower to increase exploration when diversity is too low
+
+aco:
+  pheromone_deposition: hire — each hire strengthens the path to an uncovered region of the transform space (bansal 2019)
+  pheromone_evaporation: fire redundant duplicates via swarm_fire — paths no longer used decay
+
+reynolds:
+  separation: diversity — agents keep distinct accepts/produces
+  alignment: coordination — agents converge on the same transform vocabulary
+  cohesion: coherence — the swarm's outputs compose
+
+ontomat_team_properties: the measurable substrate (team size, type distribution, accepts/produces coverage)
+
+deficit_classes:
+  variety_deficit:
+    signal: uncovered transforms in the accepts/produces space
+    tuning: hire agents whose accepts[]/produces[] cover the uncovered transforms (ACO pheromone deposition)
+  coherence_low_diversity:
+    signal: high coherence with low diversity — redundant duplicates
+    tuning: hire a diverse agent (raise PSO c1, lower omega) and fire redundant duplicates (ACO evaporation, via swarm_fire)
+  coherence_high_diversity_low_alignment:
+    signal: outputs do not compose — vocabulary mismatch
+    tuning: assign a coordinator compound agent (raise PSO c2, Reynolds alignment)
+
+non_composition_case:
+  loop_break:
+    signal: the swarm's loop is not closing (delegate_results not flowing)
+    tuning: emit a reconciliation repair — NOT a composition change
+
+canonical_failure_mode:
+  name: premature convergence / diversity collapse
+  detection_signal: coherence rising while diversity falls across iterations (every agent answering the same narrow slice)

@@ -79,7 +79,7 @@ prediction calibration.
 | `falstaffian-variance-analysis.yaml` | Reference: three-pass variance calibration with agreement matrix and final taxonomy of core, secondary, and candidate shapes. |
 | `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and surface what is not inferable. Used by the experiment step for ellipsis perspective. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `metacognition/meta-grasp-current`) and a context object with the required variables.
 
 ## Constraints
 

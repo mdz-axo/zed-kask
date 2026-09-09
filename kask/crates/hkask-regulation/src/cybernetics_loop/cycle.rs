@@ -872,9 +872,15 @@ impl super::CyberneticsLoop {
                         // silent continue would make "no verification ran"
                         // indistinguishable from "verification ran and
                         // passed" (the .rules broken-feedback-loop trap).
-                        // Full impact verification for these actions
-                        // requires carrying the before-value in a typed
-                        // RegulationData variant (follow-up).
+                        // Full impact verification for these actions needs
+                        // BOTH a before-value arm in
+                        // `RegulationData::impact_before_value` AND a
+                        // re-sense arm in the after-value match below — a
+                        // before-value alone still falls out at the
+                        // after-match's skip. Each metric needs a re-sense
+                        // source wired on the loop (the per-metric pattern)
+                        // or a generic SensorBus re-sense; deferred as a
+                        // scoped project, not a one-variant patch.
                         tracing::warn!(
                             target: "reg.cybernetics",
                             metric = action.metric_name.as_deref().unwrap_or("unknown"),

@@ -74,6 +74,18 @@ Derives an NFT from a gallery image: style transfer, upscale, and metadata capti
 3. Call `upscale_image` on the styled result to target resolution (scale=4 for 4K).
 4. Call `describe_image` on the final image to generate a caption for NFT metadata.
 
+## Verification loop (all pipelines)
+
+After each pipeline's final artifact, verify its acceptance property before
+reporting done: product shot — `describe_image` confirms the background is
+fully removed; reaction GIF — `video_info` confirms duration ≤ 5s at 480px
+width; collage — `describe_image` confirms all selected subjects are present;
+meme — the caption is visible in the rendered video; NFT — the style is
+applied and the caption generated. If the property fails, re-run the failing
+step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
+a second failure ships the artifact with the imperfection named — never
+silently.
+
 ## Constraints
 
 - All pipelines use tools from the `hkask-mcp-media` server. The server must be running and configured with at least one media provider (DeepInfra or OpenRouter).

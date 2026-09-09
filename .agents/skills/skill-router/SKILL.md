@@ -33,6 +33,12 @@ Route tasks to EXISTING installed skills. Given a task/slice description and the
 6. When `epistemic_state` is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0].
 7. Do not recommend skill-router or skill-discovery as matches — they are meta-skills.
 8. Respond with a JSON object: `coverage_assessment`, `recommendations`, `uncovered_capabilities`.
+9. Re-entry (the routing loop): when coverage is partial or none AND the
+   catalog has changed since this match ran (skill-discovery installed a
+   candidate), re-run this match once against the grown catalog. Bound:
+   max 2 routing passes per task — the initial match plus one
+   post-install re-route; a second partial result emits the gap signals
+   and stops.
 
 ## Integration with skill-discovery
 
@@ -53,7 +59,7 @@ flowchart LR
 |----------|---------|
 | `skill-router-match.j2` | Match a task/slice description against the installed skill catalog. Scores each candidate skill 0.0–1.0 on semantic fit (capability overlap, lexicon term overlap, when-to-use trigger alignment). Returns top-N ranked recommendations with fit_score, match_reason, applicable templates, and invocation hints. Identifies uncovered_capabilities (capabilities the task needs that no installed skill covers) — these are gap signals consumed by skill-discovery's detect-gap phase. Emits coverage_assessment: full (≥1 skill at fit ≥0.8), partial (best fit 0.4–0.79), or none (best fit <0.4). Accepts an optional epistemic_state input (confidence + uncertainty_type) that boosts trigger-alignment for certainty-finding skills when the agent is in a low-confidence regime. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `skill-router/skill-router-match`) and a context object with the required variables.
 
 ## Constraints
 

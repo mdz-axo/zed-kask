@@ -53,6 +53,15 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 5. Infer missing but required fields from surrounding context if possible.
 6. Report fields that cannot be populated from available information as unresolved fields.
 
+### Convergence
+
+7. Gate — call `lisp_eval` with:
+   - form: `(eq (length unresolved_fields) 0)`
+   - env: `{ "unresolved_fields": <required schema fields still unpopulated> }`
+   Bound: one re-entry — re-run identify-entities with the unresolved field
+   names as extraction hints; fields that remain unresolved after the second
+   pass are reported as unresolved (map-to-schema step 6), never fabricated.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -61,7 +70,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 | `identify-entities.j2` | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
 | `map-to-schema.j2` | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `structured-extraction/extract-relations`) and a context object with the required variables.
 
 ## Constraints
 

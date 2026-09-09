@@ -36,6 +36,15 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility.
 11. **Verify five-link alignment**: question→hypothesis, hypothesis→primary aim, primary aim→objectives, objectives→PICO outcome, and hypothesis→null hypothesis. Flag any misalignments honestly and propose corrections.
 12. **Recheck feasibility** in light of operational aims and objectives: sample size, methods, timeline, and resources. Identify any new concerns that emerged during aims/objectives development.
+13. **Check convergence (the gate).** Call `lisp_eval` with:
+    - form: `(and (eq misalignment_count 0) (eq (length weak_finer) 0))`
+    - env: `{ "misalignment_count": <five-link misalignments flagged in step 11>,
+              "weak_finer": <FINER dimensions still scoring below 7> }`
+    Bound: max 2 refinement cycles — on a failing gate, re-enter step 2
+    (refine the question) with the flagged weaknesses; misalignments that
+    survive the second cycle are reported honestly (step 11's
+    flag-don't-paper-over rule), and the framing ships as
+    testable-with-reservations.
 
 ## Registry Templates
 
@@ -45,7 +54,7 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 | `pico-structure.j2` | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
 | `hypothesis-operationalize.j2` | Single cognitive act: derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps — because you cannot assess testability without knowing the objectives. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `hypothesis-framer/finer-evaluate`) and a context object with the required variables.
 
 ## Constraints
 

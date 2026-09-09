@@ -102,7 +102,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 | `bug-hunt-report.j2` | Compile charter, oracle, and taxonomy results into a structured JSON bug report. Consolidates findings, computes summary statistics, and produces the final expedition report. v0.31.0: emits lessons_learned and pattern_signatures fields that the next expedition's charter consumes to close the feedback loop. |
 
 
-To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `bug-hunt/bug-hunt-charter`) and a context object with the required variables.
 
 ## Constraints
 
