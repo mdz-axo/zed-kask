@@ -138,7 +138,7 @@ impl RegulationSpan {
 
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  self is a valid RegulationSpan variant
-    /// post: returns the canonical namespace string (e.g. "reg.tool.web_search"); output matches CANONICAL_NAMESPACES byte-for-byte
+    /// post: returns the canonical namespace string (e.g. "reg.curation"); output matches CANONICAL_NAMESPACES byte-for-byte
     ///
     /// This output must match regulation record serialization strings byte-for-byte
     /// (P8 — Semantic Grounding).

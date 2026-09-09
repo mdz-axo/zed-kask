@@ -73,152 +73,55 @@ pub struct SpanNamespace(String);
 /// against this set. Domain span enums construct `SpanNamespace` through `from_observable()`
 /// which also validates against this set.
 const CANONICAL_NAMESPACES: &[&str] = &[
-    // ── ACP (Agent Communication Protocol) ──
-    "reg.acp.ide.connection_state",
-    "reg.acp.agent.memory_size",
     // ── Core infrastructure ──
     "reg.adapter",
-    "reg.pod",
     "reg.alert",
     // ── Seam architecture ──
     // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
     // that would have emitted them was never built; zero emitters.
-    // ── Core infrastructure ──
-    "reg.backup",
-    "reg.backup.variety",
-    // ── Authorization ──
-    "reg.authorization",
-    // ── API metering ──
-    "reg.api.request",
-    // ── Chat / Communication ──
-    "reg.chat",
-    "reg.chat.condense",
-    // ── CI / QA ──
-    "reg.ci.invariant.violation",
-    // ── Classification ──
-    "reg.classify.drift",
-    "reg.classify.dual_fidelity",
-    // ── Chat / Communication ──
-    "reg.communication.agent",
-    "reg.communication.agent.deregistered",
-    "reg.communication.agent.invited",
-    "reg.communication.agent.registered",
-    "reg.communication.listener",
-    "reg.communication.listener.started",
-    "reg.communication.listener.stopped",
-    "reg.communication.message",
-    "reg.communication.message.ignored",
-    "reg.communication.message.observed",
-    "reg.communication.thread",
-    "reg.communication.thread.created",
-    "reg.communication.thread.monitored",
     "reg.consent",
+    // Email notification span — emitted by hkask-email (hkask_email.rs) and
+    // kask_bridge credentials (credential-alert emails).
+    "reg.email.sent",
     "reg.consolidation",
-    // ── Contracts ──
-    "reg.contract.accepted",
-    "reg.contract.coverage",
-    "reg.contract.proposed",
-    "reg.contract.quality.violated",
-    "reg.contract.rejected",
     "reg.contract.violated",
     // ── Curation / Curator ──
     "reg.curation",
-    "reg.curation.escalation",
-    "reg.curation.escalation.critical",
-    "reg.curation.matrix",
-    "reg.curator",
-    "reg.curator.consolidation",
     "reg.curator.directive",
-    "reg.curator.efficiency.exceeded",
     "reg.curator.metacognition",
     // ── Cybernetics ──
     "reg.cybernetics",
     "reg.cybernetics.backpressure",
     "reg.cybernetics.substitution",
+    // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
+    // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
+    // pain-signal span. Live via Span::from_kind, not string literals.
+    "reg.variety",
     // Grounding alert signals from the cybernetics loop violation-delta sensor.
     "reg.grounding",
-    // ── Email (curator interaction — outbound reg.email.sent + inbound reg.email.received) ──
-    "reg.email",
-    "reg.email.sent",
-    // ── Deploy / Sessions ──
-    "reg.deploy.backup_auto_export",
-    "reg.deploy.backup_export",
-    "reg.deploy.backup_upload",
-    "reg.deploy.session_close",
-    "reg.deploy.session_open",
     // ── Goal ──
     "reg.goal",
-    // ── Healing ──
-    "reg.heal",
-    "reg.heal.attempt",
-    "reg.heal.code_change_proposed",
-    "reg.heal.escalated",
-    "reg.heal.file_created",
-    "reg.heal.llm_assisted",
-    "reg.heal.retry_loop",
-    "reg.heal.set_env",
-    "reg.heal.strategy",
-    "reg.heal.unmatched",
     // ── Inference ──
     "reg.inference",
     // ── Kata / Skill / Keystore ──
     "reg.kata",
     "reg.keystore",
-    // ── Ledger (governance/rollback failure signals) ──
-    "reg.ledger",
     // ── MCP ──
     "reg.mcp",
     "reg.mcp.cap",
-    "reg.mcp.health",
     // ── MCP Media ──
     "reg.mcp.media.face",
-    // ── Media / Memory ──
-    "reg.media",
-    "reg.media.select",
     "reg.memory",
-    "reg.memory.budget",
     "reg.memory.decay",
     "reg.memory.encode",
     // ── Regulation sensors (loop sense inputs; e.g. memory health) ──
     "reg.sensor",
     "reg.sensor.memory",
-    "reg.memory.health",
-    // ── Multi-agent ──
-    "reg.multi.invite.accepted",
-    "reg.multi.invite.sent",
-    "reg.multi.role.assigned",
     // ── Outcome ──
     "reg.outcome",
-    // ── Platform metrics ──
-    "reg.platform.metric",
-    "reg.platform.metric.dora.change_fail_rate",
-    "reg.platform.metric.dora.deploy_freq",
-    "reg.platform.metric.dora.lead_time",
-    "reg.platform.metric.dora.mttr",
-    "reg.platform.metric.loyalty",
-    "reg.platform.metric.space.activity",
-    "reg.platform.metric.space.communication",
-    "reg.platform.metric.space.efficiency",
-    "reg.platform.metric.space.performance",
-    "reg.platform.metric.space.satisfaction",
-    // ── QA ──
-    "reg.qa.repair_attempted",
-    "reg.qa.repair_exhausted",
-    "reg.qa.repair_verified",
-    // QA routine pass — emitted by scripts/qa-mcp-servers.sh per (tool, category)
-    "reg.qa.run",
-    "reg.qa.run.pass",
-    "reg.qa.run.fail",
-    "reg.qa.run.skipped",
     // ── Regulation (v0.31.0 Fermi impact-gate) ──
-    "reg.outcome",
-    "reg.outcome.calibration",
     "reg.outcome.coherence",
     "reg.outcome.predictive",
-    // ── Agent ──
-    "reg.agent.registered",
-    // ── SLO ──
-    "reg.slo.evaluated",
     // ── Sovereignty ──
     "reg.sovereignty",
     "reg.sovereignty.consent_anomaly",
@@ -228,31 +131,16 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.sovereignty.portability_verified",
     // ── Spec ──
     "reg.spec",
-    "reg.spec.executor",
     // ── Storage ──
     "reg.storage",
     "reg.storage.corruption",
-    // ── Tool subsystems ──
+    // ── Tool subsystems (hierarchical: reg.tool.* descendants validate via the root) ──
     "reg.tool",
-    "reg.tool.communication",
-    "reg.tool.companies",
-    "reg.tool.corpus",
-    "reg.tool.curator",
-    "reg.tool.filesystem",
-    "reg.tool.kanban",
-    "reg.tool.media",
-    "reg.tool.memory",
-    "reg.tool.registry",
-    "reg.tool.research",
-    "reg.tool.training",
-    "reg.tool.web_search",
     // ── Web research (per-provider outcome spans — cybernetic feedback for
     // provider selection. Emitted by ProviderPool::search_compound and
     // search_single_provider. Read by the curator's MetacognitionLoop and
     // reg_query to compute rolling success-rate/latency per provider.) ──
     "reg.web.provider",
-    // ── Variety ──
-    "reg.variety",
     // ── Wallet span names removed 2026-08-30 — residuals of the wallet
     // module deleted in 219c74b180; no emitter constructs them.
     // ── Well ──
@@ -281,25 +169,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Batch (corpus AIMD concurrency ramp — ratified spec, PM decision
     // 2026-09-03) ──
     "reg.batch.concurrency",
-    // ── Supply chain (security audit — supply-chain-sentinel skill) ──
-    "reg.supply_chain",
-    "reg.supply_chain.select",
-    "reg.supply_chain.probe",
-    "reg.supply_chain.report",
-    "reg.supply_chain.convergence",
-    // ── Runtime posture (cybernetics-loop signal spans) ──
-    "reg.runtime",
-    "reg.runtime.select",
-    "reg.runtime.classify",
-    "reg.runtime.regulate",
-    "reg.runtime.convergence",
-    "reg.runtime.policy",
-    // ── Attack taxonomy (from the retired kali-audit skill's taxonomy_map phase) ──
-    "reg.taxonomy",
-    "reg.taxonomy.select",
-    "reg.taxonomy.map",
-    "reg.taxonomy.report",
-    "reg.taxonomy.convergence",
     // ── LoRA training (training-config audit — lora-training skill) ──
     "reg.lora",
     "reg.lora.select",
@@ -346,18 +215,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid
     // without per-skill registration.
     "reg.skill",
-    // ── Template ──
-    "reg.template",
     // ── Training providers (provider HTTP call observability — post-mortem 2026-07-19) ──
-    "reg.training.provider",
     "reg.training.provider.runpod.cancel",
-    "reg.training.provider.runpod.drain",
-    "reg.training.provider.runpod.graphql",
-    "reg.training.provider.runpod.provision",
     "reg.training.provider.runpod.status",
     "reg.training.provider.runpod.submit",
-    "reg.training.provider.runpod.teardown",
-    "reg.training.provider.runpod.upload",
     // ── Training checkpoint (pod restart → Axolotl auto-resume) ──
     "reg.training.checkpoint.resume",
     // ── Widget (viz widget render + compose-back telemetry — D18/D21 seams) ──
@@ -469,16 +330,16 @@ pub enum SpanCategory {
     Curation,
     /// `reg.inference*` — the inference loop.
     Inference,
-    /// `reg.pod*`, `reg.connector*` — agent pod / connector operations (Memory loop).
+    /// Historical: `reg.pod*` / `reg.connector*` (pods removed 2026-09-09);
+    /// the variant remains so archived events still classify.
     Memory,
     // Wallet variant removed 2026-08-30 — residual of the wallet module
     // deleted in 219c74b180; no span emitter constructed `reg.wallet*`
     // namespaces anymore.
-    /// `reg.skill*` — per-skill feedback spans. No `reg.skill*` namespace is
-    /// currently registered or emitted (the cascade/marketplace subsystems
-    /// that used them are gone); the variant remains so archived events from
-    /// those eras still classify. Skill outcome measurement flows through
-    /// `RegulationLedger::record_skill_span`, not tracing targets.
+    /// `reg.skill*` — per-skill feedback spans. The `reg.skill` root is
+    /// registered; per-skill descendants (`reg.skill.<id>.<phase>`) validate
+    /// hierarchically without per-skill registration. Skill outcome
+    /// measurement also flows through `RegulationLedger::record_skill_span`.
     Skill,
     /// Any other namespace. Callers decide the fallback policy.
     Unknown,

@@ -187,8 +187,7 @@ analysis lives in the persisted `RegulationArchive`, queryable via `reg_query`.)
 
 Finally, `LoopMetrics::from_cycle` (`loops/core.rs:205`) computes quality
 telemetry, and `tick()` stores it in `loop_quality` for the next
-`loop_quality()` query. The cycle also emits a
-`reg.runtime.select` telemetry span with the signal count.
+`loop_quality()` query.
 
 ## See also
 

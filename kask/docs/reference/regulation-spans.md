@@ -146,14 +146,14 @@ The following typed span enums are **deleted**; their namespace strings remain
 in `CANONICAL_NAMESPACES` for tracing-target stability and historical-record
 queryability, but no typed emitter exists:
 
-| Deleted enum | Retained namespaces |
+| Deleted enum | Namespaces (subsequently removed 2026-09-09 in the dead-namespace sweep — see git history) |
 |---|---|
 | `AcpSpan` | `reg.acp.ide.connection_state`, `reg.acp.agent.memory_size` |
 | `ClassifySpan` | `reg.classify.dual_fidelity`, `reg.classify.drift` |
-| `ContractSpan` | `reg.contract.proposed/accepted/rejected/violated/coverage/quality.violated` |
+| `ContractSpan` | `reg.contract.proposed/accepted/rejected/violated/coverage/quality.violated` (`reg.contract.violated` remains registered) |
 | `SloSpan` | `reg.slo.evaluated` |
 | `ApiRequestSpan` | `reg.api.request` (the `hkask-api` HTTP server is deleted; nothing meters it) |
-| `InfraSpan`, `QaSpan` | `reg.ci.invariant.violation`, `reg.curator.consolidation`, `reg.chat`, `reg.qa.repair_attempted/verified/exhausted`, `reg.qa.run.*` — emitted, if at all, as raw tracing events |
+| `InfraSpan`, `QaSpan` | `reg.ci.invariant.violation`, `reg.curator.consolidation`, `reg.chat`, `reg.qa.repair_attempted/verified/exhausted`, `reg.qa.run.*` — never emitted through the validated span path |
 
 The `SeamSpan` row (`reg.architecture.seam.coverage`/`.drift`) was removed
 2026-08-30 along with the namespaces — the "seam watcher" that would have
@@ -194,21 +194,19 @@ wired to these spans.
 
 ### 3.7 Additional canonical namespace groups
 
-Every string below appears verbatim in `event.rs:75-431`. Selection (not
-exhaustive — the array is the authority):
+Every string below appears verbatim in the `CANONICAL_NAMESPACES` array in
+`event.rs` (the array is the authority). Selection (not exhaustive):
 
 | Group | Namespaces (selected) |
 |---|---|
-| **Tool subsystems** | `reg.tool`, `reg.tool.{communication, companies, corpus, curator, filesystem, kanban, media, memory, registry, research, training, web_search}` — note: no `reg.tool.condenser` is registered |
-| **Outcome** | `reg.outcome` (registered twice — `event.rs:192,215`, a benign duplicate), `.calibration`, `.coherence`, `.predictive` |
-| **Memory** | `reg.memory`, `.budget`, `.decay`, `.encode`, `.health` — no `.episodic` is registered |
-| **MCP** | `reg.mcp`, `.cap`, `.health`, `.media.face` |
+| **Tool subsystems** | `reg.tool` (hierarchical — `reg.tool.*` descendants validate via the root; live descendants include `reg.tool.agent`, `reg.tool.invoked`, `reg.tool.media`, `reg.tool.completed`) |
+| **Outcome** | `reg.outcome`, `.coherence`, `.predictive` |
+| **Memory** | `reg.memory`, `.decay`, `.encode` — no `.episodic` is registered |
+| **MCP** | `reg.mcp`, `.cap`, `.media.face` |
 | **Pipeline** | `reg.pipeline`, `.calibration`, `.decimation`, `.decimation.binarize`, `.triage`, `.pdf_extract`, `.ocr` + 5 `.ocr.*` failure modes |
-| **Platform metrics** | `reg.platform.metric` + DORA (4) + SPACE (5) + `.loyalty` |
-| **Skill phases** | `reg.lora.*` (6), `reg.bughunt.*` (6), `reg.codereview.*` (5), `reg.supply_chain.*` (4), `reg.taxonomy.*` (4), `reg.runtime.*` (4), `reg.eqm*` (7) |
-| **Training providers** | `reg.training.provider` + 7 `.runpod.*` HTTP observability spans; `reg.training.checkpoint.resume` |
+| **Skill phases** | `reg.lora.*` (6), `reg.bughunt.*` (6), `reg.codereview.*` (5), `reg.eqm*` (7) |
+| **Training providers** | `reg.training.provider.runpod.{cancel,status,submit}`; `reg.training.checkpoint.resume` |
 | **Sovereignty** | `reg.sovereignty` + 4 sub-namespaces |
-| **Heal** | `reg.heal` + 9 sub-namespaces |
 
 No `reg.guard*` or `reg.meta*` strings are registered — those went with the
 guard crate and the curator self-observation cleanup; historic records
