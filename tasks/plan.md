@@ -15,7 +15,7 @@ Authorization history: the operator first requested this regression-first plan, 
 
 The target is to prevent the identified loss of recoverable data, private-network boundary bypass, over-authorized external dispatch, duplicate agent creation, and false completion evidence. Fix one observable failure path at a time; deepen existing modules only after behavioral tests pass.
 
-Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **T01–T03 (including T02b) and D01 are verified; T04–T15 remain untouched. T16–T19 have passing automated tests/checks/lints; operator review and a live application-quit smoke test remain at Checkpoint D.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
+Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **State 2026-09-09: T01–T03 (+T02b), D01, T04–T06, T07–T08, T16–T19 (automated), and the follow-up queue T09–T14 are ALL verified; the Phase E teardown (C1–C5) is complete. Remaining: T15's operator_feedback producer (gated on the operator's routing decision), the live application-quit smoke test, and Checkpoint D operator review.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
 
 ## Current validation close-out — 2026-09-08
 
@@ -597,7 +597,7 @@ Each group ends with a checkpoint: cumulative regressions, build/lints, operator
 
 ## D01 — Shared-database retention decision
 
-**Policy owner:** operator. **Decision:** YES, ratified 2026-09-07 by "D01 yes. please proceed". **Implementation/verification owner:** receiving coding agent. Policy is resolved; the code is present but not yet verified.
+**Policy owner:** operator. **Decision:** YES, ratified 2026-09-07 by "D01 yes. please proceed". **Implementation/verification owner:** receiving coding agent. Policy is resolved and the implementation is verified (see Validation below — the header's earlier "not yet verified" note was stale and is corrected 2026-09-09).
 
 Companies research notes and forecasts must survive portfolio schema recovery. The decision and superseded whole-file-disposal scope are recorded in `kask/docs/reference/mcp-servers/portfolio.md` and `companies.md`. Preserve attachment metadata and referenced portfolio parents too. Portfolio-only legacy data remains disposable; no research migration is authorized by this decision.
 
@@ -611,19 +611,19 @@ Companies research notes and forecasts must survive portfolio schema recovery. T
 
 Probabilities/frequencies are unmeasured. Severity is conditional on reaching the audited path, not a claim of incident frequency.
 
-| Risk if outstanding | Severity | Owner / closure path |
-|---|---|---|
-| Private-network extraction through redirects | High | Coding agent, T02 regression and transport gate |
-| Lost recovery journal or undistilled turns | High | Coding agent, T01/T03; T04 prevents skipped learning |
-| Over-authorized spending or duplicate spawned work | High | Coding agent, T05/T06; operator ratifies any unresolved settlement policy |
-| False compliance or lost explicit escalations | High | Coding agent, T07/T08; no false durable-success claims |
-| Cross-domain research loss during schema recovery | High | D01 policy ratified; receiving agent must validate the implemented guard before closure |
-| Stale vectors, biased calibration, misleading harness/cap feedback | Medium–High | Coding agent, elaborate T09–T12 at Checkpoint C |
-| Incomplete adapter metadata, unavailable fallback IPC, unsensed skill drift | Medium | Coding agent, elaborate T13–T15; recover interfaces/spec first |
-| Missing production-shaped test seams increase task size | Medium | Coding agent, mandatory pre-task sizing/design gate |
-| Dependency compilation exceeds the current 180-second window | Verification blocker | Receiving agent coordinates a longer bounded window; preserve incremental cache; no repeated timeouts, lock deletion, or killing other builds |
+| Risk if outstanding | Severity | Owner / closure path | State (2026-09-09) |
+|---|---|---|---|
+| Private-network extraction through redirects | High | Coding agent, T02 regression and transport gate | **CLOSED** — T02+T02b verified 2026-09-07 |
+| Lost recovery journal or undistilled turns | High | Coding agent, T01/T03; T04 prevents skipped learning | **CLOSED** — T01/T03 verified 2026-09-07; T04 verified 2026-09-08 (128-bound ratified at Checkpoint B) |
+| Over-authorized spending or duplicate spawned work | High | Coding agent, T05/T06; operator ratifies any unresolved settlement policy | **CLOSED** — T05 (hold-on-ambiguity, ratified) + T06 verified 2026-09-08; Checkpoint B ratified |
+| False compliance or lost explicit escalations | High | Coding agent, T07/T08; no false durable-success claims | **CLOSED** — T07/T08 verified 2026-09-09; Checkpoint C ratified |
+| Cross-domain research loss during schema recovery | High | D01 policy ratified; receiving agent must validate the implemented guard before closure | **CLOSED** — D01 implemented + validated 2026-09-07 (stale header corrected 2026-09-09) |
+| Stale vectors, biased calibration, misleading harness/cap feedback | Medium–High | Coding agent, elaborate T09–T12 at Checkpoint C | **CLOSED** — T09–T12 verified 2026-09-09 (Groups 1–2) |
+| Incomplete adapter metadata, unavailable fallback IPC, unsensed skill drift | Medium | Coding agent, elaborate T13–T15; recover interfaces/spec first | **T13/T14 CLOSED** (verified 2026-09-09, Group 3); **T15 OPEN** — the operator_feedback producer awaits the operator's routing decision |
+| Missing production-shaped test seams increase task size | Medium | Coding agent, mandatory pre-task sizing/design gate | Standing discipline — the T13 manifest seam was recovered before implementation (the precedent held) |
+| Dependency compilation exceeds the current 180-second window | Verification blocker | Receiving agent coordinates a longer bounded window; preserve incremental cache; no repeated timeouts, lock deletion, or killing other builds | Standing constraint — 30-minute windows in use; the external release build was killed once by operator order (2026-09-09) |
 
-Unresolved details are gates, not permission to invent behavior: mixed-age deletion policy (T03), bounded pending-work behavior (T04), unknown-outcome credit reconciliation (T05), acknowledgment/delivery semantics (T07/T08), legacy calibration evidence (T11), skill-feedback ownership (T15). Research retention (D01) is resolved; only its implementation verification remains open.
+Unresolved details are gates, not permission to invent behavior. **Resolved gates** (with their resolutions): mixed-age deletion policy (T03 — hard deletion only for fully-covered entities), bounded pending-work behavior (T04 — 128 threads, evict-oldest + warn, ratified), unknown-outcome credit reconciliation (T05 — hold on ambiguity, release only on proven pre-dispatch rejection, ratified), acknowledgment/delivery semantics (T07/T08 — truthful outcomes; queue-only escalation routing, ratified), legacy calibration evidence (T11 — additive-only, identity-less rows never dedup, no migration needed). **The one remaining gate: skill-feedback ownership (T15)** — the operator_feedback producer's source event (curator advice-apply / direct operator control / gemba review outcomes).
 
 ## Definition of done and verification
 

@@ -175,9 +175,10 @@ impl VarietyTracker {
         // An empty window means the domain is idle — no states observed
         // since the last reset. Idle is not deficit: counting a resting
         // domain at full deficit made quiet periods read as maximal
-        // variety loss (the OutcomeTracker::CONFIG_GAP_KINDS precedent
-        // excludes environment gaps from success-rate math for the same
-        // reason — a missing observation is not a negative one).
+        // variety loss (the OutcomeTracker's not-tool-fault exclusion
+        // (`is_not_tool_fault_kind`) excludes environment gaps from
+        // success-rate math for the same reason — a missing observation
+        // is not a negative one).
         if self.variety() == 0 {
             return 0;
         }

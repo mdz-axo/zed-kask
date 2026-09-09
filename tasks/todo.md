@@ -91,7 +91,7 @@ Source: [plan.md](plan.md). Baseline `2475305420`; created 2026-09-07.
   - [x] Domain/severity/evidence reaches the existing human-review queue/channel; both paths tested independently.
   - [x] Missing/broken sinks are visible; queued/attempted/confirmed persistence is distinguished despite the current best-effort sink.
   - [x] Dampening/general alerts remain correct; explicit concerns are not fabricated sensor readings; routing gate resolved (queue is the path of record; live-channel variant is an operator decision, documented).
-- [ ] **Checkpoint C:** cumulative regressions, affected integration build/lints, operator review before follow-up scheduling.
+- [x] **Checkpoint C:** cumulative regressions, affected integration build/lints, operator review before follow-up scheduling. (**RATIFIED 2026-09-09 "as is"** — Phase C evidence accepted; queue-only escalation routing stands; the follow-up queue opened. All three groups have since executed: T09–T14 verified, T15 recovered and gated on the operator's routing decision.)
 
 ## Follow-up queue — elaborated 2026-09-09 (Checkpoint C ratified); awaiting operator scheduling
 

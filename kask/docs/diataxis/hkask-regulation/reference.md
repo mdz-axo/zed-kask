@@ -381,7 +381,40 @@ When the same pair shows no observed improvement for `substitution_after` cycles
 `set_points.rs:120`), `try_substitute` (`cycle.rs:31`) walks the
 substitution ladder. When it hits the per-metric stagnation threshold
 (default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:101`), a
-regulatory-plateau alert fires.
+regulatory-plateau alert fires. **Plateau latch (2026-09-09):** while a
+pending escalation for the plateau condition sits in the review queue,
+re-detections suppress the entire routing (span, queue persist, live
+channel) — the same source-level dedup `route_action_as_alert` applies.
+Before the latch, a persistent plateau re-fired every cycle (the
+live-observed retry_count 37, the `plateau_detected` span flood behind
+the algedonic log-cap breach). The stagnation detector keeps counting
+while latched, so resolving the escalation re-fires the next detection.
+
+## Tool-reliability sensing and diagnosis
+
+`ToolReliabilitySensor` (`sensor_provider.rs`) aggregates per-domain
+success rates from `RegulationLedger::outcome_breakdown`, equal-weighted,
+with a **minimum-sample floor** (`TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES` = 5,
+matching `check_outcome`'s alert minimum): a domain below the floor is
+excluded — the live-observed 0.5/0.6667/0.75 deviations all came from
+quiet windows where a couple of failures were the entire sample. The
+aggregation lives in `aggregate_tool_reliability`, shared with
+`verify_impact`'s after-value re-sense so before/after stay comparable.
+
+Failures whose error kind is **not the tool's fault**
+(`hkask_types::tool_response::is_not_tool_fault_kind`: environment gaps
+`unavailable`/`permission_denied`, and caller-caused `invalid_argument`
+rejections — including model-caused unparseable tool-call arguments,
+classified at the agent dispatch seam) are excluded from the success-rate
+math but kept in the per-kind breakdown.
+
+The **per-domain breakdown** (`DomainOutcomeSnapshot`: success rate,
+operation counts, per-error-kind tallies) is the surface that names the
+failing domain. It is emitted as the `reg.outcome.tool_domains` span when
+a tool-reliability alert fires (degradation or plateau) and on the hourly
+heartbeat, and carried in the escalation row's `error_context`
+(`outcome_breakdown` field) — retrievable via the `curator_algedonic_log`
+and `curator_escalations` MCP tools.
 
 ## Alert sinks
 

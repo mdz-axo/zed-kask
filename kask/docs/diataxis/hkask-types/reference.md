@@ -409,6 +409,7 @@ and the timeout via `INFERENCE_TIMEOUT_ENV` =
   (`tool_response.rs:61`), `parse_tool_error` (`tool_response.rs:88`),
   `error_kind_from_display` (`tool_response.rs:122`),
   `is_config_gap_kind` (`tool_response.rs:147`),
+  `is_not_tool_fault_kind` (`tool_response.rs:160`),
   `display_hints_from_output_text` (`tool_response.rs:163`).
 - `time.rs`: `now_rfc3339` (`time.rs:18`), `now_rfc3339_z` (`time.rs:42`).
 - `url_utils.rs`: `extract_youtube_id` (`url_utils.rs:13`).
