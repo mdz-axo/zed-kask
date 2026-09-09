@@ -8,7 +8,7 @@ pub mod cache;
 pub mod db;
 pub(crate) mod evidence;
 pub(crate) mod feed;
-pub(crate) mod paper_id;
+pub mod paper_id;
 pub(crate) mod performance;
 pub mod providers;
 pub mod rss_types;
@@ -20,8 +20,9 @@ pub mod types;
 use std::collections::HashMap;
 
 use providers::{
-    ArxivProvider, BraveProvider, FirecrawlProvider, RawFetchProvider, SemanticScholarProvider,
-    SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider, WebSearchProvider,
+    ArxivProvider, BraveProvider, FirecrawlProvider, OpenAlexProvider, RawFetchProvider,
+    SemanticScholarProvider, SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider,
+    WebSearchProvider,
 };
 
 // ── Re-exports ──
@@ -71,6 +72,10 @@ pub(crate) fn build_provider_pool(
     // Free providers — no API key required
     search_providers.push(Box::new(SemanticScholarProvider::new()?));
     search_providers.push(Box::new(ArxivProvider::new()?));
+    // OpenAlex — free scholarly metadata; also held typed for paper-id
+    // resolution (the `exa` pattern: one provider, two surfaces).
+    let openalex_provider = OpenAlexProvider::new()?;
+    search_providers.push(Box::new(openalex_provider.clone()));
 
     let exa_provider = exa_api_key
         .as_ref()
@@ -106,5 +111,6 @@ pub(crate) fn build_provider_pool(
         extract_providers,
         browse_providers,
         exa_provider,
+        Some(openalex_provider),
     ))
 }

@@ -11,7 +11,7 @@ use crate::research::types::WebError;
 
 /// A typed paper identifier. The payload is the normalized form.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PaperId {
+pub enum PaperId {
     Doi(String),
     Arxiv(String),
     Pmid(String),

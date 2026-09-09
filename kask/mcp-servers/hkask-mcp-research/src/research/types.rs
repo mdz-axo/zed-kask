@@ -279,6 +279,23 @@ pub struct ResolvePaperRequest {
     /// A paper reference in any supported form: DOI (bare, `doi:`, or
     /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID.
     pub query: String,
+    /// Optional research-run identifier: when set, the resolved canonical
+    /// URL is recorded into that run's ledger (recorded_by='server') with
+    /// the OpenAlex metadata as the audit copy.
+    pub run_id: Option<String>,
+}
+
+/// Metadata for a resolved paper, from the OpenAlex work record.
+#[derive(Debug, Clone)]
+pub struct PaperMetadata {
+    /// The OpenAlex work ID (W-prefixed short form).
+    pub openalex_id: String,
+    /// The DOI, normalized lowercase — None when the work has none.
+    pub doi: Option<String>,
+    pub title: String,
+    pub publication_year: Option<u64>,
+    pub authors: Vec<String>,
+    pub venue: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -1980,6 +1980,7 @@ async fn resolve_paper_canonicalizes_any_identifier_form() {
     let out = ok(server
         .resolve_paper(Parameters(ResolvePaperRequest {
             query: "https://doi.org/10.1038/s41586-024-00000-x".to_string(),
+            run_id: None,
         }))
         .await);
     let json = parse(&out);
@@ -2004,6 +2005,7 @@ async fn resolve_paper_rejects_garbage_with_typed_error() {
     let error = err(server
         .resolve_paper(Parameters(ResolvePaperRequest {
             query: "not a paper".to_string(),
+            run_id: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -2012,4 +2014,54 @@ async fn resolve_paper_rejects_garbage_with_typed_error() {
         "rejection names what was expected: {}",
         error.message
     );
+}
+
+#[tokio::test]
+async fn resolve_paper_with_run_id_records_the_canonical_url() {
+    // The stub pool has no OpenAlex provider, so the enrichment degrades
+    // with a surfaced note — but the identity and the run-ledger recording
+    // happen regardless: the deterministic floor, never blocked by the
+    // enrichment tier.
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "paper identity".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    let json = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: "doi:10.1038/s41586-024-00000-x".to_string(),
+            run_id: Some(run_id.clone()),
+        }))
+        .await));
+    assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
+    assert_eq!(
+        json["canonical_url"].as_str(),
+        Some("https://doi.org/10.1038/s41586-024-00000-x")
+    );
+    // The enrichment outcome is surfaced either way — metadata or a note,
+    // never silent.
+    assert!(
+        json["openalex"].is_object(),
+        "openalex block present (metadata or degradation): {json}"
+    );
+    assert_eq!(
+        json["run_ledger"]["recorded"].as_u64(),
+        Some(1),
+        "canonical URL recorded: {json}"
+    );
+
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
+        .await));
+    let sources = manifest["sources"].as_array().expect("sources");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        sources[0]["url"].as_str(),
+        Some("https://doi.org/10.1038/s41586-024-00000-x")
+    );
+    assert_eq!(sources[0]["recorded_by"].as_str(), Some("server"));
+    assert_eq!(sources[0]["provider"].as_str(), Some("openalex"));
 }

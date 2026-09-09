@@ -1671,25 +1671,86 @@ impl ResearchServer {
     }
 
     #[tool(
-        description = "Resolve a paper reference to a typed identity: parses any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL), normalizes it, and returns the identifier kind/value, the canonical URL, and the stable ledger key. Every rejection names what was expected."
+        description = "Resolve a paper reference to a typed identity: parses any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL), normalizes it, returns the identifier kind/value, canonical URL, and stable ledger key, and enriches with OpenAlex metadata (title, authors, year, venue) when a record exists — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
     )]
     pub async fn resolve_paper(
         &self,
-        Parameters(ResolvePaperRequest { query }): Parameters<ResolvePaperRequest>,
+        Parameters(ResolvePaperRequest { query, run_id }): Parameters<ResolvePaperRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "resolve_paper", async {
             if query.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("query must not be empty"));
             }
             let parsed = crate::research::paper_id::parse_paper_id(&query)?;
-            Ok(serde_json::json!({
+            let mut result = serde_json::json!({
                 "identifier": {
                     "kind": parsed.kind(),
                     "value": parsed.value(),
                 },
                 "canonical_url": parsed.canonical_url(),
                 "stable_key": crate::research::paper_id::stable_paper_key(&parsed),
-            }))
+            });
+
+            // OpenAlex enrichment — best-effort, surfaced either way: the
+            // identity is the deterministic floor and never blocked by the
+            // metadata tier. Ok(None) = no record (or no lookup path for the
+            // kind); Err = the lookup failed — both surface as notes.
+            let metadata = match self.pool.resolve_paper_id(&parsed).await {
+                Ok(Some(metadata)) => {
+                    result["openalex"] = serde_json::json!({
+                        "openalex_id": metadata.openalex_id,
+                        "doi": metadata.doi,
+                        "title": metadata.title,
+                        "publication_year": metadata.publication_year,
+                        "authors": metadata.authors,
+                        "venue": metadata.venue,
+                    });
+                    Some(metadata)
+                }
+                Ok(None) => {
+                    result["openalex"] = serde_json::json!({
+                        "note": "no OpenAlex record for this identifier",
+                    });
+                    None
+                }
+                Err(error) => {
+                    result["openalex"] = serde_json::json!({
+                        "error": error.to_string(),
+                    });
+                    None
+                }
+            };
+
+            // Run-ledger recording (C2 composition): the server observed
+            // this resolution — record the canonical URL with the metadata
+            // (when present) as the audit copy.
+            if let Some(run_id) = run_id.as_deref() {
+                let record = RunSourceRecord {
+                    url: parsed.canonical_url(),
+                    provider: Some("openalex".to_string()),
+                    title: metadata.as_ref().map(|metadata| metadata.title.clone()),
+                    published: metadata.as_ref().and_then(|metadata| {
+                        metadata.publication_year.map(|year| year.to_string())
+                    }),
+                    source: metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.venue.clone()),
+                    excerpt: metadata.as_ref().map(|metadata| {
+                        format!(
+                            "openalex {} — {} ({})",
+                            metadata.openalex_id,
+                            metadata.authors.join(", "),
+                            metadata
+                                .publication_year
+                                .map(|year| year.to_string())
+                                .unwrap_or_else(|| "no year".to_string())
+                        )
+                    }),
+                };
+                result["run_ledger"] = self.append_run_ledger(run_id, vec![record]).await;
+            }
+
+            Ok(result)
         })
         .await
     }

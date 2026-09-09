@@ -10,6 +10,7 @@ mod arxiv;
 mod brave;
 mod exa;
 mod firecrawl;
+mod openalex;
 mod raw_fetch;
 mod semantic_scholar;
 mod serapi;
@@ -19,6 +20,7 @@ pub(crate) use arxiv::ArxivProvider;
 pub(crate) use brave::BraveProvider;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
+pub(crate) use openalex::OpenAlexProvider;
 pub(crate) use raw_fetch::{RawFetchProvider, truncate_str, validated_fetch_client};
 pub(crate) use semantic_scholar::SemanticScholarProvider;
 pub(crate) use serapi::SerapiProvider;
@@ -172,6 +174,16 @@ pub trait WebSearchPort: Send + Sync {
     /// Score each configured provider against a query + intent hint,
     /// returning ranked recommendations. See `ProviderPool::score_providers`.
     fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation>;
+    /// Resolve a typed paper identifier to scholarly metadata. Default:
+    /// this port does not resolve papers (surfaced by the caller as a
+    /// degradation note — never silent). `Ok(None)` = no record for the
+    /// identifier; `Err` = the lookup itself failed.
+    async fn resolve_paper_id(
+        &self,
+        _id: &crate::research::paper_id::PaperId,
+    ) -> Result<Option<PaperMetadata>, WebError> {
+        Err(WebError::NoProvider)
+    }
 }
 
 #[async_trait]
@@ -199,6 +211,9 @@ pub(crate) struct ProviderPool {
     pub(crate) extract_providers: Vec<Box<dyn WebExtractProvider>>,
     pub(crate) browse_providers: Vec<Box<dyn WebBrowseProvider>>,
     pub(crate) exa: Option<ExaProvider>,
+    /// The OpenAlex provider, held typed (the `exa` pattern) for paper-id
+    /// resolution — a direct lookup, not a pool search.
+    pub(crate) openalex: Option<OpenAlexProvider>,
     /// In-process rolling performance aggregator for the cybernetic feedback
     /// loop. Updated inline at each `reg.web.provider` span emission site;
     /// read by `score_providers` to apply live success-rate and p50-latency
@@ -234,12 +249,14 @@ impl ProviderPool {
         extract_providers: Vec<Box<dyn WebExtractProvider>>,
         browse_providers: Vec<Box<dyn WebBrowseProvider>>,
         exa: Option<ExaProvider>,
+        openalex: Option<OpenAlexProvider>,
     ) -> Self {
         Self {
             search_providers,
             extract_providers,
             browse_providers,
             exa,
+            openalex,
             performance: std::sync::Mutex::new(
                 crate::research::performance::ProviderPerformanceAggregator::new(),
             ),
@@ -974,6 +991,16 @@ impl WebSearchPort for ProviderPool {
         self.browse_with_fallback(url, instruction, timeout).await
     }
 
+    async fn resolve_paper_id(
+        &self,
+        id: &crate::research::paper_id::PaperId,
+    ) -> Result<Option<PaperMetadata>, WebError> {
+        match &self.openalex {
+            Some(provider) => provider.resolve(id).await,
+            None => Err(WebError::NoProvider),
+        }
+    }
+
     async fn health_check(&self) -> Vec<ProviderHealthEntry> {
         self.health_check_all().await
     }
@@ -1074,7 +1101,7 @@ mod tests {
     fn score_providers_ranks_configured_above_unconfigured() {
         // Build a pool with only Brave configured (no API keys for others).
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None);
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None, None);
         let recs = pool.score_providers("test query", None);
         // Brave (configured) should rank first; others get the +10 unconfigured penalty.
         assert_eq!(recs[0].kind, "brave");
@@ -1102,6 +1129,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             None,
+            None,
         );
         let recs = pool.score_providers("latest AI news", Some("news"));
         // Brave (best_for includes "news") should rank above Tavily.
@@ -1123,6 +1151,7 @@ mod tests {
             vec![Box::new(brave), Box::new(tavily)],
             Vec::new(),
             Vec::new(),
+            None,
             None,
         );
         // Baseline: brave scores lower (better) than tavily (cheaper + faster).
@@ -1168,7 +1197,7 @@ mod tests {
     #[test]
     fn score_providers_no_live_penalty_below_sample_threshold() {
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None);
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None, None);
         // Record 2 failures (below the 3-sample threshold).
         {
             let mut agg = pool.performance.lock().unwrap();
