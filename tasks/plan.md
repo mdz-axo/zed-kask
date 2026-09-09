@@ -415,7 +415,7 @@ The operator ordered the two reported-not-fixed machete flags closed. Both defer
 
 **Net-LOC:** −16 manifest lines (media_panel −10, zed −1, swarm_panel −5 net after the comment rewrite) plus Cargo.lock shrinkage.
 
-**Verification (2026-09-09):** `cargo check -p media_panel -p zed` clean; `cargo test -p media_panel` → 24 passed, 0 failed; `cargo check --all-features -p swarm_panel` → 0 errors (was 2 — the fix); `cargo check --all-features --all-targets -p swarm_panel` → 0 errors (gate parity); `cargo check --all-features -p agent` → 0 errors (control — its shape needs no fix); `cargo machete` → media_panel and zed no longer flagged, swarm_panel still clean under its ignore. [Remaining suite/clippy runs recorded here once the external release build frees the lock.]
+**Verification (2026-09-09, complete — the operator killed the in-flight external release build to free the lock):** `cargo check --all-features -p swarm_panel` → **0 errors (was 2 — the fix)**; `cargo check --all-features` across all four kask panels → 0 errors; `cargo test -p swarm_panel` → 61 passed, 0 failed; `./script/clippy -p swarm_panel -p media_panel -p zed` (the wrapper's `--all-targets --all-features`) exit 0, zero warnings — this is the heavyweight validation of the `zed` dep removal; `cargo fmt --check` clean; `cargo machete` final state: **zero findings in our scope** — `media_panel` and `zed` cleared, `swarm_panel` clean under its documented ignore; the 24 remaining findings are all upstream Zed crates (the `tracing`/`component` macro-activated false-positive class).
 
 ## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
 
