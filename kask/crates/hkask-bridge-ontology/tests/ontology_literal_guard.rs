@@ -117,6 +117,16 @@ const ALLOWED_LITERALS: &[(&str, &str)] = &[
         "kask/mcp-servers/hkask-mcp-media/src/media_block.rs",
         "omc:Capture",
     ),
+    // hkask-storage test fixtures pin the h_mem ontology JSON blob shape
+    // ({"dc_type":"bibo:Note"}) — the hmems-table migration scenario and the
+    // update-replaces-row round-trip. bibo:Note verified against BIBO v1.3
+    // (http://purl.org/ontology/bibo/ — stable class, "Notes or annotations
+    // about a resource", subclass of bibo:Document).
+    (
+        "kask/crates/hkask-storage/src/core/connection.rs",
+        "bibo:Note",
+    ),
+    ("kask/crates/hkask-storage/src/hmem.rs", "bibo:Note"),
 ];
 
 /// Repo root (this crate lives at `<root>/kask/crates/hkask-bridge-ontology`).
