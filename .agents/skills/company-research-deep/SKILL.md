@@ -101,6 +101,7 @@ A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Le
 4. Score the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board, the Wardley map, the economic trajectory, the market-reality gate, and the financial red-flag screen.
 5. Every score must cite evidence: transcript quote, web source URL, or financial data point. A score without cited evidence is invalid.
 6. Call `lisp_eval` to apply fixed weights (25/30/25/20) and compute the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).
+   Pinned form: `(let ((score (+ (* 0.25 obvious_problem) (* 0.30 invisible_gorilla) (* 0.25 combinatorial_solution) (* 0.20 choke_point)))) (cond ((>= score 75) 'GORILLA) ((>= score 50) 'SMALL_ANIMAL) (t 'PEDESTRIAN)))` — env binds each dimension's 0–100 score; maturity-blocked dimensions (from gorilla-capability-reason) bind to 0, not their elicited value.
 7. Do NOT propose alternative weightings.
 
 ### gorilla-capability-reason

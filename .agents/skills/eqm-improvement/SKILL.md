@@ -130,8 +130,10 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 1. Re-score the improved rationale via `market_score_rationale`.
 2. Compute marker-space gap (lisp_eval): distance from current scores to target
    scores.
+   Pinned form: `(abs (- target_score current_score))` — env: `{ "target_score": <marker target>, "current_score": <latest marker score> }`.
 3. Brier-score the prediction (lisp_eval): did the predicted marker reach the
    predicted level?
+   Pinned form: `(let ((diff (- confidence outcome))) (* diff diff))` — env: `{ "confidence": <the prediction's carried confidence>, "outcome": 1 if the marker reached the predicted level, else 0 }`.
 4. Check convergence: gap < epsilon, or Cauchy (iterates stabilized), or Brier
    calibrated.
 

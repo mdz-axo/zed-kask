@@ -157,7 +157,7 @@ capabilities:
 ## When NOT to Use
 
 - Pure performance benchmarking without a capability registry (use HELM [^helm-2022] directly)
-- Security penetration testing (use kali-audit or adversarial-red-team)
+- Security penetration testing — outside this skill's scope; no kask skill covers it, so use a dedicated security-audit process
 - Task decomposition (use task-breakdown)
 
 ## Instructions

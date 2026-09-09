@@ -92,8 +92,14 @@ skill's decision rule encodes this asymmetry:
 ### Convergence
 
 Cauchy criterion on the forecaster-level composite across iterations. The
-convergence signal is the marker-space gap (distance from current composite to
-target composite), computed deterministically via lisp_eval.
+The convergence signal is the marker-space gap (distance from current composite to
+target composite), computed deterministically via lisp_eval:
+
+```lisp
+(let ((gap (abs (- target_composite current_composite)))) (if (<= gap epsilon) 'converged 'continue))
+```
+
+env: `{ "target_composite": <target>, "current_composite": <latest iteration>, "epsilon": 0.05 }`.
 
 ## Registry Templates
 

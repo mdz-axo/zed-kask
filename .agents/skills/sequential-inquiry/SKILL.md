@@ -58,6 +58,7 @@ Brier. Evaluate convergence after each iteration.
 3. Step 8 (`kata.hypotenuse`): compute total distance to target in combined space.
 4. Step 9 (`kata.prediction_vs_result`): Brier score for this cycle's prediction.
 5. Step 10 (call `lisp_eval`): convergence signal — the hypotenuse value from step 8. Lower signal variance across iterations = convergence (stability check).
+   Pinned form: `(sqrt (+ (* object_gap object_gap) (* process_gap process_gap)))` — env: `{ "object_gap": <step 6 result>, "process_gap": <step 7 result> }`. Track the hypotenuse across iterations for the stability check.
 6. Step 11 (re-enter the cycle): re-enter the Kata cycle at step 1 if not converged.
 
 ## Registry Templates
