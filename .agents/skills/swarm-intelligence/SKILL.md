@@ -270,9 +270,9 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
     `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
     `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
     `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools (25)**: `swarm_fund_local`, `swarm_balance_local`,
-    `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
-    `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
+  - **Local tools (31)**: `swarm_delegate_local`,
+    `swarm_fanout_local`, `swarm_pipeline_local`,
+    `swarm_execute_plan_local`, `swarm_a2a_send` (A2A protocol message, in-process),
     `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
     `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
     `swarm_create_local_agent`, `swarm_reconfigure_local_agent` (C6),
@@ -286,11 +286,28 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
     [Local Knowledge Tools design](../../../kask/docs/diataxis/swarm_system/reference.md),
     `swarm_ai_assist` (authoring aid), `swarm_evaluate_local` (deterministic
     task-success evaluator — stamps a `TaskSuccessVerdict` with
-    `provenance: Deterministic`), `swarm_execute_plan_local` (batch plan
-    execution — runs delegations, evaluates results, returns collected array
-    with verdicts stamped; closes the loop in one call).
+    `provenance: Deterministic`), `swarm_eval_suite_local`,
+    `swarm_eval_agent_local` (rollout harness), `swarm_task_board`,
+    `swarm_workflow_check_local`, `swarm_run_workflow_local` (execute a
+    declared workflow_template end-to-end), `swarm_observed_seams_local`
+    (the observed delegation topology — edges recorded at dispatch, compared
+    against declared ports), `swarm_fleet_digest_local` (the fleet's shape:
+    categories and counts, never individual agents), `swarm_who_answers_local`
+    (which agents accept a label, with the bespoke/cohort/universal reading),
+    `swarm_select_agent_local` (rank candidates for a slot by measured stats).
+
+    **Fleet facts are registry-first — never from memory** (fermi's
+    `biotech_analyst` incident: a navigator answered three specific claims
+    about an agent's model ladder, all false, all one lookup from being
+    checked, because its sources were prose). Per-agent facts (model, ports,
+    stats) come from `swarm_get_local_agent`; the fleet's shape comes from
+    `swarm_fleet_digest_local`; who answers an ask comes from
+    `swarm_who_answers_local`. Do not state them from memory. If a tool
+    reports a different fleet size than a digest you hold, the digest is
+    stale — say so rather than answering from it.
 - Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
-  `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
+  `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_execute_agent`,
+  `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,
   action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
   (headless). In local mode there is no consent token and no funding gate —
