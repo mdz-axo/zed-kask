@@ -880,9 +880,10 @@ impl CyberneticsLoop {
         // indistinguishable from a dead ticker, so idle cycles emit ONE
         // heartbeat span per hour (plus the first tick, so a freshly
         // restarted loop immediately announces liveness). The heartbeat
-        // carries the same all-zero payload plus `heartbeat: true` and
-        // `tick_count` — the zeros are the health reading, and tick_count
-        // lets a reader confirm the ticker's achieved rate.
+        // carries the same all-zero payload plus `heartbeat: true`,
+        // `tick_count`, and the alert log's fill state — the zeros are the
+        // health reading, and tick_count lets a reader confirm the ticker's
+        // achieved rate.
         const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
         let cycle_had_signal =
             !deviations.is_empty() || !actions.is_empty() || !impact_reports.is_empty();
@@ -903,6 +904,18 @@ impl CyberneticsLoop {
             if is_heartbeat {
                 observation["heartbeat"] = serde_json::Value::Bool(true);
                 observation["tick_count"] = serde_json::Value::from(tick_number);
+                // The in-memory alert log's fill state rides the heartbeat so
+                // any session — not just Curator sessions with the
+                // `curator_status` agent tool — can watch the log approach
+                // its cap from the persisted log (`curator_algedonic_log`).
+                // The algedonic log-cap-breach escalation class (0cd398d0)
+                // becomes visible in the hourly trend before the
+                // approaching-cap signal fires.
+                let health = self.ledger.read().await.health().await;
+                observation["alert_log_count"] = serde_json::Value::from(health.alert_log_count);
+                observation["alert_log_cap"] = serde_json::Value::from(health.alert_log_cap);
+                observation["alert_log_approaching_cap"] =
+                    serde_json::Value::Bool(health.alert_log_approaching_cap);
             }
             self.emit_regulation_span(SpanKind::LoopMetricsTelemetry, observation)
                 .await;

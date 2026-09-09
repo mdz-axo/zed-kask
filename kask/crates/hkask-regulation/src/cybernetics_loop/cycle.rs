@@ -2519,9 +2519,10 @@ mod tests {
     }
 
     /// Idle cycles emit exactly one heartbeat span per hour (tick 1, then
-    /// every 360 ticks) carrying the all-zero payload plus `heartbeat: true`
-    /// and `tick_count`. Without it, a converged loop and a dead ticker are
-    /// indistinguishable — both produce archive silence.
+    /// every 360 ticks) carrying the all-zero payload plus `heartbeat: true`,
+    /// `tick_count`, and the alert log's fill state. Without it, a converged
+    /// loop and a dead ticker are indistinguishable — both produce archive
+    /// silence.
     #[test]
     fn idle_loop_emits_hourly_heartbeat_span() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -2551,15 +2552,30 @@ mod tests {
                     Some(&serde_json::json!(true)),
                     "idle span {index} must be a heartbeat"
                 );
-                assert_eq!(
-                    observation.get("deviations").and_then(|v| v.as_u64()),
-                    Some(0),
-                    "the zeros are the health reading"
-                );
                 assert_eq!(observation.get("actions").and_then(|v| v.as_u64()), Some(0));
                 assert_eq!(
                     observation.get("impact_reports").and_then(|v| v.as_u64()),
                     Some(0)
+                );
+                // The heartbeat carries the alert log's fill state so the
+                // cap trend is visible from any session, not just Curator
+                // sessions with the curator_status agent tool.
+                assert_eq!(
+                    observation.get("alert_log_count").and_then(|v| v.as_u64()),
+                    Some(0),
+                    "idle span {index} reports an empty alert log"
+                );
+                assert!(
+                    observation
+                        .get("alert_log_cap")
+                        .and_then(|v| v.as_u64())
+                        .is_some_and(|cap| cap >= 1),
+                    "idle span {index} carries the configured cap"
+                );
+                assert_eq!(
+                    observation.get("alert_log_approaching_cap"),
+                    Some(&serde_json::json!(false)),
+                    "an empty log is not approaching its cap"
                 );
             }
             assert_eq!(
