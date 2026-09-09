@@ -425,8 +425,8 @@ pub fn map_to_language_model_completion_events(
                                     cache_creation_input_tokens: 0,
                                     cache_read_input_tokens: 0,
                                     // zed-kask: D20 — Copilot Chat doesn't report USD cost in `usage`;
-                                    // `cost: None` keeps `TokenUsage` (which carries `cost: Option<f64>` for
-                                    // kask's rJoule budget) constructible. See DIVERGENCE.md D20.
+                                    // `cost: None` keeps `TokenUsage` (which carries `cost: Option<f64>`
+                                    // for cost observability) constructible. See DIVERGENCE.md D20.
                                     cost: None,
                                 },
                             )));
@@ -1388,9 +1388,9 @@ mod tests {
 
     /// D20 pin: Copilot Chat's `TokenUsage` constructions must set `cost: None`.
     /// Copilot doesn't report USD cost in its `usage` object, so the
-    /// `cost: Option<f64>` field (added by zed-kask D20 for kask's rJoule budget)
-    /// must be `None` here — kask's budget charges observed cost only from
-    /// providers that report it (OpenRouter, OpenAI-compatible). If a future
+    /// `cost: Option<f64>` field (added by zed-kask D20 for cost observability)
+    /// must be `None` here — observed cost is only surfaced from providers
+    /// that report it (OpenRouter, OpenAI-compatible). If a future
     /// Copilot `usage` schema adds a cost field, this test should be updated
     /// to parse it (and the `cost: None` sites in `map_events` updated).
     #[test]

@@ -524,10 +524,6 @@ mod tool_surface_tests {
 
 /// Run the media MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Do NOT call `dotenvy::dotenv()` here — it mutates the process
-    // environment via `set_var`, which contradicts the `load_dotenv()`
-    // design. `run_server` calls `load_dotenv` internally.
-
     // Resolve the inference port — chat/vision/embed/list_models route
     // through zed's LanguageModelRegistry via the IPC bridge when
     // `HKASK_INFERENCE_SOCKET` is set; media generation

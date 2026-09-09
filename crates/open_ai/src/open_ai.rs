@@ -853,8 +853,9 @@ pub struct Usage {
     // `cost`, some OpenAI-compatible providers use `estimated_cost`, BYOK
     // providers use `market_cost`
     // (real compute energy). Surfaced into `TokenUsage.cost` by the event
-    // mapper so kask's rJoule budget charges observed (not operator-configured)
-    // cost. `None` for providers that don't report cost (Anthropic, OpenAI).
+    // mapper for cost observability (nothing gates on it — budgets are
+    // deprecated, operator ruling 2026-09-04). `None` for providers that
+    // don't report cost (Anthropic, OpenAI).
     #[serde(default)]
     pub cost: Option<f64>,
     #[serde(default)]

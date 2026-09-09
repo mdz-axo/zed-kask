@@ -84,7 +84,7 @@ pub(crate) trait OcrExecutor: Send + Sync {
 /// workloads — interactive MCP tool calls should use `None` (sequential).
 ///
 /// Regulation observability is handled externally by the GovernedTool membrane
-/// (rJoule accounting, variety tracking, RegulationRecord persistence). Internal
+/// (variety tracking, RegulationRecord persistence). Internal
 /// operational telemetry uses `tracing::info!` under `reg.pipeline` target.
 ///
 /// # Arguments

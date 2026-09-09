@@ -245,14 +245,11 @@ fn open_curator_store(
         }
     };
     let store = Arc::new({
-        // The curator uses the default storage budget (10_000) with no env
-        // override — a deliberate design decision: the curator must shed
-        // low-utility/low-saliency memories rather than grow unbounded. The
-        // default budget is the Ashby attenuator that forces consolidation
-        // to prune. The storage budget is currently hard-coded —
-        // HKASK_MEMORY_STORAGE_BUDGET is not yet wired anywhere, so an
-        // operator cannot raise any store's cap without changing the
-        // default constant.
+        // Budgets are deprecated (operator ruling 2026-09-04): nothing gates
+        // on the storage count — forgetting is time-based
+        // (`kask.memory.forgetting_days`) and distillation-gated, never
+        // count-based. The store's capacity constant remains only as the
+        // regulation loop's storage-usage-ratio reference point.
         //
         // The decay constant comes from the caller (the operator's
         // `kask.memory.memory_life_days` setting) — recall-time decay must

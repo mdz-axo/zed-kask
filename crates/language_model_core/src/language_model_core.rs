@@ -490,9 +490,11 @@ pub struct TokenUsage {
     // zed-kask D20: observed USD cost of this completion, as reported by the
     // provider in its `usage` object (`usage.cost` / `usage.estimated_cost` /
     // `usage.market_cost`). `None` when the provider doesn't report cost
-    // (Anthropic, Ollama, local). kask's rJoule budget charges this directly
-    // (1 rJoule = $1 USD) via `InferenceResult.cost_usd` in `kask_bridge`. Populated
-    // by the OpenRouter and OpenAI-compatible provider impls; `None` elsewhere.
+    // (Anthropic, Ollama, local). Cost observability only — surfaced via
+    // `InferenceResult.cost_usd` in `kask_bridge` so the operator can see what
+    // inference costs; nothing gates on it (budgets are deprecated, operator
+    // ruling 2026-09-04). Populated by the OpenRouter and OpenAI-compatible
+    // provider impls; `None` elsewhere.
     // Pinned by `test_token_usage_cost_round_trips` in this crate + the bridge
     // cost-extraction test in `kask_bridge`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

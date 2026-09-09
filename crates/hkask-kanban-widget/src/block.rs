@@ -114,10 +114,6 @@ pub struct TaskBody {
     /// on unverified tasks.
     #[serde(default)]
     pub verification: Option<VerificationBody>,
-    /// Gas/rJoule spend log. Rendered only in the detail popover (B3). Empty
-    /// on tasks with no spend entries.
-    #[serde(default)]
-    pub spend_log: Vec<SpendEntryBody>,
 }
 
 /// One comment on a task. Mirrors the server's `Comment` shape (author, body,
@@ -142,20 +138,6 @@ pub struct VerificationBody {
     pub passed: bool,
     #[serde(default)]
     pub reason: String,
-}
-
-/// One entry in a task's gas/rJoule spend log. Mirrors the server's `GasEntry`
-/// shape for passive rendering in the card-detail popover (B3). `kind`
-/// distinguishes gas spend from rJoule spend (the server emits `"spend_log"` /
-/// `"rjoule_spend"`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct SpendEntryBody {
-    #[serde(default)]
-    pub amount: u64,
-    #[serde(default)]
-    pub reason: String,
-    #[serde(default)]
-    pub kind: String,
 }
 
 /// The latest recorded activity on a task (R3). Mirrors the server's
@@ -277,18 +259,14 @@ mod tests {
 
     #[test]
     fn parses_full_task_detail_fields() {
-        // B3: comments, verification, and spend_log parse from the block body.
+        // B3: comments and verification parse from the block body.
         let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
             {"task_id":"t1","title":"A","status":"backlog",
              "criteria":["compiles"],
              "comments":[
                {"author":"alice","body":"Looks good","created_at":"2026-08-09T10:00:00Z"}
              ],
-             "verification":{"passed":true,"reason":"tests pass"},
-             "spend_log":[
-               {"amount":50,"reason":"inference","kind":"spend_log"},
-               {"amount":100,"reason":"tool call","kind":"rjoule_spend"}
-             ]}
+             "verification":{"passed":true,"reason":"tests pass"}}
         ]}"#;
         let parsed = parse_kanban_body(body).expect("valid body parses");
         let task = &parsed.tasks[0];
@@ -300,15 +278,11 @@ mod tests {
         let verification = task.verification.as_ref().expect("verification present");
         assert!(verification.passed);
         assert_eq!(verification.reason, "tests pass");
-        assert_eq!(task.spend_log.len(), 2);
-        assert_eq!(task.spend_log[0].amount, 50);
-        assert_eq!(task.spend_log[0].kind, "spend_log");
-        assert_eq!(task.spend_log[1].kind, "rjoule_spend");
     }
 
     #[test]
     fn full_detail_fields_default_empty_when_absent() {
-        // B3: older blocks without comments/verification/spend_log parse with
+        // B3: older blocks without comments/verification parse with
         // empty collections and `None` verification.
         let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
             {"task_id":"t1","title":"A","status":"backlog"}
@@ -317,7 +291,6 @@ mod tests {
         let task = &parsed.tasks[0];
         assert!(task.comments.is_empty());
         assert!(task.verification.is_none());
-        assert!(task.spend_log.is_empty());
     }
 
     #[test]

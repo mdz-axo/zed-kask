@@ -646,20 +646,37 @@ mod tests {
         let dir = tempfile::tempdir().expect("dir");
         let store_a = sqlite_store(&dir);
         let store_b = sqlite_store(&dir);
+        eprintln!("PROBE: stores built");
         let session = store_a.open_session(10, &[]).expect("session");
+        eprintln!("PROBE: session opened");
         let server =
             FixtureServer::start(vec![Behavior::Respond(200, "{\"ok\":true}".to_string())]);
         let client = test_client(&server.base_url());
+        eprintln!("PROBE: authorizing first");
         let first = authorize_delegate(&client, &store_a, SpendAuth::Session(&session), "ws", 10);
+        eprintln!("PROBE: first done");
         let second = authorize_delegate(&client, &store_b, SpendAuth::Session(&session), "ws", 10);
-        let winner = match (first, second) {
-            (Ok(auth), Err(_)) => auth,
-            (Err(_), Ok(auth)) => auth,
+        eprintln!("PROBE: second done");
+        match (first, second) {
             (Ok(_), Ok(_)) => {
+                // Teardown bisect: drop in explicit order to find the hang.
+                drop(client);
+                eprintln!("PROBE: client dropped");
+                drop(server);
+                eprintln!("PROBE: server dropped");
+                drop(store_b);
+                eprintln!("PROBE: store_b dropped");
+                drop(store_a);
+                eprintln!("PROBE: store_a dropped");
                 panic!("both authorizations succeeded — the session was oversubscribed")
             }
-            (Err(first), Err(second)) => panic!("both authorizations failed: {first}; {second}"),
-        };
+            _ => panic!("unexpected: pre-fix both must succeed"),
+        }
+        #[allow(unreachable_code)]
+        {
+            let winner = unreachable!();
+            let _ = winner;
+        }
         let data = complete_delegate(&client, &store_a, winner, "ws", "agent", "task")
             .await
             .expect("the single authorized dispatch succeeds");

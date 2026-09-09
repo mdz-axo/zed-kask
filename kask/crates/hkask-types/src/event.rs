@@ -152,7 +152,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.heal",
     "reg.heal.attempt",
     "reg.heal.code_change_proposed",
-    "reg.heal.dotenv",
     "reg.heal.escalated",
     "reg.heal.file_created",
     "reg.heal.llm_assisted",
@@ -218,59 +217,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.outcome.predictive",
     // ── Agent ──
     "reg.agent.registered",
-    // ── Semantic ──
-    "reg.semantic.published",
-    // ── Skill (organized by subdomain) ──
-    // Lifecycle: skill discovery, loading, publishing
-    "reg.skill.lifecycle",
-    "reg.skill.lifecycle.skill_activated",
-    "reg.skill.lifecycle.skills_loaded",
-    "reg.skill.lifecycle.skills_discovered",
-    "reg.skill.lifecycle.skill_published",
-    // Registry: manifest validation
-    "reg.skill.registry",
-    "reg.skill.registry.registry_validated",
-    // Cascade: step execution
-    "reg.skill.cascade",
-    "reg.skill.cascade.step_executed",
-    "reg.skill.cascade.compute",
-    "reg.skill.cascade.escalated",
-    "reg.skill.cascade.branching_misconfigured",
-    "reg.skill.cascade.choice_misconfigured",
-    "reg.skill.cascade.timeout_retry",
-    "reg.skill.cascade.parse_failure_retry",
-    "reg.skill.cascade.skill_use_issue_report_failed",
-    "reg.skill.cascade.step_failed",
-    "reg.skill.cascade.gate_passed",
-    "reg.skill.cascade.gate_failed",
-    "reg.skill.cascade.parallel_joined",
-    "reg.skill.cascade.tool_batch_joined",
-    // Convergence: cascade outcomes
-    "reg.skill.convergence",
-    "reg.skill.convergence.converged",
-    "reg.skill.convergence.escalated", // Provenance + profile enforcement
-    "reg.skill.provenance",
-    "reg.skill.profile_enforcement",
-    // Frontmatter: SKILL.md parse errors (F-02 fix)
-    "reg.skill.frontmatter",
-    "reg.skill.frontmatter.missing",
-    // Manifest: registry manifest errors (F-03 fix)
-    "reg.skill.manifest",
-    "reg.skill.manifest.unparsable",
-    "reg.skill.manifest.absent",
-    "reg.skill.manifest.unreadable",
-    // Routing: skill-to-task matching (skill-router)
-    "reg.skill.routing",
-    "reg.skill.routing.matched",
-    "reg.skill.routing.uncovered",
-    // Discovery: capability gap detection and candidate evaluation (skill-discovery)
-    "reg.skill.discovery",
-    "reg.skill.discovery.gap_detected",
-    "reg.skill.discovery.searched",
-    "reg.skill.discovery.evaluated",
-    // Bundle: composition and persistence (skill bundler / post-run UI)
-    "reg.skill.bundle_compose",
-    "reg.skill.bundle_save",
     // ── SLO ──
     "reg.slo.evaluated",
     // ── Sovereignty ──
@@ -528,7 +474,11 @@ pub enum SpanCategory {
     // Wallet variant removed 2026-08-30 — residual of the wallet module
     // deleted in 219c74b180; no span emitter constructed `reg.wallet*`
     // namespaces anymore.
-    /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, rJoule, outcome).
+    /// `reg.skill*` — per-skill feedback spans. No `reg.skill*` namespace is
+    /// currently registered or emitted (the cascade/marketplace subsystems
+    /// that used them are gone); the variant remains so archived events from
+    /// those eras still classify. Skill outcome measurement flows through
+    /// `RegulationLedger::record_skill_span`, not tracing targets.
     Skill,
     /// Any other namespace. Callers decide the fallback policy.
     Unknown,

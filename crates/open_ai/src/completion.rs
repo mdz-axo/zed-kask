@@ -5204,8 +5204,8 @@ mod tests {
 
     /// D20: the chat-completions event mapper surfaces the provider's reported USD
     /// cost into `TokenUsage.cost`, preferring `market_cost` (real compute energy)
-    /// over `cost`/`estimated_cost`. kask's rJoule budget charges this observed
-    /// (not operator-configured) cost via `kask_bridge`.
+    /// over `cost`/`estimated_cost`. Cost observability only — nothing gates on
+    /// it (budgets are deprecated, operator ruling 2026-09-04).
     #[test]
     fn test_map_event_populates_cost_from_usage() {
         let usage_with_cost =

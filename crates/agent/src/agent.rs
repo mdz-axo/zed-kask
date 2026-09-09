@@ -4398,6 +4398,46 @@ pub fn record_mcp_tool_outcome(
     }
 }
 
+/// Callback type for skill-execution outcome recording. Receives
+/// (skill_id, success, error) — the write side of the per-skill feedback
+/// loop: the composition root forwards each outcome to
+/// `RegulationLedger::record_skill_span(skill_id, "outcome", ...)`, which
+/// the metacognition loop's `sense_feedback_drift` reads for per-skill
+/// success-rate decline.
+///
+/// Scope: fired by `SkillTool::run` for skills that were found and attempted
+/// (success, missing dependencies, unreadable body). A skill-not-found is a
+/// request error with no skill to attribute; an authorization denial is the
+/// operator's choice, not a skill reliability signal — neither is recorded.
+pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, bool, Option<&str>) + Send + Sync>;
+
+/// Global hook for skill outcome recording. Wired in `main.rs` to a closure
+/// that stores each outcome as a `reg.skill.<id>.outcome` span payload in the
+/// shared `RegulationLedger`. Re-settable (`Mutex`, not `OnceLock`) so tests
+/// can replace it freely.
+static SKILL_OUTCOME_RECORDER: ProcessGlobal<SkillOutcomeRecorder> = ProcessGlobal::new();
+
+/// Set the global skill outcome recorder. Re-settable (replaces any
+/// previous recorder) — production wires once at startup.
+pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
+    SKILL_OUTCOME_RECORDER.set(Some(recorder));
+}
+
+/// Record a skill execution outcome. Best-effort by design: when no recorder
+/// is wired (tests, non-kask embedders) the outcome is dropped with a debug
+/// log — telemetry must never fail a tool call.
+pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) {
+    // Same unlocked-dispatch pattern as `record_mcp_tool_outcome` above.
+    let recorder = SKILL_OUTCOME_RECORDER.get();
+    match recorder {
+        Some(record) => record(skill_id, success, error),
+        None => log::debug!(
+            "record_skill_outcome: recorder not wired — outcome for \
+             {skill_id} not recorded"
+        ),
+    }
+}
+
 /// Collect successfully-loaded global and project-local skills into a
 /// single list, preserving every entry — even when two skills share a
 /// name. The autocomplete popup shows the full list with origin labels

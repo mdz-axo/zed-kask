@@ -10,8 +10,8 @@
 //! The `tracing::debug!` calls with `target: "hkask.condenser"` are diagnostic
 //! logging for human inspection, NOT cybernetic feedback signals — which is
 //! why they sit under `hkask.*` rather than the reserved `reg.*` prefix
-//! (PRINCIPLES §9.1). The actual feedback channel is the daemon's
-//! `store_experience` call in the MCP server layer. See the condenser README.
+//! (PRINCIPLES §9.1). There is no feedback channel: the condenser is a pure
+//! in-process compressor wired via `BridgeThreadCondenser` (D8).
 
 use crate::algorithms::{AlgorithmRegistry, classify_tool};
 use crate::types::*;

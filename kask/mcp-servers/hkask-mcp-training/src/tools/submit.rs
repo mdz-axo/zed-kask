@@ -323,7 +323,7 @@ impl TrainingServer {
                 harness: resolved_params.harness.unwrap_or(self.harness_id),
                 owner: None,
                 skill_name: resolved_skill_name.clone(),
-                estimated_cost_urj: crate::providers::types::estimate_training_cost_urj(&self.host_id, num_epochs, &base_model),
+                estimated_cost_micro_usd: crate::providers::types::estimate_training_cost_micro_usd(&self.host_id, num_epochs, &base_model),
                 artifacts: None,
             };
 
@@ -388,7 +388,7 @@ impl TrainingServer {
                         job_store.update_provider_job_id(&job.id, &provider_job_id).map_err(map_job_store_error)?;
                     }
                     let mut result = json!({"job_id": job.id, "provider_job_id": provider_job_id, "status": "queued", "base_model": base_model, "host": format!("{:?}", self.host_id)});
-                    result["estimated_cost_urj"] = json!(job.estimated_cost_urj);
+                    result["estimated_cost_micro_usd"] = json!(job.estimated_cost_micro_usd);
                     if retrain_mode {
                         result["retrain"] = json!(true);
                         result["skill_name"] = json!(resolved_skill_name);
@@ -401,7 +401,7 @@ impl TrainingServer {
                             result["ab_baseline"] = json!({"previous_version": b.previous_version, "previous_loss": b.previous_loss, "previous_perplexity": b.previous_perplexity, "description": "A/B baseline from previous adapter."});
                         }
                     }
-                    tracing::info!(target: "hkask.qa.cost.training_job", job_id = %job.id, provider_job_id = %provider_job_id, estimated_cost_urj = job.estimated_cost_urj, retrain = retrain_mode, "Training job submitted");
+                    tracing::info!(target: "hkask.qa.cost.training_job", job_id = %job.id, provider_job_id = %provider_job_id, estimated_cost_micro_usd = job.estimated_cost_micro_usd, retrain = retrain_mode, "Training job submitted");
                     if !token_warnings.is_empty() {
                         result["token_warnings"] = json!(token_warnings);
                         result["token_warning_count"] = json!(token_warnings.len());

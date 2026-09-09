@@ -97,7 +97,7 @@ pub(crate) type MemoryFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// The bridge provides the implementation. When no implementation is injected
 /// (standalone or first-run), ingestion is a no-op.
 ///
-/// The ingestion pattern mirrors hKask's `DaemonHandler::store_experience`:
+/// The ingestion pattern:
 /// - The write path cleans and chunks the turn into word-bounded passages,
 ///   stored as shared h_mems under `curator:thread:{thread_id}` — one copy
 ///   per turn (2026-09-04 single-copy ruling), each chunk embedded with its

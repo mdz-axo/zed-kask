@@ -18,32 +18,6 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
-/// Refuse a `SKILL.md` read, returning the redirect the model should act on.
-///
-/// Returns `Err` (the tool-error channel) when `resolved_path` is a skill
-/// catalog file, so the model receives the redirect as the tool result rather
-/// than the file body.
-///
-/// The `log::warn!` counts *blocked* attempts — the measurement that tells us
-/// whether the system prompt's prohibition prose is still carrying load now that
-/// a gate exists. It is deliberately **not** in the `reg.skill.*` namespace:
-/// `reg.skill.<id>.<phase>` is reserved for per-skill feedback spans
-/// (`RegulationLedger::record_skill_span`, CI-enforced by
-/// `kask/scripts/check-skill-span-namespace.sh`), and this is a tool-boundary
-/// event about a *refused file read*, not a skill's own outcome. It is also a
-/// `log` record rather than a `tracing` event because the `agent` crate has no
-/// `tracing` dependency and no `log`→`tracing` bridge is installed, so a
-/// `target:`-style span here would not reach the regulation ledger.
-fn refuse_skill_catalog_read(
-    _resolved_path: &Path,
-    _requested_path: &str,
-) -> Result<(), LanguageModelToolResultContent> {
-    // zed-kask D1 revert: SKILL.md body injection is restored. `read_file`
-    // may read SKILL.md files — the `skill` tool also reads them and injects
-    // the body into the conversation. No gate needed.
-    Ok(())
-}
-
 /// Resolves the optional `start_line` / `end_line` inputs from the tool schema
 /// to a concrete 1-indexed, inclusive `(start, end)` line range:
 ///
@@ -299,7 +273,6 @@ impl AgentTool for ReadFileTool {
             if let Some(skill_path) =
                 resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {
-                refuse_skill_catalog_read(&skill_path, &input.path)?;
                 return read_global_skill_file(
                     &skill_path,
                     fs.as_ref(),
@@ -333,8 +306,6 @@ impl AgentTool for ReadFileTool {
                 .ok_or_else(|| {
                     anyhow!("Failed to convert {} to absolute path", input.path)
                 }).map_err(tool_content_err)?;
-
-            refuse_skill_catalog_read(&abs_path, &input.path)?;
 
             // Check settings exclusions synchronously
             project.read_with(cx, |_project, cx| {
@@ -584,34 +555,6 @@ mod test {
     use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
-
-    #[test]
-    fn test_refuse_skill_catalog_read_allows_skill_md() {
-        // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
-        // the body from disk and injects it. `read_file` can also read it.
-        refuse_skill_catalog_read(
-            Path::new("/home/u/proj/.agents/skills/hypothesis-framer/SKILL.md"),
-            ".agents/skills/hypothesis-framer/SKILL.md",
-        )
-        .expect("SKILL.md reads must be allowed (body injection restored)");
-    }
-
-    #[test]
-    fn test_refuse_skill_catalog_read_allows_skill_resources_and_other_files() {
-        // Resource files inside a skill directory stay readable — a cascade
-        // result may direct the model to a template or reference. Gating the
-        // whole directory would break that path.
-        refuse_skill_catalog_read(
-            Path::new("/home/u/proj/.agents/skills/hypothesis-framer/templates/finer.j2"),
-            "templates/finer.j2",
-        )
-        .expect("skill resource files must remain readable");
-
-        // A user's own file that happens to be named SKILL.md is not a catalog
-        // entry and must not be refused.
-        refuse_skill_catalog_read(Path::new("/home/u/proj/docs/SKILL.md"), "docs/SKILL.md")
-            .expect("a non-catalog SKILL.md must remain readable");
-    }
 
     #[gpui::test]
     async fn test_read_directory_path(cx: &mut TestAppContext) {

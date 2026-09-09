@@ -8,8 +8,8 @@
 //! # Regulation Flow
 //!
 //! Threshold drift alerts are emitted via `tracing::warn!` for operational
-//! observability. Pipeline-level Regulation observation (start/settle spans, rJoule
-//! accounting, variety tracking) is handled externally by the GovernedTool
+//! observability. Pipeline-level Regulation observation (start/settle spans,
+//! variety tracking) is handled externally by the GovernedTool
 //! membrane — the docproc server is a pure instrument with no self-instrumentation.
 
 use crate::ocr::{ComplexityTier, CrossValidation, PipelineOutcome, ThresholdConfig};

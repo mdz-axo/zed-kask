@@ -853,27 +853,6 @@ impl KanbanWidget {
             );
         }
 
-        // Spend log.
-        if !task.spend_log.is_empty() {
-            panel = panel.child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Label::new(format!("Spend log ({})", task.spend_log.len()))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .children(task.spend_log.iter().map(|entry| {
-                        Label::new(format!(
-                            "{} {} — {}",
-                            entry.amount, entry.kind, entry.reason
-                        ))
-                        .size(LabelSize::XSmall)
-                        .color(Color::Default)
-                    })),
-            );
-        }
-
         Some(panel.into_any_element())
     }
 
@@ -1190,7 +1169,6 @@ mod tests {
             criteria: Vec::new(),
             comments: Vec::new(),
             verification: None,
-            spend_log: Vec::new(),
         }
     }
 
@@ -2089,7 +2067,7 @@ mod tests {
 
     #[gpui::test]
     async fn detail_popover_empty_when_no_extras(cx: &mut gpui::TestAppContext) {
-        // B3: a task with no criteria/comments/verification/spend_log still
+        // B3: a task with no criteria/comments/verification still
         // opens the detail panel (it shows the title + description only).
         let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
         let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
@@ -2106,7 +2084,7 @@ mod tests {
             "detail panel opens even with no extras"
         );
 
-        let (criteria, comments, verification, spend_log) = widget.read_with(cx, |this, _| {
+        let (criteria, comments, verification) = widget.read_with(cx, |this, _| {
             let task = this
                 .columns
                 .iter()
@@ -2116,13 +2094,9 @@ mod tests {
                 task.criteria.is_empty(),
                 task.comments.is_empty(),
                 task.verification.is_none(),
-                task.spend_log.is_empty(),
             )
         });
-        assert!(
-            criteria && comments && verification && spend_log,
-            "all extras empty"
-        );
+        assert!(criteria && comments && verification, "all extras empty");
     }
 
     #[gpui::test]

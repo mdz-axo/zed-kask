@@ -203,20 +203,23 @@ pub(crate) struct TrainingJob {
     /// Semantic/generic fine-tuning leaves this `None`.
     #[serde(default)]
     pub skill_name: Option<String>,
-    /// Estimated cost of this training job in micro-rJoules (µrJ).
-    /// Computed from host provider pricing + training epochs.
-    /// Not optional — always computed at job creation time.
-    #[serde(default)]
-    pub estimated_cost_urj: u64,
+    /// Estimated cost of this training job in micro-USD, computed from host
+    /// provider pricing + training epochs. Not optional — always computed at
+    /// job creation time. (Field renamed from `estimated_cost_urj` with the
+    /// rJoule teardown, 2026-09-08; the alias keeps stored job records
+    /// deserializable. The old unit label was wrong — the values were always
+    /// micro-USD.)
+    #[serde(default, alias = "estimated_cost_urj")]
+    pub estimated_cost_micro_usd: u64,
     /// Immutable input/output artifacts for RunPod training.
     #[serde(default)]
     pub artifacts: Option<TrainingArtifacts>,
 }
 
-/// Estimate training cost in micro-rJoules (µrJ) from host provider pricing.
+/// Estimate training cost in micro-USD from host provider pricing.
 ///
 /// Uses host-specific base rates multiplied by epoch count and model size.
-pub(crate) fn estimate_training_cost_urj(
+pub(crate) fn estimate_training_cost_micro_usd(
     host: &TrainingHostId,
     num_epochs: u32,
     base_model: &str,
