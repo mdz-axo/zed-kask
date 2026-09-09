@@ -328,6 +328,38 @@ Acceptance:
 
 **Checkpoint C:** cumulative directive and memory/budget regressions, build/lint evidence, and operator review before scheduling the follow-up queue.
 
+## Phase E — Complexity teardown (operator ruling 2026-09-08)
+
+**The ruling:** the program had been net-additive (T04–T06 added ~1,350 lines, deleted ~330) while the operator's standing 2026-09-04 budget-deprecation ruling went unenforced in code the program touched — "you have been building on unreliable code you never cleaned." Cleanup is now the program: every slice must leave the tree simpler than it found it; net-LOC accounting, simplification review, and residue removal are part of every change's definition of done. Phase C (T07/T08) is halted until the teardown tranche lands.
+
+**Role correction recorded (operator, 2026-09-08):** the PM defines required functionality and required variables; the technical program manager owns everything below that and answers for implementation choices. Technical decisions are made and documented, not deferred upward.
+
+### C1 — Remove the local budget system — VERIFIED 2026-09-08
+
+**Ratified:** "delete it all - there was never supposed to be local budget for swarm."
+
+**What was removed (operator ruling 2026-09-04 + the rJoule removal's unfinished tail):**
+- The `hkask-ledger` crate entirely (workspace member, dep, files).
+- `LocalSwarmRuntime`'s ledger/cost machinery: the ledger open/init, `balance()`, `history()`, `fund()`, `record_spend()`, `debit_and_build` (→ `build_result` — measurement only), the per-dispatch ceiling checks, and `credits_authorized`/`ceiling` parameters from `delegate`/`delegate_batch` (all ~10 call sites).
+- `LocalDelegateResult`: `cost`, `cost_uncapped`, `balance` fields (and their JSON rendering). Tokens/latency/model/tool-calls/reasoning — the real measurements — remain. Old stored delegation records with cost fields still deserialize (serde ignores unknown fields; no migration needed).
+- The three tools `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history` (`ledger_tools.rs` deleted; router, TOOL_NAMES via build.rs, and the tool-count pin 85→82 updated).
+- `credits_authorized` from all LOCAL request types (`DelegateLocalRequest`, `FanoutEntry`, `PipelineStep`, `A2aSendRequest`, `A2aBroadcastRequest`, `PlanDelegation`, `EvalAgentTask`). The CLOUD (ABW) request types keep theirs — the cloud credit system is real and consent-gated.
+- Kata-kanban's `HKASK_ABW_MAX_CREDITS` read + credits/cost/balance theater in the spawn path; the spawn note now records tokens/model/latency only.
+- `AgentStatsStore.total_cost_credits` (cost param dropped from `record_success`).
+- The bridge's `HKASK_SWARM_LEDGER_PATH` emission + 3 allowlist entries + the settings-reference row; the A2A HTTP gateway's `max_credits_per_dispatch` parameter chain.
+- The fund/balance/history round-trip test and the funding-gesture pin (replaced by `local_delegation_has_no_budget`); the panel's Steer-prompt ledger paragraph and its pre-funding assertions; `KANBAN_TOOLS` count pin 26→25 (fallout of the parallel session's rJoule tool removal, fixed here because it broke the panel build).
+- Docs: swarm.md (tool table, local-mode descriptions, algedonic section, consent-gate local note, env table), the diataxis swarm_system set (explanation/reference/tutorial/how-to — including the class diagram, sequence diagram, and "why no funding gate" → "no budget"), kask_bridge reference, diataxis INDEX.
+
+**What stayed (and why):** the CLOUD spend gate untouched (T05's reservation/settlement semantics — ABW credits are real spend); `max_credits_per_dispatch` in `SwarmConfig` (cloud ceiling); fermi's cloud spend-honesty fields; tokens/latency/model measurements; `AgentStatsStore` (real per-agent execution stats).
+
+**Net-LOC accounting:** the two teardown commits (`29d3330507`, `a4f82b3deb`) — **41 files in the budget scope: +631 / −2,052 (net −1,421)**; the repo-wide commits total +1,152/−2,668 including the parallel session's unrelated grounding-verify edits. First net-negative slice of the program.
+
+**Verification (2026-09-08):** `cargo test --offline --locked -p hkask-mcp-swarm -p hkask-mcp-kata-kanban -p swarm_panel -p kask_bridge -j 4` — 132 + 46/21/1 + 69 + allowlist suites, **0 failed**; `HKASK_BUILD_JOBS=4 CARGO_NET_OFFLINE=true ./script/clippy --locked -p hkask-mcp-swarm -p hkask-mcp-kata-kanban -p swarm_panel -p kask_bridge` clean; rustfmt clean on every touched file; `git diff --check` clean. The kata-kanban spawn path and T06 replay tests pass unchanged (the replay protection is orthogonal to the budget removal).
+
+### C2/C3 — queued (same rules as C1)
+
+C2: consolidate what T04–T06 added (`DispatchSettlement` trait shape, duplicated test helpers, T04 eviction machinery review, my own T06 response-format residue). C3: repo-wide sweep for remaining deprecated-budget mentions and stale docs. Then Phase C (T07/T08) resumes under the new definition of done.
+
 ## Phase D — Specification-truth repairs (operator ruling 2026-09-07)
 
 **Continuation:** Phase D implementation, automated checks, and release-build commands are complete; the commands reused current artifacts. Read the release/runtime evidence above and [the continuation](kask-reliability-final-verification-continuation.md) for the still-pending live functionality checks and remaining T04–T15 work. The continuation's unstarted-build statement is superseded by this evidence. The older [Phase D prompt](kask-phase-d-continuation-prompt.md) is historical and includes claims corrected by this phase's evidence. Keep one build at a time and outputs trimmed.

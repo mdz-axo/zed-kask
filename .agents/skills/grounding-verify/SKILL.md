@@ -265,9 +265,19 @@ returns.
    `cross_check` form that was NOT copied verbatim from the canonical
    library — the anti-gaming falsifier:
    - A library form references its inputs by construction; the
-     assignment's `library_form` field records which one was selected,
-     and the registry makes a false declaration visible in review.
-     Skip the check for these.
+     assignment's `library_form` field records which one was selected.
+     Verify the declaration first — one call with the library driver
+     over every claim with a non-null `library_form`:
+     - env: `{ "records": [{ "claim_id", "library_form", "cross_check" }, ...] }`
+     - `ok`: skip the empty-env check for this claim.
+     - `mismatch` or `unknown_name`: the declaration is false — record
+       a finding (class W, severity low: `library_form` did not match
+       the recorded `cross_check`) and treat the form as authored:
+       the empty-env check below applies to it.
+     - The driver is a substring check: it catches false declarations,
+       not engineered decoys — a form built to contain a library text
+       while computing something else is a doctored form, and the
+       registry records it verbatim for review.
    - For every authored form: call `lisp_eval` with the form and
      env `{}`. The call MUST fail with an unbound-symbol error: a real
      derivation references its input values, and against an empty env
@@ -517,7 +527,7 @@ this skill is the verifier, not the generator.
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, origin-tagged `inputs`, and `library_form`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) plus data-driven batch drivers (cited numbers, cited quotes, origins, consistency) that run each check family as ONE call — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, library_form, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, origin-tagged `inputs`, and `library_form`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) plus data-driven batch drivers (cited numbers, cited quotes, origins, consistency, library verification) that run each check family as ONE call — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, library_form, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
 | `compile-error-log.j2` | Compile the graduated-sanctions error log from all findings — `hallucination_findings` (class E), `rounding_notes` (class W), `source_conflicts` (class N) — into one append-only table with ID, class, claim, description, prior value, corrected value, severity, disposition, and a materiality `why`. |
 
@@ -645,9 +655,10 @@ single-pass by design and verifies against provided sources only.
   as `model_inference` and record the finding. Run it on the bare
   form, never the grading wrapper; it cannot batch.
 - Each data-driven check family (cited numbers, cited quotes, origins,
-  consistency) executes as ONE `lisp_eval` call via a canonical library
-  driver; the derive+grade wrapper is the only per-claim call. A driver
-  error falls back to per-claim calls for that family.
+  consistency, library verification) executes as ONE `lisp_eval` call
+  via a canonical library driver; the derive+grade wrapper is the only
+  per-claim call. A driver error falls back to per-claim calls for that
+  family.
 - The warn boundary carries a `1.001`×unit slack: binary64
   representation error at the boundary (`18.0 − 17.9` computes to
   `0.10000000000000142`) must not turn a rounding difference into a

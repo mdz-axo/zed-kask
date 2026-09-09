@@ -15,8 +15,8 @@ homeostatic loop that senses agent behavior, compares it against set-points,
 computes corrective actions, routes them as alerts, and verifies the impact.
 The design follows the Conant-Ashby Good Regulator theorem: the regulator
 must model the system it regulates[^conant-ashby]. The `RegulationLedger`
-(`runtime.rs:480`) is that model — it records every `RegulationCycleEntry`,
-holds the `VarietyMonitor`, and exposes health snapshots that the
+(`runtime.rs:446`) is that model — it accumulates the regulation-health
+counters, holds the `VarietyMonitor`, and exposes health snapshots that the
 `MetacognitionLoop` senses.
 
 ## Ratified observation and advice contract — core-review D4
@@ -30,7 +30,7 @@ is the confirmed post-action review horizon, **not a weekly sensing cadence**.
 Current variety/outcome samples expire after the existing one-minute window
 (`OBSERVATION_WINDOW_SECS`) even without another write. Historical EMA remains
 separate. Sensors return healthy observations as well as deviations; unavailable
-sensing returns no sample. Memory's five metrics are registered independently,
+sensing returns no sample. Memory's four metrics are registered independently,
 so one deficit cannot hide another condition's recovery.
 
 `CyberneticsLoop::tick` reconciles durable conditions through
@@ -62,9 +62,9 @@ with no samples, not fabricated success. No autonomous actuator is added.
 | `CyberneticsLoop::route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:510` |
 | `CyberneticsLoop::verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:684` |
 | `CyberneticsLoop::persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147` |
-| `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:480` |
-| `RegulationCycleEntry` | `kask/crates/hkask-regulation/src/runtime.rs:406` |
-| `VarietyMonitor` | `kask/crates/hkask-regulation/src/runtime.rs:319` |
+| `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:446` |
+| `RegulationLedger::record_cycle_outcome` | `kask/crates/hkask-regulation/src/runtime.rs:526` |
+| `VarietyMonitor` | `kask/crates/hkask-regulation/src/runtime.rs:328` |
 | `MetacognitionLoop::run` | `kask/crates/hkask-regulation/src/metacognition.rs:258` |
 | `MetacognitionLoop::tick` | `kask/crates/hkask-regulation/src/metacognition.rs:327` |
 | `EscalationAlert` | `kask/crates/hkask-regulation/src/metacognition.rs:107` |
@@ -81,9 +81,10 @@ with no samples, not fabricated success. No autonomous actuator is added.
 ## The homeostatic loop
 
 The `CyberneticsLoop` (`cybernetics_loop.rs:146`) drives the five-phase
-cycle. Each phase produces data that the `RegulationCycleEntry`
-(`runtime.rs:406`) captures: afferent signals from sense, deviations from
-compare, actions from compute, and verified impacts from verify.
+cycle. Each phase's output is observable: afferent signals from sense,
+deviations from compare, actions from compute, and verified impacts from
+verify — the last aggregated into the ledger's health counters by
+`record_cycle_outcome` (`runtime.rs:526`).
 
 ```mermaid
 stateDiagram-v2
@@ -93,7 +94,7 @@ stateDiagram-v2
     Compute --> Act: match RegulationPolicy rules → RegulatoryAction
     Act --> Verify: route actions as Escalate alerts to Curator
     Verify --> Record: re-sense, classify Accept/Stage/Block
-    Record --> Sense: write RegulationCycleEntry, emit LoopMetrics span
+    Record --> Sense: update health counters, emit LoopMetrics span
     Verify --> Escalate: stagnation or Block detected
     Escalate --> Record: persist to EscalationQueue on curator.db
 ```

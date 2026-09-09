@@ -585,9 +585,9 @@ process lifetime. Unset or unparsable values fall back to documented defaults
 | `HKASK_MEMORY_LIFE_DAYS` | `180` | Memory retention in days (≈6 months). Controls decay constant in the Bayesian forgetting model. |
 | `HKASK_CHUNK_MAX_TOKENS` | `256` | Max tokens per chunk for document chunking (≈192 words, paragraph-level). |
 
-The regulation history caps (`max_regulation_history`, `max_skill_span_history`)
-are configurable via the `HKASK_REG_CONFIG` YAML file, not env vars. See
-`SetPointsConfig` in `hkask-regulation/src/set_points.rs`.
+The skill-span history cap (`max_skill_span_history`) is configurable via the
+`HKASK_REG_CONFIG` YAML file, not env vars. See `SetPointsConfig` in
+`hkask-regulation/src/set_points.rs`.
 
 ## Footnotes
 

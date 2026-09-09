@@ -511,10 +511,7 @@ impl SwarmServer {
                     }));
                     break; // pipeline stops on agent-not-found
                 };
-                match runtime
-                    .delegate(&agent, &task)
-                    .await
-                {
+                match runtime.delegate(&agent, &task).await {
                     Ok(r) => {
                         self.validate_produces(&step.agent_name, &agent.produces, &r.response);
                         // Episodic turn memory (shared knowledgebase) —

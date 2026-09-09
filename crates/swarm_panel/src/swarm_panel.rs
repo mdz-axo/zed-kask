@@ -2620,14 +2620,9 @@ mod tests {
             "steer prompt must tell the curator local delegation has no budget"
         );
         assert!(
-            prompt.contains("Do NOT call `swarm_fund_local` before delegating"),
-            "steer prompt must actively steer the curator away from pre-funding, not \
-             merely omit the requirement"
-        );
-        assert!(
             !prompt.contains("PaymentRequired"),
             "steer prompt must NOT promise a PaymentRequired error on the local path — \
-             local delegation no longer refuses for lack of funds, so advertising it \
+             local delegation has no budget, so advertising it \
              would make the curator plan around a gate that does not exist"
         );
         // The cloud path DOES gate, and the distinction must survive: a curator
@@ -2880,11 +2875,11 @@ mod tests {
         assert_eq!(KANBAN_SERVER, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
-        // the const is caught. 26 after d0af01a3a6 folded the three kata
-        // prompt tools into one `kanban_task_kata_prompt`.
+        // the const is caught. 25 after the rJoule budget removal
+        // (e13224d836) deleted `kanban_task_add_rjoules`.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            26,
+            25,
             "tool count changed — update KANBAN_TOOLS to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );

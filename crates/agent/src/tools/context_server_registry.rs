@@ -1462,7 +1462,7 @@ mod tests {
         // surface changed, store-server untouched.
         let empty: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
             descriptors: Vec::new(),
-            invocations: invocations.clone(),
+            invocations,
         });
         assert!(ContextServerRegistry::merge_kask_tool_descriptors(
             empty.clone(),

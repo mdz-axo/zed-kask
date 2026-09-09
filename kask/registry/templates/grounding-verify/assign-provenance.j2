@@ -86,6 +86,12 @@ Consistency comparisons — env: `{ "rules": [{ "quantity", "primary", "cross", 
 (define check-rule (lambda (r) (let ((diff (abs (- (assoc "primary" r) (assoc "cross" r))))) (list (assoc "quantity" r) (if (> diff (* (assoc "primary" r) (assoc "tolerance" r))) 'conflict 'consistent))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-rule (car lst)) (check-all (cdr lst))))))) (check-all rules)
 ```
 
+Library-form verification — env: `{ "records": [{ "claim_id", "library_form", "cross_check" }, ...] }`, one record per claim with a non-null `library_form`. The driver embeds the library texts as literals — keep it in sync with the list above:
+
+```
+(define library (list (list "ev" "(+ market_cap net_debt)") (list "ev_ebitda" "(/ (+ market_cap net_debt) ebitda)") (list "pe" "(/ price eps_diluted)") (list "ps" "(/ market_cap revenue)") (list "growth_pct" "(* 100 (/ (- revenue_current revenue_prior) revenue_prior))") (list "discount_pct" "(* 100 (/ (- price_a price_b) price_b))") (list "median" "(define middle-of"))) (define text-for (lambda (name entries) (cond ((is_null entries) nil) ((member name (list (car (car entries)))) (car (cdr (car entries)))) (t (text-for name (cdr entries)))))) (define check-one (lambda (r) (let ((text (text-for (assoc "library_form" r) library))) (cond ((is_null text) (list (assoc "claim_id" r) 'unknown_name)) ((string-contains text (assoc "cross_check" r)) (list (assoc "claim_id" r) 'ok)) (t (list (assoc "claim_id" r) 'mismatch)))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-one (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
 ## The provenance lattice
 
 Every claim is classified into one of these tiers:

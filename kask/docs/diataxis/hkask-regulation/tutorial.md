@@ -12,8 +12,9 @@ mds_categories: [lifecycle]
 
 This tutorial walks through one execution of `CyberneticsLoop::tick()` — the
 sense→compare→compute→act→verify cycle that drives hKask's homeostatic
-self-regulation. By the end you will be able to read a `RegulationCycleEntry`
-and trace each of its fields back to the phase that produced it.
+self-regulation. By the end you will be able to trace each phase's output
+into the ledger's regulation-health counters and the cycle's quality
+telemetry.
 
 The crate lives at `kask/crates/hkask-regulation/`. Its public surface is
 re-exported from `kask/crates/hkask-regulation/src/hkask_regulation.rs:24-39`.
@@ -28,9 +29,8 @@ re-exported from `kask/crates/hkask-regulation/src/hkask_regulation.rs:24-39`.
 | `CyberneticsLoop::compute` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:350` |
 | `CyberneticsLoop::act` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:408` |
 | `CyberneticsLoop::verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:684` |
-| `RegulationCycleEntry` (cycle record) | `kask/crates/hkask-regulation/src/runtime.rs:406` |
-| `RegulationLedger::record_regulation_cycle` | `kask/crates/hkask-regulation/src/runtime.rs:562` |
-| `LoopMetrics::from_cycle` (quality telemetry) | `kask/crates/hkask-regulation/src/loops/core.rs:241` |
+| `RegulationLedger::record_cycle_outcome` (health counters) | `kask/crates/hkask-regulation/src/runtime.rs:526` |
+| `LoopMetrics::from_cycle` (quality telemetry) | `kask/crates/hkask-regulation/src/loops/core.rs:205` |
 | `RegulationPolicy::decide` (rule lookup) | `kask/crates/hkask-regulation/src/regulation_policy.rs:379` |
 | `SensorBus::sense_all` (pluggable sensors) | `kask/crates/hkask-regulation/src/sensor_provider.rs:57` |
 
@@ -42,14 +42,14 @@ flowchart TD
     B --> C[Step 3: Compute<br/>match deviations to rules]
     C --> D[Step 4: Act<br/>route actions as Escalate alerts]
     D --> E[Step 5: Verify<br/>re-sense and classify impact]
-    E --> F[Step 6: Record<br/>write RegulationCycleEntry]
+    E --> F[Step 6: Record<br/>update regulation-health counters]
     F --> A
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-001
-verified_date: 2026-08-31
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:721; kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684; kask/crates/hkask-regulation/src/runtime.rs:406,562
+verified_date: 2026-09-08
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:751; kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684; kask/crates/hkask-regulation/src/runtime.rs:526
 status: VERIFIED
 -->
 
@@ -170,27 +170,25 @@ cycles (default 2), `try_substitute` walks the substitution ladder
 (`regulation_policy.rs:589`). When it hits the per-metric stagnation
 threshold (default 5), a regulatory-plateau alert fires.
 
-## Step 6: Record — write the RegulationCycleEntry
+## Step 6: Record — update the regulation-health counters
 
-After verify, `tick()` aggregates the cycle's counts and calls
-`RegulationLedger::record_regulation_cycle` (`runtime.rs:562`) with a
-`RegulationCycleEntry` (`runtime.rs:406`):
+After verify, `tick()` aggregates the cycle's `ActionDecision` counts and
+calls `RegulationLedger::record_cycle_outcome` (`runtime.rs:526`), which
+increments the ledger's `RegulationHealth` counters:
 
-| Field | Source phase |
-|-------|--------------|
-| `timestamp` | end of cycle |
-| `signals` | sense — `signals.len()` |
-| `deviations` | compare — `deviations.len()` |
-| `actions` | compute — `actions.len()` |
-| `verified` | verify — `impact_reports.len()` |
+| Counter | Source phase |
+|---------|--------------|
+| `total_cycles` | every tick |
 | `accepted` / `staged` / `blocked` | verify — `ActionDecision` counts |
-| `cumulative_acceptance_rate` | ledger — `regulation_health().acceptance_rate()`; absent without samples |
 
-Finally, `LoopMetrics::from_cycle` (`loops/core.rs:241`) computes quality
+(The former per-cycle `RegulationCycleEntry` history — a `VecDeque` written
+every tick and read by nothing — was removed 2026-09-08; post-hoc cycle
+analysis lives in the persisted `RegulationArchive`, queryable via `reg_query`.)
+
+Finally, `LoopMetrics::from_cycle` (`loops/core.rs:205`) computes quality
 telemetry, and `tick()` stores it in `loop_quality` for the next
-`loop_quality()` query (`cybernetics_loop.rs:847`). The cycle also emits a
-`reg.runtime.select` telemetry span with the signal count
-(`cybernetics_loop.rs:732-736`).
+`loop_quality()` query. The cycle also emits a
+`reg.runtime.select` telemetry span with the signal count.
 
 ## See also
 

@@ -1295,14 +1295,11 @@ impl KanbanServer {
         })?;
         // No budget — local agents run on the operator's own substrate
         // (operator ruling 2026-09-04: the budget concept is deprecated).
-        let result = runtime
-            .delegate(agent, &task_text)
-            .await
-            .map_err(|e| {
-                hkask_mcp_server::server::McpToolError::unavailable(format!(
-                    "local swarm delegation failed: {e}"
-                ))
-            })?;
+        let result = runtime.delegate(agent, &task_text).await.map_err(|e| {
+            hkask_mcp_server::server::McpToolError::unavailable(format!(
+                "local swarm delegation failed: {e}"
+            ))
+        })?;
 
         // Rung 2 (Schema validation): validate the document BEFORE it
         // persists. The schema is retrieved from the `PortRegistry` (the

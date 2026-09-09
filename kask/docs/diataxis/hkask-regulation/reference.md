@@ -42,9 +42,9 @@ not on any storage crate — durable sinks are injected as traits
 | `try_substitute` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:31` |
 | `build_regulation_action` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1080` |
 | `handle_curation_directive` | `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs:14` |
-| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:480-482` |
-| `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:406-422` |
-| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:319-391` |
+| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:446-448` |
+| `RegulationLedger::record_cycle_outcome` | `kask/crates/hkask-regulation/src/runtime.rs:526` |
+| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:328-400` |
 | `VarietyTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:140-208` |
 | `OutcomeTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:222-302` |
 | `StoredSkillSpan` / `SkillSpanStore` | `kask/crates/hkask-regulation/src/runtime.rs:52-124` |
@@ -136,7 +136,7 @@ classDiagram
     }
     class RegulationLedger {
         +state: Arc~RwLock~RegState~
-        +record_regulation_cycle(entry)
+        +record_cycle_outcome(accepted, staged, blocked)
         +record_skill_span(skill_id, phase, payload)
         +record_outcome(domain, success, error_kind)
         +variety_for_domain(domain) u64

@@ -63,15 +63,7 @@ impl A2aHttpServer {
             }
         };
         let base_url = format!("http://127.0.0.1:{port}");
-        std::thread::spawn(move || {
-            run_server(
-                server,
-                runtime,
-                registry,
-                tokio_handle,
-                base_url,
-            )
-        });
+        std::thread::spawn(move || run_server(server, runtime, registry, tokio_handle, base_url));
         tracing::info!(
             target: "hkask.mcp.swarm",
             port,
@@ -95,13 +87,7 @@ fn run_server(
     loop {
         match server.recv_timeout(Duration::from_secs(1)) {
             Ok(Some(request)) => {
-                handle_request(
-                    request,
-                    &runtime,
-                    &registry,
-                    &tokio_handle,
-                    &base_url,
-                );
+                handle_request(request, &runtime, &registry, &tokio_handle, &base_url);
             }
             Ok(None) => {}
             Err(e) => {
@@ -147,12 +133,7 @@ fn handle_request(
                 }
                 return;
             }
-            let resp = handle_jsonrpc(
-                &body,
-                runtime,
-                registry,
-                tokio_handle,
-            );
+            let resp = handle_jsonrpc(&body, runtime, registry, tokio_handle);
             json_rpc_raw_response(resp)
         }
 
