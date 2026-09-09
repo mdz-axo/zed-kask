@@ -16,7 +16,7 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 - You want to maintain a constraint set over time: re-check it against the codebase after architectural changes to detect drift.
 - You are designing a new architectural principle and want to compile it into checkable constraints before committing, so future changes that violate it have a test that goes red.
 
-## When Not to Use
+## When NOT to Use
 
 - You want to generate concepts satisfying a constraint set — use `constraint-forces-recast` (the sibling skill; inverse direction of derivation).
 - You want to review a code change against an existing spec — use `code-review`.

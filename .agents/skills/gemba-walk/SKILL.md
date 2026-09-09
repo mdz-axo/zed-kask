@@ -37,6 +37,12 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 - The operator wants to triage pending escalations and algedonic alerts.
 - The operator wants to focus on a specific skill's performance (use `focus_skill` input).
 
+## When NOT to Use
+
+- Resolving or dismissing alerts — that is `algedonic-review`'s ACT phase; this skill briefs and recommends only.
+- Interactive review sessions — it is a single-pass briefing generator; follow-up questions happen in the regular conversation after it completes.
+- Executing refinement actions — proposals go to the operator; act through the named mechanism (`curator_directive`, `skill-maintenance`, direct edit) afterward.
+
 ## Instructions
 
 ### SENSE+GATHER — Query three curator signal channels (step 1)

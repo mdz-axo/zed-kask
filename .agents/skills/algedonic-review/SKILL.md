@@ -34,6 +34,12 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 - The operator wants a structured digest of recent regulation events for operational awareness.
 - The operator wants to clear reviewed alerts to free the in-memory log.
 
+## When NOT to Use
+
+- A `wiring-closed` or `broken` `loop_reading` — investigate the loop wiring before triage; alerts from a loop that never ticked are not trustworthy input.
+- Autonomous resolution — the skill proposes and the operator decides; it never resolves or dismisses on its own.
+- Clearing the in-memory log as the goal — `AlgedonicLogApproachingCap` is the trigger, not a condition this skill clears; the log self-evicts when full.
+
 ## Instructions
 
 ### SENSE — Query alert backlog (step 1)
@@ -77,6 +83,9 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 | Template | Purpose |
 |----------|---------|
+| `triage-briefing.j2` | Structure the two signal channels (escalations + algedonic) into a triage list with per-alert severity and recommended action. |
+| `present-triage.j2` | Render the triage briefing as a conversational summary with markdown tables, opening with the alert log cap status. |
+| `execute-decisions.j2` | Produce the structured resolve/dismiss call list from the operator's decisions. |
 | `verify-cleared.j2` | Summarize what was resolved, dismissed, and what remains pending. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.

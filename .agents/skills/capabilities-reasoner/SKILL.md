@@ -154,7 +154,8 @@ capabilities:
 - Assess whether capability verdicts are stable across metric choices (mirage check)
 - Detect Dunning-Kruger gaps: systems that cannot self-assess a capability they lack
 
-Do NOT use for:
+## When NOT to Use
+
 - Pure performance benchmarking without a capability registry (use HELM [^helm-2022] directly)
 - Security penetration testing (use kali-audit or adversarial-red-team)
 - Task decomposition (use task-breakdown)

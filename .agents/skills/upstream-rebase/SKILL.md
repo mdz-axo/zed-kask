@@ -15,6 +15,12 @@ kask-wiring changes without carrying forward accumulated cruft.
 - When auditing a D-seam file's marker density and pinning test coverage after a merge.
 - When you need to decide, per file, whether to git-merge or mapped-re-apply.
 
+## When NOT to Use
+
+- Fresh feature work with no upstream merge in flight — the per-file strategy decision exists only during a rebase.
+- A fork with no `DIVERGENCE.md` seam record — there is nothing to map or re-apply.
+- Deletion D-seams through Steps 1–7 — they are not files; skip to Step 8 (post-rebase cleanup) for them.
+
 ## The three strategies
 
 | Strategy                  | When to use                                                                                   | Risk         | Effort |

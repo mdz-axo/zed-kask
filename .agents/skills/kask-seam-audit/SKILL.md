@@ -26,6 +26,12 @@ methodology instructs.
 - Remediations ranked by MCDA (+-20% sensitivity) and applied only if
   essentialist-surviving and seam-scoped.
 
+## When NOT to Use
+
+- Upstream Zed files outside a D-seam — fixes belong in `kask/` behind a seam; this audit governs the seam surface only.
+- General review of a change against its spec — use `code-review`.
+- Remediation that fails the essentialist gate or requires an upstream non-D-seam edit — the Act phase hard-stops; do not force it through this skill.
+
 ## Ontological anchors
 
 - **PKO** — the engagement is a Procedure (spec/execution split); Steps map

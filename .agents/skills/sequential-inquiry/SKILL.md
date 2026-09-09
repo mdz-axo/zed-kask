@@ -16,6 +16,12 @@ Brier. Evaluate convergence after each iteration.
 - When an agent needs to reason through a complex problem with branching, revision, and hypothesis testing.
 - When an agent needs to delegate to specialized skills (hypothesis-framer, mcda, diagnose, falsifiability) based on the problem's needs.
 
+## When NOT to Use
+
+- Well-scoped tasks with one known delegation — call the specialized skill directly; the Kata cycle buys nothing there.
+- Mechanical lookups or edits with no hypothesis branching — use the direct tool.
+- Problems with an existing deterministic evaluator — run the evaluator instead of inquiring toward it.
+
 ## Instructions
 
 ### sequential-inquiry-grasp (Kata Step 1: Grasp Current Condition)

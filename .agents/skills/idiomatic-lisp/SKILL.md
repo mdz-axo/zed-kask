@@ -15,6 +15,12 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 - Conducting adversarial reviews of a Lisp design proposal to find gaps, test edge cases (tail-call depth, multiple-values, restarts, macro hygiene), challenge assumptions, and identify deeper connections.
 - Computing a normalized convergence metric for an idiomatic-lisp inquiry cycle to determine if further design refinement is needed.
 
+## When NOT to Use
+
+- Rust or non-Lisp code-design questions — use `idiomatic-rust`.
+- Machine-checked proof of program properties — use `lean-prover`.
+- Deterministic structural checks with no design question attached — call `lisp_eval` directly; this skill is for design, not computation.
+
 ## Instructions
 
 ### idiomatic-lisp-inquiry
