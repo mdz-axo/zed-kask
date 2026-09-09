@@ -30,11 +30,11 @@ use crate::research::{
     MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
     MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
     PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
-    RerankOutcome, ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery,
-    SearchRequest, SearchResultOutput, SearchStrategy, SensitivityStatus, SubscribeRequest,
-    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
-    cache_key, discover_feeds, fetch_feed, llm_rerank, provider_profile, score_evidence_set,
-    validated_fetch_client,
+    RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    SensitivityStatus, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
+    WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank,
+    provider_profile, score_evidence_set, validated_fetch_client,
 };
 
 // ── Constants ──
@@ -1668,6 +1668,30 @@ impl ResearchServer {
                 serde_json::json!({ "recorded": 0, "error": error.to_string() })
             }
         }
+    }
+
+    #[tool(
+        description = "Resolve a paper reference to a typed identity: parses any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL), normalizes it, and returns the identifier kind/value, the canonical URL, and the stable ledger key. Every rejection names what was expected."
+    )]
+    pub async fn resolve_paper(
+        &self,
+        Parameters(ResolvePaperRequest { query }): Parameters<ResolvePaperRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "resolve_paper", async {
+            if query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            let parsed = crate::research::paper_id::parse_paper_id(&query)?;
+            Ok(serde_json::json!({
+                "identifier": {
+                    "kind": parsed.kind(),
+                    "value": parsed.value(),
+                },
+                "canonical_url": parsed.canonical_url(),
+                "stable_key": crate::research::paper_id::stable_paper_key(&parsed),
+            }))
+        })
+        .await
     }
 
     // ═══════════════════ Evidence evaluation ═══════════════════

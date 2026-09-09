@@ -275,6 +275,13 @@ pub struct AnnotateResearchRunRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResolvePaperRequest {
+    /// A paper reference in any supported form: DOI (bare, `doi:`, or
+    /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID.
+    pub query: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvaluateEvidenceRequest {
     /// The research question to evaluate evidence against.
     pub question: String,

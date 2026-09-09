@@ -8,6 +8,7 @@ pub mod cache;
 pub mod db;
 pub(crate) mod evidence;
 pub(crate) mod feed;
+pub(crate) mod paper_id;
 pub(crate) mod performance;
 pub mod providers;
 pub mod rss_types;
@@ -45,8 +46,8 @@ pub(crate) use types::{
     FindSimilarRequest, FindSimilarResultOutput, GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
     MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput, ProviderRecommendation,
-    RerankInfo, RerankOutcome, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, WebError, llm_rerank, provider_profile,
+    RerankInfo, RerankOutcome, ResolvePaperRequest, SearchMetadata, SearchOutput, SearchQuery,
+    SearchRequest, SearchResultOutput, SearchStrategy, WebError, llm_rerank, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.

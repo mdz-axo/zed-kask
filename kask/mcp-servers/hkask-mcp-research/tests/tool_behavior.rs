@@ -34,7 +34,7 @@ use hkask_mcp_research::research::types::{
     CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, ExtractOptions,
     ExtractRequest, ExtractedContent, FindSimilarRequest, GetResearchRunRequest, LatencyTier,
     ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
-    RateLimiter, SearchQuery, SearchRequest, SearchStrategy, WebError,
+    RateLimiter, ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -1968,6 +1968,48 @@ async fn annotate_rejects_unknown_verification_state() {
     assert!(
         error.message.contains("verification_state"),
         "message names the enum: {}",
+        error.message
+    );
+}
+
+// ── Paper resolution (identity) ────────────────────────────────────────────
+
+#[tokio::test]
+async fn resolve_paper_canonicalizes_any_identifier_form() {
+    let server = make_server_without_db();
+    let out = ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: "https://doi.org/10.1038/s41586-024-00000-x".to_string(),
+        }))
+        .await);
+    let json = parse(&out);
+    assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
+    assert_eq!(
+        json["identifier"]["value"].as_str(),
+        Some("10.1038/s41586-024-00000-x")
+    );
+    assert_eq!(
+        json["canonical_url"].as_str(),
+        Some("https://doi.org/10.1038/s41586-024-00000-x")
+    );
+    assert_eq!(
+        json["stable_key"].as_str(),
+        Some("doi:10.1038/s41586-024-00000-x")
+    );
+}
+
+#[tokio::test]
+async fn resolve_paper_rejects_garbage_with_typed_error() {
+    let server = make_server_without_db();
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: "not a paper".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("expected"),
+        "rejection names what was expected: {}",
         error.message
     );
 }
