@@ -41,6 +41,17 @@
 # the config's own comment), and the ubuntu-latest image ships neither
 # ld.mold nor a fallback the collect2 search accepts — every build-script
 # link dies with "collect2: fatal error: cannot find 'ld'" without it.
+# Beyond mold, each job installs the native libraries its cargo graph
+# needs (ubuntu-latest ships no -dev packages):
+# - kask-tests: libasound2-dev (alsa-sys — the only pkg-config system dep
+#   in the hkask-* + kask_bridge graph, reached via hkask-media-widget →
+#   rodio → cpal) and nasm (hkask-media-widget's default `vendored`
+#   feature compiles FFmpeg from source; the alsa-sys failure masks this
+#   one because cargo aborts at the first build-script failure).
+# - zed-check: script/linux — the canonical, upstream-maintained zed
+#   dependency list (x11, fontconfig, glib, wayland, freetype, ...).
+#   Running the script instead of a hand-curated apt list keeps the set
+#   correct through upstream rebases.
 name: Kask invariants
 
 on:
@@ -74,14 +85,18 @@ jobs:
 
   kask-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Cold builds compile vendored FFmpeg + the full kask dependency graph
+    # on a 4-core runner; rust-cache makes subsequent runs much faster.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: kask-tests
-      - name: Install mold linker (forced by .cargo/config.toml on x86_64-linux)
-        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Install native build deps — mold linker (forced by
+          .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
+          (vendored FFmpeg static build)
+        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm
       - name: Kask subtree — cargo test (hkask-* + kask_bridge)
         run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
 
@@ -94,7 +109,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: zed-check
-      - name: Install mold linker (forced by .cargo/config.toml on x86_64-linux)
-        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Install zed Linux build deps (script/linux) + mold linker
+        run: |
+          script/linux
+          sudo apt-get install -y mold
       - name: Full workspace — cargo check -p zed
         run: cargo check -p zed
