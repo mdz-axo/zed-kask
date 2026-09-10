@@ -22,6 +22,7 @@
 
 # Rust coding guidelines
 
+* Project scripts are bash — this is a Rust project. Do not introduce Python scripts or a Python dependency for tooling; audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09: "we are a rust project - not python - we do bash scripts not python scripts. not planning to push the python dependency into the project").
 * Prioritize correctness and clarity over speed and efficiency.
 * Comments explain "why", not "what". No organizational comments.
 * Prefer existing files over creating new ones. Avoid many small files.
@@ -147,6 +148,8 @@ A zed-side edit carries its DIVERGENCE.md seam update in the same pass — the s
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
 * `read_file` can return stale content for files modified in prior sessions or by parallel processes. Before acting on `read_file` content for files that might have changed, verify with `git show HEAD:path` or `git diff --name-only`. If the file doesn't appear in `git diff`, the `read_file` content may be stale — re-read or use `terminal` (`sed`/`cat`) instead.
 # Test protocol traps
+
+* Cross-seam tests assert category invariants derived from the tree at test time, never hardcoded file-name lists. A test on one side of a seam (agent_skills seeding, agent's render_template) must walk the registry and assert every file of the handled category is covered — a name list breaks on every content rename and silently misses every addition (observed 2026-09-09: the seed test pinned eqm-catalog.yaml/capability-ontology.yaml/swarm-patterns.yaml by name inside agent_skills, so every new reference YAML required editing the crate; operator ruling — replaced with the filesystem-derived `collect_seedable_files` walk).
 
 * MCP tool tests must construct the server with the capability under test (embedding store, inference port). A test over a capability-stripped constructor (`try_new_without_embeddings`, no inference) can only pin degradation, never function — the curator "semantic" tools shipped broken for months because every test used the stripped constructor.
 * Degradation tests must assert the degradation is SURFACED (a note/status/mode field naming the reason), never that an empty result equals success. A test asserting `count == 0` on the degraded path enforces the broken behavior as spec.

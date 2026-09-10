@@ -1,3 +1,4 @@
+{# goal: EXTRACT phase — agent-coordinated source reading. Provides extraction guidance for the target diagram type: what to look for in SQL schemas (tables, columns, PK/FK), Rust code (enums, traits, control flow), or documentation. The actual file I/O is agent-coordinated between template calls. If extracted_entities is pre-populated, skip extraction and proceed. #}
 [inference]
 contract:
   input:

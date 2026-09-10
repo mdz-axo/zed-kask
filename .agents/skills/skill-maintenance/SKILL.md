@@ -107,7 +107,13 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)
-   - **T2**: Each `.j2` template has a comment header describing its purpose
+   - **T2**: Each `.j2` template carries a `{# goal: ... #}` annotation
+     describing its purpose — the exact format skill-logic-audit's
+     logic-load-goal step parses; a comment header in any other form is a
+     fail (an unparseable goal is unauditable). Mechanical enforcement
+     point: `kask/scripts/audit/skill-corpus-prescreen.sh` (goal presence,
+     length, and content-overlap pre-screen over the whole corpus; flagged
+     templates get read-triage under this check).
    - **T3**: Each `.j2` template defines expected output fields (as comments
      or schema description)
    - **T4**: `[inference]` blocks in .j2 templates follow the two-stanza
@@ -118,10 +124,15 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      param stanza (temperature/work_effort/verbosity/thinking_budget),
      placed at the top of the body. `render_template` strips both; a
      third `[inference]` block or a header missing its `---` terminator
-     is a fail.
+     is a fail. Mechanically enforced corpus-wide by
+     `corpus_templates_strip_without_leaking_metadata`
+     (crates/agent/src/tools/render_template_tool.rs).
    - **T5**: If a template is referenced for rendering via `render_template`,
      it is reachable from the `render_template` base path (registry templates
-     directory, not the skill directory)
+     directory, not the skill directory). Mechanically enforced corpus-wide
+     by `corpus_templates_render_without_error` and
+     `corpus_includes_resolve_and_strip`
+     (crates/agent/src/tools/render_template_tool.rs).
 2. Evaluate every check for every targeted skill without omissions.
 3. Include specific evidence for any fail results (file path, line number).
 4. Provide actionable fix suggestions for any failures.

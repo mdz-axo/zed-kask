@@ -1,3 +1,4 @@
+{# goal: Measure the rendering container's available width and each child element's minimum width. Compute whether sum(min_widths) + gaps exceeds the container. If a text column (flex_1) is present, compute its residual width after fixed-width children claim their space. Grounded in Fitts's Law (minimum target width) and the CSS flexbox overflow invariant. #}
 [inference]
 contract:
   input:

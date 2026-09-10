@@ -1,3 +1,4 @@
+{# goal: Measure the current swarm state. Mode-aware (v2 §15): in `abw` mode, fetch the ABW workspace roster (agents[], accepts[], produces[], capabilities, dependencies) and the wallet balance/transactions via hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local agent registry via `swarm_list_local_agents` and the local ledger balance. #}
 [inference]
 contract:
   input:

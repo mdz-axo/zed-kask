@@ -1,3 +1,4 @@
+{# goal: Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep and read_file, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. #}
 [inference]
 contract:
   input:

@@ -1,3 +1,4 @@
+{# goal: Apply the MAIA v3 listening template over a company knowledge graph. Takes RAG-retrieved passages from multiple documents (earnings calls, 10-Ks, investor days) plus KG triples linking them. Emits per-section verdicts with cross-source citations — a verdict can cite evidence from document A and document B. The no-fabrication invariant extends to the full corpus: every evidence field is a verbatim substring of one of the source passages. #}
 [inference]
 contract:
   input:

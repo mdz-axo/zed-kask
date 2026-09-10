@@ -1,3 +1,4 @@
+{# goal: Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. #}
 [inference]
 contract:
   input:

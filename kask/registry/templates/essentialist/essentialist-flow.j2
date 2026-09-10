@@ -1,4 +1,4 @@
-{# goal: Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. #}
+{# goal: Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. #}
 [inference]
 contract:
   input:

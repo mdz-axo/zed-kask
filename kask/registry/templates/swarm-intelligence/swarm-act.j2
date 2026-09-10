@@ -1,3 +1,4 @@
+{# goal: Emit the gated composition change. Mode-aware (v2 §15): in `abw` mode, the gate is the consent token from `swarm_request_consent`; in `local` mode there is NO funding gate and no consent token — the per-dispatch ceiling is the only local bound, and an unfunded or negative ledger does not block a delegation. For each proposed delegate, construct a DispatchIntent { swarm_id, task, estimated_credits, curator_involved (default false), data_shared }. #}
 [inference]
 contract:
   input:

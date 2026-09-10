@@ -1,3 +1,4 @@
+{# goal: Re-measure the swarm state post-Act. Mode-aware (v2 §15): in `abw` mode, re-fetch workspace + wallet via `swarm_get_swarm`; in `local` mode, re-read the local agent registry + ledger balance. Compute the convergence metric: composite swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target condition is met on all three axes. Emit next_focus (which axis dominates d). #}
 [inference]
 contract:
   input:

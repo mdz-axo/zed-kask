@@ -1,3 +1,4 @@
+{# goal: Anchor a bug diagnosis to the actual code structure using a dual ontology: Dublin Core classifies the THING affected (entity type, identifier, source, subject domain derived from code position) and PKO classifies the FLOW the bug occurs in (call chain as Procedure, each function as Step, bug as IssueOccurrence at a StepExecution). Uses `grep` and `read_file` to locate symbols and trace call chains. Phase 0 of the diagnosis pipeline. #}
 [inference]
 contract:
   input:

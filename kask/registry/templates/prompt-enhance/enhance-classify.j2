@@ -1,4 +1,4 @@
-[inference]
+{# goal: Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic-semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers so downstream phases have a signal to optimize against. Produces the routing decision that drives step 2. #}
 contract:
   input:
     prompt:
@@ -70,7 +70,7 @@ visibility: Public
 ---
 {# hKask v0.39.0 — prompt-enhance #}
 {# Phase 1: Classify prompt type, select effort tier, synthesize proxy eval set #}
-{# goal: Route the prompt through the typed enhancement pipeline. #}
+{# goal: Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic-semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). #}
 {#
   Group: G (Prompt Enhancement — typed routing)
   This is the unique value-add of prompt-enhance: a typed taxonomy that

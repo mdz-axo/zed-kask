@@ -1,3 +1,4 @@
+{# goal: Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to grep + manual code analysis for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). #}
 [inference]
 contract:
   input:

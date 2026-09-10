@@ -1,3 +1,4 @@
+{# goal: Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. #}
 [inference]
 contract:
   input:
