@@ -61,7 +61,6 @@ backend/              — Office format backends (docx, pptx, xlsx) + shared mar
 bridge/               — Ontology bridges (golem, fibo, eso)
 corpus/
   discover/           — Academic author discovery (search, cache, concept extraction, config)
-  embed/              — EmbedService (corpus embedding pipeline with metadata layer)
   fetch.rs            — Shared HTTP fetch + PDF/OCR/HTML pipeline
 runtime/              — Section classifier + provider intelligence + adaptive monitor
 ```
@@ -359,7 +358,6 @@ Corpus server integrates with hkask's shared service layer:
 - **Regulation:** Daemon-backed event persistence for Curator consumption
 - **Inference:** `hkask-inference` router with provider-prefixed model names
 - **Compose:** `compose.rs` — `ComposeService` for prose generation with exemplar retrieval
-- **Corpus:** `corpus/embed/service.rs` — `EmbedService::embed_corpus` (style exemplar embedding)
 - **Services:** `services/` — `ConvertService`, `TriplesService`, `ConsolidationService`, `PromptBuilderService`
 
 ## Quick Start
