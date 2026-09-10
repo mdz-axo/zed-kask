@@ -5,6 +5,7 @@ contract:
     date: string
     count_before: number
     count_after: number
+    reason_category: string
     triage_rows: array
     fold_rows: array
     ledger_rows: array
@@ -29,7 +30,9 @@ Tree count after (projected): {{ count_after }}
 
 | Path | Role (CORE / FOLD / DELETE) | Reason | Successor |
 |------|------------------------------|--------|-----------|
-| {{ path }} | {{ role }} | {{ reason }} | {{ successor_or_none }}
+{%- for row in triage_rows %}
+| {{ row.path }} | {{ row.role }} | {{ row.reason }} | {{ row.successor_or_none }} |
+{%- endfor %}
 
 ## Fold plan (FOLD rows only)
 
@@ -38,7 +41,9 @@ being carried forward, and the links that must be repointed.
 
 | Source | Successor section | Content carried | Links to repoint |
 |--------|-------------------|-----------------|------------------|
-| {{ source }} | {{ section }} | {{ content }} | {{ links }}
+{%- for row in fold_rows %}
+| {{ row.source }} | {{ row.section }} | {{ row.content }} | {{ row.links }} |
+{%- endfor %}
 
 ## Lifecycle ledger entry (append to kask/docs/README.md)
 
@@ -46,14 +51,16 @@ being carried forward, and the links that must be repointed.
 
 | Artifact | Successor |
 |----------|-----------|
-| {{ artifact }} | {{ successor }} |
+{%- for row in ledger_rows %}
+| {{ row.artifact }} | {{ row.successor }} |
+{%- endfor %}
 
 ## Gate results (fill after Phase 6)
 
 | Gate | Result | Evidence |
 |------|--------|----------|
-| Count (< 70) | {{ pass_fail }} | `find kask/docs -type f | wc -l` → {{ n }} |
-| Links (0 broken) | {{ pass_fail }} | sweep result |
-| Citations (sample ≥ 5/artifact) | {{ pass_fail }} | {{ sampled }} checked, {{ failed }} failed |
-| Frontmatter (all .md) | {{ pass_fail }} | sweep result |
-| No deleted surfaces as current | {{ pass_fail }} | grep result |
+| Count (< 70) | {{ gate_results.count }} | `find kask/docs -type f | wc -l` → {{ gate_results.n }} |
+| Links (0 broken) | {{ gate_results.links }} | sweep result |
+| Citations (sample ≥ 5/artifact) | {{ gate_results.citations }} | {{ gate_results.sampled }} checked, {{ gate_results.failed }} failed |
+| Frontmatter (all .md) | {{ gate_results.frontmatter }} | sweep result |
+| No deleted surfaces as current | {{ gate_results.no_deleted_surfaces }} | grep result |
