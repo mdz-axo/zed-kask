@@ -10,6 +10,24 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
+## Release identity — 0.40.0 (operator decision, 2026-09-10)
+
+D7: the `zed-kask` application (`crates/zed/Cargo.toml`, package `zed`) now
+inherits `[workspace.package].version` alongside the Kask crates. The release
+is **0.40.0**, based on upstream Zed **1.21.0** at `595d62863e`; upstream
+library package versions remain unchanged. `main.rs` already supplies
+`CARGO_PKG_VERSION` to `AppVersion::load`, so default application version
+reporting follows the workspace release (with existing build metadata).
+The explicit `ZED_APP_VERSION` override remains available.
+
+Pinned by `kask/scripts/check-version-sync.sh` and its self-test: the app
+manifest must inherit the workspace version, rather than use an independent
+literal. Observed RED on the upstream `1.21.0` declaration before the change.
+The source installer's no-manifest fallback and current-version README
+labels are updated to 0.40.0; historical document revisions are not releases
+and are not rewritten. This change does not create a release tag or install
+binaries.
+
 ## Upstream merge recovery — 2026-09-10
 
 Recovered the interrupted merge from fork `f0e2d97e1f` into upstream

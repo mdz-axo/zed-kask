@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# CI gate: assert MCP-server provenance and README version lines stay in sync
+# CI gate: assert the application, MCP provenance and README versions stay in sync
 # with the zed-kask workspace release version in the root Cargo.toml
 # `[workspace.package] version`.
 #
 # Drift surface this guards:
+#   - The zed-kask application must inherit the workspace package version (D7).
 #   - Hardcoded `"version": "0.x.y"` provenance literals in MCP server .rs
 #     files — these must report `env!("CARGO_PKG_VERSION")` (which inherits the
 #     workspace version), not a literal that rots between releases.
@@ -14,8 +15,7 @@
 # `version:` fields and brand-header comments. The manifest registry was
 # removed in 80e466c1a5 ("Remove hkask-templates crate and manifest registry"),
 # so those checks were dead — they iterated over a non-existent directory and
-# silently no-op'd while reporting [OK]. They are removed here; the two live
-# checks below remain.
+# silently no-op'd while reporting [OK]. Those checks remain removed.
 #
 # Usage: cd kask && bash scripts/check-version-sync.sh
 # Exit codes: 0 = in sync, 1 = drift detected
@@ -67,6 +67,16 @@ fail() {
     status=1
 }
 
+# The editor must not revert to upstream's independent release version at a merge.
+if ! awk '
+    /^\[package\]/ { in_package=1; next }
+    /^\[/ { in_package=0 }
+    in_package && /^version\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$/ { inherited=1 }
+    END { exit !inherited }
+' "$REPO_ROOT/crates/zed/Cargo.toml"; then
+    fail "zed-kask application must inherit version.workspace = true (D7)"
+fi
+
 # 1. MCP server .rs files must not hardcode a numeric provenance version
 #    literal. Reporting the crate version requires `env!("CARGO_PKG_VERSION")`,
 #    which inherits the workspace version; a literal rots silently between
@@ -86,7 +96,7 @@ done < <(grep -rnE --include='*.md' --include='README*' '\*\*Version:\*\*[[:spac
     | grep -vE "\*\*Version:\*\*[[:space:]]*v?${WORKSPACE_VERSION//./\\.}([[:space:]]|$)")
 
 if [ "$status" -eq 0 ]; then
-    echo -e "${GREEN}[OK]${NC} all MCP provenance and README version lines in sync with v${WORKSPACE_VERSION}"
+    echo -e "${GREEN}[OK]${NC} application version, MCP provenance and README version lines in sync with v${WORKSPACE_VERSION}"
 else
     echo ""
     echo "Fix: bump the drifted fields to $WORKSPACE_VERSION (workspace version in $CARGO_TOML)."

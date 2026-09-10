@@ -5,13 +5,14 @@
 # status: enforced is trusted" — applied to check-version-sync.sh per CI gate
 # sweep follow-up issue #6. The gate's "0 = 0" failure mode (zero drift
 # candidates → zero drift found → trivially passes) was flagged in the sweep.
-# This self-test pins both failure modes:
+# This self-test pins version drift and the clean path:
 #   1. Drift: a README whose `**Version:` line does NOT match the workspace
 #      version — the canonical drift case the gate exists for.
 #   2. Clean: a tree with no drift must exit 0 ("in sync") without crashing —
 #      pinning the trivial-pass path so a future change can't invert it (e.g.
 #      exit 1 on empty, hiding a real disconnection behind a different failure
 #      mode).
+#   3. The application must inherit the workspace release, not upstream's version.
 #
 # History: this self-test previously pinned manifest-dir drift and an empty
 # manifest dir. The manifest registry was removed in 80e466c1a5, so the gate's
@@ -61,7 +62,8 @@ EOF
 
 # An empty mcp-servers dir so the provenance-literal scan (step 1) finds nothing.
 # Both cases share this; drift is introduced via the README tree only.
-mkdir -p "$TMPDIR/mcp-servers"
+mkdir -p "$TMPDIR/mcp-servers" "$TMPDIR/crates/zed"
+printf '[package]\nname = "zed"\nversion.workspace = true\n' > "$TMPDIR/crates/zed/Cargo.toml"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Case 1: drift — a README whose `**Version:**` line does NOT match the
@@ -125,6 +127,24 @@ elif ! printf '%s\n' "$CASE2_OUT" | grep -q "in sync"; then
 else
   echo "OK (case 2 — clean): gate exited 0 on a clean tree"
 fi
+
+# Even a literal matching this release would drift on the next workspace bump.
+for version_line in 'version = "1.21.0"' 'version = "1.2.3"' 'version.workspace = false'; do
+  printf '[package]\nname = "zed"\n%s\n' "$version_line" > "$TMPDIR/crates/zed/Cargo.toml"
+  if CASE3_OUT=$(CARGO_TOML="$TMPDIR/Cargo.toml" \
+    MCP_SERVERS_DIR="$TMPDIR/mcp-servers" \
+    KASK_ROOT="$TMPDIR/kask-clean" \
+    bash "$GATE" 2>&1); then
+    echo "FAIL (application drift): accepted $version_line"
+    failures=$((failures + 1))
+  elif [[ "$CASE3_OUT" != *"application must inherit"* ]]; then
+    echo "FAIL (application drift): missing diagnostic for $version_line"
+    printf '%s\n' "$CASE3_OUT"
+    failures=$((failures + 1))
+  else
+    echo "OK (application drift): rejected $version_line"
+  fi
+done
 
 if [ "$failures" -eq 0 ]; then
   echo ""

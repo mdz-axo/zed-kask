@@ -321,8 +321,8 @@ default-members = ["crates/zed"]
 [workspace.package]
 publish = false
 edition = "2024"
-# hKask crates inherit these; zed crates set their own.
-version = "0.39.0"
+# hKask crates and the zed-kask application inherit these; upstream libraries set their own.
+version = "0.40.0"
 license = "MIT"
 repository = "https://github.com/mdz-axo/zed-kask"
 

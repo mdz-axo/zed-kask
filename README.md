@@ -81,7 +81,7 @@ Environment variables the installer honors:
 
 | Variable                 | Default                          | Purpose                                                         |
 | ------------------------ | -------------------------------- | --------------------------------------------------------------- |
-| `HKASK_VERSION`          | derived from workspace `Cargo.toml` (or `0.39.0`) | Pin a release tag (e.g. `0.233.10`)                  |
+| `HKASK_VERSION`          | derived from workspace `Cargo.toml` (or `0.40.0`) | Pin a release tag (e.g. `0.40.0`)                  |
 | `HKASK_BUILD_TYPE`       | `release`                        | `release` or `debug`                                            |
 | `HKASK_SOURCE_DIR`       | unset                            | Use an existing checkout instead of cloning                     |
 | `HKASK_REPO_URL`         | `https://github.com/mdz-axo/zed-kask.git` | Override the clone URL                                |
