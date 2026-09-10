@@ -1838,7 +1838,8 @@ pub struct KaskTrainingSettingsContent {
 /// Media MCP server configuration (the `"kask.media"` section in settings.json).
 ///
 /// Model overrides for the media server's TTS, STT, vision, image generation,
-/// and video generation pipelines. When empty, the media server falls back
+/// video generation, and prompt-schema pass (transcript passes, voice
+/// design) pipelines. When empty, the media server falls back
 /// to `hkask_inference::model_constants` defaults (resolved at startup via
 /// `std::env::var` → `DEFAULT_*_MODEL`). All are provider-prefixed strings.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -1848,6 +1849,7 @@ pub struct KaskMediaSettingsContent {
     pub vision_model: Option<String>,
     pub image_gen_model: Option<String>,
     pub video_model: Option<String>,
+    pub pass_model: Option<String>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

@@ -76,6 +76,15 @@ pub(crate) const WATERMARK_PREFIX: &str = "curator:distilled:";
 const MAX_TURNS_PER_PROMPT: usize = 12;
 const MAX_TURN_CHARS: usize = 3_000;
 const MAX_LESSONS_PER_THREAD: usize = 5;
+/// Per-entry text cap for the prior-lessons dedup section of the prompt —
+/// the slug and attribute carry the dedup signal; the text only has to
+/// be recognizable, not complete.
+const PRIOR_LESSON_TEXT_CHARS: usize = 160;
+/// Maximum edit distance for recovering a model-corrupted evidence ID
+/// against the batch's actual turn IDs. UUIDs differ in ~30 of 36
+/// positions, so distance ≤ 3 is unambiguous in practice; the recovery
+/// additionally requires the match to be unique.
+const EVIDENCE_RECOVERY_MAX_DISTANCE: usize = 3;
 const MAX_ENTITY_CHARS: usize = 128;
 const MAX_TEXT_CHARS: usize = 2_000;
 const MAX_EVIDENCE_IDS: usize = 8;
@@ -485,8 +494,14 @@ pub(crate) async fn distill_store(
         // earlier batches are already covered by their own watermarks,
         // and the failed batch's turns stay pending for the next pass.
         let mut thread_distilled = true;
+        // Lessons extracted by earlier batches of this thread THIS pass —
+        // fed into later batch prompts so the model neither re-extracts
+        // them nor drifts the entity slug (the 2026-09-09 audit's root
+        // cause). In-pass only: cross-pass duplication (new turns arriving
+        // to a long-distilled thread) is rarer and left to therapy dedup.
+        let mut prior_lessons: Vec<(String, String, String)> = Vec::new();
         for batch in pending.chunks(MAX_TURNS_PER_PROMPT) {
-            let prompt = build_distillation_prompt(&thread_id, batch);
+            let prompt = build_distillation_prompt(&thread_id, batch, &prior_lessons);
             // Route to the non-thinking model: the port default is
             // reasoning-mandatory and rejects `thinking_allowed: false`.
             // `generate_with_model` falls back to the port default when
@@ -509,7 +524,7 @@ pub(crate) async fn distill_store(
                     break;
                 }
             };
-            let candidates = match parse_lessons(&generated.text) {
+            let mut candidates = match parse_lessons(&generated.text) {
                 Ok(candidates) => candidates,
                 Err(error) => {
                     tracing::warn!(
@@ -524,6 +539,14 @@ pub(crate) async fn distill_store(
                     break;
                 }
             };
+            // Recover model-corrupted evidence IDs against the batch's
+            // actual turn IDs before validation rejects them — a skipped
+            // lesson is permanently lost (the watermark advances before
+            // insertion), and the observed corruption is character-level
+            // (dropped hyphens, truncated groups; ~1.3% of lessons).
+            for candidate in &mut candidates {
+                recover_evidence_ids(candidate, batch);
+            }
             // Advance the watermark BEFORE inserting lessons: a failure
             // after lessons are stored would re-distill the same turns
             // next pass and duplicate them — the exact redundancy this
@@ -558,7 +581,14 @@ pub(crate) async fn distill_store(
             }
             for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
                 match insert_lesson(memory, inference_port, &candidate, &thread_id, webid).await {
-                    Ok(true) => outcome.lessons_inserted += 1,
+                    Ok(true) => {
+                        outcome.lessons_inserted += 1;
+                        prior_lessons.push((
+                            candidate.entity.clone(),
+                            candidate.attribute.clone(),
+                            candidate.text.clone(),
+                        ));
+                    }
                     Ok(false) => outcome.lessons_skipped += 1,
                     Err(error) => {
                         tracing::warn!(
@@ -627,6 +657,63 @@ fn parse_lessons(text: &str) -> Result<Vec<LessonCandidate>, LessonParseError> {
 /// Insert one distilled lesson. Returns `Ok(false)` when the candidate is
 /// malformed or cites evidence that does not exist — the same
 /// evidence-verification invariant `memory_insert` enforces.
+/// Recover model-corrupted evidence IDs against the batch's actual
+/// turn IDs. The model corrupts UUIDs at the character level (dropped
+/// hyphens, truncated groups — observed ~1.3% of lessons, e.g.
+/// `4d56f468f7` for a 36-char id), and `insert_lesson`'s validation
+/// rejects the lesson permanently: the watermark already advanced, so
+/// the lesson's content is lost. A recovery replaces the corrupted id
+/// only when exactly one turn id in the batch is within
+/// [`EVIDENCE_RECOVERY_MAX_DISTANCE`] edits — an ambiguous or absent
+/// match leaves the id untouched and validation rejects as before.
+fn recover_evidence_ids(candidate: &mut LessonCandidate, batch: &[&HMem]) {
+    for evidence in &mut candidate.evidence {
+        if evidence.parse::<hkask_storage::HMemId>().is_ok() {
+            continue;
+        }
+        let mut recovered: Option<String> = None;
+        let mut match_count = 0usize;
+        for turn in batch {
+            let id = turn.id.to_string();
+            if levenshtein(evidence, &id) <= EVIDENCE_RECOVERY_MAX_DISTANCE {
+                match_count += 1;
+                recovered = Some(id);
+            }
+        }
+        if match_count == 1 {
+            let recovered = recovered.expect("match_count 1 implies a match");
+            tracing::debug!(
+                target: "hkask.mcp.curator.distillation",
+                corrupted = %evidence,
+                recovered = %recovered,
+                "Recovered corrupted evidence id against the batch's turn ids"
+            );
+            *evidence = recovered;
+        }
+    }
+}
+
+/// Levenshtein edit distance (insert/delete/substitute) over chars.
+/// Evidence ids are ≤ 36 chars, so the two-row DP is trivially cheap —
+/// no early-exit cleverness.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    let mut current = vec![0usize; b.len() + 1];
+    for (i, char_a) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, char_b) in b.iter().enumerate() {
+            let cost = usize::from(char_a != char_b);
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + cost);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
+}
+
 async fn insert_lesson(
     memory: &hkask_memory::MemoryStore,
     inference_port: &dyn hkask_types::InferencePort,
@@ -713,7 +800,11 @@ fn truncate_chars(text: &str, max: usize) -> String {
     format!("{}…", &text[..boundary])
 }
 
-fn build_distillation_prompt(thread_id: &str, turns: &[&HMem]) -> String {
+fn build_distillation_prompt(
+    thread_id: &str,
+    turns: &[&HMem],
+    prior_lessons: &[(String, String, String)],
+) -> String {
     let start = turns.len().saturating_sub(MAX_TURNS_PER_PROMPT);
     let mut turns_json = Vec::new();
     for turn in &turns[start..] {
@@ -728,11 +819,36 @@ fn build_distillation_prompt(thread_id: &str, turns: &[&HMem]) -> String {
             "text": truncate_chars(turn.value.as_str().unwrap_or(""), MAX_TURN_CHARS),
         }));
     }
+    // Cross-batch dedup context: without it, each batch independently
+    // rediscovers the same durable fact under a fresh entity slug — the
+    // 2026-09-09 audit measured 239 same-thread near-duplicate pairs and
+    // slug drift (the same lesson under lisp-eval-sandbox,
+    // lisp-interpreter-string-contains, and lisp-string-contains), so
+    // nothing aggregated and recall returned copies.
+    let prior_section = if prior_lessons.is_empty() {
+        String::new()
+    } else {
+        let listed: Vec<String> = prior_lessons
+            .iter()
+            .map(|(entity, attribute, text)| {
+                format!(
+                    "- {entity} | {attribute}: {}",
+                    truncate_chars(text, PRIOR_LESSON_TEXT_CHARS)
+                )
+            })
+            .collect();
+        format!(
+            "\nLessons already extracted from earlier batches of this thread:\n{}\n\
+             Do NOT re-extract these. If a passage extends one of them, reuse its \
+             exact entity slug so the lessons aggregate.\n",
+            listed.join("\n")
+        )
+    };
     format!(
         "You are distilling a finished conversation thread into durable lessons \
-         for a long-lived memory system.\n\n\
+         for a long-lived memory system.\n\
          Thread: {thread_id}\n\
-         Passages (oldest first):\n{turns}\n\n\
+         Passages (oldest first):\n{turns}\n{prior_section}\n\
          Extract 0-{MAX_LESSONS_PER_THREAD} durable, generalizable lessons — \
          stable facts, preferences, decisions, and corrections a future session \
          should know. Not task narration, not transient details. Each lesson must \
@@ -1248,6 +1364,178 @@ mod tests {
         );
     }
 
+    /// Returns scripted per-call responses and records every prompt —
+    /// pins the cross-batch dedup context: later batch prompts must carry
+    /// earlier batches' lessons (entity slug + text) so the model neither
+    /// re-extracts them nor drifts the slug.
+    struct ScriptedResponsesPort {
+        responses: Vec<String>,
+        calls: std::sync::atomic::AtomicUsize,
+        prompts: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl hkask_types::InferencePort for ScriptedResponsesPort {
+        fn generate(
+            &self,
+            prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let text = self
+                .responses
+                .get(call)
+                .cloned()
+                .unwrap_or_else(|| "[]".to_string());
+            self.prompts
+                .lock()
+                .expect("prompt recorder mutex")
+                .push(prompt.to_string());
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text,
+                    model: "test-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// The 2026-09-09 audit's root-cause fix: lessons extracted by an
+    /// earlier batch appear in later batch prompts with an explicit
+    /// do-not-re-extract instruction — without this, each batch
+    /// independently rediscovered the same fact under a fresh entity
+    /// slug (239 same-thread near-duplicate pairs measured).
+    #[tokio::test]
+    async fn prior_lessons_reach_later_batch_prompts() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turns = seed_turns(&store, "t-prior", 15, webid, now);
+        let port = ScriptedResponsesPort {
+            responses: vec![
+                lesson_response(
+                    "prior-slug-entity",
+                    "prior-attribute",
+                    "prior lesson text",
+                    &[&turns[0].to_string()],
+                ),
+                "[]".to_string(),
+            ],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 1);
+        let prompts = port.prompts.lock().expect("prompts").clone();
+        assert_eq!(prompts.len(), 2, "a 15-turn thread distills in two batches");
+        assert!(
+            !prompts[0].contains("Lessons already extracted"),
+            "the first batch has no prior lessons"
+        );
+        assert!(
+            prompts[1].contains("Lessons already extracted"),
+            "the second batch must see the first batch's lessons"
+        );
+        assert!(
+            prompts[1].contains("prior-slug-entity"),
+            "the prior lesson's entity slug must appear so the model reuses it"
+        );
+        assert!(
+            prompts[1].contains("Do NOT re-extract"),
+            "the dedup instruction must be explicit"
+        );
+    }
+
+    /// Corrupted evidence IDs are recovered against the batch's actual
+    /// turn IDs (unique match within edit distance 3); an id with no
+    /// near match stays rejected — the validation backstop is unchanged
+    /// for genuinely wrong citations.
+    #[tokio::test]
+    async fn corrupted_evidence_ids_are_recovered_against_the_batch() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turns = seed_turns(&store, "t-evidence", 5, webid, now);
+        // A character-level corruption of a real turn id: truncated by 2
+        // chars — parse fails, edit distance 2 from the real id, far from
+        // every other id.
+        let full_id = turns[0].to_string();
+        let corrupted: String = full_id.chars().take(34).collect();
+        assert!(corrupted.parse::<hkask_storage::HMemId>().is_err());
+        let response = serde_json::json!([
+            {
+                "entity": "recovered-entity",
+                "attribute": "recovered-attribute",
+                "text": "lesson with a corrupted citation",
+                "evidence": [corrupted],
+            },
+            {
+                "entity": "bogus-entity",
+                "attribute": "bogus-attribute",
+                "text": "lesson with a bogus citation",
+                "evidence": ["totally-bogus-id"],
+            }
+        ])
+        .to_string();
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response,
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(
+            outcome.lessons_inserted, 1,
+            "the corrupted-citation lesson must be recovered and inserted"
+        );
+        assert_eq!(
+            outcome.lessons_skipped, 1,
+            "the bogus-citation lesson must stay rejected"
+        );
+        let stored = store
+            .h_mems_by_entity_prefix("recovered-entity")
+            .expect("query");
+        assert_eq!(stored.len(), 1);
+        let evidence = stored[0]
+            .value
+            .get("evidence")
+            .and_then(|value| value.as_array())
+            .expect("evidence array");
+        assert_eq!(
+            evidence[0].as_str().expect("evidence id"),
+            full_id,
+            "the stored lesson must cite the recovered real turn id"
+        );
+    }
+
     #[tokio::test]
     async fn distillation_pass_inserts_lessons_and_watermark() {
         let store = test_store();
@@ -1556,7 +1844,7 @@ mod tests {
             serde_json::json!("user: please review the design"),
             webid,
         );
-        let prompt = build_distillation_prompt("t1", &[&h_mem]);
+        let prompt = build_distillation_prompt("t1", &[&h_mem], &[]);
         assert!(
             prompt.contains("user: please review the design"),
             "the chunk's text must appear in the prompt verbatim"

@@ -35,7 +35,7 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 
 5. **Update Pareto frontier.** Merge the current frontier with newly tested variants into a single pool. Perform non-dominated sort: variant A dominates variant B if A is at least as good as B on ALL objectives and strictly better on at least ONE. Keep only non-dominated members as the new frontier. If the frontier exceeds `frontier_size`, prune by crowding distance (remove variants in the most crowded region of objective space to maintain diversity). Record which variants were dominated and by whom for audit.
 
-6. **Check convergence.** Compute the Pareto-frontier stability convergence metric. Calculate hypervolume delta between `frontier_before` and `frontier_after` under the given objectives. Count new non-dominated members not present in the prior frontier. If iteration < 2, set metric = 1.0 (don't converge too early). Otherwise, metric = hypervolume_delta + (0.05 × new_members). Clamp to [0, 1]. Converged when metric ≤ threshold (default 0.10). Return the metric, decomposition, rationale, and any blockers preventing convergence.
+6. **Check convergence.** Compute the Pareto-frontier stability convergence metric. Calculate hypervolume delta between `frontier_before` and `frontier_after` under the given objectives. Count new non-dominated members not present in the prior frontier. If iteration < 2, set metric = 1.0 (don't converge too early). Otherwise, metric = hypervolume_delta + (0.05 * new_members). Clamp to [0, 1]. Converged when metric ≤ threshold (default 0.10). Return the metric, decomposition, rationale, and any blockers preventing convergence.
 
 ## Registry Templates
 

@@ -548,18 +548,22 @@ pub struct KaskMediaSettings {
     pub image_gen_model: String,
     /// Video generation model override (env `HKASK_MEDIA_VIDEO_MODEL`).
     pub video_model: String,
+    /// Prompt-schema pass model override (env `HKASK_MEDIA_PASS_MODEL`) —
+    /// the transcript passes and `voice_design`.
+    pub pass_model: String,
 }
 
 impl Default for KaskMediaSettings {
     fn default() -> Self {
         Self {
-            // TTS/image/video generation stay operator-set (no ratified
+            // TTS/image/video/pass stay operator-set (no ratified
             // default); empty = not configured, the tools fail visibly.
             tts_model: String::new(),
             stt_model: hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL.to_string(),
             vision_model: hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL.to_string(),
             image_gen_model: String::new(),
             video_model: String::new(),
+            pass_model: String::new(),
         }
     }
 }
@@ -970,6 +974,7 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
             vision_model: c.vision_model.unwrap_or(default.vision_model),
             image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
             video_model: c.video_model.unwrap_or(default.video_model),
+            pass_model: c.pass_model.unwrap_or(default.pass_model),
         }
     }
 }
@@ -1037,6 +1042,7 @@ mod tests {
         assert!(default.tts_model.is_empty());
         assert!(default.image_gen_model.is_empty());
         assert!(default.video_model.is_empty());
+        assert!(default.pass_model.is_empty());
     }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user

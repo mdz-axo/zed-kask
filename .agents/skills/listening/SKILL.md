@@ -30,7 +30,11 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    - form: `"(string-contains cited_substring chunk_text)"`
    - env: `{ "cited_substring": <the cited text>, "chunk_text": <the referenced chunk's text> }`
    Fabricated quotes are rejected — the check is mechanical, not
-   model-mediated. For stored transcripts, `educt_locate` is the
+   model-mediated. On a failed citation, re-retrieve once from the chunks
+   (the Act); a citation that fails verification twice is dropped and the
+   claim is reported as unverifiable — never shipped. Bound: one
+   re-retrieval per cited claim; the overall process stays single-pass
+   (sense→act). For stored transcripts, `educt_locate` is the
    deterministic word-aligned locator — prefer it when the transcript is
    educt-stored.
 

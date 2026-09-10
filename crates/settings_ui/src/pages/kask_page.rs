@@ -443,6 +443,10 @@ pub(crate) fn kask_string_input(
                                 kask.media.get_or_insert_default().video_model =
                                     Some(parsed.clone());
                             }
+                            ("media", "pass_model") => {
+                                kask.media.get_or_insert_default().pass_model =
+                                    Some(parsed.clone());
+                            }
                             ("models", "default_model") => {
                                 kask.models.get_or_insert_default().default_model =
                                     Some(parsed.clone());

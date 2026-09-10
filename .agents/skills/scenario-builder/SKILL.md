@@ -75,6 +75,10 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 5. Score each dimension on a 0–1 scale, justifying scores with specific evidence from the narratives.
 6. Set the parametric variation flag to true if any two end states differ only in degree, not kind.
 7. Determine gate_pass as true only if there are exactly four scenarios and all three scores are ≥ 0.60.
+8. Close the loop: on a failing gate, revise the scenarios the fix notes
+   name and re-run the gate once. Bound: max 2 gate cycles; a second
+   failing gate ships the scenarios with the fix notes surfaced — the
+   operator decides whether to iterate further.
 
 ### implications-indicators
 

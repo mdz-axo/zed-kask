@@ -408,6 +408,12 @@ pub(crate) fn emit_media_env(
             media.video_model.clone(),
         );
     }
+    if !media.pass_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_PASS_MODEL".to_string(),
+            media.pass_model.clone(),
+        );
+    }
 }
 
 /// Pass through operator shell overrides for server knobs that have no

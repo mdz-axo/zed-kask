@@ -493,6 +493,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_IMAGE_GEN_MODEL",
             "HKASK_MEDIA_VIDEO_MODEL",
+            "HKASK_MEDIA_PASS_MODEL",
             // Embedding model — read by `embed_text` via
             // `hkask_inference::model_constants::embedding_model()`. Without
             // this entry the per-server filter drops it and media embedding

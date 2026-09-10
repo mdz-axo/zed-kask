@@ -49,7 +49,7 @@ Plan:  seam-map + prior verification  ->  Gate A (lisp: prior exclusivity)
 Do:    audit-security -> audit-architecture -> audit-ui -> Gate B (lisp: citation + severity)
 Check: adjudicate (semantics + cybernetics + essentialist) -> mcda (+ sensitivity)
 Act:   remediate -> Gate C (lisp: test-pinning + divergence membership, hard-stop)
-Converge: lisp score (uncited/unadjudicated -> 0) -> loop to Do
+Converge: lisp score (uncited/unadjudicated -> 0) -> loop to Do (bound: max 2 re-loops per track; a third failing score escalates the unadjudicated findings to the operator instead of looping)
 Final: report
 ```
 

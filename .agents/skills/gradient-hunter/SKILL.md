@@ -46,8 +46,8 @@ Do:     Phase 2 — Map         → Measure actual field with prior's granularit
 Do:     Phase 3 — Detect      → Classify shape, scale, domain, fractal recurrence
 Check:  Phase 4 — Hypothesize → Generate reason hypotheses (Rubin + spin glass + allostery)
 Act:    Phase 5 — Report      → Prioritized gradient report with lessons + pattern signatures
-Check:  Phase 6 — Converge    → Composite metric + next_prior_focus for loop closure
-Act:    Phase 7 — Loop        → If not converged, re-enter at Phase 1 with refined prior
+Check:  Phase 6 — Converge    → gradient-map stability gate (`lisp_eval`: `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` — no new gradient shapes vs the prior map and the prioritized top-K unchanged)
+Act:    Phase 7 — Loop        → If not converged, re-enter at Phase 1 with refined prior (bound: max 2 prior refinements; then emit the report with lessons_learned)
 ```
 
 Feedback loop closure: convergence emits `next_prior_focus` (consumed by next iteration's Prior); Report emits `lessons_learned` and `pattern_signatures` (consumed by next iteration's Prior and Detect).

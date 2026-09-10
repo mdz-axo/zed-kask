@@ -98,7 +98,7 @@ media model settings/replays and remove fixed-op model overrides. See the
 | `HKASK_MEDIA_DB` | Gallery DB path override (`src/hkask_mcp_media.rs:485`) | `{data_dir}/mcp/media/gallery.db` |
 | `HKASK_MEDIA_TTS_MODEL` | TTS model (`models::tts_model()`) | not configured — TTS calls fail visibly |
 | `HKASK_MEDIA_STT_MODEL` | STT model (`models::stt_model()`) | not configured — STT calls fail visibly |
-| `HKASK_MEDIA_PASS_MODEL` | Prompt-schema pass model — transcript passes and `voice_design` (`models::PASS_ENV`) | not configured — `voice_design` and prompt-schema passes fail visibly |
+| `HKASK_MEDIA_PASS_MODEL` | Prompt-schema pass model — transcript passes and `voice_design` (`models::PASS_ENV`) | not configured — `voice_design` and prompt-schema passes fail visibly; settings-wired (`kask.media.pass_model`)
 | `HKASK_MEDIA_AUDIO_CHAT_MODEL` | Audio-chat model (`models::AUDIO_CHAT_ENV`) | not configured |
 | `HKASK_MEDIA_STRUCTURED_PASS_MODEL` | Structured-pass model (`models::STRUCTURED_PASS_ENV`) | not configured |
 | `HKASK_MEDIA_VISION_MODEL` | Vision model (`models::vision_model()`) | not configured — vision calls fail visibly |
@@ -108,7 +108,7 @@ media model settings/replays and remove fixed-op model overrides. See the
 
 `build_model_list` lists only configured models — an unset modality is absent from the list, never a hidden default (`src/tools/models.rs:15-30`).
 
-The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides via `KaskMediaSettings` → `emit_media_env` (`kask/crates/kask_bridge/src/mcp_env.rs:352-371`; wired at `kask/crates/kask_bridge/src/settings.rs:707`).
+The kask settings UI can populate the six `HKASK_MEDIA_*_MODEL` overrides (TTS, STT, vision, image-gen, video, pass) via `KaskMediaSettings` → `emit_media_env` (`kask/crates/kask_bridge/src/mcp_env.rs`; wired at `kask/crates/kask_bridge/src/settings.rs`). `HKASK_MEDIA_AUDIO_CHAT_MODEL` and `HKASK_MEDIA_STRUCTURED_PASS_MODEL` remain standalone-env-only.
 
 **System dependencies:**
 
