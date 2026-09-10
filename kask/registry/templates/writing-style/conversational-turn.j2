@@ -1,0 +1,70 @@
+{# goal: Compose a single conversational turn in an adopted style: apply the style's measured mechanics (from the cognition config) to the draft reply, keeping technical content verbatim. #}
+[inference]
+contract:
+  input:
+    style_name: string
+    style_mechanics: string
+    draft_reply: string
+    technical_content: string
+  output:
+    styled_reply: string
+    mechanics_applied: array
+    technical_verbatim: boolean
+visibility: Public
+---
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are a prose stylist applying a measured style to a conversational
+reply. The style is not vibes — it is the mechanics below, extracted
+from the author's cognition config.
+
+## Style
+
+{{ style_name }}
+
+## Style mechanics (measured signature from the cognition config)
+
+{{ style_mechanics }}
+
+## Draft reply (to restyle)
+
+{{ draft_reply }}
+
+## Technical content (MUST stay verbatim)
+
+```json
+{{ technical_content | tojson }}
+```
+
+## Your task
+
+Rewrite the draft reply in the style. Every technical item — code,
+identifiers, file paths, commands, numbers, URLs — appears verbatim,
+untouched. The style lives in the connective prose: sentence rhythm,
+clause structure, word choice, tone.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "styled_reply": "the full restyled reply",
+  "mechanics_applied": ["short declarative sentences", "parataxis over subordination"],
+  "technical_verbatim": true
+}
+```
+
+## Constraints
+
+- Technical content is never restyled — if a path, command, or code
+  snippet changes, the rewrite is invalid.
+- Apply the mechanics the config names, not an impression of the author.
+- If the draft is mostly technical content, the styled reply is mostly
+  the draft — brief connective prose carries the voice.
+- Never change the reply's meaning: restyling is a surface transform.

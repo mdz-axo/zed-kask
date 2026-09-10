@@ -158,7 +158,7 @@ validation:
 
 embedding:
   corpus_config: "registry/styles/hemingway/corpus.yaml"
-  model: "Qwen/Qwen3-Embedding-0.6B"
+  model: "ollama/qwen3-embedding:0.6b"
   dim: 1024
   centroid_entity_ref: "style:hemingway:centroid"
   retrieval:
