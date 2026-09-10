@@ -63,18 +63,33 @@ strip_comments() {
 
 checked=0
 flagged=0
+accepted=0
+BASELINE="$SCRIPT_DIR/skill-corpus-prescreen-accepted.txt"
+
+# Report a flag unless it is a read-triaged acceptance in the baseline
+# file. Baseline entries are `<rel-path>: <FLAG KIND>` (grep -qF on a
+# file — no pipe, no SIGPIPE). Accepted flags are counted, not printed,
+# so a clean run shows zero noise and any NEW flag still surfaces.
+flag() {
+    # $1 = rel, $2 = kind, $3 = message
+    if [ -f "$BASELINE" ] && grep -qF -- "$1: $2" "$BASELINE"; then
+        accepted=$((accepted + 1))
+    else
+        echo "  $1: $3"
+        flagged=$((flagged + 1))
+    fi
+}
+
 for file in "$REG"/*/*.j2; do
     checked=$((checked + 1))
     rel="${file#"$REG"/}"
     goal="$(extract_goal "$file" || true)"
     if [ -z "$goal" ]; then
-        echo "  $rel: NO GOAL |"
-        flagged=$((flagged + 1))
+        flag "$rel" "NO GOAL" "NO GOAL |"
         continue
     fi
     if [ "${#goal}" -lt 10 ]; then
-        echo "  $rel: SHORT GOAL | $goal"
-        flagged=$((flagged + 1))
+        flag "$rel" "SHORT GOAL" "SHORT GOAL | $goal"
         continue
     fi
     # Goal-wrap detection: the canonical parse (extract_goal above and
@@ -84,8 +99,7 @@ for file in "$REG"/*/*.j2; do
     case "$goal" in
         *[.!?]*) ;;
         *)
-            echo "  $rel: GOAL WRAP? | ${goal:0:90}"
-            flagged=$((flagged + 1))
+            flag "$rel" "GOAL WRAP?" "GOAL WRAP? | ${goal:0:90}"
             continue
             ;;
     esac
@@ -107,9 +121,8 @@ for file in "$REG"/*/*.j2; do
     if [ "$total" -gt 0 ]; then
         overlap=$(awk -v h="$hits" -v t="$total" 'BEGIN { printf "%.0f", 100 * h / t }')
         if awk -v o="$overlap" -v f="$OVERLAP_FLOOR" 'BEGIN { exit !(o < f * 100) }'; then
-            echo "  $rel: LOW OVERLAP ${overlap}% | ${goal:0:90}"
-            flagged=$((flagged + 1))
+            flag "$rel" "LOW OVERLAP" "LOW OVERLAP ${overlap}% | ${goal:0:90}"
         fi
     fi
 done
-echo "checked $checked templates; $flagged flagged"
+echo "checked $checked templates; $flagged flagged; $accepted accepted (baseline)"

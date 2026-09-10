@@ -1,0 +1,8 @@
+# Accepted prescreen flags — read-triaged and confirmed correct by design.
+# One entry per line: <template-rel-path>: <FLAG KIND>
+# A flagged template matching an entry here is counted as accepted, not
+# printed — a clean run shows zero noise and any NEW flag still surfaces.
+# Kinds: NO GOAL, SHORT GOAL, GOAL WRAP?, LOW OVERLAP
+diataxis-diagram/present-diagram.j2: LOW OVERLAP
+sankey-flow/present-sankey.j2: LOW OVERLAP
+wardley-mapper/present-map.j2: LOW OVERLAP
