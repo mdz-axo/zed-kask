@@ -5,6 +5,7 @@ crates/agent/src/tools/evals/fixtures/translate_doc_comments/before.rs:3
 crates/agent_ui/src/thread_metadata_store.rs:1
 crates/call/src/call_impl/diagnostics.rs:2
 crates/cli/src/main.rs:1
+crates/collab/src/rpc.rs:1
 crates/context_server/src/client.rs:3
 crates/docs_preprocessor/src/main.rs:1
 crates/editor/src/element.rs:1
@@ -45,6 +46,7 @@ crates/open_router/src/open_router.rs:1
 crates/project/src/debugger/dap_command.rs:3
 crates/project/src/debugger/dap_store.rs:1
 crates/project/src/lsp_store.rs:1
+crates/sandbox/src/util/canonical_path.rs:1
 crates/settings_ui/src/pages/external_agents_page.rs:3
 crates/sum_tree/src/sum_tree.rs:1
 crates/tabular_data_preview/src/settings.rs:1

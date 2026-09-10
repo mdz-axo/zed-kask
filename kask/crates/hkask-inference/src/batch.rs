@@ -133,7 +133,13 @@ pub struct BatchResult {
     /// failures. Duplicate identities and ambiguous responses are failures.
     /// Only returned identities appear here; callers must detect missing or
     /// unsolicited identities against the requested batch.
-    pub results: std::collections::HashMap<String, Result<BatchInferenceResult, String>>,
+    ///
+    /// The `String` error is the inference-IPC wire contract:
+    /// `BatchResultEntry.error` is `Option<String>` across the process
+    /// boundary, and consumers type it at their own boundary (the corpus
+    /// wraps it in `QaCompletionError::BatchProvider`). Pinned by
+    /// `parse_failures_satisfy_ipc_error_contract`.
+    pub results: std::collections::HashMap<String, Result<BatchInferenceResult, String>>, // string-error-ok
     /// Number of unique returned identities that succeeded.
     pub succeeded: usize,
     /// Number of unique returned identities that failed.

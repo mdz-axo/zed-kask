@@ -24,6 +24,13 @@
 #   struct-level allow even masked never-read fields). Adding an allow
 #   requires bumping the baseline in the same commit, which makes the
 #   addition a visible, reviewable act.
+# - check-string-errors.sh: no `Result<_, String>` in hkask library code.
+#   Wired 2026-09-10 after clearing the 7-violation backlog that
+#   accumulated while the gate sat unwired.
+# - check-mcp-tool-tests.sh: every MCP server carries tool-behavior contract
+#   tests through the public `Parameters<T>` seam (ratcheted allowlist).
+# - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
+#   namespace (registered in CANONICAL_NAMESPACES).
 #
 # kask-tests (minutes, every push + PR): the runbook's verification gate —
 #   cargo test over every hkask-* crate plus the kask_bridge seam. Serial
@@ -82,6 +89,12 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Dead-code allows — no net-new beyond the committed baseline
         run: bash kask/scripts/check-no-new-dead-code-allows.sh
+      - name: String errors — no Result<_, String> in hkask library code
+        run: bash kask/scripts/check-string-errors.sh
+      - name: MCP tool-behavior contract tests — Parameters seam coverage
+        run: bash kask/scripts/check-mcp-tool-tests.sh
+      - name: Regulation namespaces — reg.* spans are canonical
+        run: bash kask/scripts/check-reg-canonical.sh
 
   kask-tests:
     runs-on: ubuntu-latest

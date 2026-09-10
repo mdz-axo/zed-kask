@@ -281,7 +281,7 @@ pub async fn run_workflow<D, F, R>(
 ) -> Vec<WorkflowStageOutcome>
 where
     D: Fn(&str, &str) -> F,
-    F: Future<Output = Result<(String, Option<serde_json::Value>), String>>,
+    F: Future<Output = Result<(String, Option<serde_json::Value>), WorkflowDelegateError>>,
     R: FnMut(&str, &str),
 {
     let mut outcomes = Vec::with_capacity(template.stages.len());
@@ -347,7 +347,7 @@ where
                     agent: Some(declared_agent.clone()),
                     ok: false,
                     response: None,
-                    error: Some(error),
+                    error: Some(error.to_string()),
                     notes: Vec::new(),
                     reliance: None,
                 });
@@ -356,6 +356,18 @@ where
         }
     }
     outcomes
+}
+
+/// Delegate failure for one workflow stage. Recorded via Display in the
+/// stage outcome; the runner stops the chain on `Err`. The module stays
+/// decoupled from the runtime's error types — the delegate closure (in the
+/// runtime-coupled caller) converts its error to this type at the boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum WorkflowDelegateError {
+    #[error("agent '{0}' not found in local registry")]
+    AgentNotFound(String),
+    #[error("{0}")]
+    Delegate(String),
 }
 
 #[cfg(test)]
@@ -642,7 +654,9 @@ mod tests {
             let task = task.to_string();
             async move {
                 if task.contains("(handled)") {
-                    Err("writer exploded".to_string())
+                    Err(WorkflowDelegateError::Delegate(
+                        "writer exploded".to_string(),
+                    ))
                 } else {
                     Ok((
                         format!("{task} (handled)"),

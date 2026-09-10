@@ -85,10 +85,10 @@ For the current skill catalog, see `.agents/skills/` (project-local) and `~/.loc
 
 | Gate | Enforcement | Script / Method |
 |---|---|---|
-| No visual-UI / monitoring infra (grafana/prometheus) | `grep` scan | Inline `.github/workflows/ci.yml` |
-| No hardcoded secrets | Env vars / keystore only | Inline `ci.yml` |
+| No visual-UI / monitoring infra (grafana/prometheus) | `grep` scan | Review-enforced (was inline in the removed `kask-ci.yml`) |
+| No hardcoded secrets | Env vars / keystore only | Review-enforced (was inline in the removed `kask-ci.yml`) |
 | No `Result<_, String>` | `thiserror` enums | `scripts/check-string-errors.sh` |
-| No unused crate dependencies | `nightly -D unused_crate_dependencies` | Nightly job |
+| No unused crate dependencies | `cargo machete` (kask/ scope) | `script/clippy` (local) |
 | MCP servers: tool-behavior contract tests | `Parameters(` seam | `scripts/check-mcp-tool-tests.sh` |
 | Regulation namespace invariant (`reg.*` → `CANONICAL_NAMESPACES`) | Canonical span check | `scripts/check-reg-canonical.sh` |
 

@@ -1505,7 +1505,7 @@ mod tests {
         /// `Err` holds only the failure detail; the typed
         /// [`RolloutEventError`] is built at the trait boundary so the mock
         /// does not force `Clone` onto the port's error type.
-        before_after: Mutex<Result<Option<(f64, f64)>, String>>,
+        before_after: Mutex<Result<Option<(f64, f64)>, String>>, // string-error-ok
         verdicts: Mutex<Vec<RecordedVerdict>>,
     }
 

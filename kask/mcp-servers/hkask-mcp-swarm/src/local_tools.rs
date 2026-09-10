@@ -862,13 +862,15 @@ impl SwarmServer {
                     let registry = &delegate_registry;
                     async move {
                         let agent = registry.get(&agent_id).ok_or_else(|| {
-                            format!("agent '{agent_id}' not found in local registry")
+                            crate::workflow::WorkflowDelegateError::AgentNotFound(agent_id.clone())
                         })?;
                         runtime
                             .delegate(&agent, &task)
                             .await
                             .map(|result| (result.response, result.reliance))
-                            .map_err(|error| error.to_string())
+                            .map_err(|error| {
+                                crate::workflow::WorkflowDelegateError::Delegate(error.to_string())
+                            })
                     }
                 },
                 |from, to| {

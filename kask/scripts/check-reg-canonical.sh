@@ -15,7 +15,7 @@
 #    (templates instruct agents to emit spans — those references must be
 #    canonical too, otherwise the agent would emit non-canonical spans)
 #
-# Enabled in CI via `.github/workflows/ci.yml` invariants job.
+# Enabled in CI via `.github/workflows/kask-invariants.yml` check job.
 # Run locally: `bash scripts/check-reg-canonical.sh`
 #
 # Exit codes:

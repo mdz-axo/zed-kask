@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# CI gate: no net-new #[allow(dead_code)] beyond the committed baseline.
+# CI gate: no net-new #[allow(dead_code)] / #[expect(dead_code)] beyond the
+# committed baseline.
 #
 # Every strangler-fig residue finding from the 2026-09-08 audit carried an
 # #[allow(dead_code)] — it is the mechanism that hides partial removals and
 # write-only surface from the compiler (a struct-level allow even masked
 # never-read fields). This gate fails when any tracked .rs file contains
-# MORE allow(dead_code) occurrences than the baseline records.
+# MORE allow/expect(dead_code) occurrences than the baseline records.
 #
 # Adding an allow therefore requires a visible, reviewable act: bumping
 # scripts/dead-code-allow-baseline.txt in the same commit, with the
@@ -40,14 +41,14 @@ BASELINE="$SCRIPT_DIR/dead-code-allow-baseline.txt"
 # entirely on empty input (grep with no file argument would read stdin).
 current_counts() {
   git ls-files '*.rs' \
-    | xargs -r grep -cH 'allow(dead_code)' 2>/dev/null \
+    | xargs -r grep -cH 'allow(dead_code)\|expect(dead_code)' 2>/dev/null \
     | grep -v ':0$' \
     | sort
 }
 
 if [ "${1:-}" = "--refresh" ]; then
   current_counts > "$BASELINE"
-  echo "OK: baseline refreshed — $(wc -l < "$BASELINE") files carry allow(dead_code), $(awk -F: '{s+=$2} END {print s+0}' "$BASELINE") total occurrences. Commit it with the change that justifies the delta."
+  echo "OK: baseline refreshed — $(wc -l < "$BASELINE") files carry allow/expect(dead_code), $(awk -F: '{s+=$2} END {print s+0}' "$BASELINE") total occurrences. Commit it with the change that justifies the delta."
   exit 0
 fi
 
@@ -67,7 +68,7 @@ while IFS= read -r line; do
   base=$(awk -F: -v f="$file" '$1 == f {print $2; exit}' "$BASELINE")
   base="${base:-0}"
   if [ "$count" -gt "$base" ]; then
-    echo "FAIL: $file carries $count allow(dead_code) — baseline $base."
+    echo "FAIL: $file carries $count allow/expect(dead_code) — baseline $base."
     echo "  Justify the addition in the code, then bump the baseline in the same commit:"
     echo "  bash kask/scripts/check-no-new-dead-code-allows.sh --refresh"
     VIOLATIONS=1
