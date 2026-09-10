@@ -185,22 +185,16 @@ async fn run_pass_core<TOutput: serde::de::DeserializeOwned>(
     rejections: &AtomicU64,
     expected: &'static str,
 ) -> Result<(TOutput, String), PassError> {
+    // The transcript-pipeline model is the STT model (the operator's
+    // 2026-09-09 ruling): both call shapes — prompt-schema and structured —
+    // resolve `models::stt_model()`; an explicit per-call override wins.
     let resolved_model = model_override
         .map(str::to_string)
-        .or_else(|| match mode {
-            PassMode::PromptSchema => std::env::var(crate::models::PASS_ENV).ok(),
-            PassMode::Structured => std::env::var(crate::models::STRUCTURED_PASS_ENV).ok(),
-        })
+        .or_else(crate::models::stt_model)
         .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| match mode {
-            PassMode::PromptSchema => PassError::NotConfigured {
-                kind: "transcript-pass",
-                env: crate::models::PASS_ENV,
-            },
-            PassMode::Structured => PassError::NotConfigured {
-                kind: "structured-pass",
-                env: crate::models::STRUCTURED_PASS_ENV,
-            },
+        .ok_or(PassError::NotConfigured {
+            kind: "STT",
+            env: crate::models::STT_ENV,
         })?;
 
     let prompt = render_pass_prompt(template_env, template_name, schema, request, words)?;
@@ -457,11 +451,11 @@ pub async fn run_speaker_pass_audio(
     }
     let resolved_model = model_override
         .map(str::to_string)
-        .or_else(|| std::env::var(crate::models::AUDIO_CHAT_ENV).ok())
+        .or_else(crate::models::stt_model)
         .filter(|model| !model.trim().is_empty())
         .ok_or(PassError::NotConfigured {
-            kind: "audio-chat",
-            env: crate::models::AUDIO_CHAT_ENV,
+            kind: "STT",
+            env: crate::models::STT_ENV,
         })?;
     let schema = serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput))
         .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;

@@ -80,9 +80,6 @@ pub(crate) static ARTIFACTS_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>
 pub mod models {
     pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
-    pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
-    pub const AUDIO_CHAT_ENV: &str = "HKASK_MEDIA_AUDIO_CHAT_MODEL";
-    pub const STRUCTURED_PASS_ENV: &str = "HKASK_MEDIA_STRUCTURED_PASS_MODEL";
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
     pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
@@ -95,9 +92,6 @@ pub mod models {
 
     pub fn tts_model() -> Option<String> {
         configured(TTS_ENV)
-    }
-    pub fn pass_model() -> Option<String> {
-        configured(PASS_ENV)
     }
     pub fn stt_model() -> Option<String> {
         configured(STT_ENV)

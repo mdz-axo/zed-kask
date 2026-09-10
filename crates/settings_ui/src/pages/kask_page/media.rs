@@ -1,5 +1,5 @@
 //! Media sub-page — media server model configuration (TTS, STT, Vision,
-//! Image Gen, Video, Pass models).
+//! Image Gen, Video models).
 //!
 //! Reads from `kask_bridge::KaskMediaSettings` (the `"kask.media"` section
 //! in settings.json) and writes via `kask_string_input` — the same pattern
@@ -61,14 +61,6 @@ pub(crate) fn render_media_page(
         "media",
         "video_model",
     );
-    let pass_input = kask_string_input(
-        "kask-media-pass",
-        "Pass Model",
-        "Provider/model-id (required — no hidden default)",
-        media.pass_model,
-        "media",
-        "pass_model",
-    );
 
     v_flex()
         .id("kask-media-page")
@@ -81,11 +73,10 @@ pub(crate) fn render_media_page(
         .child(
             Label::new(
                 "Configure the media MCP server: model overrides for TTS, \
-                 speech-to-text, vision, image generation, video generation, \
-                 and the prompt-schema pass model (transcript passes, voice \
-                 design). When empty, the server falls back to the kask default \
-                 models. The media panel (View > Media or the status bar button) \
-                 provides a Steer-mode conversation scoped to the media MCP server.",
+                 speech-to-text, vision, image generation, and video generation. \
+                 When empty, the server falls back to the kask default models. \
+                 The media panel (View > Media or the status bar button) provides \
+                 a Steer-mode conversation scoped to the media MCP server.",
             )
             .color(Color::Muted)
             .size(LabelSize::Small),
@@ -98,8 +89,7 @@ pub(crate) fn render_media_page(
                 .child(stt_input)
                 .child(vision_input)
                 .child(image_gen_input)
-                .child(video_input)
-                .child(pass_input),
+                .child(video_input),
         )
         .into_any_element()
 }

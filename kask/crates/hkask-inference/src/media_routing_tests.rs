@@ -16,8 +16,8 @@ const SELECTABLE: [(MediaOp, &str); 8] = [
     (MediaOp::Transcribe, "HKASK_MEDIA_STT_MODEL"),
     (MediaOp::GenerateVideo, "HKASK_MEDIA_VIDEO_MODEL"),
     (MediaOp::ImageToVideo, "HKASK_MEDIA_VIDEO_MODEL"),
-    (MediaOp::ChatAudio, "HKASK_MEDIA_AUDIO_CHAT_MODEL"),
-    (MediaOp::ChatJson, "HKASK_MEDIA_STRUCTURED_PASS_MODEL"),
+    (MediaOp::ChatAudio, "HKASK_MEDIA_STT_MODEL"),
+    (MediaOp::ChatJson, "HKASK_MEDIA_STT_MODEL"),
 ];
 
 type Calls = Arc<Mutex<Vec<(String, MediaOp, Option<String>)>>>;

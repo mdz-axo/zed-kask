@@ -3,7 +3,7 @@ use super::notes::run_store;
 use crate::{
     CompaniesServer, StoredForecast, fibo, financial_model,
     research_store::PersistedForecast,
-    scenarios, superforecast,
+    resolve_current_price, scenarios, superforecast,
     types::{self, AttributionRequest, CharacteristicsRequest},
     validate_symbol,
 };
@@ -642,13 +642,25 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile.price().unwrap_or(0.0);
-
-            if current_price <= 0.0 {
-                return Err(McpToolError::invalid_argument(
-                    "current price must be positive for reverse DCF",
-                ));
-            }
+            // FMP profiles carry `price`; EODHD-routed profiles (every
+            // exchange-qualified symbol) do not — the stock quote's `close`
+            // is the fallback, in the listing currency (consistent with the
+            // local-currency financials above).
+            let (current_price, price_source) =
+                match resolve_current_price(profile.raw(), None) {
+                    Some((price, source)) => (price, source),
+                    None => {
+                        let quote = self.fetch("stock_quote", &req.symbol, &[]).await?;
+                        match resolve_current_price(profile.raw(), Some(&quote)) {
+                            Some((price, source)) => (price, source),
+                            None => {
+                                return Err(McpToolError::invalid_argument(
+                                    "current price must be positive for reverse DCF",
+                                ))
+                            }
+                        }
+                    }
+                };
 
             // Solve via the shared bisection in `financial_model` — the single
             // source of truth for the search direction, shared with
@@ -693,6 +705,7 @@ impl CompaniesServer {
             let output = serde_json::json!({
                 "symbol": req.symbol,
                 "current_price": current_price,
+                "price_source": price_source,
                 "implied_growth_rate": implied_growth,
                 "intrinsic_at_implied": result.intrinsic_per_share,
                 "enterprise_value": result.enterprise_value,

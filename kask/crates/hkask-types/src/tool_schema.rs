@@ -12,9 +12,11 @@
 //! `true`, so any MCP tool input field typed `serde_json::Value` (or
 //! `Option<serde_json::Value>`) renders as `properties.<field> = true` and
 //! breaks Ollama-routed turns. [`AnyJsonValue`] is a transparent `Value`
-//! wrapper whose `JsonSchema` emits the empty object `{}` — equally permissive
-//! ("any value") but JSON-object-shaped so strict tool-schema decoders accept
-//! it.
+//! wrapper whose `JsonSchema` emits an object-typed permissive schema —
+//! JSON-object-shaped so strict tool-schema decoders accept it, and
+//! concrete enough that schema-guided tool-call parsers bind the value
+//! (live-observed 2026-09-10: the earlier empty-object `{}` form was
+//! silently dropped from tool-call arguments on the GLM/OpenRouter path).
 //!
 //! This module lives in `hkask-types` (rather than `hkask-mcp-server`) so that
 //! [`find_boolean_schema_positions`] without pulling in `hkask-mcp-server`'s
@@ -31,13 +33,22 @@ use schemars::Schema;
 use schemars::SchemaGenerator;
 use serde::{Deserialize, Serialize};
 
-/// A `serde_json::Value` whose `JsonSchema` is the empty object `{}` ("accept any
-/// value") instead of the bare boolean `true` that schemars emits for `Value`.
+/// A `serde_json::Value` whose `JsonSchema` is an object-typed permissive
+/// schema (`{"type": "object", "properties": {}, "additionalProperties": {}}`)
+/// instead of the bare boolean `true` that schemars emits for `Value`.
 ///
 /// Serialize/Deserialize are transparent, so the wire value is unchanged (any
 /// JSON) — only the generated tool input schema differs. Use this for MCP tool
-/// input fields that must accept arbitrary JSON, so the field's schema is a JSON
-/// object (accepted by Ollama's `api.ToolProperty`) rather than a boolean.
+/// input fields that must accept arbitrary JSON, so the field's schema is a
+/// JSON object (accepted by Ollama's `api.ToolProperty`) rather than a
+/// boolean, and binds as an object in schema-guided tool-call parsers.
+///
+/// The earlier empty-object `{}` form ("any value" in JSON Schema) was
+/// live-observed dropped from tool-call arguments on the GLM/OpenRouter path
+/// (2026-09-10, `company_screener`'s `criteria_overrides`: the model emitted
+/// the parameter, prompt/limit arrived, the `{}`-schema parameter vanished
+/// before dispatch — reproduced 3×). A concrete object type with permissive
+/// `additionalProperties` gives schema-guided parsers something to bind.
 ///
 /// Derefs to the inner `serde_json::Value`, so existing call sites using
 /// `.is_null()`, `.as_object()`, etc. work unchanged.
@@ -79,10 +90,27 @@ impl JsonSchema for AnyJsonValue {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        // Empty object schema == "any value", but JSON-object-shaped so strict
-        // tool-schema decoders (Ollama's `api.ToolProperty`) don't reject a
-        // boolean schema.
-        Schema::from(serde_json::Map::new())
+        // Object-typed permissive schema. The keys are carried explicitly so
+        // Zed's `preprocess_json_schema` (which injects `additionalProperties:
+        // false` into type-object schemas lacking it) cannot tighten this
+        // into "no properties allowed" — the trap that would reintroduce the
+        // drop the concrete type exists to fix. `additionalProperties` is an
+        // empty SCHEMA object, never a bare boolean — Ollama's
+        // `api.ToolProperty` rejects booleans in schema positions.
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "type".to_string(),
+            serde_json::Value::String("object".to_string()),
+        );
+        map.insert(
+            "properties".to_string(),
+            serde_json::Value::Object(serde_json::Map::new()),
+        );
+        map.insert(
+            "additionalProperties".to_string(),
+            serde_json::Value::Object(serde_json::Map::new()),
+        );
+        Schema::from(map)
     }
 }
 
@@ -178,5 +206,64 @@ fn collect_in_schema(value: &serde_json::Value, path: &str, found: &mut Vec<Stri
         }
         // A bare array is not a schema; nothing to scan.
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The AnyJsonValue schema must be object-typed and permissive: the empty
+    /// `{}` form was live-observed dropped from tool-call arguments by
+    /// schema-guided parsing on the GLM/OpenRouter path (2026-09-10), and a
+    /// bare `type: object` would be tightened into `additionalProperties:
+    /// false` by Zed's preprocess — forbidding all content.
+    #[test]
+    fn any_json_value_schema_is_object_typed_and_permissive() {
+        let mut schema = serde_json::to_value(schemars::schema_for!(AnyJsonValue)).expect("schema");
+        // `schema_for!` adds root metadata (`$schema`, `title`) that
+        // `adapt_schema_to_format` strips before the schema reaches the
+        // model — remove them the same way to assert the wire shape.
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("$schema");
+            object.remove("title");
+        }
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {}
+            })
+        );
+    }
+
+    /// The schema must stay free of bare booleans (Ollama/Gemini reject
+    /// them) — including inside `additionalProperties`.
+    #[test]
+    fn any_json_value_schema_has_no_boolean_positions() {
+        let schema = serde_json::to_value(schemars::schema_for!(AnyJsonValue)).expect("schema");
+        assert!(find_boolean_schema_positions(&schema).is_empty());
+    }
+
+    /// A struct field typed AnyJsonValue renders the property as the
+    /// object-typed permissive schema — the shape tool-call parsers bind.
+    #[test]
+    fn any_json_value_property_renders_object_typed_in_parent_schema() {
+        #[derive(schemars::JsonSchema)]
+        struct Request {
+            #[allow(dead_code)]
+            payload: AnyJsonValue,
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(Request)).expect("schema");
+        assert_eq!(
+            schema["properties"]["payload"],
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {}
+            })
+        );
     }
 }

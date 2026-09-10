@@ -335,12 +335,13 @@ impl CompaniesServer {
             let mut row_stats = RowFilterStats::default();
             let mut extra_rates = serde_json::Map::new();
             let (merged_rows, exchange_counts) = if exchange_codes.is_empty() {
-                let rows = providers::fetch_eodhd_screener(
+                let mut rows = providers::fetch_eodhd_screener(
                     &self.client,
                     &self.eodhd_api_key,
                     &screener_filters,
                 )
                 .await?;
+                filter_non_common(&mut rows, &mut row_stats);
                 (rows, serde_json::Map::new())
             } else {
                 // Build per-exchange queries. With an FX context, cap bounds
@@ -418,20 +419,32 @@ impl CompaniesServer {
                     )));
                 }
 
-                let fetches = queries.iter().map(|(code, rate, filters)| {
-                    let filters = filters.clone();
-                    let code = code.clone();
-                    async move {
-                        let outcome = providers::fetch_eodhd_screener(
-                            &self.client,
-                            &self.eodhd_api_key,
-                            &filters,
-                        )
-                        .await;
-                        (code, *rate, outcome)
-                    }
-                });
-                let results = futures::future::join_all(fetches).await;
+                let fetches: Vec<_> = queries
+                    .iter()
+                    .map(|(code, rate, filters)| {
+                        let filters = filters.clone();
+                        let code = code.clone();
+                        async move {
+                            let outcome = providers::fetch_eodhd_screener(
+                                &self.client,
+                                &self.eodhd_api_key,
+                                &filters,
+                            )
+                            .await;
+                            (code, *rate, outcome)
+                        }
+                    })
+                    .collect();
+                // Bounded concurrency: EODHD rate-limits (~17 req/s); a
+                // 27-exchange fan-out at full concurrency can burst past it.
+                // Eight in flight keeps the fan-out well under the limit
+                // while staying concurrent.
+                const SCREENER_FANOUT_CONCURRENCY: usize = 8;
+                use futures::StreamExt as _;
+                let results = futures::stream::iter(fetches)
+                    .buffered(SCREENER_FANOUT_CONCURRENCY)
+                    .collect::<Vec<_>>()
+                    .await;
 
                 // A partial exchange failure keeps the surviving exchanges
                 // and surfaces the failure; a total failure propagates.
@@ -448,7 +461,11 @@ impl CompaniesServer {
                 let mut buckets: Vec<(String, f64, Vec<serde_json::Value>)> = Vec::new();
                 for (code, rate, outcome) in results {
                     match outcome {
-                        Ok(rows) => buckets.push((code, rate, rows)),
+                        Ok(rows) => {
+                            let mut rows = rows;
+                            filter_non_common(&mut rows, &mut row_stats);
+                            buckets.push((code, rate, rows));
+                        }
                         Err(error) => {
                             exchange_errors
                                 .insert(code, serde_json::Value::String(error.to_string()));
@@ -468,7 +485,6 @@ impl CompaniesServer {
                             .screener_row_currency_pass(
                                 buckets,
                                 context,
-                                &exchange_codes,
                                 cap_min,
                                 cap_max,
                             )
@@ -596,6 +612,7 @@ impl CompaniesServer {
                 "foreign_lines_dropped": row_stats.foreign_lines_dropped,
                 "out_of_band_dropped": row_stats.out_of_band_dropped,
                 "unconverted_rows": row_stats.unconverted_rows,
+                "non_common_dropped": row_stats.non_common_dropped,
                 "post_screen_filters": post_screen_filters,
                 "warnings": warnings,
                 "count": count,
@@ -604,7 +621,7 @@ impl CompaniesServer {
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
                 },
-                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap. Row currency follows the row's currency_symbol: lines quoted in another currency are dropped when that currency's home market is also screened (the company appears via its home exchange) and otherwise kept and converted at their own currency's rate — Japanese companies enter this way (EODHD has no Japanese exchange; their London ¥ lines are the surface). The requested band is enforced client-side (out_of_band_dropped counts rows EODHD returned outside it; foreign_lines_dropped counts dropped foreign lines; unconverted_rows counts rows without a USD conversion, sorted last). Mixed-currency exchanges (London) are queried unbounded — their foreign-currency lines (¥, kr, Ft) are selected by the row-currency rules instead of server-side bounds. Without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
+                "framework": "EODHD Screener API. Parses natural-language prompts into EODHD filter triples ([field, operation, value], AND-combined). Keywords: field names in space or underscore form (market cap / market_capitalization, price / adjusted_close, volume / avgvol_1d, average volume / avgvol_200d, eps / earnings_share, dividend yield, sector, industry, daily change / refund_1d_p, weekly change / refund_5d_p). Operators: above/over/more than/greater than/higher than/>/>=/at least; below/under/less than/lower than/fewer than/</<=/at most; between X and Y; equals/is/= for string fields. Values accept $, thousands commas, and B/M/K/T or billion/million/thousand suffixes — the suffix binds to its number ('between 2 and 200 billion' parses as min 2, max 2e11). Geography: country/region names and major exchange codes map to EODHD exchange codes under parsed_criteria.exchanges and fan out one query per exchange; results are listings (a cross-listed company appears once per exchange). USD-stated market-cap bounds are converted per exchange into the listing currency using EODHD FOREX daily closes (cached 24h; the fx object carries rates and the as-of date) and rows carry market_capitalization_usd, ranked by USD cap. Row currency follows the row's currency_symbol: lines quoted in another currency are dropped when that currency's home market is also screened (the company appears via its home exchange) and otherwise kept and converted at their own currency's rate — Japanese companies enter this way (EODHD has no Japanese exchange; their London ¥ lines are the surface). The requested band is enforced client-side (out_of_band_dropped counts rows EODHD returned outside it; foreign_lines_dropped counts dropped foreign lines; unconverted_rows counts rows without a USD conversion, sorted last; non_common_dropped counts ETFs/preferreds/notes/CDRs dropped — EODHD has no type filter). Mixed-currency exchanges (London) are queried unbounded — their foreign-currency lines (¥, kr, Ft) are selected by the row-currency rules instead of server-side bounds. Without geography, or when the FX context is unavailable (warned), bounds apply in each listing's local currency. Sector/industry are single-value. Verify parsed_criteria and correct with criteria_overrides (keys: market_capitalization_min/_max and other _min/_max bounds, exchanges: [codes], sector, industry). Post-screen fields (revenue_growth, roic, roe, pe_ratio, debt_equity, price_book, beta) require per-company fundamentals from key_metrics. Paginates automatically beyond the 1,000-result offset limit.",
                 "source": "EODHD Screener API"
             });
 
@@ -747,16 +764,27 @@ impl CompaniesServer {
     /// exchange's default currency (London IOB lines quote Japanese stocks in
     /// ¥, Nordic stocks in kr). Classification per row:
     /// - symbol matches the exchange currency → convert at the exchange rate;
-    /// - symbol maps to another currency this screen also covers → drop (the
-    ///   company's home-exchange line is in another bucket of this very
-    ///   screen, correctly converted);
-    /// - symbol maps to a currency the screen does not cover → keep and
+    /// - symbol maps to another currency whose home rows survived in this
+    ///   screen → drop (the company's home-exchange line is in another
+    ///   bucket, correctly converted);
+    /// - symbol maps to a currency with no surviving home rows → keep and
     ///   convert at that currency's USD rate (how Japanese companies enter:
     ///   EODHD has no Japanese exchange, so their London ¥ lines are the only
-    ///   surface);
+    ///   surface — and how Hungarian companies survive an empty Budapest
+    ///   bucket);
     /// - ambiguous symbol ("kr" = SEK/NOK/DKK) → drop when any candidate
-    ///   currency is covered by the screen, else keep unconverted;
+    ///   currency kept home rows, else keep unconverted;
     /// - unknown symbol or missing cap → keep unconverted (no USD field).
+    ///
+    /// Home coverage counts only rows that survive the band enforcement — a
+    /// home bucket that fetched nothing (or whose rows all fell outside the
+    /// requested band) must not orphan the company's foreign line
+    /// (live-observed 2026-09-10: BUD kept zero rows, so Hungarian companies'
+    /// London Ft lines were dropped with nothing replacing them).
+    ///
+    /// Non-common-stock instruments (ETFs, preferreds, notes — EODHD's
+    /// screener has no type filter) are dropped first and counted in
+    /// `non_common_dropped`.
     ///
     /// Rows with a resolved USD cap are enforced against the requested band
     /// client-side — EODHD's server-side filter application is inconsistent
@@ -769,7 +797,6 @@ impl CompaniesServer {
         &self,
         buckets: Vec<(String, f64, Vec<serde_json::Value>)>,
         context: &ScreenerFx,
-        exchange_codes: &[String],
         cap_min: Option<f64>,
         cap_max: Option<f64>,
     ) -> (
@@ -777,57 +804,125 @@ impl CompaniesServer {
         RowFilterStats,
         serde_json::Map<String, serde_json::Value>,
     ) {
-        let screen_currencies: std::collections::HashSet<&str> = exchange_codes
-            .iter()
-            .filter_map(|code| context.currency_by_exchange.get(code).map(String::as_str))
-            .collect();
-
-        // Classify every row; collect currencies whose rates are needed for
-        // foreign-currency keeps.
         enum RowClass {
             SameCurrency(f64),
             Foreign(String),
+            Ambiguous(&'static [&'static str]),
             Unconverted,
         }
-        let mut classified: Vec<(String, Vec<(serde_json::Value, RowClass)>)> = Vec::new();
-        let mut needed_currencies: Vec<String> = Vec::new();
+        struct PendingRow {
+            exchange: String,
+            exchange_currency: String,
+            row: serde_json::Value,
+            class: RowClass,
+        }
+
+        // Classify every row; drop non-common instruments first, counted.
         let mut stats = RowFilterStats::default();
+        let mut pending: Vec<PendingRow> = Vec::new();
+        let mut exchange_order: Vec<String> = Vec::new();
         for (code, rate, rows) in buckets {
             let exchange_currency = context
                 .currency_by_exchange
                 .get(&code)
-                .map(String::as_str)
-                .unwrap_or("");
-            let mut rows_out: Vec<(serde_json::Value, RowClass)> = Vec::new();
+                .cloned()
+                .unwrap_or_default();
+            if !exchange_order.contains(&code) {
+                exchange_order.push(code.clone());
+            }
             for row in rows {
+                // Non-common instruments were already filtered upstream
+                // (filter_non_common runs on every fetch path, with or
+                // without an FX context).
                 let symbol = row
                     .get("currency_symbol")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
-                let class = if symbols_for(exchange_currency).contains(&symbol) {
+                let class = if symbols_for(&exchange_currency).contains(&symbol) {
                     RowClass::SameCurrency(rate)
                 } else if let Some(currency) = currency_for_symbol(symbol) {
-                    if screen_currencies.contains(currency) {
-                        stats.foreign_lines_dropped += 1;
-                        continue;
-                    }
-                    needed_currencies.push(currency.to_string());
                     RowClass::Foreign(currency.to_string())
                 } else if let Some((_, candidates)) = AMBIGUOUS_SYMBOLS
                     .iter()
                     .find(|(ambiguous, _)| *ambiguous == symbol)
-                    && candidates
-                        .iter()
-                        .any(|currency| screen_currencies.contains(currency))
                 {
-                    stats.foreign_lines_dropped += 1;
-                    continue;
+                    RowClass::Ambiguous(candidates)
                 } else {
                     RowClass::Unconverted
                 };
-                rows_out.push((row, class));
+                pending.push(PendingRow {
+                    exchange: code.clone(),
+                    exchange_currency: exchange_currency.clone(),
+                    row,
+                    class,
+                });
             }
-            classified.push((code, rows_out));
+        }
+
+        let in_band =
+            |usd: f64| cap_min.is_none_or(|min| usd >= min) && cap_max.is_none_or(|max| usd <= max);
+
+        // Same-currency pass: annotate + band-enforce. The currencies that
+        // keep at least one row here are the home-covered set.
+        let mut kept_currencies: std::collections::HashSet<String> = Default::default();
+        let mut kept: Vec<PendingRow> = Vec::new();
+        let mut foreign_pending: Vec<PendingRow> = Vec::new();
+        for mut entry in pending {
+            let RowClass::SameCurrency(rate) = entry.class else {
+                foreign_pending.push(entry);
+                continue;
+            };
+            let cap = entry
+                .row
+                .get("market_capitalization")
+                .and_then(|value| value.as_f64());
+            match cap.map(|cap| cap / rate) {
+                Some(usd) => {
+                    if !in_band(usd) {
+                        stats.out_of_band_dropped += 1;
+                        continue;
+                    }
+                    annotate_usd(&mut entry.row, usd);
+                    kept_currencies.insert(entry.exchange_currency.clone());
+                    kept.push(entry);
+                }
+                None => {
+                    // No cap → unconverted, but the listing exists: it still
+                    // counts as home coverage.
+                    stats.unconverted_rows += 1;
+                    kept_currencies.insert(entry.exchange_currency.clone());
+                    kept.push(entry);
+                }
+            }
+        }
+
+        // Foreign/ambiguous decision: drop only when the home currency
+        // actually kept rows in this screen; otherwise keep — the foreign
+        // line is the company's only surface.
+        let mut foreign_kept: Vec<PendingRow> = Vec::new();
+        let mut needed_currencies: Vec<String> = Vec::new();
+        for entry in foreign_pending {
+            let drop = match &entry.class {
+                RowClass::Foreign(currency) => kept_currencies.contains(currency),
+                RowClass::Ambiguous(candidates) => candidates
+                    .iter()
+                    .any(|currency| kept_currencies.contains(*currency)),
+                _ => false,
+            };
+            if drop {
+                stats.foreign_lines_dropped += 1;
+                continue;
+            }
+            match &entry.class {
+                RowClass::Foreign(currency) => {
+                    needed_currencies.push(currency.clone());
+                    foreign_kept.push(entry);
+                }
+                _ => {
+                    stats.unconverted_rows += 1;
+                    kept.push(entry);
+                }
+            }
         }
 
         // Fetch the extra currency rates (concurrent, cached 24h).
@@ -848,52 +943,49 @@ impl CompaniesServer {
             }
         }
 
-        // Annotate, enforce the band client-side, and rebuild the buckets.
-        let mut kept_buckets: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-        for (code, rows) in classified {
-            let mut kept: Vec<serde_json::Value> = Vec::new();
-            for (mut row, class) in rows {
-                let cap = row
-                    .get("market_capitalization")
-                    .and_then(|value| value.as_f64());
-                let usd = match class {
-                    RowClass::SameCurrency(rate) => cap.map(|cap| cap / rate),
-                    RowClass::Foreign(ref currency) => extra_rates
-                        .get(currency)
-                        .and_then(|rate| cap.map(|cap| cap / rate)),
-                    RowClass::Unconverted => None,
-                };
-                match usd {
-                    Some(usd) => {
-                        if let Some(min) = cap_min
-                            && usd < min
-                        {
-                            stats.out_of_band_dropped += 1;
-                            continue;
-                        }
-                        if let Some(max) = cap_max
-                            && usd > max
-                        {
-                            stats.out_of_band_dropped += 1;
-                            continue;
-                        }
-                        if let Some(number) = serde_json::Number::from_f64(usd)
-                            && let Some(object) = row.as_object_mut()
-                        {
-                            object.insert(
-                                "market_capitalization_usd".to_string(),
-                                serde_json::Value::Number(number),
-                            );
-                        }
-                        kept.push(row);
+        // Foreign pass: annotate + band-enforce at the foreign currency's
+        // own rate. A missing rate keeps the row unconverted (never dropped
+        // silently).
+        for mut entry in foreign_kept {
+            let currency = match &entry.class {
+                RowClass::Foreign(currency) => currency.clone(),
+                _ => continue,
+            };
+            let cap = entry
+                .row
+                .get("market_capitalization")
+                .and_then(|value| value.as_f64());
+            let usd = extra_rates
+                .get(&currency)
+                .and_then(|rate| cap.map(|cap| cap / rate));
+            match usd {
+                Some(usd) => {
+                    if !in_band(usd) {
+                        stats.out_of_band_dropped += 1;
+                        continue;
                     }
-                    None => {
-                        stats.unconverted_rows += 1;
-                        kept.push(row);
-                    }
+                    annotate_usd(&mut entry.row, usd);
+                    kept.push(entry);
+                }
+                None => {
+                    stats.unconverted_rows += 1;
+                    kept.push(entry);
                 }
             }
-            kept_buckets.push((code, kept));
+        }
+
+        // Regroup by exchange, preserving the original bucket order.
+        let mut kept_buckets: Vec<(String, Vec<serde_json::Value>)> = exchange_order
+            .into_iter()
+            .map(|code| (code, Vec::new()))
+            .collect();
+        for entry in kept {
+            if let Some((_, rows)) = kept_buckets
+                .iter_mut()
+                .find(|(code, _)| *code == entry.exchange)
+            {
+                rows.push(entry.row);
+            }
         }
 
         let extra_rates_json: serde_json::Map<String, serde_json::Value> = extra_rates
@@ -1080,4 +1172,75 @@ struct RowFilterStats {
     foreign_lines_dropped: u64,
     out_of_band_dropped: u64,
     unconverted_rows: u64,
+    non_common_dropped: u64,
+}
+
+/// Stamp a row with its USD market cap.
+fn annotate_usd(row: &mut serde_json::Value, usd: f64) {
+    if let Some(number) = serde_json::Number::from_f64(usd)
+        && let Some(object) = row.as_object_mut()
+    {
+        object.insert(
+            "market_capitalization_usd".to_string(),
+            serde_json::Value::Number(number),
+        );
+    }
+}
+
+/// Drop non-common-stock instruments from a row set, counting every drop.
+/// Applied on every fetch path (with or without an FX context) — EODHD's
+/// screener has no type filter.
+fn filter_non_common(rows: &mut Vec<serde_json::Value>, stats: &mut RowFilterStats) {
+    rows.retain(|row| {
+        let name = row
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let ticker = row
+            .get("code")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let common = !is_non_common_instrument(ticker, name);
+        if !common {
+            stats.non_common_dropped += 1;
+        }
+        common
+    });
+}
+
+/// Non-common-stock instruments the EODHD screener cannot exclude
+/// server-side (it has no type filter): ETFs/ETPs, Canadian depositary
+/// receipts (a derivative wrapper duplicating the underlying's home
+/// listing), preferred shares (FMP-style `-P*` ticker suffixes), and
+/// notes/bonds (coupon-bearing names). Dropped client-side and counted in
+/// `non_common_dropped` — never silent. ADRs are deliberately KEPT: they
+/// are the US surface of foreign companies, not wrappers of a screened
+/// listing. European dual-class tickers (`-A`/`-B`/`-C`, e.g. `MAERSK-B`)
+/// are common shares and do not match the preferred pattern.
+fn is_non_common_instrument(ticker: &str, name: &str) -> bool {
+    let upper = name.to_uppercase();
+    if upper.contains("ETF")
+        || upper.contains("ETP")
+        || upper.contains("EXCHANGE TRADED")
+        || upper.contains(" CDR (")
+        || upper.contains("JUNIOR SUBORDINATE")
+        || upper.contains("PREFERRED")
+        || upper.contains(" PFD")
+        || upper.contains(" PREF ")
+        || upper.contains("NOTES")
+        || upper.contains('%')
+    {
+        return true;
+    }
+    let base = ticker.split('.').next().unwrap_or(ticker);
+    if let Some((_, suffix)) = base.rsplit_once('-')
+        && suffix.len() <= 2
+        && suffix.starts_with('P')
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_uppercase())
+    {
+        return true;
+    }
+    false
 }

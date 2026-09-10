@@ -7,7 +7,9 @@
 //!
 //! Produces a structured gap report showing where consensus diverges from
 //! market pricing — the core of Mauboussin's Expectations Investing framework.
-use crate::{CompaniesServer, fibo, financial_model, research, types, validate_symbol};
+use crate::{
+    CompaniesServer, fibo, financial_model, research, resolve_current_price, types, validate_symbol,
+};
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -25,24 +27,29 @@ impl CompaniesServer {
 
             // ── 1. Fetch financial data for reverse DCF ──────────────────
             //
-            // All five fetches are independent (no data dependency between
+            // All six fetches are independent (no data dependency between
             // them) and run concurrently via `tokio::join!`. This is not
             // `try_join!` — we intentionally tolerate partial failures:
             // a failed income_statement must not prevent fetching
             // balance_sheet. The match below handles the Ok/Err cases
             // per-fetch. Running them concurrently keeps the total under
             // the 60s MCP `tools/call` cap (worst case = max single
-            // fetch timeout, not sum of all fetch timeouts).
-            let (req_income, req_balance, req_cf, req_metrics, req_profile) = tokio::join! {
-                self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
-                self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
-                self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
-                self.fetch_key_metrics(&req.symbol, 5),
-                self.fetch_profile(&req.symbol),
-            };
+            // fetch timeout, not sum of all fetch timeouts). The stock
+            // quote is the price fallback: EODHD-routed profiles (every
+            // exchange-qualified symbol) carry no `price` field.
+            let (req_income, req_balance, req_cf, req_metrics, req_profile, req_quote) =
+                tokio::join! {
+                    self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
+                    self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
+                    self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                    self.fetch_key_metrics(&req.symbol, 5),
+                    self.fetch_profile(&req.symbol),
+                    self.fetch("stock_quote", &req.symbol, &[]),
+                };
 
             // ── 2. Compute market-implied growth via reverse DCF ──────────
 
+            let mut price_source = "unavailable";
             let market_implied_growth = match (
                 &req_income,
                 &req_balance,
@@ -51,7 +58,12 @@ impl CompaniesServer {
                 &req_profile,
             ) {
                 (Ok(inc), Ok(bal), Ok(cf), Ok(met), Ok(prof)) => {
-                    compute_implied_growth(inc, bal, cf, met.raw(), prof.raw()).unwrap_or(f64::NAN)
+                    let (current_price, source) =
+                        resolve_current_price(prof.raw(), req_quote.as_ref().ok())
+                            .unwrap_or((f64::NAN, "unavailable"));
+                    price_source = source;
+                    compute_implied_growth(inc, bal, cf, met.raw(), prof.raw(), current_price)
+                        .unwrap_or(f64::NAN)
                 }
                 _ => f64::NAN,
             };
@@ -104,6 +116,7 @@ impl CompaniesServer {
                 user_growth,
                 &management_narrative,
                 claims.claims.len(),
+                price_source,
             );
 
             let output = serde_json::json!(analysis);
@@ -122,6 +135,7 @@ fn compute_implied_growth(
     cf: &serde_json::Value,
     metrics: &serde_json::Value,
     profile: &serde_json::Value,
+    current_price: f64,
 ) -> Option<f64> {
     let income_arr = income.as_array()?;
     let balance_arr = balance.as_array()?;
@@ -145,8 +159,9 @@ fn compute_implied_growth(
         return None;
     }
 
-    let current_price = profile_obj.get("price").and_then(|v| v.as_f64())?;
-    if current_price <= 0.0 {
+    // The price arrives resolved (profile `price` or the stock quote's
+    // `close` — EODHD-routed profiles carry no price field).
+    if !current_price.is_finite() || current_price <= 0.0 {
         return None;
     }
 
@@ -192,6 +207,7 @@ fn build_gap_analysis(
     user_growth: f64,
     narrative: &[String],
     total_claims: usize,
+    price_source: &str,
 ) -> serde_json::Value {
     let market_pct = if market_implied.is_finite() {
         format!("{:.1}%", market_implied * 100.0)
@@ -299,6 +315,7 @@ fn build_gap_analysis(
             "total_research_claims": total_claims,
             "guidance_claims_found": management_growth.len(),
             "market_implied_available": market_implied.is_finite(),
+            "price_source": price_source,
         },
     })
 }

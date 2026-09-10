@@ -60,8 +60,10 @@ impl MediaOp {
             Self::GenerateSpeech => Some("HKASK_MEDIA_TTS_MODEL"),
             Self::Transcribe => Some("HKASK_MEDIA_STT_MODEL"),
             Self::GenerateVideo | Self::ImageToVideo => Some("HKASK_MEDIA_VIDEO_MODEL"),
-            Self::ChatAudio => Some("HKASK_MEDIA_AUDIO_CHAT_MODEL"),
-            Self::ChatJson => Some("HKASK_MEDIA_STRUCTURED_PASS_MODEL"),
+            // The transcript-pipeline ops resolve the STT model (the
+            // operator's 2026-09-09 ruling): chat_audio and chat_json are
+            // the educt pass call shapes, and their model is the STT model.
+            Self::ChatAudio | Self::ChatJson | Self::Transcribe => Some("HKASK_MEDIA_STT_MODEL"),
             Self::RemoveBackground | Self::Upscale => None,
         }
     }

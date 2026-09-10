@@ -323,6 +323,61 @@ async fn comparable(server: &CompaniesServer, request: Value) -> Value {
     )
 }
 
+/// expect: [P5] The reverse DCF's current price falls back to the stock
+/// quote's close when the profile carries no `price` field (every
+/// EODHD-routed, exchange-qualified symbol — live-observed 2026-09-10:
+/// `expectations_gap` and `reverse_dcf` returned no market-implied growth
+/// for DNB.OL, PKN.WAR, NTDOY on exactly this shape) — the implied growth
+/// resolves and the price source is surfaced. (Tested through `reverse_dcf`
+/// because `expectations_gap` additionally requires research-search
+/// credentials, which the fixture server does not carry.)
+/// dcterms:identifier: CompaniesServer::reverse_dcf / forecast::resolve_current_price
+#[tokio::test]
+async fn reverse_dcf_price_falls_back_to_quote_close() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        let endpoint = path.split('?').next().expect("endpoint");
+        if endpoint == "/fmp/profile" {
+            // EODHD-routed profile shape: no `price` field.
+            return (
+                200,
+                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0}]),
+            );
+        }
+        if endpoint == "/fmp/quote" {
+            return (
+                200,
+                json!({"symbol":"ACME","price":30.0,"open":29.0,"high":31.0,"low":28.0}),
+            );
+        }
+        financial_fixture(path)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ReverseDcfRequest>(json!({
+                "symbol": "ACME"
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .reverse_dcf(Parameters(request))
+                    .await
+                    .expect("reverse dcf tool"),
+            );
+            assert_eq!(output["price_source"], json!("stock_quote"));
+            assert_eq!(output["current_price"], json!(30.0));
+            assert!(
+                output["implied_growth_rate"]
+                    .as_f64()
+                    .is_some_and(f64::is_finite),
+                "implied growth must resolve with the quote-close price"
+            );
+        })
+        .await;
+}
+
 /// expect: [P5] Comparable overlay agrees with standalone DCF for identical history and assumptions.
 #[tokio::test]
 async fn overlay_matches_standalone_dcf() {
@@ -2120,6 +2175,168 @@ async fn screener_unknown_exchange_code_is_dropped() {
             // exchanges-list + the US screener query (no forex — USD is
             // skipped)
             assert_eq!(fixture.count(), 2);
+        })
+        .await;
+}
+
+/// expect: [P5] A foreign-currency line survives when its home bucket kept
+/// zero rows — home coverage counts surviving rows, not screened exchanges
+/// (live-observed 2026-09-10: BUD kept 0 rows, so Hungarian companies'
+/// London Ft lines were dropped with nothing replacing them).
+/// dcterms:identifier: CompaniesServer::screener_row_currency_pass
+#[tokio::test]
+async fn screener_foreign_line_kept_when_home_bucket_empty() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (
+                200,
+                json!([
+                    {"Code": "US", "Currency": "USD"},
+                    {"Code": "LSE", "Currency": "GBP"},
+                    {"Code": "BUD", "Currency": "HUF"}
+                ]),
+            );
+        }
+        if path.starts_with("/eodhd/eod/USDGBP.FOREX") {
+            return (200, json!([{"date": "2026-09-08", "close": 0.75}]));
+        }
+        if path.starts_with("/eodhd/eod/USDHUF.FOREX") {
+            return (200, json!([{"date": "2026-09-08", "close": 312.92}]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("US") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "US0", "name": "US Zero", "exchange": "US",
+                        "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
+                    }] }),
+                ),
+                // The home bucket delivers nothing (EODHD's Budapest data is
+                // cap-less — the converted bounds filter everything).
+                Some("BUD") => (200, json!({ "data": [] })),
+                // London is mixed-currency: queried unbounded, so the Ft line
+                // arrives despite the GBP-converted bounds.
+                Some("LSE") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "HUF1", "name": "Hungary One", "exchange": "LSE",
+                        "currency_symbol": "Ft", "market_capitalization": 6_000_000_000_000.0
+                    }] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US, UK and Hungary listed companies with market capitalization between 2 billion and 200 billion",
+                "limit": 10
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            // The Ft line survived the empty home bucket, converted at the
+            // HUF rate (6e12 / 312.92 ≈ $19.2B — in band).
+            assert_eq!(output["foreign_lines_dropped"], json!(0));
+            assert_eq!(output["exchange_match_counts"]["LSE"], json!(1));
+            assert_eq!(output["exchange_match_counts"]["BUD"], json!(0));
+            let results = output["results"].as_array().expect("results");
+            let codes: Vec<&str> = results
+                .iter()
+                .map(|row| row["code"].as_str().expect("code"))
+                .collect();
+            assert!(codes.contains(&"HUF1"), "the Ft line must survive: {codes:?}");
+            let huf_row = results
+                .iter()
+                .find(|row| row["code"] == "HUF1")
+                .expect("HUF row");
+            assert_eq!(
+                huf_row["market_capitalization_usd"],
+                json!(6_000_000_000_000.0 / 312.92)
+            );
+            assert_eq!(output["fx"]["usd_rates"]["HUF"], json!(312.92));
+        })
+        .await;
+}
+
+/// expect: [P5] Non-common instruments (ETFs, preferreds, notes, CDRs) are
+/// dropped client-side and counted — EODHD's screener has no type filter.
+/// ADRs and European dual-class tickers are deliberately kept.
+/// dcterms:identifier: CompaniesServer::screener_row_currency_pass / is_non_common_instrument
+#[tokio::test]
+async fn screener_non_common_instruments_dropped() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (200, json!([{ "Code": "US", "Currency": "USD" }]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({ "data": [
+                    {"code": "IWD", "name": "iShares Russell 1000 Value ETF",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 48_000_000_000.0},
+                    {"code": "MFC-PK", "name": "Manulife Financial Corp Pref K",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 48_000_000_000.0},
+                    {"code": "PFH", "name": "Prudential Financial Inc 4.125% Junior Subordinated Notes",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 45_000_000_000.0},
+                    {"code": "NKE", "name": "NIKE CDR (CAD Hedged)",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 47_000_000_000.0},
+                    {"code": "MAERSK-B", "name": "A.P. Møller - Mærsk A/S",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 48_000_000_000.0},
+                    {"code": "SIEGY", "name": "Siemens AG ADR",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 46_000_000_000.0}
+                ] }),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US listed companies with market capitalization between 2 billion and 200 billion",
+                "limit": 10
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["non_common_dropped"], json!(4));
+            assert_eq!(output["count"], json!(2));
+            let codes: Vec<&str> = output["results"]
+                .as_array()
+                .expect("results")
+                .iter()
+                .map(|row| row["code"].as_str().expect("code"))
+                .collect();
+            // Dual-class and ADR survive; the four wrappers drop.
+            assert!(codes.contains(&"MAERSK-B"), "dual-class kept: {codes:?}");
+            assert!(codes.contains(&"SIEGY"), "ADR kept: {codes:?}");
+            assert!(!codes.contains(&"IWD"));
+            assert!(!codes.contains(&"MFC-PK"));
+            assert!(!codes.contains(&"PFH"));
+            assert!(!codes.contains(&"NKE"));
         })
         .await;
 }

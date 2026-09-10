@@ -245,7 +245,8 @@ pub struct EductListLayersRequest {
 pub struct EductParagraphPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
-    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    /// Default: HKASK_MEDIA_STT_MODEL — unset fails visibly (no hidden
+    /// fallback).
     pub model: Option<String>,
     /// Opt into the v2 structured-outputs mode (provider-enforced JSON
     /// Schema via chat_json). Default false — v1 (schema-in-prompt), the
@@ -257,7 +258,8 @@ pub struct EductParagraphPassRequest {
 pub struct EductSpeakerPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
-    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    /// Default: HKASK_MEDIA_STT_MODEL — unset fails visibly (no hidden
+    /// fallback).
     pub model: Option<String>,
     /// Speaker attribution source: "audio" (default — an audio-capable
     /// model hears the recording; the scaffold's primary source) or
@@ -273,7 +275,8 @@ pub struct EductSpeakerPassRequest {
 pub struct EductCorrectionPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
-    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    /// Default: HKASK_MEDIA_STT_MODEL — unset fails visibly (no hidden
+    /// fallback).
     pub model: Option<String>,
     /// Opt into the v2 structured-outputs mode (provider-enforced JSON
     /// Schema via chat_json). Default false.
@@ -294,7 +297,8 @@ pub struct EductHighlightPassRequest {
     /// the Cinderella curve") — resolved to word ranges with labels.
     pub request: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
-    /// Default: HKASK_MEDIA_PASS_MODEL, then the classifier-tier default.
+    /// Default: HKASK_MEDIA_STT_MODEL — unset fails visibly (no hidden
+    /// fallback).
     pub model: Option<String>,
     /// Opt into the v2 structured-outputs mode (provider-enforced JSON
     /// Schema via chat_json). Default false.

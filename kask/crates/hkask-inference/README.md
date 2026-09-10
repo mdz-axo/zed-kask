@@ -64,10 +64,8 @@ configured host/base path instead of parsing model text as URL syntax.
 |---|---|
 | `generate_image`, `image_to_image` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
 | `generate_speech` | `HKASK_MEDIA_TTS_MODEL` |
-| `transcribe` | `HKASK_MEDIA_STT_MODEL` |
+| `transcribe`, `chat_audio`, `chat_json` | `HKASK_MEDIA_STT_MODEL` |
 | `generate_video`, `image_to_video` | `HKASK_MEDIA_VIDEO_MODEL` |
-| `chat_audio` | `HKASK_MEDIA_AUDIO_CHAT_MODEL` |
-| `chat_json` | `HKASK_MEDIA_STRUCTURED_PASS_MODEL` |
 
 `ProviderRegistry::execute` resolves once, verifies the named provider is
 registered and supports the operation, and calls exactly that provider with

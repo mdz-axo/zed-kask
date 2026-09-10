@@ -759,9 +759,11 @@ pub(crate) struct ScreenerRequest {
     /// code.
     ///
     /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
-    /// so the generated tool input schema is the empty object `{}` rather than the
-    /// bare boolean `true` schemars emits for `Value` — Ollama rejects boolean
-    /// property schemas with `400 cannot unmarshal bool into ... api.ToolProperty`.
+    /// so the generated tool input schema is an object-typed permissive schema
+    /// rather than the bare boolean `true` schemars emits for `Value` — Ollama
+    /// rejects boolean property schemas with `400 cannot unmarshal bool into
+    /// ... api.ToolProperty`, and schema-guided tool-call parsers drop
+    /// untyped parameters (live-observed 2026-09-10).
     #[serde(default)]
     pub criteria_overrides: AnyJsonValue,
 }

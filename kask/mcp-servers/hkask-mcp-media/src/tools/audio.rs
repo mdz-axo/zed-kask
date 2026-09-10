@@ -104,15 +104,16 @@ impl MediaServer {
                 McpToolError::internal(format!("Template render failed: {}", e)) // rr0044-ok: own template engine render failure
             })?;
 
-            // Fail-visible (the operator's no-hidden-models spec): no configured
-            // pass model is a typed error naming the setting — never a hidden
-            // code constant.
-            let model = crate::models::pass_model().ok_or_else(|| {
+            // Fail-visible (the operator's no-hidden-models spec): the
+            // transcript-pipeline model is the STT model — no configured
+            // STT model is a typed error naming the setting, never a
+            // hidden code constant.
+            let model = crate::models::stt_model().ok_or_else(|| {
                 McpToolError::permission_denied(format!(
-                    "no pass model configured — set {} (injected from \
-                     kask.models); kask never falls back to a hidden \
+                    "no STT model configured — set {} \
+                     (injected from kask.media.stt_model); kask never falls back to a hidden \
                      code constant",
-                    crate::models::PASS_ENV
+                    crate::models::STT_ENV
                 ))
             })?;
             let params = hkask_types::template::LLMParameters::default();

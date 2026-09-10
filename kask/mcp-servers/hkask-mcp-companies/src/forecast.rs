@@ -71,3 +71,99 @@ pub(crate) fn current_price_from_multiple(multiple: f64, hist: &HistoricalSnapsh
         0.0
     }
 }
+
+/// Resolve the current price for valuation tools. FMP profiles carry a
+/// `price` field; EODHD-routed profiles (every exchange-qualified symbol,
+/// e.g. `DNB.OL`) do not — the stock quote's `close` is the fallback, in the
+/// listing currency, which is consistent with the local-currency financials
+/// the valuation models consume (live-observed 2026-09-10: `expectations_gap`
+/// and `reverse_dcf` returned no market-implied growth for every
+/// exchange-qualified symbol because the profile price was the only source).
+///
+/// Returns the price and its source ("profile" or "stock_quote"), or `None`
+/// when neither surface has a positive price.
+pub(crate) fn resolve_current_price(
+    profile: &serde_json::Value,
+    quote: Option<&serde_json::Value>,
+) -> Option<(f64, &'static str)> {
+    let profile_price = profile
+        .as_array()
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry.get("price"))
+        .and_then(|value| value.as_f64())
+        .filter(|price| *price > 0.0);
+    if let Some(price) = profile_price {
+        return Some((price, "profile"));
+    }
+    quote_close(quote).map(|price| (price, "stock_quote"))
+}
+
+/// The positive current price of a raw stock-quote payload (object or
+/// single-entry array shape). EODHD real-time quotes carry `close`; FMP
+/// quotes carry `price` — both keys are accepted.
+fn quote_close(quote: Option<&serde_json::Value>) -> Option<f64> {
+    let entry = match quote {
+        Some(serde_json::Value::Object(_)) => quote,
+        Some(serde_json::Value::Array(entries)) => entries.first(),
+        _ => None,
+    };
+    entry
+        .and_then(|quote| {
+            quote
+                .get("close")
+                .or_else(|| quote.get("price"))
+                .and_then(|value| value.as_f64())
+        })
+        .filter(|price| *price > 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_current_price_prefers_profile_price() {
+        let profile = json!([{"price": 30.0, "marketCap": 3_000_000_000.0}]);
+        let quote = json!({"close": 31.5});
+        assert_eq!(
+            resolve_current_price(&profile, Some(&quote)),
+            Some((30.0, "profile"))
+        );
+    }
+
+    /// expect: EODHD-routed profiles (every exchange-qualified symbol) carry
+    /// no `price` field — the stock quote's close is the fallback.
+    #[test]
+    fn resolve_current_price_falls_back_to_quote_close() {
+        let profile = json!([{"marketCap": 3_000_000_000.0, "sharesOutstanding": 100_000_000.0}]);
+        let quote = json!({"code": "DNB.OL", "close": 318.9});
+        assert_eq!(
+            resolve_current_price(&profile, Some(&quote)),
+            Some((318.9, "stock_quote"))
+        );
+    }
+
+    /// expect: FMP quotes carry `price` instead of `close` — both keys are
+    /// accepted on the quote surface.
+    #[test]
+    fn resolve_current_price_accepts_fmp_quote_price_key() {
+        let profile = json!([{"marketCap": 3_000_000_000.0}]);
+        let quote = json!({"symbol": "ACME", "price": 42.0});
+        assert_eq!(
+            resolve_current_price(&profile, Some(&quote)),
+            Some((42.0, "stock_quote"))
+        );
+    }
+
+    /// expect: a non-positive or absent price on both surfaces resolves to
+    /// None — never a fabricated zero.
+    #[test]
+    fn resolve_current_price_rejects_nonpositive_prices() {
+        let profile = json!([{"price": 0.0}]);
+        assert_eq!(resolve_current_price(&profile, None), None);
+        let profile = json!([{"marketCap": 1.0}]);
+        let quote = json!({"close": -5.0});
+        assert_eq!(resolve_current_price(&profile, Some(&quote)), None);
+    }
+}

@@ -69,7 +69,7 @@ pub(crate) mod superforecast;
 mod transcript;
 mod valuation_service;
 pub(crate) use forecast::{
-    StoredForecast, current_price_from_multiple, projected_terminal_multiple,
+    StoredForecast, current_price_from_multiple, projected_terminal_multiple, resolve_current_price,
 };
 
 pub(crate) mod types;

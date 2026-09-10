@@ -160,10 +160,7 @@ automatic cross-provider retry on any error.
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | unset | image generation and image-to-image |
 | `HKASK_MEDIA_VIDEO_MODEL` | unset | text-to-video and image-to-video |
 | `HKASK_MEDIA_TTS_MODEL` | unset | speech (DeepInfra only) |
-| `HKASK_MEDIA_STT_MODEL` | `OpenRouter/openai/whisper-large-v3-turbo` | transcription |
-| `HKASK_MEDIA_PASS_MODEL` | unset | prompt-schema passes and `voice_design` (settings-wired: `kask.media.pass_model`) |
-| `HKASK_MEDIA_AUDIO_CHAT_MODEL` | unset | audio chat (OpenRouter only) |
-| `HKASK_MEDIA_STRUCTURED_PASS_MODEL` | unset | structured chat (OpenRouter only) |
+| `HKASK_MEDIA_STT_MODEL` | `OpenRouter/openai/whisper-large-v3-turbo` | transcription, the educt transcript passes, and `voice_design` |
 
 Settings inject resolved defaults into the child; standalone calls need env
 configuration or an explicit override. Background removal and upscale use
