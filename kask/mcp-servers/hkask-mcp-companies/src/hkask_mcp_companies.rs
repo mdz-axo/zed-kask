@@ -125,10 +125,12 @@ hkask_mcp_server::mcp_server!(
 
 use hkask_mcp_portfolio::map_portfolio_error;
 
-// v2 excludes pre-sanitizer envelopes whose warnings may contain credentials.
-// Keep older rows on disk, but never read or log them through acquisition.
+// v3 excludes pre-coercion envelopes: EODHD numeric-string values and
+// untruncated histories normalized before 2026-09-10 are a different
+// representation. Keep older rows on disk, but never read or log them
+// through acquisition.
 fn acquisition_cache_key(extra: &[(&str, &str)]) -> String {
-    format!("normalized-v2:{}", fibo_cache::hash_params(extra))
+    format!("normalized-v3:{}", fibo_cache::hash_params(extra))
 }
 
 impl CompaniesServer {
