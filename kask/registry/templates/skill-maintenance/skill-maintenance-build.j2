@@ -1,18 +1,17 @@
+{# goal: Scaffold a complete skill (SKILL.md body + .j2 templates) from a user description. The SKILL.md body is the source of truth and carries the PDCA loop; templates are companion step-leaves. Every generated template's goal annotation is stamped verbatim from the generated SKILL.md's own Registry Templates row, and the generated corpus must pass the prescreen before the build responds. #}
 [inference]
 contract:
   input:
     skill_description: string
     scope: string
   output:
-    manifest_yaml: string
-    template_bodies: array
     sk_name: string
     sk_description: string
-    sk_body_outline: string
+    sk_body: string
+    template_bodies: array
+    validation: object
 visibility: Private
 ---
-{# goal: Scaffold a complete registry crate (manifest.yaml + .j2 templates) from a user description, then derive a companion SKILL.md. #}
-{# hKask v0.39.0 — A Minimal Viable Container for UserPods #}
 
 [inference]
 temperature = 0.3
@@ -20,9 +19,13 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-You are a skill scaffolder. Your job is to generate a complete hKask skill from a user's natural language description.
-
-Per P5.1, the registry crate (manifest.yaml + *.j2 templates) is the canonical source of truth. Build that first. Then derive a SKILL.md companion from it.
+You are a skill scaffolder. Generate a complete kask skill from the user's
+description, following the skill-maintenance-build steps in the
+skill-maintenance SKILL.md body — that body is the authoritative process;
+this prompt structures it. Do NOT generate manifests of any kind: the
+manifest format is deprecated in agent-facing code (operator ruling
+2026-09-09). A skill is exactly two artifacts: a SKILL.md body and .j2
+templates.
 
 ## User Description
 
@@ -34,157 +37,57 @@ Per P5.1, the registry crate (manifest.yaml + *.j2 templates) is the canonical s
 
 ## Naming Rules
 
-1. **Lowercase, hyphenated** — `my-skill-name`, not `MySkillName` or `my_skill_name`.
-2. **2–40 characters** — Short enough to type, long enough to be descriptive.
-3. **Verb-noun or noun-noun** — `diagnose-bug`, `code-review`, `tdd-cycle`.
-4. **No reserved prefixes** — Do not use `hkask-`, `regulation-`, `mcp-` (those are system prefixes).
-5. **Unique** — Must not collide with any existing skill name in the corpus.
+1. **Lowercase, hyphenated** — `my-skill-name`.
+2. **2–40 characters.**
+3. **Verb-noun or noun-noun** — `diagnose-bug`, `code-review`.
+4. **No reserved prefixes** — `hkask-`, `regulation-`, `mcp-` are system prefixes.
+5. **Unique** — no collision with any existing skill name in the corpus.
 
-## Step 1: Build the Registry Crate (canonical source of truth)
+## Artifact 1 — SKILL.md (the source of truth)
 
-Generate `manifest.yaml`:
+Generate the SKILL.md body:
 
-```yaml
-crate:
-  name: <skill-name>
-  version: "0.39.0"
-  description: >
-    <one-paragraph description of what this skill does at runtime>
+- Frontmatter: `name` and `description` ONLY. No `visibility` field, no
+  `steps` structure, no manifest keys — those are removed vocabulary.
+- "When to Use" / "When NOT to Use" sections.
+- "Instructions" section with numbered, tool-oriented steps referencing
+  concrete tools (`lisp_eval`, MCP tools, `read_file`, `render_template`,
+  `skill`) — never abstract "the system will" language.
+- "Constraints" section.
+- A "Registry Templates" table with one row per template: `| path | purpose |`.
+  This table is the single source for every template's goal annotation.
+- The body must carry the skill's core PDCA loop itself (Plan → Do → Check →
+  Act): a named Check signal, a threshold or convergence criterion, a bound
+  (max iterations or a stability condition), and an Act re-entry. Templates
+  are leaves of this loop, never its carrier. Derive the loop's shape from
+  the skill's ontological anchors (see the create-skill skill — the canonical
+  creation skill).
 
-templates:
-  - id: <skill-name>/<skill-name>-<verb>
-    path: <skill-name>-<verb>.j2
-    description: >
-      <what this template produces at inference time>
+## Artifact 2 — .j2 templates (companion step-leaves)
 
-vocabulary_terms:
-  - <term1>
-  - <term2>
-  ...
-```
+For each reasoning phase in the Instructions section, generate one template:
 
-Generate at least one `.j2` template with:
-- `[inference]` frontmatter: contract (input/output typed fields, visibility)
-- Jinja2 body after `---`: system prompt with imperative instructions, {{ input_variable }} placeholders, JSON output schema
+- `{% raw %}{# goal: ... #}{% endraw %}` as the FIRST line, derived verbatim from the Registry
+  Templates row for that template — the row IS the goal; there is no drift
+  between the table and the annotation. One `{% raw %}{# goal: ... #}{% endraw %}` block per
+  template: a long goal is one long line, never consecutive `{% raw %}{# ... #}{% endraw %}`
+  blocks (wrapped goals parse partially under logic-load-goal and the
+  prescreen).
+- An `[inference]` contract header (input/output typed fields, `visibility`),
+  terminated by a lone `---` line.
+- Jinja2 variables matching the contract inputs, and only the contract inputs.
+- An expected JSON output shape.
 
-## Step 1b: Build the Process Manifest (registry/manifests/<skill-name>.yaml)
+## Validation gate
 
-Every skill needs a process manifest that defines the PDCA process.
-Generate `registry/manifests/<skill-name>.yaml`:
+Before responding, check the generated corpus mechanically:
 
-```yaml
-{% raw %}
-manifest:
-  id: <skill-name>
-  category: skill
-  name: <Title Case Name>
-  description: >
-    <one-paragraph description>
-  version: 0.31.0
-  editor: curator-or-human-admin
-  visibility: Public
-
-convergence:
-  threshold: 0.15          # 0.05-0.30 range; 0.05-0.15 for precise, 0.20-0.30 for broad
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_N_result.convergence_metric  # last step's convergence field
-  on_not_reached: escalate  # "abort" or "escalate"
-
-steps:
-  - ordinal: 1
-    action: select          # render .j2 + inference + parse JSON
-    description: <what this step does>
-    renderer: minijinja
-    template_ref: <skill-name>/<template-name>
-    timeout_seconds: 30
-    input_mapping:
-      <param>: "{{ <param> }}"
-
-  - ordinal: 2
-    action: select          # convergence check
-    description: <convergence check description>
-    renderer: minijinja
-    template_ref: <skill-name>/<convergence-check>
-    timeout_seconds: 30
-    input_mapping:
-      primary_result: "{{ step_1_result }}"
-
-  - ordinal: 3
-    action: loop            # Control flow: re-enter process if not converged
-    description: Re-enter PDCA cycle if convergence is not met.
-    input_mapping:
-      loop_target: "{{ 1 }}"
-
-ledger:
-  emit_spans: true
-  # MANDATORY: must be reg.skill.<manifest.id> (CI-enforced by
-  # scripts/check-skill-span-namespace.sh). Any other form fails the gate.
-  # The abolished `spans:` list MUST NOT appear here.
-  span_namespace: reg.skill.<skill-name>
-  telemetry_namespace: hkask.template.<skill-name>
-  variety_monitoring: true
-  algedonic_threshold: 100
-  escalation_target: Curator
-{% endraw %}
-```
-
-### Canonical Actions (only these are valid in step.action)
-
-| Action | When to use |
-|--------|-------------|
-| `select` | Render `.j2` + inference + parse JSON |
-| `populate` | Render `.j2` without inference |
-| `compute` | Math primitive via `compute_ref` |
-| `execute` | Invoke MCP tool (requires `mcp:` field) |
-| `feedback` | Emit Regulation feedback |
-| `validate` | Validate a contract/condition |
-| `retrieve` | Retrieve data (e.g., semantic search) |
-| `render` | Render `.j2`/`.yaml` without inference |
-| `loop` | Re-enter process from target ordinal |
-| `choice` | Branch on condition |
-| `abort` | Exit with success (converged) |
-| `escalate` | Exit with error (blocked) |
-
-## Step 2: Derive SKILL.md Companion
-
-From the completed manifest.yaml and .j2 templates, derive a SKILL.md:
-
-```markdown
----
-name: <crate.name>
-visibility: public
-description: "<crate.description>"
----
-
-# <Title Case Name>
-
-<crate.description>
-
-## When to Use
-
-- <derived from template descriptions — what triggers this skill>
-- <derived from .j2 system prompt — specific activation conditions>
-
-## Instructions
-
-1. <derived from first .j2 template's system prompt — imperative steps>
-2. <derived from second .j2 template's system prompt>
-...
-
-## Registry Templates
-
-| Template | Purpose |
-|----------|---------|
-| `<template.path>` | `<template.description>` |
-...
-
-## Constraints
-
-- <derived from .j2 contracts — visibility, safety rules>
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
-```
+- Every template's goal parses as a complete sentence (terminal punctuation).
+- Every contract input is consumed by the template body; every declared
+  output appears in the body's output instructions.
+- The generated set would pass `kask/scripts/audit/skill-corpus-prescreen.sh`
+  (goal presence, length, overlap). A generated template that fails the
+  prescreen is a build defect, not a triage candidate.
 
 ## Output Requirements
 
@@ -192,42 +95,29 @@ Respond with a JSON object:
 
 ```json
 {
-  "manifest_yaml": "<complete manifest.yaml content>",
-  "process_manifest_yaml": "<complete registry/manifests/<name>.yaml content>",
-  "template_bodies": [
-    {
-      "path": "<basename>.j2",
-      "content": "<complete .j2 content>"
-    }
-  ],
   "sk_name": "derived-skill-name",
   "sk_description": "One-line description derived from user input",
-  "sk_body_outline": "<complete SKILL.md markdown content>",
+  "sk_body": "<complete SKILL.md markdown content>",
+  "template_bodies": [
+    { "path": "<basename>.j2", "content": "<complete .j2 content>" }
+  ],
   "validation": {
     "name_valid": true,
     "description_specific": true,
-    "has_template_entries": true,
-    "contract_valid": true,
-    "vocabulary_coverage": true,
-    "actions_canonical": true,
-    "convergence_block_present": true
+    "pdca_loop_in_body": true,
+    "goals_stamped_from_rows": true,
+    "contracts_match_bodies": true,
+    "prescreen_would_pass": true
   }
 }
 ```
 
 ## Constraints
 
-- The registry crate is the primary deliverable. SKILL.md is a derived companion.
-- The process manifest (registry/manifests/<name>.yaml) is mandatory for every skill.
-- Every .j2 template must have a contract with structured input and output types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, loop, choice, abort, escalate).
-- The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.
-- The process manifest must have a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (CI-enforced). The `spans:` list is abolished — do not add it.
-- Every `lisp.eval` compute step must have a non-empty `form` string in `input_mapping` (E12). The `form` must use only supported special forms (`quote`, `if`, `let`, `lambda`, `define`, `begin`, `and`, `or`, `not`) and builtins (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`, `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`, `numberp`, `assoc`, `append`, `string=`, `concat`). `=` is numeric-only; string equality uses `string=`. String concatenation uses `concat`. List concatenation uses `append`. Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`) (E14).
-- Every `{% raw %}{{ step_N_result ... }}{% endraw %}` reference in a `lisp.eval` step's `input_mapping.env` must reference an ordinal `N` less than the current step's ordinal (no forward references — silent `null` binding). If step N's result is a bare list, bind `step_N_result` directly, not `step_N_result.field` (always `undefined` on a list) (E13).
-- The name must pass all naming rules.
+- The SKILL.md body is the primary deliverable; templates are companions.
 - Do not add features, tools, or capabilities the user did not describe.
-- If the user description is too vague for a section, ask clarifying questions before scaffolding. Do not generate TODO markers or stubs.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully.
-
+- Do not generate manifest.yaml, process manifests, `input_mapping`,
+  `ordinal`, `compute_ref`, `convergence_field`, or `step_N_result`
+  references — all deprecated or removed vocabulary.
+- If the user description is too vague for a section, ask clarifying
+  questions before scaffolding. Do not generate TODO markers or stubs.

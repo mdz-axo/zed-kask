@@ -1,137 +1,67 @@
+{# goal: Translate a classified source skill from another agent system into the kask format: a SKILL.md body (the source of truth, carrying the PDCA loop) plus .j2 companion templates. Source tool calls map to kask tools, source concepts with no kask equivalent are marked unresolved, and no manifests are generated — the manifest format is deprecated in agent-facing code. #}
 [inference]
 contract:
   input:
-    source_skill: string
-    format_analysis: object
-    step_classifications: array
+    source_skill: object
+    target_domain: string
   output:
-    translated_skill: string
-    translation_summary: object
-visibility: Public
+    sk_body: string
+    template_bodies: array
+    translation_summary: string
+visibility: Private
 ---
-{# goal: Translate an intermediate skill representation into an hKask registry crate (manifest.yaml + .j2 templates). #}
-{# hKask v0.39.0 — A Minimal Viable Container for UserPods #}
 
 [inference]
-temperature = 0.2
+temperature = 0.3
 work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-You are a skill translator. Convert a classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) as the canonical source of truth per P5.1. The registry crate is the primary deliverable. SKILL.md is a derived companion, generated from the registry after translation.
+You are a skill translator. Convert the classified source skill below into
+the kask format, following the skill-maintenance-translate steps in the
+skill-maintenance SKILL.md body — that body is the authoritative process.
+A kask skill is exactly two artifacts: a SKILL.md body and .j2 templates.
+Do NOT translate into manifests of any kind — the manifest format is
+deprecated in agent-facing code (operator ruling 2026-09-09).
 
 ## Source Skill
 
-```
-{{ source_skill }}
-```
-
-## Format Analysis
-
 ```json
-{{ format_analysis | tojson }}
+{{ source_skill | tojson }}
 ```
 
-## Step Classifications
+## Target Domain
 
-```json
-{{ step_classifications | tojson }}
-```
+{{ target_domain }}
 
-## Translation Rules
+## Translation mapping
 
-1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, description.
-2. **Templates** — Produce one `.j2` file per classified step:
-   - Cognitive steps → `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
-   - Workflow steps → `.j2` with same structure (transformation or dispatch/routing).
-   - Reference content → `.j2` or `.yaml` (no inference).
-   - Guardrails → Encoded as `visibility` and constraints in `.j2` body.
-3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` process manifest with:
-   - `manifest.category: skill` (or `pipeline`/`runtime-config` for non-agent infrastructure)
-   - `convergence:` block (threshold 0.05-0.30, max_iterations, min_iterations, convergence_field, on_not_reached)
-   - `steps:` array with canonical actions only
-4. **State model** — hKask skills are stateless by default. Source state → `.j2` contract input/output.
-5. **Consent model** — hKask uses capability matching. User-confirmation gates → `.j2` contract visibility.
-6. **Observability** — Map to Regulation span references in `.j2` body.
-7. **Domain references** — Substitute using the domain substitution table.
-8. **Validation** — visibility MUST be Private/Public/Shared. 
+1. **Process steps → SKILL.md instruction steps.** Map the source skill's
+   process steps to numbered, tool-oriented instructions in the SKILL.md
+   body. The body carries the skill's core PDCA loop (named Check signal,
+   threshold, bound, Act re-entry); templates are leaves of that loop.
 
-### Source Action → Canonical Action Mapping
+2. **Tool calls → kask tools:**
+   - Deterministic computation → `lisp_eval`
+   - Data retrieval → the appropriate MCP tool
+   - Skill composition → the `skill` tool
+   - Prompt rendering → `render_template`
+   - File operations → `read_file`, `write_file`, `edit_file`
 
-| Source Action | Canonical Action | Notes |
-|---------------|-----------------|-------|
-| `call`, `invoke`, `execute_tool` | `execute` | MCP tool invocation (requires `mcp:` field) |
-| `classify`, `infer`, `generate`, `select_tool` | `select` | render `.j2` + inference + JSON parse |
-| `render_template`, `format`, `compose` | `populate` | render `.j2` without inference |
-| `validate_contract`, `check`, `verify` | `validate` | MCP tool validation |
-| `emit`, `record`, `log` | `feedback` | MCP tool Regulation feedback |
-| `recall`, `retrieve`, `search`, `extract` | `retrieve` | MCP tool data retrieval |
-| `index`, `register` | `populate` | deterministic registration |
-| `evaluate` (deprecated) | `select` | Use `select` for inference |
-| `run_command` | `execute` | Map shell commands to MCP tool dispatch |
-| `mcp_tool` | `execute` | Direct MCP tool invocation |
-| `centroid`, `coordinate`, `curator_escalation` | `feedback` or `escalate` | Map to feedback or escalate control flow |
+3. **Reasoning steps → .j2 templates.** For each reasoning step that needs a
+   structured prompt, generate a template with a `{% raw %}{# goal: ... #}{% endraw %}` first
+   line stamped verbatim from the SKILL.md's Registry Templates row, an
+   `[inference]` contract header terminated by a lone `---`, Jinja2
+   variables matching the contract inputs, and an expected JSON output shape.
 
-## Domain Substitution Table
+4. **Unresolvable concepts → explicit markers.** Mark any source concept
+   with no kask equivalent as `[unresolved: no kask equivalent for
+   <source_ref>]`. Never silently drop a concept and never improvise a
+   substitute.
 
-| Source Pattern | Registry Equivalent |
-|----------------|--------------------|
-| REST API calls | `web` MCP server |
-| File system operations | `.j2` contract input/output |
-| LLM inference | `inference` MCP server |
-| Database queries | `hkask-storage` |
-| Key/value store | `hkask-keystore` |
-| Event bus / pubsub | `hkask-regulation` algedonic alerts |
-| User interaction | Agent panel chat or API (`hkask-api`) |
-| Container / sandbox | Pod execution (`hkask-agents`) |
-| Git operations | `git` MCP server |
-| Web search | `web` MCP server |
-| Custom tool dispatch | `hkask-mcp` dynamic tool discovery |
-| Journal / log store | `hkask-storage` |
-| Sentinel / sensor | MCP tool dispatch (`reg.tool.*`) |
-| Baselines / EWMA | Regulation variety counters |
-| Nurse / regulator | Curator Agent |
-| Proprioception | Regulation algedonic signals (`reg.cybernetics.*`) |
-| IDRS / consent gate | OCAP capability delegation |
-
-If no hKask equivalent exists, mark `[unresolved: no hKask equivalent for <source_ref>]`.
-
-## Registry Crate Output Format
-
-Produce the registry crate as the primary artifact:
-
-### 1. manifest.yaml
-
-```yaml
-crate:
-  name: <skill-name>
-  version: "0.28.0"
-  description: <one-line>
-templates:
-  - id: <skill-name>/<template-id>
-    path: <template-id>.j2
-    description: <one-line>
-vocabulary_terms: [term, ...]
-```
-
-### 2. .j2 template files (one per step)
-
-```
-[inference]
-contract:
-  input:
-    <field>: <type>
-  output:
-    <field>: <type>
-visibility: Private | Public | Shared
----
-{# Template header #}
-[System prompt, {{ variables }}, JSON output schema]
-```
-
-### 3. SKILL.md (derived companion)
-
-After the registry crate is complete, derive a SKILL.md companion for the Zed coding agent. The SKILL.md is NOT a co-equal artifact — it is generated from the registry crate content.
+5. **Frontmatter discipline.** The generated SKILL.md frontmatter carries
+   `name` and `description` only — no `visibility` field, no manifest keys,
+   no steps dispatch structure.
 
 ## Output Requirements
 
@@ -139,53 +69,23 @@ Respond with a JSON object:
 
 ```json
 {
-  "manifest_yaml": "crate:\n  name: ...\n  ...",
-  "process_manifest_yaml": "manifest:\n  id: ...\n  category: skill\n  ...\nsteps:\n  - ordinal: 1\n    action: select\n    ...",
-  "templates": [
-    {
-      "filename": "<step-name>.j2",
-      "content": "[inference]\n---\n..."
-    }
+  "sk_body": "<complete SKILL.md markdown content>",
+  "template_bodies": [
+    { "path": "<basename>.j2", "content": "<complete .j2 content>" }
   ],
-  "skill_md": "---\nname: ...\ndescription: ...\n---\n...",
   "translation_summary": {
-    "preserved": ["list of concepts/steps preserved with full fidelity"],
-    "adapted": [
-      {
-        "original": "source concept or step",
-        "registry_equivalent": "how it maps in the registry crate",
-        "adaptation_notes": "what changed and why"
-      }
-    ],
-    "dropped": [
-      {
-        "original": "source concept or step",
-        "reason": "why it was dropped"
-      }
-    ],
-    "unresolved": ["list of references with no hKask equivalent"],
-    "action_mappings": [
-      {
-        "source_action": "original action name",
-        "canonical_action": "select|populate|compute|execute|feedback|validate|retrieve|render|loop|choice|abort|escalate",
-        "rationale": "why this mapping was chosen"
-      }
-    ]
+    "steps_mapped": 0,
+    "tools_mapped": 0,
+    "unresolved_concepts": ["[unresolved: ...] markers, if any"],
+    "dropped_nothing": true
   }
 }
 ```
 
 ## Constraints
 
-- The primary deliverable is the registry crate (manifest.yaml + .j2 templates) plus the process manifest (registry/manifests/<name>.yaml). SKILL.md is derived from them.
-- `visibility` must be Private, Public, or Shared.
-- `contract.input` and `contract.output` must be structured JSON types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, loop, choice, abort, escalate).
-- The process manifest must have a `convergence:` block (for `category: skill`).
-- Every `lisp.eval` compute step must have a non-empty `form` string using only supported special forms and builtins (E12, E14). `=` is numeric-only; string equality uses `string=`. String concatenation uses `concat`. List concatenation uses `append`. Boolean literals are `true`/`false`/`nil`.
-- Every `{% raw %}{{ step_N_result }}{% endraw %}` reference in a `lisp.eval` step's `env` must point backward (ordinal < current). Bare-list results must be bound directly, not via `.field` (E13).
-- Every step from `step_classifications` must appear in the output (preserved, adapted, or dropped with reason).
-- Do not invent hKask tools or MCP servers that do not exist. Use the domain substitution table.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully.
-
+- The SKILL.md body is the primary deliverable; templates are companions.
+- Preserve the source skill's process semantics — translation, not revision.
+- Do not generate manifest.yaml, process manifests, `input_mapping`,
+  `ordinal`, `compute_ref`, or `step_N_result` references.
+- Every `[unresolved: ...]` marker must name the source concept it carries.
