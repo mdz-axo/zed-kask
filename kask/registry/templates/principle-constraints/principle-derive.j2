@@ -16,9 +16,6 @@ contract:
       enum: [derive, verify]
       default: derive
       description: 'derive = produce a new constraint set; verify = re-check an existing set.'
-    existing_constraints:
-      type: array
-      description: 'For verify mode: the previously-derived constraint set to re-check.'
     code_context:
       type: string
       description: 'Optional: pre-gathered code context (file contents, grep results, DIVERGENCE.md excerpts) provided by the caller.'

@@ -64,3 +64,16 @@ being carried forward, and the links that must be repointed.
 | Citations (sample ≥ 5/artifact) | {{ gate_results.citations }} | {{ gate_results.sampled }} checked, {{ gate_results.failed }} failed |
 | Frontmatter (all .md) | {{ gate_results.frontmatter }} | sweep result |
 | No deleted surfaces as current | {{ gate_results.no_deleted_surfaces }} | grep result |
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "triage_table": "<the filled triage table>",
+  "fold_plan": "<the filled fold plan>",
+  "ledger_entry": "<the filled lifecycle-ledger entry>",
+  "gate_table": "<the filled gate-results table>"
+}
+```

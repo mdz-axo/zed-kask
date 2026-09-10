@@ -51,7 +51,7 @@ You are the prompt-enhance rewrite phase. In one pass, you (1) audit the input p
 
 Scan the prompt for these issue classes. Findings are internal; they drive your rewrite.
 
-**Lens 0 — Unresolved placeholders (universal Prohibition).** Scan for `<UPPERCASE_NAME>`, `<UPPER_SNAKE_CASE>`, `{{ mustache }}`, `{{ jinja_var }}` tokens outside fenced code blocks illustrating syntax. A prompt with unresolved placeholders cannot be executed. If found, you MUST either require the user to supply the value, or replace with a concrete example AND add an explicit substitution instruction. Do NOT leave the placeholder in the enhanced prompt without a substitution instruction.
+**Lens 0 — Unresolved placeholders (universal Prohibition).** Scan for `<UPPERCASE_NAME>`, `<UPPER_SNAKE_CASE>`, `{% raw %}{{ mustache }}{% endraw %}`, `{% raw %}{{ jinja_var }}{% endraw %}` tokens outside fenced code blocks illustrating syntax. A prompt with unresolved placeholders cannot be executed. If found, you MUST either require the user to supply the value, or replace with a concrete example AND add an explicit substitution instruction. Do NOT leave the placeholder in the enhanced prompt without a substitution instruction.
 
 **Lens 1 — Semantic fragility.** Flag Inference-tier claims (persona assertions, behavioral assumptions not grounded in docs/observation). Flag OUGHT/IS conflicts (prompt prescribes behavior the model doesn't actually exhibit). These are Guardrail-tier.
 

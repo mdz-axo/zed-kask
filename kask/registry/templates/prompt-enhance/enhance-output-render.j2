@@ -4,8 +4,6 @@ contract:
     enhanced_prompt:
       type: string
       description: The Phase 3 rewritten prompt to deliver
-    original_prompt:
-      type: string
     prompt_type:
       type: string
     effort_tier:
@@ -15,9 +13,6 @@ contract:
       enum: [inline, file, both]
     output_path_resolved:
       type: string
-    phases_run:
-      type: object
-      description: Routing decision from Phase 1 (which phases were selected)
     audit_findings:
       type: array
       description: Findings from the inline audit with constraint_force labels
