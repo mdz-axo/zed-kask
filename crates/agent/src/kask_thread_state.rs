@@ -25,6 +25,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::SharedString;
+use language_model::LanguageModelCompletionError;
 use project::AgentId;
 
 use crate::thread::{CachedFilteredContext, CachedSystemPrompt, DeferredToolResult};
@@ -114,6 +115,57 @@ impl KaskThreadState {
                  silence → nothing. Check the provider's reasoning/output token budget."
             )
         }
+    }
+
+    /// Detail line for a turn that fails with a provider rejection (D43).
+    /// `ProviderRejection`'s Display is the provider's wire message only —
+    /// the status, provider code, category, and retry-after that the variant
+    /// preserves "so callers that need the raw wire details (diagnostics,
+    /// provider-specific workarounds) never lose them" reach no log, because
+    /// the turn-failure site formats the anyhow wrapper, whose Display chain
+    /// carries none of them. The 2026-09-10 "Provider returned error"
+    /// incident (OpenRouter's generic upstream-failure wrapper; five turn
+    /// failures across three sessions in three minutes) was unrootable from
+    /// the log: credit exhaustion (402), rate limiting (429), an upstream
+    /// outage (502 — retried four times over ~75 s before the turn failed)
+    /// and a statusless mid-stream rejection are indistinguishable, yet each
+    /// demands different operator action. Returns `None` for non-rejections,
+    /// whose Display already carries the full story.
+    pub(crate) fn provider_rejection_turn_end_warning(
+        error: &LanguageModelCompletionError,
+    ) -> Option<String> {
+        let LanguageModelCompletionError::ProviderRejection {
+            provider,
+            status,
+            code,
+            message,
+            retry_after,
+            category,
+        } = error
+        else {
+            return None;
+        };
+        let status = status
+            .map(|status| status.as_u16().to_string())
+            .unwrap_or_else(|| "none (mid-stream rejection)".to_string());
+        let code = code.clone().unwrap_or_else(|| "none".to_string());
+        let retry_after = retry_after
+            .map(|delay| format!("{delay:?}"))
+            .unwrap_or_else(|| "none".to_string());
+        // `is_transient` is the exact predicate `retry_strategy_for` gates
+        // on, so the verdict tells the operator whether the failure followed
+        // retry exhaustion or happened on the first attempt.
+        let classification = if error.is_transient() {
+            "transient — the turn was retried before failing"
+        } else {
+            "permanent — the turn was not retried"
+        };
+        Some(format!(
+            "Provider rejection detail — provider: {}, status: {status}, code: {code}, \
+             category: {category:?}, retry_after: {retry_after}, classification: {classification}. \
+             Wire message: {message:?}",
+            provider.0
+        ))
     }
 
     // ── System prompt caching ─────────────────────────────────────────
@@ -309,6 +361,10 @@ impl Default for KaskThreadState {
 #[cfg(test)]
 mod tests {
     use super::KaskThreadState;
+    use anyhow::anyhow;
+    use http_client::StatusCode;
+    use language_model::ProviderErrorCategory;
+    use language_model::{LanguageModelCompletionError, LanguageModelProviderName};
 
     #[test]
     fn max_tokens_warning_names_the_stop_reason_and_content_state() {
@@ -325,5 +381,59 @@ mod tests {
         assert!(partial.contains("StopReason::MaxTokens"));
         assert!(partial.contains("partial content"));
         assert!(!partial.contains("silent-stop"));
+    }
+
+    #[test]
+    fn provider_rejection_detail_names_wire_fields_and_transient_verdict() {
+        // D43: the 2026-09-10 "Provider returned error" incident — five
+        // turn failures whose status/code/category reached no log. The
+        // detail must carry every preserved wire field plus the retry
+        // classification, so a 502 (retried to exhaustion) is
+        // distinguishable from a 402 (permanent, credits) by the log line
+        // alone.
+        let rejection = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: Some(StatusCode::BAD_GATEWAY),
+            code: Some("502".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InternalServer,
+        };
+        let detail = KaskThreadState::provider_rejection_turn_end_warning(&rejection)
+            .expect("a ProviderRejection must produce a detail line");
+        assert!(detail.contains("OpenRouter"));
+        assert!(detail.contains("502"));
+        assert!(detail.contains("InternalServer"));
+        assert!(detail.contains("transient"));
+        assert!(detail.contains("retried"));
+        assert!(detail.contains("Provider returned error"));
+    }
+
+    #[test]
+    fn provider_rejection_detail_marks_statusless_permanent_rejections() {
+        // Mid-stream rejections carry no HTTP status; a code mapping to no
+        // known category is classified permanent and never retried — the
+        // sub-second failure signature from the 2026-09-10 incident log.
+        let rejection = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: None,
+            code: Some("499".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::Other,
+        };
+        let detail = KaskThreadState::provider_rejection_turn_end_warning(&rejection)
+            .expect("a ProviderRejection must produce a detail line");
+        assert!(detail.contains("none (mid-stream rejection)"));
+        assert!(detail.contains("499"));
+        assert!(detail.contains("Other"));
+        assert!(detail.contains("permanent"));
+        assert!(detail.contains("not retried"));
+    }
+
+    #[test]
+    fn provider_rejection_detail_is_none_for_non_rejections() {
+        let transport = LanguageModelCompletionError::Other(anyhow!("transport error"));
+        assert!(KaskThreadState::provider_rejection_turn_end_warning(&transport).is_none());
     }
 }

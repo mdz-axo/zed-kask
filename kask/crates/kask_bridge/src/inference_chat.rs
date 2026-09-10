@@ -122,6 +122,55 @@ struct StreamInferenceRequest {
     reply: tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
 }
 
+/// Render a completion error for an `InferenceError` string payload,
+/// preserving the wire fields a `ProviderRejection` carries.
+///
+/// `InferenceError` (hkask-types) is deliberately string-carrying: hkask
+/// crates must not depend on zed-side types (`StatusCode`,
+/// `ProviderErrorCategory`), so the variant stays the programmatic
+/// classification and this function is where the diagnostic detail is
+/// attached — at the bridge boundary, the one place that sees both worlds.
+/// Without it, every provider rejection flattens to its Display (the wire
+/// message only), which made the 2026-09-10 "Provider returned error"
+/// incident unrootable from MCP-server inference logs: credit exhaustion
+/// (402), rate limiting (429), upstream outage (502) and statusless
+/// mid-stream rejections are indistinguishable yet demand different
+/// operator action. Mirrors the agent-side D43 helper
+/// (`KaskThreadState::provider_rejection_turn_end_warning`); the
+/// classification verdict here states the class only — retry behavior is
+/// the caller's policy, not the bridge's to claim.
+fn completion_error_detail(error: &LanguageModelCompletionError) -> String {
+    let LanguageModelCompletionError::ProviderRejection {
+        provider,
+        status,
+        code,
+        message,
+        retry_after,
+        category,
+    } = error
+    else {
+        return error.to_string();
+    };
+    let status = status
+        .map(|status| status.as_u16().to_string())
+        .unwrap_or_else(|| "none (mid-stream rejection)".to_string());
+    let code = code.clone().unwrap_or_else(|| "none".to_string());
+    let retry_after = retry_after
+        .map(|delay| format!("{delay:?}"))
+        .unwrap_or_else(|| "none".to_string());
+    let classification = if error.is_transient() {
+        "transient"
+    } else {
+        "permanent"
+    };
+    format!(
+        "provider rejection — provider: {}, status: {status}, code: {code}, \
+         category: {category:?}, retry_after: {retry_after}, classification: {classification}. \
+         Wire message: {message:?}",
+        provider.0
+    )
+}
+
 /// Shared accumulator for `collect_completion`: non-streaming calls collect
 /// all events; streaming calls forward text/thinking deltas immediately and
 /// accumulate metadata for the final chunk.
@@ -202,7 +251,7 @@ impl StreamAccumulator {
                 self.cost_usd = token_usage.cost;
             }
             Ok(_) => {}
-            Err(e) => return Err(InferenceError::Generation(e.to_string())),
+            Err(e) => return Err(InferenceError::Generation(completion_error_detail(&e))),
         }
         Ok(())
     }
@@ -513,7 +562,7 @@ impl LanguageModelInferencePort {
         let mut stream = model
             .stream_completion(request, cx)
             .await
-            .map_err(|error| InferenceError::Connection(error.to_string()))?;
+            .map_err(|error| InferenceError::Connection(completion_error_detail(&error)))?;
         let model_name = model.name().0.to_string();
         let mut accumulator = StreamAccumulator::new(model_name.clone());
         while let Some(event) = stream.next().await {
@@ -961,8 +1010,122 @@ mod tests {
     use hkask_types::{InferenceError, InferencePort};
     use language_model::fake_provider::FakeLanguageModel;
     use language_model_core::LanguageModelToolChoice;
+    use language_model_core::ProviderErrorCategory;
+    use language_model_core::{LanguageModelCompletionError, LanguageModelProviderName};
     use std::sync::Arc;
     use std::time::Duration;
+
+    // ── Provider-rejection detail preservation (D43-adjacent, bridge path) ──
+
+    #[test]
+    fn completion_error_detail_carries_rejection_wire_fields() {
+        // The 2026-09-10 incident class: without enrichment, a rejection's
+        // Display is the wire message only — 402/429/502/statusless all read
+        // "Provider returned error". The detail must carry every preserved
+        // wire field plus the retryability class.
+        let rejection = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: Some(http_client::StatusCode::BAD_GATEWAY),
+            code: Some("502".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InternalServer,
+        };
+        let detail = super::completion_error_detail(&rejection);
+        assert!(detail.contains("OpenRouter"));
+        assert!(detail.contains("502"));
+        assert!(detail.contains("InternalServer"));
+        assert!(detail.contains("transient"));
+        assert!(detail.contains("Provider returned error"));
+    }
+
+    #[test]
+    fn completion_error_detail_marks_statusless_rejections_permanent() {
+        // Mid-stream rejections carry no HTTP status; a code mapping to no
+        // known category is permanent-class — the sub-second failure
+        // signature from the incident log.
+        let rejection = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: None,
+            code: Some("499".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::Other,
+        };
+        let detail = super::completion_error_detail(&rejection);
+        assert!(detail.contains("none (mid-stream rejection)"));
+        assert!(detail.contains("499"));
+        assert!(detail.contains("Other"));
+        assert!(detail.contains("permanent"));
+    }
+
+    #[test]
+    fn completion_error_detail_passes_non_rejections_through() {
+        let transport = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
+        assert_eq!(
+            super::completion_error_detail(&transport),
+            "transport error"
+        );
+    }
+
+    #[gpui::test]
+    async fn mid_stream_rejection_surfaces_wire_detail_through_the_port(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Behavioral pin of the mid-stream conversion site: a ProviderRejection
+        // arriving mid-stream must reach the MCP-server caller as
+        // InferenceError::Generation carrying the wire fields, not the bare
+        // "Provider returned error" Display.
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2, // max_concurrency
+            cx.to_async(),
+        );
+
+        let generate =
+            cx.spawn(async move |_cx| port.generate("test", &LLMParameters::default(), None).await);
+        // Let the request reach the fake and open its stream.
+        cx.run_until_parked();
+        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: Some(http_client::StatusCode::BAD_GATEWAY),
+            code: Some("502".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InternalServer,
+        });
+        cx.run_until_parked();
+
+        let Err(error) = generate.await else {
+            panic!("the injected stream error must fail the generate call");
+        };
+        let InferenceError::Generation(detail) = error else {
+            panic!("mid-stream rejection must surface as Generation, got: {error:?}");
+        };
+        assert!(detail.contains("OpenRouter"));
+        assert!(detail.contains("502"));
+        assert!(detail.contains("InternalServer"));
+        assert!(detail.contains("Provider returned error"));
+    }
+
+    #[test]
+    fn establishment_errors_route_through_the_detail_helper() {
+        // The establishment path (stream_completion returning Err before any
+        // events) cannot be driven with a ProviderRejection through
+        // FakeLanguageModel (its forbidden-request path hardcodes an `Other`
+        // error), so the wiring is pinned structurally, D48 style. The needle
+        // is assembled from pieces so this test's own source cannot satisfy
+        // it.
+        let source = include_str!("inference_chat.rs");
+        let needle = concat!("Connection(completion_error_detail", "(&error))");
+        assert!(
+            source.contains(needle),
+            "the stream-establishment map_err must enrich errors via the detail helper"
+        );
+    }
 
     // ── build_request_with_images: image attachment targeting ───────────
     //

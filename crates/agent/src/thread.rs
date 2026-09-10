@@ -3066,6 +3066,29 @@ impl Thread {
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
+                        // zed-kask: D43 — `ProviderRejection`'s Display is the
+                        // provider's wire message only; the status, code and
+                        // category the variant preserves for diagnostics reach
+                        // no log (the 2026-09-10 "Provider returned error"
+                        // failures were unrootable from the log alone). Surface
+                        // them so credit exhaustion, rate limiting, upstream
+                        // outage and statusless mid-stream rejections are
+                        // distinguishable.
+                        if let Some(rejection_detail) = error
+                            .downcast_ref::<LanguageModelCompletionError>()
+                            .and_then(
+                                crate::kask_thread_state::KaskThreadState::
+                                    provider_rejection_turn_end_warning,
+                            )
+                        {
+                            let thread_id = this
+                                .read_with(cx, |thread, _| thread.id().to_string())
+                                .unwrap_or_default();
+                            log::error!(
+                                target: "agent.thread",
+                                "[thread {thread_id}] {rejection_detail}"
+                            );
+                        }
                         match error.downcast::<CompletionError>() {
                             Ok(CompletionError::Refusal) => {
                                 event_stream.send_stop(acp::StopReason::Refusal);
@@ -8247,6 +8270,26 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    // ── D43: turn-end failure visibility ────────────────────────────────
+
+    /// D43 pin: the turn-failure arm must downcast the completion error and
+    /// route ProviderRejections through the kask detail helper. A rebase
+    /// that rewrites the arm and drops this block restores the silent
+    /// signature — five unrootable "Provider returned error" turn failures
+    /// on 2026-09-10. The needle is the helper's method name, assembled
+    /// from pieces so this test's own source cannot satisfy it; it matches
+    /// the call site's method name on its own line, tolerant of the
+    /// `KaskThreadState::` path wrapping across lines (the file's style).
+    #[test]
+    fn turn_failure_surfaces_provider_rejection_detail() {
+        let source = include_str!("thread.rs");
+        let needle = concat!("provider_rejection_turn_end", "_warning");
+        assert!(
+            source.contains(needle),
+            "the turn-failure Err arm must route ProviderRejections through the kask detail helper"
+        );
+    }
 
     // ── D44: router-visibility marker (hidden MCP tool count) ──────────
 
