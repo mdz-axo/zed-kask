@@ -54,6 +54,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 - Imperative PR title, no conventional commit prefixes, no trailing punctuation.
 - Optional crate prefix (e.g., `git_ui: Add history view`).
 - `Release Notes:` section as final section, blank line after heading, one bullet (`- Added/Fixed/Improved/N/A`).
+- Commit messages are plain text at the `git commit` boundary — never include the markdown fences used to present the message in chat. A bare ``` first or last line leaks the chat presentation into the commit subject (97 commits on main, 2026-07→09); the `kask/githooks/commit-msg` hook (wired via `git config core.hooksPath kask/githooks`) rejects fenced messages.
 
 # Sankey diagrams
 
