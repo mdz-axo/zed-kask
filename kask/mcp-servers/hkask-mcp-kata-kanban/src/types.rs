@@ -224,7 +224,7 @@ pub struct CriterionCitationInput {
     pub criterion_index: usize,
     /// The criterion's description, verbatim — validated against the goal
     /// at creation and captured so the citation stays readable after the
-    /// ephemeral goal is gone.
+    /// goal is resolved and pruned.
     pub criterion_text: String,
 }
 

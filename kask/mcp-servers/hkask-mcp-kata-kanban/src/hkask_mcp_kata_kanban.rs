@@ -70,12 +70,11 @@ hkask_mcp_server::mcp_server!(
         /// Shares the kanban database, so protection has the same durability as
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
-        /// Replay protection for `kanban_goal_create` — process-local by
-        /// design. Goals are ephemeral (in-memory store, operator ruling
-        /// 2026-08-29), so their replay protection must share that durability:
-        /// a durable cache here would replay a stale success — the dead
-        /// goal's id — after a restart, handing the agent a ghost pointer
-        /// whose next `kanban_goal_judge` fails NotFound.
+        /// Replay protection for `kanban_goal_create` — the same durable
+        /// store as task creates. Goals persist until resolved (operator
+        /// ruling 2026-09-09, superseding the 2026-08-29 ephemerality
+        /// ruling), so a replayed create returns a live goal's id, not a
+        /// ghost pointer whose next `kanban_goal_judge` fails NotFound.
         pub goal_idempotency: Arc<idempotency::IdempotencyStore>,
     }
 );
@@ -397,7 +396,7 @@ impl KanbanServer {
     /// for the four-moves interaction loop
     /// (`kask/docs/architecture/functional-interaction-spec.md`).
     #[tool(
-        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals are EPHEMERAL (in-memory, die with the session) — the curator's memory is the durable record."
+        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals persist in the kanban database until resolved (auto-removed on resolution), so the Brier closure survives restarts; the curator's memory remains the durable outcome record."
     )]
     pub async fn kanban_goal_create(
         &self,
@@ -540,7 +539,7 @@ impl KanbanServer {
     /// for Move 4 (bank the learning): the next bit of work starts from
     /// these.
     #[tool(
-        description = "List the caller's functional goals (this session's in-memory store) with latest verdicts and resolution state, newest first."
+        description = "List the caller's functional goals (persisted until resolved) with latest verdicts and resolution state, newest first."
     )]
     pub async fn kanban_goal_list(
         &self,
@@ -1870,12 +1869,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                // Goals are ephemeral, so their replay protection is
-                // process-local by construction — never the durable store,
-                // whose cache would outlive the goal it guards.
-                let goal_idempotency = Arc::new(idempotency::IdempotencyStore::default());
+                // Goals persist until resolved (operator ruling 2026-09-09,
+                // superseding the 2026-08-29 ephemerality ruling), so their
+                // replay protection shares the durable store — a replayed
+                // create returns a live goal's id.
+                let idempotency = Arc::new(idempotency);
+                let goal_idempotency = Arc::clone(&idempotency);
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency), goal_idempotency))
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, idempotency, goal_idempotency))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

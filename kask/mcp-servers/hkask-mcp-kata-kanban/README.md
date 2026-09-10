@@ -28,12 +28,16 @@ Native goal-setting and verification for the four-moves interaction loop
 kata target condition: the user's functional requirement in the user's
 words, with observable criteria and a Brier-scored intake prediction.
 
-**Goals are ephemeral** (operator ruling 2026-08-29): the goal store is
-in-memory and dies with the process — conversational goals leave no
-persistent clutter. The curator's memory is the durable vehicle: every
-`kanban_goal_*` tool result in a turn is written as a first-class goal
-h_mem by the bridge's turn-ingestion path (`kask_bridge/src/memory/ingest.rs`),
-so therapy / algedonic-review find goal entities, not prose archaeology.
+**Goals persist until resolved** (operator ruling 2026-09-09, superseding
+the 2026-08-29 ephemerality ruling): the goal store is the same DB-backed
+HMemStore that persists boards and tasks, so the Brier closure
+(`kanban_goal_score`) survives server restarts. Resolution is the prune
+point — a scored goal's row is deleted, so resolved goals leave no
+persistent clutter. The curator's memory remains the durable outcome
+record: every `kanban_goal_*` tool result in a turn is written as a
+first-class goal h_mem by the bridge's turn-ingestion path
+(`kask_bridge/src/memory/ingest.rs`), so therapy / algedonic-review find
+goal entities, not prose archaeology.
 Curator-involved goals additionally get a curator-perspective Private
 h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 

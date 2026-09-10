@@ -27,7 +27,7 @@ use crate::kanban::{
 
 /// Core kanban coordination service.
 ///
-/// Persists boards and tasks as RDF h_mems in a HMemStore.
+/// Persists boards, tasks, and goals as RDF h_mems in a HMemStore.
 /// Public surface: board and task coordination operations.
 ///
 /// `Clone` is required because the REPL caches the service in `ReplState`
@@ -35,14 +35,6 @@ use crate::kanban::{
 #[derive(Clone)]
 pub struct KanbanService {
     pub(crate) store: HMemStore,
-    /// Ephemeral goal store — in-memory, dies with the process (operator
-    /// ruling 2026-08-29: zed-agent goals are ephemeral; the curator's
-    /// memory is the durable vehicle, fed by the turn-ingestion goal-event
-    /// path in `kask_bridge/src/memory/ingest.rs`). Shared across service
-    /// clones via `Arc`; lazily initialized on first goal operation so the
-    /// de-facto-infallible in-memory driver creation surfaces as a typed
-    /// error rather than a constructor panic.
-    pub(crate) goal_store: std::sync::Arc<std::sync::Mutex<Option<HMemStore>>>,
     /// One-shot fault injection for the replay-protection integration
     /// suite: the next N `task_comment` calls fail instead of writing
     /// (`#[doc(hidden)]` arm below). Arc-shared across clones so a test can
@@ -65,7 +57,6 @@ impl KanbanService {
     pub fn new(store: HMemStore) -> Self {
         Self {
             store,
-            goal_store: std::sync::Arc::new(std::sync::Mutex::new(None)),
             comment_faults: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
@@ -243,8 +234,8 @@ impl KanbanService {
 
     /// Validate goal citations against the live goal store: the cited goal
     /// must exist, the index must be in range, and the captured text must
-    /// match the goal's criterion verbatim. After a restart the goal is gone
-    /// (ephemerality ruling) and the citation survives as captured
+    /// match the goal's criterion verbatim. After resolution the goal row
+    /// is pruned and the citation survives as captured
     /// documentation — validation happens once, at the write that carries
     /// the citation (create or update).
     fn validate_goal_citations(&self, citations: &[CriterionCitation]) -> Result<(), KanbanError> {

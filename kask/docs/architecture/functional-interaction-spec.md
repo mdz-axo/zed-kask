@@ -202,23 +202,23 @@ When a user works with the agent:
   kanban Steer prompt advertises all four tools (the
   `server_tools_are_all_advertised` gate).
 
-  **Goals are ephemeral; curator memory is the vehicle (operator ruling
-  2026-08-29).** The goal store is in-memory and dies with the process —
-  conversational goals leave no persistent clutter. Replay protection for
-  `kanban_goal_create` is likewise process-local (a separate
-  `goal_idempotency` store on the server, never the durable kanban-DB
-  idempotency store): a durable replay cache would return a stale success —
-  the dead goal's id — after a restart, handing the agent a ghost pointer
-  whose next `kanban_goal_judge` fails NotFound. Pinned by
-  `goal_replay_protection_does_not_survive_a_restart`. The durable record is
-  the curator's memory: every `kanban_goal_*` tool result in a turn is
-  extracted by the thread-side record builder
+  **Goals persist until resolved (operator ruling 2026-09-09, superseding
+  the 2026-08-29 ephemerality ruling); curator memory remains the outcome
+  record.** The goal store is the same DB-backed HMemStore that persists
+  boards and tasks, so the Brier closure (`kanban_goal_score`) survives
+  server restarts. Resolution is the prune point — a scored goal's row is
+  deleted, so resolved goals leave no persistent clutter. Replay protection
+  for `kanban_goal_create` shares the durable kanban-DB idempotency store:
+  a replayed create returns a live goal's id, not a ghost pointer. Pinned by
+  `goal_replay_protection_survives_a_restart_and_replays_the_live_goal`.
+  The durable outcome record is the curator's memory: every `kanban_goal_*`
+  tool result in a turn is extracted by the thread-side record builder
   (`ThreadTurnRecord.goal_events`) and written by the bridge's ingestion
   path (`kask_bridge/src/memory/ingest.rs`) as first-class goal h_mems —
   curator-perspective Private for curator turns ("the curator remembers all
   goals it is involved with"), shared copy for zed-agent turns (recallable,
   not sovereign). Lessons are learned in `therapy` and `algedonic-review`
-  sessions with the curator, not from a persistent goal store.
+  sessions with the curator; the goal store persists only unresolved goals.
 
   **Criterion-coupling layer (2026-08-30).** Two seams closed the
   functional–technical join — the mapping between the technical plan and

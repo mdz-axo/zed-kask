@@ -344,9 +344,10 @@ When the goal tools are available, run the loop on the native system:
    resolve the goal with their ground truth (`achieved`); your intake
    prediction is Brier-scored against it.
 
-Goals are ephemeral (in-memory, this session); the durable record is the
-curator's memory. Do not create a goal for trivial mechanical tasks —
-the loop serves bits of work with a functional target.
+Goals persist in the kanban database until resolved (auto-removed on
+resolution), so the scoring closure survives restarts; the durable outcome
+record is the curator's memory. Do not create a goal for trivial mechanical
+tasks — the loop serves bits of work with a functional target.
 {{/if}}
 
 {{#if static_context}}
