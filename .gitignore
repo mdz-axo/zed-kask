@@ -62,6 +62,7 @@ crates/docs_preprocessor/actions.json
 .nixos-test-history
 
 .local*
+.cache
 
 # Local build error logs (stale artifacts, not source)
 build-err.txt

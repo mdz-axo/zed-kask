@@ -312,7 +312,7 @@ impl SkillCreatorPage {
 
     fn recompute_description_error(&mut self, cx: &mut Context<Self>) {
         let description = self.current_description(cx);
-        self.description_length = description.len();
+        self.description_length = description.chars().count();
         let error = validate_description(&description).err();
         self.description_error = error;
         self.description_editor

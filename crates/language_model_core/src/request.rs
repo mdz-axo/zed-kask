@@ -473,8 +473,7 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
-    /// Per-request output token budget. Deprecated — the provider handles
-    /// this via the model's `max_output_tokens`. Kept for serde compat.
+    /// Optional per-request output limit; overrides the OpenRouter model limit (D13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
 }

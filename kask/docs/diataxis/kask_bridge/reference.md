@@ -482,12 +482,12 @@ happens on the GPUI foreground executor via a spawned task that owns the
 Skill execution is **not** implemented in `kask_bridge`. It follows upstream
 Zed's body-injection model and lives entirely in the `agent` crate:
 
-- `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the
-  `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects
-  it into the conversation via `render_skill_envelope`
-  (`crates/agent/src/tools/skill_tool.rs:47`; call site at
-  `crates/agent/src/agent.rs:2294`). The model reads the body and follows the
-  instructions. `SkillTool::new(skills, fs)` matches the upstream constructor.
+- `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs`) resolves the
+  `SKILL.md` body through the project-aware resolver supplied by
+  `SkillTool::with_body_resolver`. Project skills read through project buffers;
+  global skills use `agent_skills::read_skill_body`. The body is injected via
+  `render_skill_envelope`; the model reads it and follows the instructions.
+  Kask dependency checks, authorization and outcome recording remain in the tool.
 - `lisp_eval` (`crates/agent/src/tools/lisp_eval_tool.rs`) — wraps
   `hkask_lisp::eval_sandboxed_with_budget`. Registered in `add_default_tools`.
   The agent calls it directly when a SKILL.md instructs deterministic

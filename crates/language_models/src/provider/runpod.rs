@@ -23,7 +23,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, env_var,
+    ProviderSettingsView, RateLimiter, chat_completion::ChatCompletionEventMapper, env_var,
 };
 use open_ai::{ResponseStreamEvent, stream_completion};
 use serde::Deserialize;
@@ -31,7 +31,7 @@ use settings::Settings;
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 
-use crate::provider::open_ai::{ChatCompletionMaxTokensParameter, OpenAiEventMapper, into_open_ai};
+use crate::provider::open_ai::{ChatCompletionMaxTokensParameter, into_open_ai};
 pub use settings::RunpodAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("runpod");
@@ -497,10 +497,6 @@ impl LanguageModel for RunpodLanguageModel {
         self.supports_images
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
     fn telemetry_id(&self) -> String {
         format!("runpod/{}", self.model_name)
     }
@@ -540,7 +536,8 @@ impl LanguageModel for RunpodLanguageModel {
         let stream = self.stream_completion(request, cx);
 
         async move {
-            let mapper = OpenAiEventMapper::new();
+            // zed-kask: D29 — use upstream's shared mapper, including D20/D36 handling.
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(stream.await?).boxed())
         }
         .boxed()

@@ -539,21 +539,17 @@ impl AnyAgentTool for KaskServerTool {
         format_mcp_initial_title(&self.descriptor.name, &input).into()
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> Result<serde_json::Value> {
-        let mut schema = self.descriptor.input_schema.clone();
-        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
-        Ok(match schema {
-            serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
-            }
+    fn input_schema(&self) -> serde_json::Value {
+        let mut schema = match self.descriptor.input_schema.clone() {
+            serde_json::Value::Null => serde_json::json!({ "type": "object" }),
             serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object" })
             }
-            _ => schema,
-        })
+            schema => schema,
+        };
+        // zed-kask: D44/D47 — managed tools share the built-in schema normalization path.
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn run(
@@ -761,21 +757,19 @@ impl AnyAgentTool for ContextServerTool {
         format_mcp_initial_title(&self.tool.name, &input).into()
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> Result<serde_json::Value> {
+    fn input_schema(&self) -> serde_json::Value {
         let mut schema = self.tool.input_schema.clone();
-        language_model::tool_schema::adapt_schema_to_format(&mut schema, format)?;
-        Ok(match schema {
+        schema = match schema {
             serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             _ => schema,
-        })
+        };
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn run(
@@ -1707,6 +1701,41 @@ mod tests {
             &mut registered,
             &mut kask_ids
         ));
+    }
+
+    #[test]
+    fn kask_server_tool_normalizes_schemas_without_losing_named_properties() {
+        let schema_for = |input_schema| {
+            KaskServerTool {
+                source: FakeKaskToolSource::empty(),
+                descriptor: KaskToolDescriptor {
+                    server_id: "kask-test".into(),
+                    name: "schema-tool".into(),
+                    description: "Schema normalization pin".into(),
+                    input_schema,
+                },
+            }
+            .input_schema()
+        };
+        for empty in [serde_json::Value::Null, serde_json::json!({})] {
+            assert_eq!(
+                schema_for(empty),
+                serde_json::json!({"type": "object", "properties": {}})
+            );
+        }
+        assert_eq!(
+            schema_for(serde_json::json!({
+                "type": "object",
+                "$defs": {"text": {"type": "string", "description": "Field help"}},
+                "properties": {"description": {"$ref": "#/$defs/text"}},
+                "required": ["description"]
+            })),
+            serde_json::json!({
+                "type": "object",
+                "properties": {"description": {"type": "string"}},
+                "required": ["description"]
+            })
+        );
     }
 
     /// Pin: `KaskServerTool` — the agent-visible surface of a kask MCP

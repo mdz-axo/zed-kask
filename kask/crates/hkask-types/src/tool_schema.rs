@@ -78,7 +78,7 @@ impl From<AnyJsonValue> for serde_json::Value {
 
 impl JsonSchema for AnyJsonValue {
     // Inline so the property value is the schema object directly, not a
-    // `$ref` into `$defs`. (Zed's `adapt_schema_to_format` inlines `$defs`
+    // `$ref` into `$defs`. (Zed's `normalize_tool_schema` inlines `$defs`
     // anyway, but inlining here keeps the raw MCP `tools/list` schema clean
     // for any consumer that doesn't run that pass.)
     fn inline_schema() -> bool {
@@ -217,13 +217,13 @@ mod tests {
     /// The AnyJsonValue schema must be object-typed and permissive: the empty
     /// `{}` form was live-observed dropped from tool-call arguments by
     /// schema-guided parsing on the GLM/OpenRouter path (2026-09-10), and a
-    /// bare `type: object` would be tightened into `additionalProperties:
-    /// false` by Zed's preprocess — forbidding all content.
+    /// explicit `additionalProperties` preserves arbitrary content through
+    /// schema normalization and provider-specific validation.
     #[test]
     fn any_json_value_schema_is_object_typed_and_permissive() {
         let mut schema = serde_json::to_value(schemars::schema_for!(AnyJsonValue)).expect("schema");
         // `schema_for!` adds root metadata (`$schema`, `title`) that
-        // `adapt_schema_to_format` strips before the schema reaches the
+        // `normalize_tool_schema` strips before the schema reaches the
         // model — remove them the same way to assert the wire shape.
         if let Some(object) = schema.as_object_mut() {
             object.remove("$schema");

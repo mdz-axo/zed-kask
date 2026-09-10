@@ -1,8 +1,9 @@
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::Skill;
 use anyhow::Result;
+#[cfg(test)]
 use fs::Fs;
-use gpui::{App, SharedString, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -120,20 +121,36 @@ impl From<SkillToolOutput> for LanguageModelToolResultContent {
 /// project after the thread was created.
 pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
 
+pub type SkillBodyResolver =
+    Arc<dyn Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync>;
+
 pub struct SkillTool {
     skills: SkillsResolver,
-    fs: Arc<dyn Fs>,
+    body_resolver: SkillBodyResolver,
 }
 
 impl SkillTool {
-    /// Construct a `SkillTool` that reads skill bodies from disk on demand.
-    pub fn new<F>(skills: F, fs: Arc<dyn Fs>) -> Self
+    #[cfg(test)]
+    fn new<F>(skills: F, fs: Arc<dyn Fs>) -> Self
     where
         F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
     {
+        Self::with_body_resolver(skills, move |skill, cx| {
+            let fs = fs.clone();
+            cx.spawn(async move |_| {
+                Ok(agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path).await?)
+            })
+        })
+    }
+
+    pub fn with_body_resolver<F, R>(skills: F, body_resolver: R) -> Self
+    where
+        F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
+        R: Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static,
+    {
         Self {
             skills: Arc::new(skills),
-            fs,
+            body_resolver: Arc::new(body_resolver),
         }
     }
 }
@@ -241,9 +258,6 @@ impl AgentTool for SkillTool {
                 }
             }
 
-            // For built-in skills the body is already in memory (compiled
-            // into the binary). For user skills, read on demand from disk.
-            //
             // Core skills are pre-authorized (trusted by default) since they
             // are operator-controlled, uneditable, and always-on. User skills
             // go through the normal authorization flow.
@@ -258,9 +272,8 @@ impl AgentTool for SkillTool {
                 })?;
             }
 
-            let body = match agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
-                .await
-            {
+            // zed-kask: D1 — record resolver failures without bypassing authorization.
+            let body = match (self.body_resolver)(skill.clone(), cx).await {
                 Ok(body) => body,
                 Err(e) => {
                     crate::record_skill_outcome(&skill.name, false, Some(&e.to_string()));

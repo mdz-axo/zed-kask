@@ -227,8 +227,10 @@ SKILL.md bodies describe:
 
 The bridge crate does not participate in skill execution — it has no skill
 executor module. The D1 seam lives entirely in the `agent` crate's tool
-registration, matching the upstream Zed constructor `SkillTool::new(skills,
-fs)`. PDCA iteration is model-coordinated: the SKILL.md body describes
+registration, using upstream's `SkillTool::with_body_resolver` constructor.
+The project-aware resolver reads project buffers or global skill files;
+Kask retains its dependency checks, authorization and activation-outcome hook.
+PDCA iteration is model-coordinated: the SKILL.md body describes
 convergence criteria, and the model uses `lisp_eval` for deterministic
 convergence checks and `render_template` for structured prompt scaffolding
 within iterations.

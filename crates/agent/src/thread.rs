@@ -43,9 +43,9 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, ProviderErrorCategory, Role,
-    SelectedModel, Speed, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, ProviderErrorCategory, Role, SelectedModel, Speed,
+    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{AgentId, Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
@@ -4575,6 +4575,7 @@ impl Thread {
             return Task::ready(None).shared();
         };
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
@@ -4663,7 +4664,7 @@ impl Thread {
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let mut request = build_thread_title_request(&self.messages, temperature);
+        let mut request = build_thread_title_request(&self.id, &self.messages, temperature);
 
         // zed-kask: D38 — respect reasoning-model requirements for thread
         // title generation. Upstream's `build_thread_title_request` leaves
@@ -4837,13 +4838,14 @@ impl Thread {
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()
-                .filter_map(|(tool_name, tool)| {
+                .map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
                     // Truncate tool descriptions to avoid token bloat. The
                     // LLM needs enough to select the right tool; full detail
                     // is not needed for selection. The first sentence is
                     // usually sufficient.
                     let mut description = tool.description().to_string();
+                    // zed-kask: D44 — retain UTF-8-safe description truncation.
                     if description.len() > 200 {
                         // Truncate at the first sentence boundary within 200
                         // chars. Use a char-boundary-safe cutoff: byte index
@@ -4861,7 +4863,7 @@ impl Thread {
                             description.push_str("...");
                         }
                     }
-                    let mut schema = tool.input_schema(model.tool_input_format()).log_err()?;
+                    let mut schema = tool.input_schema();
                     // TEMPORARY (sandboxing feature flag): with the flag off,
                     // the fetch and create_directory descriptions/schemas must
                     // not advertise sandbox-dependent behavior (host grants,
@@ -4891,12 +4893,12 @@ impl Thread {
                             }
                         }
                     }
-                    Some(LanguageModelRequestTool::function(
+                    LanguageModelRequestTool::function(
                         tool_name.to_string(),
                         description,
                         schema,
                         tool.supports_input_streaming(),
-                    ))
+                    )
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -5522,7 +5524,7 @@ impl Thread {
             // provider's requested delay when it gave one, and fall back to
             // exponential backoff when it didn't.
             ProviderRejection { retry_after, .. } => {
-                if error.retry_delay(1).is_none() {
+                if !error.is_transient() {
                     return None;
                 }
                 Some(match retry_after {
@@ -6130,10 +6132,12 @@ fn retained_user_request_messages_before(
 }
 
 pub fn build_thread_title_request(
+    thread_id: &acp::SessionId,
     messages: &[Arc<Message>],
     temperature: Option<f32>,
 ) -> LanguageModelRequest {
     let mut request = LanguageModelRequest {
+        thread_id: Some(thread_id.to_string()),
         intent: Some(CompletionIntent::ThreadSummarization),
         temperature,
         ..Default::default()
@@ -6396,8 +6400,8 @@ where
     ) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
-        language_model::tool_schema::root_schema_for::<Self::Input>(format)
+    fn input_schema() -> Schema {
+        language_model::tool_schema::root_schema_for::<Self::Input>()
     }
 
     /// Returns whether the tool supports streaming of tool use parameters.
@@ -6475,7 +6479,7 @@ pub trait AnyAgentTool {
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn input_schema(&self) -> serde_json::Value;
     fn supports_input_streaming(&self) -> bool {
         false
     }
@@ -6526,10 +6530,10 @@ where
         self.0.initial_title(parsed_input, _cx)
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let mut json = serde_json::to_value(T::input_schema(format))?;
-        language_model::tool_schema::adapt_schema_to_format(&mut json, format)?;
-        Ok(json)
+    fn input_schema(&self) -> serde_json::Value {
+        let mut schema = T::input_schema().to_value();
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
     }
 
     fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
@@ -8572,6 +8576,7 @@ mod tests {
     #[gpui::test]
     async fn test_thread_summary_request_uses_compacted_history(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_id = thread.read_with(cx, |thread, _| thread.id().to_string());
         let summary_model = Arc::new(FakeLanguageModel::default());
 
         let summary_task = cx.update(|cx| {
@@ -8601,6 +8606,10 @@ mod tests {
         cx.run_until_parked();
 
         let summary_request = summary_model.pending_completions().pop().unwrap();
+        assert_eq!(
+            summary_request.thread_id.as_deref(),
+            Some(thread_id.as_str())
+        );
         assert_eq!(
             summary_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -8635,8 +8644,10 @@ mod tests {
             agent_text_message("after assistant"),
         ];
 
-        let request = build_thread_title_request(&messages, Some(0.2));
+        let request =
+            build_thread_title_request(&acp::SessionId::new("thread-id"), &messages, Some(0.2));
 
+        assert_eq!(request.thread_id.as_deref(), Some("thread-id"));
         assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
         assert_eq!(request.temperature, Some(0.2));
         assert_eq!(
@@ -8650,6 +8661,97 @@ mod tests {
                 SUMMARIZE_THREAD_PROMPT.to_string(),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_completion_request_preserves_utf8_description_cutoff_and_schema(
+        cx: &mut TestAppContext,
+    ) {
+        struct VerboseTool;
+        impl AgentTool for VerboseTool {
+            type Input = ();
+            type Output = String;
+            const NAME: &'static str = "verbose_tool";
+
+            fn description() -> SharedString {
+                "界".repeat(100).into()
+            }
+
+            fn kind() -> acp::ToolKind {
+                acp::ToolKind::Other
+            }
+
+            fn initial_title(&self, _: Result<(), serde_json::Value>, _: &mut App) -> SharedString {
+                "Verbose tool".into()
+            }
+
+            fn run(
+                self: Arc<Self>,
+                _: ToolInput<()>,
+                _: ToolCallEventStream,
+                _: &mut App,
+            ) -> Task<Result<String, String>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+            let tool: Arc<dyn AnyAgentTool> = Arc::new(Erased(Arc::new(VerboseTool)));
+            let schema = tool.input_schema();
+            let (sender, _receiver) = mpsc::unbounded();
+            let (cancellation, _cancellation_receiver) = watch::channel(false);
+            thread.running_turn = Some(RunningTurn::new(
+                ThreadEventStream(sender),
+                BTreeMap::from([(VerboseTool::NAME.into(), tool)]),
+                cancellation,
+                Task::ready(()),
+            ));
+
+            let request = thread
+                .build_completion_request(CompletionIntent::UserPrompt, cx)
+                .expect("completion request");
+            let tool = request.tools.first().expect("tool remains visible");
+            assert_eq!(tool.description, format!("{}...", "界".repeat(66)));
+            let language_model::LanguageModelRequestToolInput::Function { input_schema, .. } =
+                &tool.input
+            else {
+                panic!("expected a function tool");
+            };
+            assert_eq!(input_schema, &schema);
+            thread.running_turn.take();
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_title_guard_preserves_thread_id_and_reasoning_effort(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_id = thread.read_with(cx, |thread, _| thread.id().to_string());
+        for supports_thinking in [false, true] {
+            let model = Arc::new(FakeLanguageModel::default());
+            model.set_supports_thinking(supports_thinking);
+            thread.update(cx, |thread, cx| {
+                thread.spawn_title_generation(model.clone(), None, cx);
+            });
+            cx.run_until_parked();
+
+            let request = model.pending_completions().pop().expect("title request");
+            assert_eq!(request.thread_id.as_deref(), Some(thread_id.as_str()));
+            assert_eq!(request.thinking_allowed, supports_thinking);
+            assert_eq!(
+                request.reasoning_effort.as_deref(),
+                supports_thinking.then_some("low")
+            );
+            model.send_completion_stream_text_chunk(&request, "Title");
+            model.end_completion_stream(&request);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.title(), Some("Title".into()));
+            });
+        }
     }
 
     // zed-kask: D38 — pins the self-healing error classifier for thread-title
