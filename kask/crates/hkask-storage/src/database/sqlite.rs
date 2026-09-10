@@ -47,6 +47,13 @@ pub struct SqliteDriver {
     /// production pools where cross-process/cross-connection contention is
     /// possible and the source file must be identifiable in logs.
     label: Option<Arc<str>>,
+    /// Whether the underlying pool survives a process restart (file-backed)
+    /// or dies with it (in-memory). Constructors default to `true`; a
+    /// caller wrapping an in-memory pool must claim the honest stance via
+    /// `with_durability(false)` — durability reporters (the kata-kanban
+    /// replay-protection store) consult `is_durable()` and must never be
+    /// told an in-memory DB protects across a restart.
+    durable: bool,
 }
 
 impl SqliteDriver {
@@ -58,7 +65,11 @@ impl SqliteDriver {
     /// configured with WAL mode and any encryption PRAGMAs before being
     /// passed here.
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        Self { pool, label: None }
+        Self {
+            pool,
+            label: None,
+            durable: true,
+        }
     }
 
     /// Create a labeled SQLite driver. The label (typically the DB file
@@ -69,7 +80,22 @@ impl SqliteDriver {
         Self {
             pool,
             label: Some(label.into()),
+            durable: true,
         }
+    }
+
+    /// Claim the driver's durability stance explicitly.
+    ///
+    /// `false` for pools that die with the process (in-memory fallbacks):
+    /// the driver carries a label naming a would-be DB path even when the
+    /// pool behind it is in-memory, so the label cannot be used to detect
+    /// the stance — the construction site knows, and must say so here.
+    /// `is_durable()` reports this to replay-protection callers, which must
+    /// not advertise cross-restart protection an in-memory pool cannot keep.
+    #[must_use]
+    pub fn with_durability(mut self, durable: bool) -> Self {
+        self.durable = durable;
+        self
     }
 
     /// Create a pool for an in-memory database (testing only).
@@ -101,8 +127,10 @@ impl SqliteDriver {
     }
 
     /// Create an in-memory driver for testing (one-liner convenience).
+    /// Claims the honest durability stance: in-memory pools die with the
+    /// process, so `is_durable()` reports `false`.
     pub fn in_memory_driver() -> Arc<dyn super::driver::DatabaseDriver> {
-        Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")))
+        Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")).with_durability(false))
     }
 
     /// Create a file-backed pool with WAL mode enabled. Used by MCP servers
@@ -233,6 +261,10 @@ impl DatabaseDriver for SqliteDriver {
 
     fn sqlite_pool(&self) -> Option<&Pool<SqliteConnectionManager>> {
         Some(&self.pool)
+    }
+
+    fn is_durable(&self) -> bool {
+        self.durable
     }
 
     fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {

@@ -44,6 +44,16 @@ pub trait DatabaseDriver: Send + Sync {
         None
     }
 
+    /// Whether the underlying storage survives a process restart.
+    ///
+    /// File-backed drivers keep the default `true`; drivers wrapping an
+    /// in-memory pool must override to `false` — durability reporters
+    /// (e.g. replay-protection stores) must not claim cross-restart
+    /// guarantees an in-memory pool cannot keep.
+    fn is_durable(&self) -> bool {
+        true
+    }
+
     /// Start a transaction, returning a RAII guard.
     /// Auto-rollbacks on drop if not committed.
     ///

@@ -1765,6 +1765,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         None
                     }
                 };
+                let durable_db = passphrase.is_some();
                 let db = if let Some(passphrase) = passphrase {
                     hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
                         .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -1778,11 +1779,20 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .map_err(|e| anyhow::anyhow!("in-memory DB: {e}"))?
                 };
                 let pool = db.sqlite_pool().map_err(|e| anyhow::anyhow!("pool: {e}"))?;
-                let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-                    Arc::new(hkask_storage::database::sqlite::SqliteDriver::new_labeled(
+                let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(
+                    hkask_storage::database::sqlite::SqliteDriver::new_labeled(
                         pool,
                         kanban_db_path.as_str(),
-                    ));
+                    )
+                    // The no-passphrase fallback is an in-memory pool that
+                    // still carries the would-be DB path as its label — the
+                    // label cannot reveal the stance, so claim it here.
+                    // is_durable() feeds the replay-protection durability
+                    // label and the construction warning; without this the
+                    // in-memory mode advertised cross-restart protection it
+                    // could not keep.
+                    .with_durability(durable_db),
+                );
                 // Clone the handle before `HMemStore` takes ownership: replay
                 // protection lives in the same database as the writes it guards.
                 let idempotency_driver = driver.clone();

@@ -445,9 +445,27 @@ async fn non_durable_protection_is_labelled_in_the_response() {
 }
 
 /// A durable store does NOT add the label, so its absence is meaningful.
+/// Built over a driver that explicitly claims durability — the simulated
+/// file-backed-DB shape (the pool is in-memory; the claim is explicit
+/// because the driver cannot detect its own pool's stance).
 #[tokio::test]
 async fn durable_protection_carries_no_degradation_label() {
-    let server = make_server();
+    let pool = SqliteDriver::in_memory_pool().expect("pool");
+    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+        Arc::new(SqliteDriver::new(pool).with_durability(true));
+    let idempotency = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::clone(&driver))
+            .expect("idempotency schema"),
+    );
+    let server = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
+        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    );
     let board = create_board(&server, "Board", Some("durable")).await;
     assert!(
         board.get("idempotency_durable").is_none(),
@@ -566,18 +584,43 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
     );
 }
 
+#[test]
+fn in_memory_drivers_report_not_durable() {
+    let store = hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+        SqliteDriver::in_memory_driver(),
+    )
+    .expect("store init");
+    assert!(
+        !store.is_durable(),
+        "an in-memory sqlite driver must not claim cross-restart replay protection"
+    );
+}
+
+#[test]
+fn with_durability_false_overrides_the_labeled_default() {
+    let pool = SqliteDriver::in_memory_pool().expect("pool");
+    let driver = SqliteDriver::new_labeled(pool, "in-memory fallback").with_durability(false);
+    let store = hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::new(driver))
+        .expect("store init");
+    assert!(
+        !store.is_durable(),
+        "the production in-memory fallback shape (labeled driver, with_durability(false)) must report non-durable"
+    );
+}
+
 /// Within one process, a keyed goal create is replay-protected — the goal
 /// replay store (sharing the kanban driver) absorbs the retry and returns
-/// the original goal. The in-memory test driver is process-local, so the
-/// response must never claim `idempotency_durable: true`.
+/// the original goal. The in-memory test driver honestly reports
+/// process-local durability, so the response carries
+/// `idempotency_durable: false`.
 #[tokio::test]
 async fn goal_replay_is_absorbed_within_the_process() {
     let server = make_server();
     let first = create_goal(&server, "Goal", Some("goal-key")).await;
-    assert_ne!(
+    assert_eq!(
         first["idempotency_durable"].as_bool(),
-        Some(true),
-        "a process-local (in-memory driver) store must not claim durable replay protection, got: {first}"
+        Some(false),
+        "a process-local (in-memory driver) store must label its replay protection as non-durable, got: {first}"
     );
 
     let replay = create_goal(&server, "Goal", Some("goal-key")).await;

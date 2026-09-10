@@ -32,7 +32,7 @@ SQLite is the only backend.
 | `query_map` / `query_row` helpers | `kask/crates/hkask-storage/src/database/driver.rs:78-109` |
 | `TransactionHandle` (RAII tx) | `kask/crates/hkask-storage/src/database/transaction.rs` |
 | `DbValue` / `DbRow` typed values | `kask/crates/hkask-storage/src/database/value.rs` |
-| `SqliteDriver::new` / `new_labeled` | `kask/crates/hkask-storage/src/database/sqlite.rs:60-73` |
+| `SqliteDriver::new` / `new_labeled` / `with_durability` | `kask/crates/hkask-storage/src/database/sqlite.rs:67-102` |
 | `SqliteDriver::in_memory_pool` | `kask/crates/hkask-storage/src/database/sqlite.rs:86-101` |
 | `WAL_PRAGMA_BATCH` (PRAGMA ordering) | `kask/crates/hkask-storage/src/database/sqlite.rs:24-25` |
 | `sanitize_path` (traversal guard) | `kask/crates/hkask-storage/src/core/security.rs:17-54` |

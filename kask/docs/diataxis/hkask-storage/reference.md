@@ -49,7 +49,7 @@ their store modules' `init_schema` methods.
 | `DatabaseDriver` trait | `kask/crates/hkask-storage/src/database/driver.rs:16-58` |
 | `query_map` / `query_row` helpers | `kask/crates/hkask-storage/src/database/driver.rs:78-109` |
 | `SqliteDriver` struct | `kask/crates/hkask-storage/src/database/sqlite.rs:42-50` |
-| `SqliteDriver::new` / `new_labeled` | `kask/crates/hkask-storage/src/database/sqlite.rs:60-73` |
+| `SqliteDriver::new` / `new_labeled` / `with_durability` | `kask/crates/hkask-storage/src/database/sqlite.rs:67-102` |
 | `SqliteDriver::in_memory_pool` / `in_memory_driver` | `kask/crates/hkask-storage/src/database/sqlite.rs:86-106` |
 | `SqliteDriver::file_pool` (unencrypted WAL pool) | `kask/crates/hkask-storage/src/database/sqlite.rs:111-117` |
 | `WAL_PRAGMA_BATCH` / `init_wal_pragmas` | `kask/crates/hkask-storage/src/database/sqlite.rs:24-35` |

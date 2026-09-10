@@ -139,7 +139,10 @@ impl IdempotencyStore {
     /// repo's advertised-invariant rule: a claimed guarantee must point at its
     /// enforcement, or say it is absent).
     pub fn is_durable(&self) -> bool {
-        matches!(self.inner, Inner::Sqlite(_))
+        match &self.inner {
+            Inner::Memory(_) => false,
+            Inner::Sqlite(driver) => driver.is_durable(),
+        }
     }
 
     /// Validate a client-supplied key.
