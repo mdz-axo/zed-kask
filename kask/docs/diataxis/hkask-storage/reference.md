@@ -278,16 +278,12 @@ erDiagram
         INTEGER value
         TEXT updated_at
     }
-    pod_meta {
-        TEXT key PK
-        TEXT value
-    }
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-004
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-27
+verified_date: 2026-09-10
+verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-29
 status: VERIFIED
 -->
 
@@ -338,14 +334,13 @@ The `reg_records` and `reg_cursors` tables are created inline in
 The `escalations` table is created inline in `EscalationQueue::init`
 (`escalation.rs:83-103`) for the algedonic alert review path.
 
-The `reg_variety_checkpoint` table (`schema.sql:13`) tracks per-domain
+The `reg_variety_checkpoint` table (`schema.sql:11`) tracks per-domain
 variety counts for Ashby's Law monitoring. The `reg_alerts` table
-(`schema.sql:14`) stores algedonic alerts with `severity` and `resolved`
-flag. The `agent_registry` table (`schema.sql:15`) registers agent
+(`schema.sql:12`) stores algedonic alerts with `severity` and `resolved`
+flag. The `agent_registry` table (`schema.sql:13`) registers agent
 definitions with `token_hash` for integrity verification. The `loop_cursors`
-table (`schema.sql:17`) stores key-value loop state for the Regulation
-cycle. The `pod_meta` table (`schema.sql:21`) stores pod metadata (webid,
-pod_kind) for passphrase derivation and discovery.
+table (`schema.sql:15`) stores key-value loop state for the Regulation
+cycle.
 
 ## Port trait implementors
 
@@ -367,8 +362,7 @@ it — agent-owned under `agents/{name}/`, server-owned under
 `mcp/{server_id}/`. The curator DB is `agents/curator/curator.db` (the "pod"
 concept was deprecated). MCP server DBs follow
 `mcp/{server_id}/{purpose}.db` (e.g. `mcp/kata-kanban/kanban.db`,
-`mcp/swarm/ledger.db`). The `pod_meta` table in `schema.sql:21` is the
-in-DB metadata mirror, not a path component. See
+`mcp/swarm/ledger.db`). See
 [`kask/docs/architecture/standardized-artifact-storage.md`](../../architecture/standardized-artifact-storage.md)
 for the full layout spec.
 

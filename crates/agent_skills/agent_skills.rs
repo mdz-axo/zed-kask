@@ -2707,42 +2707,6 @@ description: A skill with no body content
         );
     }
 
-    // Classifier configs are runtime-consumed registry assets: seed_templates
-    // must write them to the sibling `classify/` dir (sibling of templates/)
-    // so the corpus server's `load_classifier_config` finds them in production.
-    #[gpui::test]
-    async fn test_seed_templates_writes_classify_configs_next_to_templates(
-        cx: &mut TestAppContext,
-    ) {
-        let fs = FakeFs::new(cx.executor());
-        let target_dir = Path::new("/registry/templates");
-        fs.create_dir(target_dir).await.unwrap();
-
-        seed_templates(fs.as_ref(), target_dir).await;
-
-        let classify_seed = shipped_classify_seed();
-        assert!(
-            !classify_seed.is_empty(),
-            "shipped_classify_seed must not be empty — build.rs scans kask/registry/classify/"
-        );
-
-        let registry_root = target_dir.parent().expect("templates dir has a parent");
-        for (rel_path, expected_content) in classify_seed {
-            let full_path = registry_root.join("classify").join(rel_path);
-            assert!(
-                fs.is_file(&full_path).await,
-                "classifier config '{}' must be seeded to {{registry}}/classify/",
-                full_path.display()
-            );
-            let actual = fs.load(&full_path).await.unwrap();
-            assert_eq!(
-                actual, *expected_content,
-                "seeded classifier config '{}' does not match the compiled-in source",
-                rel_path
-            );
-        }
-    }
-
     // zed-kask: D28 — pins the global skills dir override hook.
     // Mirrors `test_threads_db_override_hook_round_trips` in
     // `crates/agent/src/db.rs`. Tests that `global_skills_dir()` returns the

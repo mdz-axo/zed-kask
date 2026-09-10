@@ -142,16 +142,16 @@ improv
 
 ### 1. Dual-Presence REPL
 
-The userpod's role is Socratic facilitator — helping the user and Curator explore questions, enriching perspectives, ensuring key questions are explored.
+The user agent's role is Socratic facilitator — helping the user and Curator explore questions, enriching perspectives, ensuring key questions are explored.
 
 | Mode | Application | Example |
 |------|------------|---------|
-| **Plussing** | UserPod builds on user's question and Curator's system context. "I like the energy budget analysis. What if we also consider the per-tool breakdown?" | User asks about system health → Curator reports Regulation data → UserPod plusses both contributions |
-| **Freestyling** | User says "explore options for X" → UserPod and Curator freestyle rapid alternatives. No evaluation during flow. | "Give me 5 ways to reduce inference latency" → rapid responses from both |
-| **Riffing** | UserPod takes a thread (e.g., "the kata system needs redesign") and explores it solo, then returns with structured observations. | UserPod: "Let me riff on the kata redesign for a moment..." → solo exploration → returns with analysis |
-| **Yes-And** | Default collaborative mode. UserPod accepts Curator's system report and adds facilitator perspective. Curator accepts user's question and adds relevant data. | Every normal turn in the dual-presence loop |
+| **Plussing** | User agent builds on user's question and Curator's system context. "I like the energy budget analysis. What if we also consider the per-tool breakdown?" | User asks about system health → Curator reports Regulation data → user agent plusses both contributions |
+| **Freestyling** | User says "explore options for X" → the user agent and Curator freestyle rapid alternatives. No evaluation during flow. | "Give me 5 ways to reduce inference latency" → rapid responses from both |
+| **Riffing** | User agent takes a thread (e.g., "the kata system needs redesign") and explores it solo, then returns with structured observations. | user agent: "Let me riff on the kata redesign for a moment..." → solo exploration → returns with analysis |
+| **Yes-And** | Default collaborative mode. User agent accepts Curator's system report and adds facilitator perspective. Curator accepts user's question and adds relevant data. | Every normal turn in the dual-presence loop |
 
-**UserPod's mode selection:** The userpod chooses the mode based on context. Plussing is the default for facilitator responses. Freestyling is invoked by user request ("explore", "brainstorm", "give me options"). Riffing is self-initiated when the userpod identifies a thread worth solo exploration. Yes-And is the continuous substrate.
+**User agent's mode selection:** The user agent chooses the mode based on context. Plussing is the default for facilitator responses. Freestyling is invoked by user request ("explore", "brainstorm", "give me options"). Riffing is self-initiated when the user agent identifies a thread worth solo exploration. Yes-And is the continuous substrate.
 
 ### 2. Starter Kata
 
@@ -193,7 +193,7 @@ Riffing is a temporary divergence — solo, then return.
 | Transition | Rule |
 |------------|------|
 | Yes-And → Plussing | Natural escalation. When a contribution has components worth building on, switch to plussing. |
-| Yes-And → Freestyling | Explicit invocation. User or userpod calls for exploration mode. |
+| Yes-And → Freestyling | Explicit invocation. User or user agent calls for exploration mode. |
 | Yes-And → Riffing | Self-initiated. A participant signals "let me riff on that" and takes a solo turn. |
 | Freestyling → Yes-And | Time-box expiry or natural conclusion. Return to normal dialogue. |
 | Riffing → Yes-And | The riff returns. Solo exploration concludes, findings shared. |
@@ -217,13 +217,13 @@ Per P5 (essentialism): keep the skill to a handful of core techniques. Resist ad
 
 ### 1. Mode Detection — Implicit Default, Explicit Override
 
-**Default: implicit.** The userpod operates in Yes-And substrate. When it detects a contribution with concrete, buildable components (a specific claim, a measurable observation, a named option), it naturally shifts to plussing. This is not a mode switch — it's a response style choice within Yes-And.
+**Default: implicit.** The user agent operates in Yes-And substrate. When it detects a contribution with concrete, buildable components (a specific claim, a measurable observation, a named option), it naturally shifts to plussing. This is not a mode switch — it's a response style choice within Yes-And.
 
-**Override: explicit.** The user can invoke `/plus` or say "plus that" to request plussing on a specific contribution the userpod didn't catch.
+**Override: explicit.** The user can invoke `/plus` or say "plus that" to request plussing on a specific contribution the user agent didn't catch.
 
 **Detection heuristic:** A contribution is "plussable" when it contains a concrete, named component. "Energy budget is at 47%" is plussable. "The system seems slow" is not — it needs clarification first (Yes-And: "What metric indicates slowness?").
 
-**Mode signaling:** The userpod prefixes its response with a brief mode marker when switching: "Plussing that observation..." so the user knows what's happening.
+**Mode signaling:** The user agent prefixes its response with a brief mode marker when switching: "Plussing that observation..." so the user knows what's happening.
 
 ### 2. Freestyling Time-Box — Count-Based, Default 5, User-Overridable
 
@@ -237,11 +237,11 @@ Per P5 (essentialism): keep the skill to a handful of core techniques. Resist ad
 
 **Flow:**
 1. User: "Freestyle 5 ways to reduce inference latency"
-2. UserPod signals: "Freestyling — 5 responses, no evaluation during flow."
-3. Responses 1-5 come rapid-fire from userpod (and Curator if participating)
+2. User agent signals: "Freestyling — 5 responses, no evaluation during flow."
+3. Responses 1-5 come rapid-fire from the user agent (and Curator if participating)
 4. After 5: "Freestyle complete. Evaluating..." then normal Yes-And resumes with evaluation
 
-**Critical constraint:** NO evaluation during the flow. The userpod must not say "that won't work" or "that's the best one" during freestyling. Evaluation happens after.
+**Critical constraint:** NO evaluation during the flow. The user agent must not say "that won't work" or "that's the best one" during freestyling. Evaluation happens after.
 
 ### 3. Riffing Return Signal — Explicit Signaling, Single-Turn
 
@@ -262,14 +262,14 @@ Per P5 (essentialism): keep the skill to a handful of core techniques. Resist ad
 
 ### 4. Skill vs. Embedded — Hybrid Architecture
 
-**Yes-And and Plussing are embedded in the REPL core.** They are fundamental interaction patterns, not optional. Yes-And is the default turn-taking protocol. Plussing is the userpod's default facilitator response style in dual-presence mode. They cannot be "turned off" — they are the architecture of conversation.
+**Yes-And and Plussing are embedded in the REPL core.** They are fundamental interaction patterns, not optional. Yes-And is the default turn-taking protocol. Plussing is the user agent's default facilitator response style in dual-presence mode. They cannot be "turned off" — they are the architecture of conversation.
 
 **Freestyling and Riffing are in the `improv` skill.** They are optional modes invoked explicitly. The skill adds `/freestyle` and `/riff` slash commands, mode-switching logic, and count tracking.
 
 ```
 REPL core (always active)
 ├── Yes-And — default turn protocol
-└── Plussing — userpod's default response style in dual-presence
+└── Plussing — user agent's default response style in dual-presence
 
 improv skill (loadable)
 ├── Freestyling — `/freestyle [N]` — time-boxed creative exploration
@@ -283,7 +283,7 @@ improv skill (loadable)
 
 ### 5. Template Surface — Prompt Prefixes for REPL, Jinja2 for Kata
 
-**Dual-presence REPL: prompt prefixes.** Modes are response-style instructions injected into the userpod's system prompt. `/freestyle` prepends "MODE: freestyling — generate rapid unpolished responses. Do not evaluate during flow. 5 responses." for the duration of the freestyle. No template files needed — a mode is a 2-3 sentence instruction.
+**Dual-presence REPL: prompt prefixes.** Modes are response-style instructions injected into the user agent's system prompt. `/freestyle` prepends "MODE: freestyling — generate rapid unpolished responses. Do not evaluate during flow. 5 responses." for the duration of the freestyle. No template files needed — a mode is a 2-3 sentence instruction.
 
 **Kata: Jinja2 templates.** The kata system already uses templates for practice routines. Improv modes within kata follow the same pattern: `registry/templates/improv/improv-plussing.j2`, `improv-freestyling.j2`, `improv-riffing.j2`. Each wraps the kata practice routine with the improv mode instructions.
 
@@ -295,12 +295,12 @@ improv skill (loadable)
 
 **Lessons to extract:**
 - Mode enum pattern — our modes also need a type-safe `Mode` enum with 4 variants
-- Confidence threshold concept — may apply to plussing: "how confident is the userpod that this component is worth plussing?"
+- Confidence threshold concept — may apply to plussing: "how confident is the user agent that this component is worth plussing?"
 - Template-based approach for kata integration — worth keeping
 
 **What NOT to carry forward:**
 - Bot selection logic — not relevant to dual-presence
-- Relevance checking — the userpod is always relevant (it's the facilitator)
+- Relevance checking — the user agent is always relevant (it's the facilitator)
 - Round-robin turn ordering — dual-presence uses natural turn-taking
 - Multi-participant orchestration — dual-presence is 2-3 participants, not N bots
 

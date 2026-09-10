@@ -141,7 +141,7 @@ constructed against a missing table (`core/store_macros.rs:44-71`).
 Two ownership patterns coexist:
 
 - **Core tables** (`hmems`, `embeddings`, `vec_embeddings`, `audit_log`,
-  `memory_links`, `pod_meta`, `agent_registry`, `loop_cursors`,
+  `memory_links`, `agent_registry`, `loop_cursors`,
   `reg_variety_checkpoint`, `reg_alerts`) live in `core/sql/schema.sql` and
   are loaded by `Database::initialize_schema` on every pool creation
   (`core/connection.rs:192-204`). Stores for these tables do not re-create

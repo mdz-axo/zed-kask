@@ -114,7 +114,7 @@ Every `init_schema` uses `CREATE TABLE IF NOT EXISTS` so the call is safe to
 repeat. Two ownership patterns coexist:
 
 - **Core tables** (`hmems`, `embeddings`, `vec_embeddings`, `audit_log`,
-  `memory_links`, `pod_meta`, `agent_registry`, `loop_cursors`,
+  `memory_links`, `agent_registry`, `loop_cursors`,
   `reg_variety_checkpoint`, `reg_alerts`) live in `core/sql/schema.sql` and
   are loaded by `Database::initialize_schema` on every pool creation
   (`core/connection.rs:192-204`). Stores for these tables do not re-create

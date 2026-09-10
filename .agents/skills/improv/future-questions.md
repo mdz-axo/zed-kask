@@ -60,9 +60,9 @@ mds_categories: [composition, curation]
 
 ---
 
-## 4. UserPod Personality Integration
+## 4. User Agent Personality Integration
 
-**Question:** How does improv mode interact with userpod persona (defined in `persona.yaml`)?
+**Question:** How does improv mode interact with user agent persona (defined in `persona.yaml`)?
 
 **Current state:** Persona constraints filter forbidden patterns from model output. Improv mode sets interaction posture. They operate independently.
 
