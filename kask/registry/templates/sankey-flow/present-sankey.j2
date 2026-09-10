@@ -1,8 +1,8 @@
 {# goal: Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). #}
 {# Format and surface the finalized Sankey as the process's final output.
-[inference]
-   This is a pure Jinja2 template (no frontmatter) executed by the `render` action.
-   It wraps the adapt step's mermaid source in a titled, annotated document with:
+   This is a pure Jinja2 template (no [inference] header, no LLM call) rendered by
+   the `render_template` tool from the SKILL.md body's final step. It wraps the
+   adapt step's mermaid source in a titled, annotated document with:
    - A title derived from domain + subject
    - A description paragraph (domain, weight unit, conservation mode, ontology)
    - The Mermaid sankey-beta diagram in a fenced code block

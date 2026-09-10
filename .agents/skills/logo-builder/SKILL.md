@@ -35,7 +35,7 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 ### Phase 2 — Formal Generation
 
-1. Render the `media/logo-formal-prompt` template with the design parameters from Phase 1.
+1. Render the `media/logo-formal-prompt` template with the design parameters from Phase 1 — map Phase 1's `palette_hex` (joined into a readable list) to the template's `palette` input so the discovered palette reaches the generation prompt.
 2. Call the `generate_image` tool with the rendered prompt to produce the logo image.
 3. If the logo needs background removal, call `image_remove_background` on the generated image.
 4. If the logo needs upscaling for print quality, call `upscale_image` on the result.

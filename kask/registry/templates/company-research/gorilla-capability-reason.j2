@@ -4,7 +4,6 @@ contract:
     ticker: string
     company_board: object
     gorilla_scores: object
-    wardley_map: object
   output:
     capability_assessments: object
     floor_violations: array
@@ -14,13 +13,7 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# goal: Adapt capabilities-reasoner/capability-reason to the GORILLA 4-dim #}
-{# framework. Types each GORILLA dimension (Obvious Problem, Invisible #}
-{# Gorilla, Combinatorial Solution, Choke Point) against a capability #}
-{# registry with floor, ceiling, and maturity-gate limits. The GORILLA #}
-{# score (0–100) is the elicited potential; the capability assessment #}
-{# determines whether that score is credible against the company's #}
-{# observed behavior and maturity. #}
+{# goal: Adapt capabilities-reasoner/capability-reason to the GORILLA 4-dim framework. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. #}
 {# #}
 {# This is a thin adapter over capability-reason. It does NOT re-score #}
 {# the dimensions — the gorilla-4dim template already did that. It #}

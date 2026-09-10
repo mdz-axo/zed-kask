@@ -63,7 +63,7 @@ impl MediaOp {
             // The transcript-pipeline ops resolve the STT model (the
             // operator's 2026-09-09 ruling): chat_audio and chat_json are
             // the educt pass call shapes, and their model is the STT model.
-            Self::ChatAudio | Self::ChatJson | Self::Transcribe => Some("HKASK_MEDIA_STT_MODEL"),
+            Self::ChatAudio | Self::ChatJson => Some("HKASK_MEDIA_STT_MODEL"),
             Self::RemoveBackground | Self::Upscale => None,
         }
     }

@@ -4,6 +4,19 @@
 
 You are producing the therapy session report for "{{ target }}".
 
+{% if proposals %}
+## Approved Proposals
+
+{{ proposals | tojson }}
+
+{% endif %}
+{% if executions %}
+## Execution Results
+
+{{ executions | tojson }}
+
+{% endif %}
+
 ## Report structure
 
 ### Memory hygiene summary (forgetting — not learning)

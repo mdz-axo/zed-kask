@@ -80,7 +80,7 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 1. Rendering step (`present-map.j2` via `render_template`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
 2. This is the process's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
-3. Deterministic (no LLM call) — pure Jinja2 rendering via the `render` action.
+3. Deterministic (no LLM call) — pure Jinja2 rendering via `render_template`.
 
 ## Registry Templates
 

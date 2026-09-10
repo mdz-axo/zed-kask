@@ -1,15 +1,13 @@
 {# goal: Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). #}
 {# Surface the Wardley Map quadrant chart + recommendations as markdown.
-   This is a pure Jinja2 template (no frontmatter, no inference call) executed by
-   the `render` action. The output is stored as step_N_result (Value::String) and
-   becomes the process's final output via extract_final_step_result (highest
-   ordinal).
+   This is a pure Jinja2 template (no [inference] header, no LLM call) rendered by
+   the `render_template` tool from the SKILL.md body's final step.
 
    The fenced ```mermaid block is what acp_thread's mermaid renderer picks up —
    parse_mermaid_info requires the info string "mermaid" on a fenced code block,
    and is_supported_diagram_type checks that the first token is quadrantChart.
-   Without this render step, map_diagram stays buried inside step_3_result and
-   extract_final_step_result picks a later step (compute/loop) that has no diagram. #}
+   Without this render step, map_diagram stays buried inside the map-value-chain
+   step's JSON output and the final surfaced text has no diagram. #}
 ## Wardley Map
 
 ```mermaid

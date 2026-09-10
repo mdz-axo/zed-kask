@@ -59,13 +59,19 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - **S7**: SKILL.md instructions reference concrete tools (`lisp_eval`,
      MCP tools, `read_file`, `render_template`, `skill`) — not abstract "the system will" language
    - **S8**: SKILL.md has a "Constraints" section
-   - **S9**: No `visibility` field in frontmatter
+   - **S9**: No `visibility` field in frontmatter. Mechanical enforcement
+     point: `kask/scripts/audit/skill-corpus-s9-s10-sweep.sh` (frontmatter
+     dispatch-key sweep).
    - **S10**: SKILL.md does not use removed vocabulary (`compute_ref`,
      `action:`, `template_ref` as a manifest dispatch key, `convergence_signal`,
      `input_mapping`, `on_failure`, `ordinal:`) or vestigial `steps` frontmatter with
      `id`/`tools` dispatch structure (manifest-executor remnant). The
      `render_template` tool's `template_ref` parameter, named in call
-     instructions, is the live contract — not a violation.
+     instructions, is the live contract — not a violation. Mechanical
+     enforcement point: `kask/scripts/audit/skill-corpus-s9-s10-sweep.sh`
+     (frontmatter dispatch keys + body key-form sweep of the no-live-contract
+     tokens; `template_ref`/`action` body usages adjudicate at read-triage
+     under this check).
    - **S11**: If `core: true` is declared, the name must be in
      `CORE_SKILL_NAMES` (enforced by `agent_skills` at load time)
    - **S12**: Every `lisp_eval` form pinned in a SKILL.md's instructions
@@ -150,11 +156,24 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
    - "Instructions" section with numbered, tool-oriented steps
    - "Constraints" section
 4. Create .j2 templates for each reasoning phase:
-   - Comment header with purpose
-   - Jinja2 variables for context
+   - `{# goal: ... #}` annotation as the first line, derived verbatim from
+     the Registry Templates row this build writes into the generated
+     SKILL.md — the row IS the goal (single source, no drift between the
+     table and the annotation). One `{# goal: ... #}` block per template:
+     a long goal is one long line, never consecutive `{# ... #}` blocks
+     (wrapped goals parse partially under logic-load-goal and the
+     prescreen).
+   - `[inference]` contract header (input/output fields, `visibility`),
+     terminated by a lone `---` line
+   - Jinja2 variables for context, matching the contract inputs
    - Expected JSON output shape
-5. Derive the PDCA shape from the skill's ontological anchors (see create-skill).
-6. Respond with the SKILL.md content, template contents, and validation status.
+5. Run the generated templates through
+   `kask/scripts/audit/skill-corpus-prescreen.sh` before responding — every
+   generated template must pass (goal presence, length, overlap). A
+   generated template that fails the prescreen is a build defect, not a
+   triage candidate.
+6. Derive the PDCA shape from the skill's ontological anchors (see create-skill).
+7. Respond with the SKILL.md content, template contents, and validation status.
 
 ### skill-maintenance-translate
 

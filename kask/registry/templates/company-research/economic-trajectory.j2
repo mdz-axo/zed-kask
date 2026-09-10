@@ -4,6 +4,7 @@ contract:
     ticker: string
     company_board: object
     rotated_board: object|null
+    wardley_map: object|null
     prior_economic_trajectory: object|null
   output:
     falling_cost: object
@@ -17,15 +18,7 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# goal: Economically-anchored imagination scaffold. Identifies the falling-cost #}
-{# trajectory in the subject's industry, the design constraint being removed, the #}
-{# Coasean firm-boundary shifts, and the Kauffman adjacent possible that opens up. #}
-{# This is the economic structure that IMAGINE must be consistent with. Anchored to #}
-{# MAIA Substack "Focus and Imagination" (imagination must be anchored in reality), #}
-{# "Stuart A. Kauffman Readings" (adjacent possible, economic web, Darwinian #}
-{# preadaptations), "More From Less" (dematerialization, falling costs), "The Future #}
-{# Is Faster Than You Think" (convergence), "Bottlenecks and Critical Mass" #}
-{# (rate-limiting factors, constraint removal), "Time Horizons" (walk-back method). #}
+{# goal: Economically-anchored imagination scaffold. Identifies the falling-cost trajectory in the subject's industry, the design constraint being removed, the Coasean firm-boundary shifts, and the Kauffman adjacent possible that opens up. This is the economic structure that IMAGINE must be consistent with. Anchored to MAIA Substack "Focus and Imagination" (imagination must be anchored in reality), "Stuart A. Kauffman Readings" (adjacent possible, economic web, Darwinian preadaptations), "More From Less" (dematerialization, falling costs), "The Future Is Faster Than You Think" (convergence), "Bottlenecks and Critical Mass" (rate-limiting factors, constraint removal), "Time Horizons" (walk-back method). #}
 
 [inference]
 temperature = 0.4
@@ -52,6 +45,16 @@ You are the ECONOMIC TRAJECTORY agent for an institutional equity research desk.
 ```
 
 Use the rotated competitive landscape, not the original, when assessing the subject's position in the economic trajectory.
+{% endif %}
+
+{% if wardley_map %}
+## Wardley Map (from WARDLEY agent — the commoditization anchor)
+
+```json
+{{ wardley_map | tojson }}
+```
+
+Consume `commoditization_candidates` as the falling-cost anchor — what's becoming commodity IS the falling-cost trajectory. Components the broader market has already commoditized that the company still builds custom are the strongest falling-cost signals.
 {% endif %}
 
 {% if prior_economic_trajectory %}
