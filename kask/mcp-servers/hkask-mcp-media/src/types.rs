@@ -171,7 +171,7 @@ pub struct FaceRegisterRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FaceListRequest {
-    /// Optional status filter: "valid", "rejected", or "pending".
+    /// Optional status filter: "valid" or "rejected".
     pub status: Option<String>,
 }
 
@@ -338,21 +338,13 @@ pub struct EductLocateRequest {
     pub text: String,
 }
 
-/// Lifecycle status of a face registry entry.
-/// Stored as TEXT in SQLite; the storage layer accepts `&str` and this enum
-/// implements `AsRef<str>` for a typed call site.
+/// Lifecycle status of a face registry entry, set at registration by the
+/// validation result. Stored as TEXT in SQLite; the storage layer accepts
+/// `&str` and this enum implements `AsRef<str>` for a typed call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaceStatus {
     Valid,
     Rejected,
-    Pending,
-}
-
-impl FaceStatus {
-    /// Returns true if this status is `Valid`.
-    pub fn is_valid(self) -> bool {
-        matches!(self, Self::Valid)
-    }
 }
 
 impl std::fmt::Display for FaceStatus {
@@ -366,19 +358,6 @@ impl AsRef<str> for FaceStatus {
         match self {
             Self::Valid => "valid",
             Self::Rejected => "rejected",
-            Self::Pending => "pending",
-        }
-    }
-}
-
-impl std::str::FromStr for FaceStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "valid" => Ok(Self::Valid),
-            "rejected" => Ok(Self::Rejected),
-            "pending" => Ok(Self::Pending),
-            other => Err(format!("unknown face status: {}", other)),
         }
     }
 }
@@ -568,7 +547,7 @@ pub struct GenerateSpeechRequest {
 // ── Audio request types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TranscribeRequest {
+pub struct TranscribeBundleRequest {
     /// URL or base64 data URI of the audio to transcribe.
     pub audio_url: String,
     /// Optional ISO 639-1 language code (e.g., "en", "ja").

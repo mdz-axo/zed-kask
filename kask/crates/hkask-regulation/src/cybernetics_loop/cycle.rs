@@ -2433,7 +2433,7 @@ mod tests {
                 .record_variety("hkask-mcp-media", "gallery_search")
                 .await;
             regulation_loop
-                .record_variety("hkask-mcp-media", "gallery_add_audio")
+                .record_variety("hkask-mcp-media", "gallery_add_media")
                 .await;
             let ledger_guard = ledger.read().await;
             assert_eq!(

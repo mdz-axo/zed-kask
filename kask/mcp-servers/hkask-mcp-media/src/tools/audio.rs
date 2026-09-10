@@ -38,12 +38,10 @@ fn transcript_bundle_from_raw(
     audio_path: String,
     language: Option<String>,
     duration_fallback_secs: f64,
-    repl_chat_ref: Option<String>,
 ) -> TranscriptBundle {
     TranscriptBundle {
         format: "hkask-transcript-v1".to_string(),
         audio_path,
-        repl_chat_ref,
         audio_duration_secs: raw
             .get("duration")
             .and_then(|d| d.as_f64())
@@ -106,15 +104,21 @@ impl MediaServer {
                 McpToolError::internal(format!("Template render failed: {}", e)) // rr0044-ok: own template engine render failure
             })?;
 
+            // Fail-visible (the operator's no-hidden-models spec): no configured
+            // pass model is a typed error naming the setting — never a hidden
+            // code constant.
+            let model = crate::models::pass_model().ok_or_else(|| {
+                McpToolError::permission_denied(format!(
+                    "no pass model configured — set {} (injected from \
+                     kask.models); kask never falls back to a hidden \
+                     code constant",
+                    crate::models::PASS_ENV
+                ))
+            })?;
             let params = hkask_types::template::LLMParameters::default();
             let r = self
                 .vision_port
-                .generate_with_model(
-                    &prompt,
-                    &params,
-                    Some("OpenRouter/meta-llama/Llama-3.3-70B-Instruct"),
-                    None,
-                )
+                .generate_with_model(&prompt, &params, Some(model.as_str()), None)
                 .await
                 .map_err(|e| classify_inference_error("Voice design inference failed", e))?;
 
@@ -187,10 +191,10 @@ impl MediaServer {
     )]
     pub async fn transcribe_bundle(
         &self,
-        Parameters(TranscribeRequest {
+        Parameters(TranscribeBundleRequest {
             audio_url,
             language,
-        }): Parameters<TranscribeRequest>,
+        }): Parameters<TranscribeBundleRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
             // Local recordings and fetched media are the primary transcript
@@ -211,8 +215,7 @@ impl MediaServer {
                 .await
                 .map_err(|e| classify_inference_error("Transcription failed", e))?;
 
-            let bundle =
-                transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0, None);
+            let bundle = transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0);
 
             Ok(serde_json::to_value(&bundle)
                 .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize bundle"})))
@@ -249,8 +252,7 @@ impl MediaServer {
                 .await
                 .map_err(|e| classify_inference_error("Transcription failed", e))?;
 
-            let bundle =
-                transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0, None);
+            let bundle = transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0);
 
             let driver = &**self.gallery_store.driver();
             let summary = crate::transcript_store::store_transcript(
@@ -373,7 +375,6 @@ impl MediaServer {
                         audio_path_str,
                         language.clone(),
                         duration_secs as f64,
-                        Some("repl_chat_hook".to_string()),
                     );
 
                     let result = serde_json::to_value(&bundle).unwrap_or_else(|_| {

@@ -39,8 +39,9 @@ pub struct TranscriptSegment {
 
 /// A synchronized audio + transcript bundle.
 ///
-/// Produced by `record_and_transcribe` or `transcribe_with_words` tools.
-/// The frontend uses `words` for word-level highlighting and click-to-seek.
+/// Produced by `transcribe_bundle`, `transcribe_and_store`, or
+/// `record_and_transcribe` tools. The frontend uses `words` for word-level
+/// highlighting and click-to-seek.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptBundle {
     /// Format identifier: "hkask-transcript-v1"
@@ -71,11 +72,6 @@ pub struct TranscriptBundle {
     /// STT model used for transcription.
     #[serde(default)]
     pub model: Option<String>,
-
-    /// REPL/chat loop event reference (S1→S5 algedonic channel).
-    /// Links transcript bundle back to agent decision layer.
-    #[serde(default)]
-    pub repl_chat_ref: Option<String>,
 }
 
 impl TranscriptBundle {
@@ -96,29 +92,7 @@ impl TranscriptBundle {
             segments: Vec::new(),
             language: None,
             model: None,
-            repl_chat_ref: None,
         }
-    }
-
-    /// Total word count.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is a valid TranscriptBundle
-    /// post: returns the number of TimedWord entries in self.words (usize)
-    pub fn word_count(&self) -> usize {
-        self.words.len()
-    }
-
-    /// Find the word at a given millisecond position.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  ms is any u64 millisecond offset
-    /// post: returns Some(&TimedWord) if a word spans ms (start_ms <= ms < end_ms);
-    ///       returns None if no word covers that position
-    pub fn word_at_ms(&self, ms: u64) -> Option<&TimedWord> {
-        self.words
-            .iter()
-            .find(|w| w.start_ms <= ms && ms < w.end_ms)
     }
 }
 
@@ -134,34 +108,5 @@ mod tests {
             "Hello world.".to_string(),
         );
         assert_eq!(bundle.format, "hkask-transcript-v1");
-    }
-
-    #[test]
-    fn word_at_ms_finds_correct_word() {
-        let bundle = TranscriptBundle {
-            words: vec![
-                TimedWord {
-                    word: "Hello".to_string(),
-                    start_ms: 0,
-                    end_ms: 500,
-                    confidence: Some(Confidence::new(0.99)),
-                },
-                TimedWord {
-                    word: "world".to_string(),
-                    start_ms: 500,
-                    end_ms: 900,
-                    confidence: Some(Confidence::new(0.98)),
-                },
-            ],
-            ..TranscriptBundle::new(
-                "/tmp/audio.wav".to_string(),
-                2.0,
-                "Hello world.".to_string(),
-            )
-        };
-
-        assert_eq!(bundle.word_at_ms(200).unwrap().word, "Hello");
-        assert_eq!(bundle.word_at_ms(700).unwrap().word, "world");
-        assert!(bundle.word_at_ms(1000).is_none());
     }
 }

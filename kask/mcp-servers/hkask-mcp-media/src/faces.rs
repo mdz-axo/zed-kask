@@ -73,20 +73,14 @@ impl MediaServer {
         // (j2) prompt templates — `validate_face_ref` here, `match_faces` in
         // `run_face_matching` — dispatched through the inference port, the
         // same pattern as every other vision capability in this server. No
-        // local embedding model, no local geometric matching. Full build-out
-        // is deferred; no embedding is produced at registration. The store's
-        // nullable `embedding` column is legacy from a removed local-cosine
-        // path, is unused, and is not part of this design.
+        // local embedding model, no local geometric matching; a previous
+        // LLM-produced-"embedding" cosine path was removed because LLMs
+        // cannot emit geometrically consistent vectors, and its store
+        // column went with it. Full build-out of the face-recognition
+        // feature is deferred — the current templates are the working core.
         let record = self
             .gallery_store
-            .register_face(
-                first_name,
-                last_name,
-                image_id,
-                None,
-                status.as_ref(),
-                &notes,
-            )
+            .register_face(first_name, last_name, image_id, status.as_ref(), &notes)
             .map_err(|e| map_media_error(e.into()))?;
         Ok((record, validation))
     }

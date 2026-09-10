@@ -794,7 +794,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "List all registered faces in the face registry. Optionally filter by status: 'valid', 'rejected', or 'pending'."
+        description = "List all registered faces in the face registry. Optionally filter by status: 'valid' or 'rejected'."
     )]
     pub async fn face_list(
         &self,

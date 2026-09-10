@@ -1,7 +1,7 @@
 //! Media Panel — a Steer-only surface for the `hkask-mcp-media` MCP server.
 //!
 //! Like the portfolio panel, this panel deliberately has **no browse forms** —
-//! the media server exposes 60+ tools spanning gallery management, image/video
+//! the media server exposes 80 tools spanning gallery management, image/video
 //! generation, voice synthesis, transcription, and face recognition. A
 //! hand-written management UI for all of these would be impractical and would
 //! duplicate the Steer conversation's chat-driven workflow. The panel's sole

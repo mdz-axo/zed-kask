@@ -1,6 +1,6 @@
 # hkask-mcp-media
 
-Media generation MCP server — image, video, audio, and 3D generation via the configured media providers.
+Media generation MCP server — image, video, and audio generation via the configured media providers.
 
 ## Tools (80)
 
@@ -179,7 +179,7 @@ model overrides for background removal/upscale. See the
 
 ## Face recognition — design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. Full build-out of the face-recognition feature is **deferred** — the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface. The store's nullable `embedding` column is legacy from the removed path, is unused, and is not part of this design.
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred** — the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
 
 ## Quick Start
 
@@ -196,5 +196,5 @@ hkask-mcp-media
 "Generate an image of a sunset over mountains"  → generate_image
 "Search my gallery for cat photos"              → gallery_search
 "Convert this video to GIF"                      → video_to_gif
-"Transcribe this audio recording"                → transcribe
+"Transcribe this audio recording"                → transcribe_bundle
 ```

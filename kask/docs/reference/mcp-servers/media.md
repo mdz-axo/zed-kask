@@ -98,7 +98,7 @@ media model settings/replays and remove fixed-op model overrides. See the
 | `HKASK_MEDIA_DB` | Gallery DB path override (`src/hkask_mcp_media.rs:485`) | `{data_dir}/mcp/media/gallery.db` |
 | `HKASK_MEDIA_TTS_MODEL` | TTS model (`models::tts_model()`) | not configured — TTS calls fail visibly |
 | `HKASK_MEDIA_STT_MODEL` | STT model (`models::stt_model()`) | not configured — STT calls fail visibly |
-| `HKASK_MEDIA_PASS_MODEL` | Pass (image-processing) model (`models::PASS_ENV`) | not configured |
+| `HKASK_MEDIA_PASS_MODEL` | Prompt-schema pass model — transcript passes and `voice_design` (`models::PASS_ENV`) | not configured — `voice_design` and prompt-schema passes fail visibly |
 | `HKASK_MEDIA_AUDIO_CHAT_MODEL` | Audio-chat model (`models::AUDIO_CHAT_ENV`) | not configured |
 | `HKASK_MEDIA_STRUCTURED_PASS_MODEL` | Structured-pass model (`models::STRUCTURED_PASS_ENV`) | not configured |
 | `HKASK_MEDIA_VISION_MODEL` | Vision model (`models::vision_model()`) | not configured — vision calls fail visibly |
@@ -227,7 +227,7 @@ No routing or layout change is part of this repair.
 | `face_validate` | 761 | Validate a gallery image as a face reference: exactly 1 face, coverage ≥15%, frontal pose, good lighting, no occlusion, sharp focus; structured pass/fail with reasons. |
 | `face_register` | 794 | Register a face reference with a person's name; auto-validates 6 criteria, `--force` skips validation; stored in `face_registry` for matching during `gallery_refresh`. |
 | `face_scan_folder` | 842 | Scan a folder of reference face images (with YAML sidecars) and register each in `face_registry`; default `mcp/media/faces/`. |
-| `face_list` | 877 | List registered faces; optional status filter (valid / rejected / pending). |
+| `face_list` | 877 | List registered faces; optional status filter (valid / rejected). |
 | `face_remove` | 903 | Remove a face from the registry by ID. |
 | `gallery_timeline` | 927 | Organize gallery images by time period using EXIF dates; grouped by year, month, or decade. |
 | `gallery_record_generation` | 1026 | Record generation lineage for a gallery image (prompt, model, provider, seed, params) so it can be reproduced or varied later; image must already be indexed. |
@@ -359,7 +359,7 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 ## Key paths
 
 - **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` (tags or semantic mode) / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_media` for non-image assets
-- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors). Full build-out is deferred; the store's nullable `embedding` column is unused legacy from the removed path and not part of this design.
+- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors, and its `face_registry.embedding` store column was dropped with it via the forward schema update). Full build-out is deferred.
 - **Generation with lineage:** `generate_image` → save to gallery → `gallery_organize`/`gallery_refresh` → `gallery_record_generation` → later `gallery_reproduce` or `gallery_lineage`/`gallery_asset_detail`
 - **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
 - **Video from gallery assets:** `video_fetch` (acquire) or `gallery_add_media` (import) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` to turn keyframes back into searchable assets

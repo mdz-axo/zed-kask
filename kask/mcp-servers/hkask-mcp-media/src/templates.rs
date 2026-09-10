@@ -18,8 +18,6 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("tag_objects", TAG_OBJECTS),
         ("tag_colors", TAG_COLORS),
         ("tag_composition", TAG_COMPOSITION),
-        ("describe_scene", DESCRIBE_SCENE),
-        ("classify_style", CLASSIFY_STYLE),
         ("caption", CAPTION),
         ("voice_design", VOICE_DESIGN),
         ("video_caption", VIDEO_CAPTION),
@@ -274,39 +272,6 @@ Return ONLY a JSON object with these fields:
 - framing: string
 - symmetry: string
 - negative_space: string"#;
-
-const DESCRIBE_SCENE: &str = r#"{% if style == "descriptive" %}
-Describe this image in detail. Cover the subject, setting, lighting, colors, composition, mood, and any notable details. Write 2-4 sentences.
-
-{% elif style == "artistic" %}
-Write an artistic, evocative description of this image. Use poetic language and focus on mood, emotion, and aesthetic quality. Write 2-3 sentences.
-
-{% elif style == "technical" %}
-Provide a technical description of this image. Note the photographic/compositional elements: focal point, depth of field, lighting conditions, color palette, perspective, and any post-processing effects visible. Write 2-4 sentences.
-
-{% elif style == "alt_text" %}
-Write concise alt text for this image suitable for accessibility. Describe only what is visually present — no interpretation. Keep to 1-2 sentences, max 125 characters.
-
-{% endif %}
-
-Return ONLY the description text. No markdown, no preamble, no labels."#;
-
-const CLASSIFY_STYLE: &str = r#"Analyze this image and classify its photographic style.
-
-{% if categories %}
-Classify into these categories (an image can belong to multiple): {{ categories }}
-{% else %}
-Evaluate these dimensions:
-- Genre: portrait, landscape, street, macro, architecture, documentary, abstract, still life, wildlife, fashion, food, sports, aerial, underwater, astrophotography
-- Era/Style: contemporary, vintage, film-grain, HDR, minimalist, maximalist, surreal, photorealistic, painterly, noir, pastel, neon, grunge
-- Technique: long exposure, bokeh, tilt-shift, double exposure, infrared, black-and-white, sepia, cross-processed
-{% endif %}
-
-For each matching category, provide:
-- category: string
-- confidence: number (0.0 to 1.0)
-
-Return ONLY a JSON array. Each element: category, confidence."#;
 
 const CAPTION: &str = r#"{% if style == "descriptive" %}
 Describe this image in detail. Cover the subject, setting, lighting, colors, composition, mood, and any notable details. Write 2-4 sentences.

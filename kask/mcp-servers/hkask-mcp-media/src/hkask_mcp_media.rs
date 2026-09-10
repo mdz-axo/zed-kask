@@ -96,6 +96,9 @@ pub mod models {
     pub fn tts_model() -> Option<String> {
         configured(TTS_ENV)
     }
+    pub fn pass_model() -> Option<String> {
+        configured(PASS_ENV)
+    }
     pub fn stt_model() -> Option<String> {
         configured(STT_ENV)
     }
@@ -941,7 +944,7 @@ mod integration_tests {
 
         // Register a face
         let face = store
-            .register_face("Alice", "Chen", &img.id, None, "valid", "Frontal portrait")
+            .register_face("Alice", "Chen", &img.id, "valid", "Frontal portrait")
             .expect("register face");
         assert_eq!(face.first_name, "Alice");
         assert_eq!(face.status, "valid");
@@ -981,10 +984,10 @@ mod integration_tests {
             .expect("add img2");
 
         store
-            .register_face("Alice", "A", &img1.id, None, "valid", "")
+            .register_face("Alice", "A", &img1.id, "valid", "")
             .unwrap();
         store
-            .register_face("Bob", "B", &img2.id, None, "rejected", "Too dark")
+            .register_face("Bob", "B", &img2.id, "rejected", "Too dark")
             .unwrap();
 
         let valid = store.list_faces(Some("valid")).unwrap();
@@ -994,9 +997,6 @@ mod integration_tests {
         let rejected = store.list_faces(Some("rejected")).unwrap();
         assert_eq!(rejected.len(), 1);
         assert_eq!(rejected[0].first_name, "Bob");
-
-        let pending = store.list_faces(Some("pending")).unwrap();
-        assert_eq!(pending.len(), 0);
     }
 
     #[test]

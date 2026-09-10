@@ -1,10 +1,6 @@
-//! Gallery module — image management, analysis, and composition.
-//!
-//! Tool families:
-//! - State: init, scan, info
-//! - Vision: detect_objects, detect_faces, caption, tag, classify
-//! - Creation: collage, derivative
-//! - Search: semantic search
+//! Gallery module — active-gallery state and the vision-LLM analysis
+//! helpers (face validation/matching, tagging, captioning) shared by the
+//! `gallery_*` and `face_*` tools.
 
 pub mod state;
 pub mod vision;

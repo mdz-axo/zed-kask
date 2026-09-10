@@ -1129,7 +1129,7 @@ mod tests {
             .increment_variety("hkask-mcp-media", "gallery_search")
             .await;
         ledger
-            .increment_variety("hkask-mcp-media", "gallery_add_audio")
+            .increment_variety("hkask-mcp-media", "gallery_add_media")
             .await;
         let variety = ledger.variety().await;
         assert_eq!(

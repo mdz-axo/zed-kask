@@ -220,11 +220,6 @@ pub struct FaceRegistryRecord {
     pub first_name: String,
     pub last_name: String,
     pub image_id: String,
-    /// Serialized face descriptor (template-produced) as raw bytes. None if
-    /// not yet computed. Compared via cosine similarity on the descriptor
-    /// vector for fast matching.
-    #[serde(skip)]
-    pub embedding: Option<Vec<u8>>,
     pub status: String,
     pub notes: String,
     pub created_at: String,
@@ -256,8 +251,8 @@ pub struct AlbumRecord {
 }
 
 /// Generation lineage for a gallery image — the full context that produced
-/// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored op+params)
-/// and `gallery_variants` (re-run with a new seed). Anti-lock-in: this is the
+/// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored
+/// op+params). Anti-lock-in: this is the
 /// metadata that makes an asset reproducible even if the provider changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationRecord {
@@ -339,8 +334,7 @@ impl GalleryStore {
                 first_name TEXT NOT NULL,
                 last_name TEXT NOT NULL,
                 image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE,
-                embedding BLOB,
-                status TEXT NOT NULL DEFAULT 'pending',
+                status TEXT NOT NULL,
                 notes TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -444,6 +438,21 @@ impl GalleryStore {
             .map_err(database_error)?;
         if columns.iter().any(|column| column == "image_count") {
             transaction.execute_batch("ALTER TABLE galleries DROP COLUMN image_count; ALTER TABLE galleries DROP COLUMN total_size_bytes;").map_err(database_error)?;
+        }
+        // The face_registry `embedding` column is gone: the local-cosine
+        // matching path it served was removed (LLM-produced "embeddings" are
+        // not geometrically consistent); face matching is vision-LLM only.
+        let columns = transaction
+            .prepare("PRAGMA table_info(face_registry)")
+            .map_err(database_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(database_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(database_error)?;
+        if columns.iter().any(|column| column == "embedding") {
+            transaction
+                .execute_batch("ALTER TABLE face_registry DROP COLUMN embedding;")
+                .map_err(database_error)?;
         }
         transaction.commit().map_err(database_error)?;
         Ok(())
@@ -1001,21 +1010,19 @@ impl GalleryStore {
         first_name: &str,
         last_name: &str,
         image_id: &str,
-        embedding: Option<&[u8]>,
         status: &str,
         notes: &str,
     ) -> std::result::Result<FaceRegistryRecord, GalleryStoreError> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = now_rfc3339();
         self.driver.execute(
-            "INSERT OR IGNORE INTO face_registry (id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            "INSERT OR IGNORE INTO face_registry (id, first_name, last_name, image_id, status, notes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             &[
                 DbValue::Text(id),
                 DbValue::Text(first_name.to_string()),
                 DbValue::Text(last_name.to_string()),
                 DbValue::Text(image_id.to_string()),
-                embedding.map_or(DbValue::Null, |e| DbValue::Blob(e.to_vec())),
                 DbValue::Text(status.to_string()),
                 DbValue::Text(notes.to_string()),
                 DbValue::Text(now),
@@ -1024,7 +1031,7 @@ impl GalleryStore {
         // Read back the existing row when insert was ignored (duplicate) or the new one
         query_row(
             &*self.driver,
-            "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+            "SELECT id, first_name, last_name, image_id, status, notes, created_at, updated_at
              FROM face_registry WHERE first_name = ?1 AND last_name = ?2 AND image_id = ?3",
             &[
                 DbValue::Text(first_name.to_string()),
@@ -1033,10 +1040,12 @@ impl GalleryStore {
             ],
             Self::face_from_row,
         )?
-        .ok_or_else(|| GalleryStoreError::NotFound(NotFound {
-            entity_type: "face".to_string(),
-            id: "face registration failed".to_string(),
-        }))
+        .ok_or_else(|| {
+            GalleryStoreError::NotFound(NotFound {
+                entity_type: "face".to_string(),
+                id: "face registration failed".to_string(),
+            })
+        })
     }
     /// List all faces in the registry, optionally filtered by status.
     ///
@@ -1054,7 +1063,7 @@ impl GalleryStore {
         if let Some(status) = status_filter {
             Ok(query_map(
                 &*self.driver,
-                "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+                "SELECT id, first_name, last_name, image_id, status, notes, created_at, updated_at
                  FROM face_registry WHERE status = ?1
                  ORDER BY created_at DESC",
                 &[DbValue::Text(status.to_string())],
@@ -1063,7 +1072,7 @@ impl GalleryStore {
         } else {
             Ok(query_map(
                 &*self.driver,
-                "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+                "SELECT id, first_name, last_name, image_id, status, notes, created_at, updated_at
                  FROM face_registry
                  ORDER BY created_at DESC",
                 &[],
@@ -1087,15 +1096,17 @@ impl GalleryStore {
     ) -> std::result::Result<FaceRegistryRecord, GalleryStoreError> {
         query_row(
             &*self.driver,
-            "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+            "SELECT id, first_name, last_name, image_id, status, notes, created_at, updated_at
              FROM face_registry WHERE id = ?1",
             &[DbValue::Text(face_id.to_string())],
             Self::face_from_row,
         )?
-        .ok_or_else(|| GalleryStoreError::NotFound(NotFound {
-            entity_type: "face".to_string(),
-            id: format!("face_id={}", face_id),
-        }))
+        .ok_or_else(|| {
+            GalleryStoreError::NotFound(NotFound {
+                entity_type: "face".to_string(),
+                id: format!("face_id={}", face_id),
+            })
+        })
     }
 
     /// Get all face registry entries associated with a specific image.
@@ -1109,7 +1120,7 @@ impl GalleryStore {
     ) -> std::result::Result<Vec<FaceRegistryRecord>, GalleryStoreError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
+            "SELECT id, first_name, last_name, image_id, status, notes, created_at, updated_at
              FROM face_registry WHERE image_id = ?1
              ORDER BY created_at DESC",
             &[DbValue::Text(image_id.to_string())],
@@ -1138,50 +1149,6 @@ impl GalleryStore {
             }));
         }
         Ok(())
-    }
-    /// Update a face registry entry's status and notes.
-    ///
-    /// expect: "The system provides durable storage for gallery data"
-    /// Update a face's status.
-    ///
-    /// expect: "The system provides durable storage for gallery data"
-    /// \[P3\] Motivating: Generative Space — update face status
-    /// pre:  face_id is valid, status is valid
-    /// post: face status updated
-    pub fn update_face(
-        &self,
-        face_id: &str,
-        status: &str,
-        notes: &str,
-    ) -> std::result::Result<FaceRegistryRecord, GalleryStoreError> {
-        let now = now_rfc3339();
-        let affected = self.driver.execute(
-            "UPDATE face_registry SET status = ?1, notes = ?2, updated_at = ?3 WHERE id = ?4",
-            &[
-                DbValue::Text(status.to_string()),
-                DbValue::Text(notes.to_string()),
-                DbValue::Text(now),
-                DbValue::Text(face_id.to_string()),
-            ],
-        )?;
-        if affected == 0 {
-            return Err(GalleryStoreError::NotFound(NotFound {
-                entity_type: "face".to_string(),
-                id: format!("face_id={}", face_id),
-            }));
-        }
-        // Read back the updated row
-        query_row(
-            &*self.driver,
-            "SELECT id, first_name, last_name, image_id, embedding, status, notes, created_at, updated_at
-             FROM face_registry WHERE id = ?1",
-            &[DbValue::Text(face_id.to_string())],
-            Self::face_from_row,
-        )?
-        .ok_or_else(|| GalleryStoreError::NotFound(NotFound {
-            entity_type: "face".to_string(),
-            id: format!("face_id={}", face_id),
-        }))
     }
     // ── Row mappers ──
     fn image_from_row(
@@ -1224,14 +1191,10 @@ impl GalleryStore {
             first_name: row.get_str(1)?.to_string(),
             last_name: row.get_str(2)?.to_string(),
             image_id: row.get_str(3)?.to_string(),
-            embedding: match row.get(4)? {
-                DbValue::Null => None,
-                v => Some(v.as_blob()?.to_vec()),
-            },
-            status: row.get_str(5)?.to_string(),
-            notes: row.get_str(6)?.to_string(),
-            created_at: row.get_str(7)?.to_string(),
-            updated_at: row.get_str(8)?.to_string(),
+            status: row.get_str(4)?.to_string(),
+            notes: row.get_str(5)?.to_string(),
+            created_at: row.get_str(6)?.to_string(),
+            updated_at: row.get_str(7)?.to_string(),
         })
     }
 }
@@ -1359,7 +1322,7 @@ impl GalleryStore {
     }
 
     /// Look up the most recent generation lineage for an image (None if none
-    /// recorded). Used by `gallery_reproduce` / `gallery_variants`.
+    /// recorded). Used by `gallery_reproduce`.
     #[must_use = "result must be used"]
     pub fn get_generation(
         &self,
@@ -1798,7 +1761,7 @@ mod tests {
             .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
-            .register_face("John", "Doe", &img.id, None, "active", "")
+            .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
         assert_eq!(face.first_name, "John");
         assert_eq!(face.status, "active");
@@ -1821,10 +1784,10 @@ mod tests {
             .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
-            .register_face("John", "Doe", &img.id, None, "active", "")
+            .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
         store
-            .register_face("Jane", "Smith", &img.id, None, "pending", "")
+            .register_face("Jane", "Smith", &img.id, "pending", "")
             .unwrap();
         let faces = store.list_faces(None).unwrap();
         assert_eq!(faces.len(), 2);
@@ -1847,10 +1810,10 @@ mod tests {
             .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         store
-            .register_face("John", "Doe", &img.id, None, "active", "")
+            .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
         store
-            .register_face("Jane", "Smith", &img.id, None, "pending", "")
+            .register_face("Jane", "Smith", &img.id, "pending", "")
             .unwrap();
         let active = store.list_faces(Some("active")).unwrap();
         assert_eq!(active.len(), 1);
@@ -1873,7 +1836,7 @@ mod tests {
             .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
-            .register_face("John", "Doe", &img.id, None, "active", "")
+            .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
         let retrieved = store.get_face(&face.id).unwrap();
         assert_eq!(retrieved.first_name, "John");
@@ -1902,33 +1865,10 @@ mod tests {
             .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
             .unwrap();
         let face = store
-            .register_face("John", "Doe", &img.id, None, "active", "")
+            .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
         store.remove_face(&face.id).unwrap();
         assert!(store.get_face(&face.id).is_err());
-    }
-
-    #[test]
-    fn update_face_changes_status() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
-        let face = store
-            .register_face("John", "Doe", &img.id, None, "active", "")
-            .unwrap();
-        let updated = store.update_face(&face.id, "inactive", "retired").unwrap();
-        assert_eq!(updated.status, "inactive");
     }
 
     #[test]

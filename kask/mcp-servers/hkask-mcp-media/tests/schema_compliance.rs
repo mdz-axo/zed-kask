@@ -25,7 +25,7 @@ use hkask_mcp_media::types::{
     GalleryReproduceRequest, GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest,
     GenerateSpeechRequest, GenerateVideoRequest, ImageEditRegionRequest, ImageToVideoRequest,
     JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest,
-    ModelListRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest,
+    ModelListRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeBundleRequest,
     TransformImageRequest, UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest,
     VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest,
     VideoFromImagesRequest, VideoInfoRequest, VideoMemeRequest, VideoRemixRequest,
@@ -52,7 +52,7 @@ macro_rules! schema_clean_test {
 
 schema_clean_test!(voice_design_request_schema, VoiceDesignRequest);
 schema_clean_test!(generate_speech_request_schema, GenerateSpeechRequest);
-schema_clean_test!(transcribe_request_schema, TranscribeRequest);
+schema_clean_test!(transcribe_request_schema, TranscribeBundleRequest);
 schema_clean_test!(audio_capture_request_schema, AudioCaptureRequest);
 schema_clean_test!(
     record_and_transcribe_request_schema,
