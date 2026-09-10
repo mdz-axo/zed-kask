@@ -1,10 +1,10 @@
-{# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings and reg.lora.audit spans (P9), and require userpod_host (P12). #}
+{# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings and reg.lora.audit spans (P9), and require host (P12). #}
 [inference]
 contract:
   input:
     config_paths: array
     selected_method: string
-    userpod_host: string
+    host: string
     dataset_profile: object
     runtime_metrics: object
   output:
@@ -25,7 +25,7 @@ thinking_budget = "full"
 
 INPUT: config_paths = {{ config_paths | default([]) }}
 INPUT: selected_method = {{ selected_method }} (operator-selected; do not replace)
-INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory)
+INPUT: host = {{ host | default("REQUIRED") }} (P12 — mandatory)
 INPUT: dataset_profile = {{ dataset_profile | default({}) | tojson }} (v0.31.0 — from G-D0 dataset profiling; feeds G-D1 dataset size/quality assessment)
 INPUT: runtime_metrics = {{ runtime_metrics | default({}) | tojson }} (v0.32.0 — runtime metrics from training; feeds G-R1 runtime alert gate. Empty/absent in preflight.)
 
@@ -257,7 +257,7 @@ shapes for passes, observations, or deficiencies:
   PEFT and arXiv citations.
 - `recommendation`: advisory next action or null; never overwrites
   `selected_method`.
-- `userpod_host`: mandatory authenticated host identity.
+- `host`: mandatory authenticated host identity.
 
 A gate result uses the same semantics and contains:
 `gate_id`, `phase`, `state`, `readiness_impact`, `finding_ids`, and
@@ -299,7 +299,7 @@ should reach the operator BEFORE the full report/convergence pipeline
 completes. Emit each `refuse` finding as a `refuse_escalation` entry with:
 - `finding_id`, `gate_id`, `claim`, `requirement`, `evidence` (the
   contradictory evidence that triggered the refusal), `selected_method`,
-  `userpod_host`, and `severity` (always critical).
+  `host`, and `severity` (always critical).
 The manifest and downstream phases still process the finding normally —
 the escalation is an IN-ADDITION short-circuit, not a replacement for the
 normal flow. This mirrors bug-hunt's `probe_escalation` pattern.
@@ -308,7 +308,7 @@ Regulation SPAN EMISSION (P9)
 Emit `reg.lora.audit` for every gate represented in `gate_results`: target
 `"reg.lora.audit"`, message `"Regulation"`, operation `"audit_gate"`, gate_id,
 phase, state, readiness_impact, evidence_kind, selected_method,
-userpod_host, latency_ms. The namespace remains registered in
+host, latency_ms. The namespace remains registered in
 `CANONICAL_NAMESPACES`. Emit no anonymous action.
 
 CAPABILITY BOUNDARY (P4)
@@ -320,18 +320,18 @@ evidence assessments only.
 OUTPUT FORMAT
 JSON object with `config_paths`, `parameters_extracted`, `selected_method`,
 `method_recommendations`, `findings` (the normalized schema unchanged),
-`gate_results`, `readiness_state`, `userpod_host`, `source_citations`,
+`gate_results`, `readiness_state`, `host`, `source_citations`,
 `reg_span_reference`, `refuse_escalation` (v0.31.0 — algedonic short-circuit
 for refuse findings), and `rejected_findings` (v0.31.0 — count of findings
 rejected for missing citations).
 
-5W1H GATE CHECK (P5): Who = operator / userpod_host; What = phase-aware
+5W1H GATE CHECK (P5): Who = operator / host; What = phase-aware
 training contract audit; Where = declared workspace paths; When = static,
 harness, runtime-evidence, and post-training-evidence phases; Why = safe,
 observable, sovereign training decisions; How = inspect declared artifacts,
 classify evidence, preserve selected method, and emit Regulation spans.
 
 REGISTRY AUTHORITATIVE (P5.1): This template is the canonical audit-config
-phase definition. PUBLIC VISIBILITY (P11): no hidden controls. USERPOD HOST
+phase definition. PUBLIC VISIBILITY (P11): no hidden controls. HOST
 (P12): mandatory in every finding, gate result context, and Regulation action.
 CONVERGENCE INDEPENDENT: this phase does not compute the convergence metric.

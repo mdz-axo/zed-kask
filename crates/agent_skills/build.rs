@@ -178,31 +178,6 @@ fn collect_template_files(base: &PathBuf, dir: &PathBuf, out: &mut Vec<(String, 
     }
 }
 
-/// Recursively collect files with the given extension from a directory,
-/// computing relative paths from the base directory.
-fn collect_extension_files(
-    base: &PathBuf,
-    dir: &PathBuf,
-    extension: &str,
-    out: &mut Vec<(String, PathBuf)>,
-) {
-    for entry in fs::read_dir(dir).expect("read seed asset directory") {
-        let entry = entry.expect("dir entry");
-        let path = entry.path();
-        if path.is_dir() {
-            collect_extension_files(base, &path, extension, out);
-        } else if path.extension().is_some_and(|e| e == extension) {
-            let rel = path
-                .strip_prefix(base)
-                .expect("asset path under base")
-                .to_str()
-                .expect("UTF-8 asset relative path")
-                .to_string();
-            out.push((rel, path));
-        }
-    }
-}
-
 /// Validate a shipped SKILL.md's frontmatter at build time. Mirrors the
 /// runtime checks in `parse_skill_file_content_for_loading` so a build break
 /// here corresponds exactly to a runtime load failure there. Only checks the

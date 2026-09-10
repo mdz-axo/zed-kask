@@ -386,7 +386,7 @@ pub fn resolve_db_passphrase() -> Result<Zeroizing<Vec<u8>>, KeychainError> {
 /// Resolve the canonical SQLCipher passphrase as text.
 ///
 /// All database openers must use this function so the same configured secret
-/// produces the same SQLCipher key across CLI, pods, synchronization, and MCP.
+/// produces the same SQLCipher key everywhere.
 pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError> {
     let bytes = resolve_db_passphrase()?;
     // Validate in place and copy only on success. `String::from_utf8(bytes.to_vec())`

@@ -47,7 +47,7 @@ hKask operates under a Magna Carta — a charter of liberties that honors user s
 1. **User Sovereignty** — Data is owned by the user, correctly categorized, portable, and consent is atomic. Grounded in Berners-Lee's SOLID architecture principles.[^solid]
 2. **Affirmative Consent** — Default is deny. Nothing passes without an explicit yes. Consent is scoped, versioned, and expiring.
 3. **Generative Space** — Within boundaries, hKask is maximally generative. Inference and tooling expose all probabilistic/generative settings to users. No privileged engineer access. Open-source only.
-4. **Clear Boundaries** — Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability allowlists.[^miller-ocap]
+4. **Clear Boundaries** — Principles 1–3 are enforced through explicit capability boundaries. Every agent and template invocation operates within in-process capability allowlists.[^miller-ocap]
 
 ---
 

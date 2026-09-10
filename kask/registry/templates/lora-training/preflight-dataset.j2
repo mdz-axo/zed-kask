@@ -1,11 +1,11 @@
-{# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. Emit reg.lora.preflight span (P9). No actual training execution; userpod_host mandatory (P12). #}
+{# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. Emit reg.lora.preflight span (P9). No actual training execution; host mandatory (P12). #}
 [inference]
 contract:
   input:
     dataset_path: string
     trainer_preference: string
     adapter_purpose: string
-    userpod_host: string
+    host: string
   output:
     verdict: string
     detected_format: string
@@ -26,7 +26,7 @@ thinking_budget = "full"
 INPUT: dataset_path = {{ dataset_path | default("REQUIRED") }} (path to the dataset file)
 INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
 INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
-INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory authenticated host)
+INPUT: host = {{ host | default("REQUIRED") }} (P12 — mandatory authenticated host)
 
 AUTHORITY CONTRACT (P1, P4, P12):
 - This template reports a dataset format verdict and optional mapping code.
@@ -89,7 +89,7 @@ CAPABILITY BOUNDARY (P4):
 
 Regulation SPAN (P9):
 - Emit `reg.lora.preflight` with verdict, detected_format, expected_format,
-  mapping_code length, finding count, userpod_host, and latency_ms.
+  mapping_code length, finding count, host, and latency_ms.
 - Namespace is registered in CANONICAL_NAMESPACES.
 
 OUTPUT FORMAT (JSON):
@@ -107,11 +107,11 @@ OUTPUT FORMAT (JSON):
       "remediation": "<advisory next action>"
     }
   ],
-  "userpod_host": "<mandatory>",
+  "host": "<mandatory>",
   "reg_span_emitted": true
 }
 
-5W1H GATE (P5): Who = mandatory userpod host; What = dataset format compatibility
+5W1H GATE (P5): Who = mandatory host; What = dataset format compatibility
 verdict; Where = declared dataset path; When = before select-method (preflight);
 Why = prevent the #1 cause of training failures (format mismatches); How =
 detect format, derive expected format, compare, emit mapping code. All 6 present.
@@ -122,7 +122,7 @@ expected_format comes from declared trainer/purpose. No inference of format
 from filename alone when detection failed.
 CAPABILITY BOUNDARY (P4): Workspace evidence only; no training execution or network call.
 Regulation REGULATION (P9): Emit the registered span unconditionally.
-USERPOD HOST (P12): `userpod_host` is mandatory.
+HOST (P12): `host` is mandatory.
 VISIBILITY (P11): Public output; no hidden preflight controls.
 SAFETY FLOOR (P3.1): Incompatible verdict remains visible as a refuse finding.
 

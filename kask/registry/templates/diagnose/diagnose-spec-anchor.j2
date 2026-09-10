@@ -79,8 +79,8 @@ From the query results, identify the primary affected symbol. Classify it using 
 | Dublin Core term | Maps to |
 |---|---|
 | `dcterms:type` | The symbol kind (function, struct, trait, module, impl, etc.) — this is the THING type |
-| `dcterms:identifier` | The symbol's qualified name (e.g. `hkask_test_harness::write_trace`) |
-| `dcterms:source` | The file path and line number (e.g. `kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179`) |
+| `dcterms:identifier` | The symbol's qualified name (e.g. `hkask_types::agent_paths::mcp_server_db`) |
+| `dcterms:source` | The file path and line number (e.g. `kask/crates/hkask-types/src/agent_paths.rs:169`) |
 | `dcterms:subject` | The MDS domain category, DERIVED from the entity's ontological position — not looked up from a spec. A function in the capability crate → "Trust"; a function in the template executor → "Composition"; a persistence function → "Lifecycle". The subject is a tag on the thing, derived from where it sits in the graph. |
 
 ### Step 2: Locate the flow (PKO procedure)
@@ -118,11 +118,11 @@ Respond with a JSON object:
 ```json
 {
   "dcterms_type": "function|struct|trait|module|impl|...",
-  "dcterms_identifier": "hkask_test_harness::write_trace",
-  "dcterms_source": "kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179",
+  "dcterms_identifier": "hkask_types::agent_paths::mcp_server_db",
+  "dcterms_source": "kask/crates/hkask-types/src/agent_paths.rs:169",
   "dcterms_subject": "Lifecycle",
   "pko_procedure": [
-    {"step": "write_trace", "edge": "calls", "issue": true}
+    {"step": "mcp_server_db", "edge": "calls", "issue": true}
   ],
   "pko_step": "write_trace",
   "pko_issue_occurrence": {

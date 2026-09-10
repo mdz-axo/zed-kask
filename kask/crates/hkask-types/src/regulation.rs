@@ -102,7 +102,7 @@ impl RegulationHealth {
 /// loop variables, and `SpanNamespace::new` rejects them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RegulationSpan {
-    /// Curation loop operations — registry sync, pod sync, directive issuance.
+    /// Curation loop operations — registry sync, directive issuance.
     Curation,
     /// Memory encoding operations.
     MemoryEncode,

@@ -98,5 +98,5 @@ Template context variables (from each template's [inference] contract):
 - Criteria are designed for LLM-judged semantic verification, not deterministic checks — this avoids Goodhart's law.
 - Low confidence (< 0.7) escalates to human regardless of verdict.
 - Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Maximum 10 iterations; minimum 2 iterations before declaring convergence.
-- Goals coordinate across human, userpod, and bot agents.
+- Goals coordinate across human and agent participants.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -76,7 +76,7 @@ h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 
 | Variable | Description |
 |----------|-------------|
-| `HKASK_KANBAN_DB` | Per-agent kanban database file (defaults to `agents/{userpod}/kanban.db`) |
+| `HKASK_KANBAN_DB` | Kanban database file (defaults to `{kask_data_dir}/mcp/kata-kanban/kanban.db`) |
 | `HKASK_DB_PASSPHRASE` | SQLCipher encryption passphrase |
 
 ## Regulation Spans

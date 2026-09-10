@@ -90,7 +90,7 @@ Return a JSON object with a "tasks" array AND a "recomposition" object. Each tas
    For each task, optionally include:
    - **starter_kata**: When should the agent use an observation drill? "If you're unsure why progress is slow, run /kanban practice <task> to separate facts from interpretations."
    - **improvement_kata**: When should the agent run a PDCA experiment? "If the task hits a blocker, run /kanban improve <task> to design a targeted experiment."
-   - **coaching_guidance**: For the userpod managing this task — what coaching approach helps? "Ask the agent what ONE obstacle they're addressing, not all of them. Use /kanban coach <task> for the 5-question dialogue."
+   - **coaching_guidance**: For the agent managing this task — what coaching approach helps? "Ask the agent what ONE obstacle they're addressing, not all of them. Use /kanban coach <task> for the 5-question dialogue."
 
    Include a "kata_guidance" object in the output with per-task suggestions. This is optional — omit it if katas don't naturally apply to a task.
 

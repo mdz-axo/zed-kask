@@ -1,4 +1,4 @@
-{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. Emit reg.lora.select span (P9). No actual training execution; userpod_host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → convergence-check → revise inputs → re-invoke. #}
+{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. Emit reg.lora.select span (P9). No actual training execution; host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → convergence-check → revise inputs → re-invoke. #}
 [inference]
 contract:
   input:
@@ -10,7 +10,7 @@ contract:
     task_distance: string
     quality_vs_cost: string
     knowledge_preservation_required: boolean
-    userpod_host: string
+    host: string
     harness_preference: string
     trainer_preference: string
     adapter_purpose: string
@@ -49,7 +49,7 @@ INPUT: inference_constraint = {{ inference_constraint | default("either-ok") }} 
 INPUT: task_distance = {{ task_distance | default("moderate") }} (light | moderate | heavy)
 INPUT: quality_vs_cost = {{ quality_vs_cost | default("default") }} (cost-sensitive | quality-critical | default)
 INPUT: knowledge_preservation_required = {{ knowledge_preservation_required | default(false) }} (bool)
-INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — no anonymous training config)
+INPUT: host = {{ host | default("REQUIRED") }} (P12 — no anonymous training config)
 INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (axolotl | trl | ludwig | undetermined)
 INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
 INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
@@ -564,7 +564,7 @@ OUTPUT (JSON; emit only derivable values and explicit undetermined states):
     "operator": "accepts_overrides_or_rejects",
     "runtime": "enforces_established_hard_contracts"
   },
-  "userpod_host": <string>
+  "host": <string>
 }
 
 DO NOT EMIT WITHOUT CONCRETE INPUT EVIDENCE:
@@ -578,7 +578,7 @@ Regulation SPAN EMISSION (P9 — every recommendation action):
 - `reg.lora.select` span: target `"reg.lora.select"`, message `"Regulation"`,
   operation `"recommend_method"`, gate_inputs: {...}, recommendation,
   readiness_status, operator_disposition (`pending` until supplied),
-  justification_citations, userpod_host, latency_ms.
+  justification_citations, host, latency_ms.
 - Namespace registered in `CANONICAL_NAMESPACES`
   (`crates/hkask-types/src/event.rs`). Emit unconditionally.
 
@@ -586,7 +586,7 @@ CONSTRAINTS (P1-P12, P5 minimalism, P8 evidence integrity, P12 host):
 - No synthetic config values. Every refinement must cite a concrete source.
 - No actual training execution (P4 boundary — recommendation only).
 - No model download; read only declared workspace config paths.
-- Every recommendation includes `userpod_host` identity (P12).
+- Every recommendation includes `host` identity (P12).
 - Registry (`manifest.yaml` + `.j2`) is authoritative over SKILL.md (P5.1).
 - Do NOT use AutoPEFT-style search (arXiv:2301.12132) — multi-objective
   BO over hundreds of training runs is infeasible per training job.
@@ -600,7 +600,7 @@ CONSTRAINTS (P1-P12, P5 minimalism, P8 evidence integrity, P12 host):
   consumed by that loop.
 
 5W1H GATE (P5 — minimal):
-- Who: Authenticated training operator / userpod host (P12).
+- Who: Authenticated training operator / host (P12).
 - What: Composable PEFT recommendation and unresolved evidence.
 - Where: Training script / config file / model card.
 - When: Pre-training recommendation, before acceptance and readiness audit.
@@ -672,6 +672,6 @@ CAPABILITY BOUNDARY (P4): Read only declared workspace config paths; no ambient
 model download or network calls without explicit consent (P2).
 Regulation REGULATION (P9): Emit `reg.lora.select` unconditionally; namespace is
 registered in `CANONICAL_NAMESPACES`.
-USERPOD HOST (P12): `userpod_host` is mandatory in every output.
+HOST (P12): `host` is mandatory in every output.
 SAFETY FLOOR (P3.1): Recommendation exposes uncertainty; audit and runtime
 establish readiness and enforce hard contracts.

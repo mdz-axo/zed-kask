@@ -13,8 +13,6 @@ CREATE TABLE IF NOT EXISTS reg_alerts (id TEXT PRIMARY KEY, timestamp TEXT NOT N
 CREATE TABLE IF NOT EXISTS agent_registry (name TEXT PRIMARY KEY, agent_kind TEXT, definition_json TEXT NOT NULL, token_hash TEXT NOT NULL, registered_at TEXT NOT NULL, source_yaml TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_agent_registry_kind ON agent_registry(agent_kind);
 CREATE TABLE IF NOT EXISTS loop_cursors (key TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TEXT NOT NULL);
--- Pod metadata — webid, pod_kind, created_at for passphrase derivation and discovery
-CREATE TABLE IF NOT EXISTS pod_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- Memory co-occurrence links — tracks how often two entities are recalled
 -- together. The link count is the `connectedness` signal for recall ranking:
 -- a memory referenced by many others has been tested against more contexts.

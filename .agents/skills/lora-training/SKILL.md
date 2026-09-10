@@ -41,7 +41,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - Read only declared workspace paths. Do not download models, call remote
   services without explicit consent, or execute initialization, forward,
   backward, merge, training, or evaluation.
-- Require `userpod_host` for every action and emit the corresponding registered
+- Require `host` for every action and emit the corresponding registered
   `reg.lora.*` span.
 
 ## When NOT to Use
@@ -183,7 +183,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 9. Emit algedonic escalation (v0.31.0): for every `refuse` finding, emit a
    `refuse_escalation` entry (VSM S1→S5 short-circuit) with `finding_id`,
    `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
-   `userpod_host`, and `severity: critical`. The escalation is in-addition; the
+   `host`, and `severity: critical`. The escalation is in-addition; the
    manifest and downstream phases still process the finding normally.
 10. Emit every result using the normalized Finding schema below, compute readiness
     separately, and emit `reg.lora.audit` for every represented gate.
@@ -207,14 +207,14 @@ Every finding has exactly these fields:
 - `epistemic_mode`: `declarative | probabilistic | subjunctive`
 - `citation`
 - `recommendation`
-- `userpod_host`
+- `host`
 
 Do not create alternate finding shapes. A recommendation never overwrites
 `selected_method`, and unavailable evidence never becomes an observed violation.
 
 ### `lora-training/report`
 
-1. Validate `userpod_host` and consume normalized findings without adding,
+1. Validate `host` and consume normalized findings without adding,
    removing, renaming, repairing, or reclassifying fields.
 2. Present complete findings unchanged; grouped views may organize them by phase,
    state, or severity only.
@@ -244,7 +244,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - All four templates are public. No hidden training controls or parameters.
-- Preserve operator sovereignty and authenticated `userpod_host` identity.
+- Preserve operator sovereignty and authenticated `host` identity.
 - Emit only values, findings, states, citations, and measurements supported by
   declared evidence. Do not invent defaults, snippets, line numbers, benchmark
   results, or training outcomes.

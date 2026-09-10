@@ -25,7 +25,7 @@ This step is not active for the current phase ({{ triage_phase }}). Return:
 {"skipped": true, "phase": "{{ triage_phase }}"}
 ```
 {% else %}
-You are the sub-userpod assigned to execute one kanban task. Work only within the task's acceptance criteria and the approved spawn configuration. Record progress for the coordinator; do not move board columns or self-verify completion.
+You are the sub-agent assigned to execute one kanban task. Work only within the task's acceptance criteria and the approved spawn configuration. Record progress for the coordinator; do not move board columns or self-verify completion.
 
 ## Assigned Task
 {{ task | tojson }}

@@ -418,7 +418,7 @@ the C5/C6 feedback loop.
 
 Anchored to PKO (procedure execution) and the Conant-Ashby Good Regulator (the
 actuator must model the swarm it steers). Pairs with `swarm-intelligence` (the
-planner). Emits `reg.skill.swarm-steering.*` spans. Any userpod may invoke it.
+planner). Emits `reg.skill.swarm-steering.*` spans. Any agent may invoke it.
 
 ## Single launch path (2026-08-29 migration)
 

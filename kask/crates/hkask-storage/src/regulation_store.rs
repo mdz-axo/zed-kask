@@ -49,8 +49,9 @@ pub struct WeightedEvent {
 ///
 /// These are the Regulation span namespaces that produce events requiring
 /// Curation (Loop 5) attention: energy deficits, variety imbalances,
-/// agent pod failures, and communication activity (Matrix messages, thread
-/// lifecycle).
+/// agent failures (the `pod` entry is historical — pods were removed
+/// 2026-09-09; it remains so archived spans still classify), and
+/// communication activity (Matrix messages, thread lifecycle).
 ///
 /// Matched against the stored `span_category` column (which holds the
 /// full `short_name()`). Wallet key-lifecycle entries removed 2026-08-30

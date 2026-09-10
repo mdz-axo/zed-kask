@@ -1,7 +1,7 @@
 //! Metacognition loop — the Curator's sense→compare→compute→act governance loop.
 //!
-//! This is a self-contained implementation that doesn't depend on `hkask-pods`.
-//! It reads from `RegulationLedger` (already wired in zed-kask) and emits
+//! This is a self-contained implementation. It reads from `RegulationLedger`
+//! (already wired in zed-kask) and emits
 //! health snapshots + escalation alerts.
 //!
 //! ## Architecture
@@ -190,9 +190,8 @@ impl Default for MetacognitionConfig {
 /// 3. **Compute**: decides whether to escalate, calibrate, or do nothing
 /// 4. **Act**: emits `reg.curator.metacognition.*` spans and logs alerts
 ///
-/// The loop is self-contained — it doesn't need `hkask-pods`, `CuratorContext`,
-/// or `CurationLoop`. It reads directly from `RegulationLedger` which is already
-/// wired in zed-kask's composition root.
+/// The loop is self-contained — it reads directly from `RegulationLedger`,
+/// which is already wired in zed-kask's composition root.
 pub struct MetacognitionLoop {
     ledger: Arc<TokioRwLock<RegulationLedger>>,
     config: MetacognitionConfig,

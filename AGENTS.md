@@ -144,6 +144,6 @@ For low-confidence regimes: `metacognition` → `falsifiability` → `improv`. L
 
 ---
 
-> **Quality reminder (Weinberg):** Value = "value to some person who matters." This guide optimizes for userpod orientation — not exhaustiveness. If you need full skill details, consult `.agents/skills/` directly.
+> **Quality reminder (Weinberg):** Value = "value to some person who matters." This guide optimizes for user orientation — not exhaustiveness. If you need full skill details, consult `.agents/skills/` directly.
 >
 > **Feedback:** If an agent failure reveals a missing trap or routing gap, propose an addition under "Suggested AGENTS.md additions" in your PR description. Mirror the `.rules` hygiene pattern: validate the pattern in review before merging.

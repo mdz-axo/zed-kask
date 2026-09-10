@@ -1,10 +1,10 @@
-{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, emit reg.lora.report (P9), and require userpod_host (P12). #}
+{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, emit reg.lora.report (P9), and require host (P12). #}
 [inference]
 contract:
   input:
     findings: array
     gate_results: object
-    userpod_host: string
+    host: string
   output:
     findings_grouped: array
     verdict: string
@@ -21,7 +21,7 @@ thinking_budget = "full"
 
 INPUT: findings = {{ findings }} (normalized array from audit-config)
 INPUT: gate_results = {{ gate_results }}
-INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory)
+INPUT: host = {{ host }} (P12 — mandatory)
 
 AUTHORITATIVE INPUT CONTRACT
 
@@ -45,7 +45,7 @@ finding unchanged with exactly this schema:
 - `epistemic_mode`
 - `citation`: array
 - `recommendation`
-- `userpod_host`
+- `host`
 
 Do not add, remove, rename, reinterpret, upgrade, downgrade, or reclassify any
 finding field. In particular:
@@ -59,8 +59,8 @@ finding field. In particular:
 REPORT ACTIONS
 
 1. Validate losslessly:
-   - Reject report synthesis if `userpod_host` is absent or if a finding's
-     `userpod_host` conflicts with it; preserve P12 identity.
+   - Reject report synthesis if `host` is absent or if a finding's
+     `host` conflicts with it; preserve P12 identity.
    - Record malformed finding inputs as `input_contract_errors` outside the
      findings array. Do not repair or reclassify them.
 2. Present `findings` unchanged. `findings_grouped` may contain views grouped
@@ -128,7 +128,7 @@ EVIDENCE INTEGRITY
 Regulation SPAN (P9)
 Emit `reg.lora.report` with exact counts by phase, state, severity, and
 `evidence_kind`; selected_method; readiness
-verdict; contract-gap count; userpod_host; latency_ms. Namespace remains
+verdict; contract-gap count; host; latency_ms. Namespace remains
 registered in `CANONICAL_NAMESPACES`. Emit no anonymous action.
 
 CAPABILITY BOUNDARY (P4)
@@ -149,11 +149,11 @@ JSON object with:
 - `readiness`: `Pass | Conditional | Fail | Refuse | Deferred | Not evaluated`
 - `contract_gaps`: requirement/evidence gaps without finding reclassification
 - `input_contract_errors`
-- `userpod_host`
+- `host`
 - `source_citations`
 - `reg_span_reference`
 
-5W1H GATE CHECK (P5): Who = operator / userpod_host; What = lossless
+5W1H GATE CHECK (P5): Who = operator / host; What = lossless
 phase-aware audit report; Where = supplied audit artifacts; When = after
 configuration/harness audit and whenever runtime/post-training evidence is
 supplied; Why = transparent readiness without fabricated execution; How =
@@ -161,6 +161,6 @@ preserve findings, summarize states, separate recommendations,
 and emit Regulation span.
 
 REGISTRY AUTHORITATIVE (P5.1): This template is the canonical report phase.
-PUBLIC VISIBILITY (P11): report outputs are public. USERPOD HOST
+PUBLIC VISIBILITY (P11): report outputs are public. HOST
 (P12): mandatory throughout. CONVERGENCE INDEPENDENT: this report does not
 compute the convergence metric.

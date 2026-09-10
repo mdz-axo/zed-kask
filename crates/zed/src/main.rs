@@ -1092,8 +1092,8 @@ fn main() {
         // above) and receives alerts from the CyberneticsLoop via the alert
         // channel.
         //
-        // This is a self-contained implementation in hkask-regulation that
-        // doesn't need hkask-pods. It reads directly from RegulationLedger.
+        // This is a self-contained implementation in hkask-regulation.
+        // It reads directly from RegulationLedger.
         //
         // A clone of the ledger is hoisted for the kask panel's regulation
         // status bar (wired later in the deferred task's model-dependent

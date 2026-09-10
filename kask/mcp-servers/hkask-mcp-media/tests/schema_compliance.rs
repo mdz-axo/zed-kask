@@ -10,8 +10,8 @@
 //! Layer 1 only — the `schema_clean_test!` macro asserts no request struct's
 //! JSON schema has a bare-boolean schema-valued position. Layer 2 (a
 //! `proptest!` deserialization-totality property) is intentionally omitted: it
-//! needs `proptest` + `hkask-test-harness` dev-deps to guard a different
-//! invariant (P4 deserialization totality) that is out of scope here.
+//! needs `proptest` dev-deps to guard a different invariant (P4
+//! deserialization totality) that is out of scope here.
 
 use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,

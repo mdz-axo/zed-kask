@@ -231,7 +231,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 - `kask.data_services` — **removed**. API keys are stored in the keychain only (D9b); the key's presence IS the toggle. No settings.json `*_enabled` fields.
 - `kask.mcp.load_default` + `overrides` — the default-loaded set (§2.3; 11 on disk total) + per-server toggles (curator may be unloaded via override).
 - `kask.curator` — always-on toggle, regulation set-points (variety window, algedonic thresholds).
-- `kask.sovereignty.pod` — data-dir override, consent defaults.
+- `kask.sovereignty.pod` — **removed**. Never shipped; the "pod" concept was deprecated 2026-09-09.
 - `kask.guard` — direct-chat guard strategy (R3: buffer / incremental / cascade-only). **Removed** — `cascade_only` is hardcoded; direct chat uses provider-side safety + refusal fallback.
 - `kask.memory` — consolidation cadence, confidence floor.
   Registered with zed's settings system so it appears in the `zed://schemas/settings` schema. **Minimal divergence:** one new settings struct + registration; core zed settings structs untouched.
@@ -240,7 +240,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 
 ### 11.3 Settings UI (additive page)
 
-A new **Kask** page: `crates/settings_ui/src/pages/kask_page.rs` + one entry in `page_data.rs::settings_data()`. Sub-pages mirror the settings section: **Data Services** (per-service key entry → writes to keychain via `CredentialsProvider`), **MCP Servers** (the 11 on-disk servers, with load toggles — curator may be unloaded via override), **Curator**, **Sovereignty/Pod**, **Regulation**, **Memory**. Touches `page_data.rs` minimally (one `SettingsPage` push) — core zed pages untouched.
+A new **Kask** page: `crates/settings_ui/src/pages/kask_page.rs` + one entry in `page_data.rs::settings_data()`. Sub-pages mirror the settings section: **Data Services** (per-service key entry → writes to keychain via `CredentialsProvider`), **MCP Servers** (the 11 on-disk servers, with load toggles — curator may be unloaded via override), **Curator**, **Regulation**, **Memory**. Touches `page_data.rs` minimally (one `SettingsPage` push) — core zed pages untouched.
 
 ### 11.4 Configuration translation / migration
 

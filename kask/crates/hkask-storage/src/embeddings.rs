@@ -9,7 +9,7 @@
 //! Deduplicating would require backend-conditional retrieval (join vec0 for
 //! the KNN path, read the column for the metadata path) — more complexity
 //! for ~4 KB/embedding savings. The redundancy earns its keep by preserving
-//! the uniform retrieval abstraction. If per-pod storage becomes a concern
+//! the uniform retrieval abstraction. If per-agent storage becomes a concern
 //! at scale, the escape hatch is a vec0 auxiliary column (`+vector BLOB`)
 //! to eliminate the `embeddings.vector` copy.
 use hkask_types::InfrastructureError;

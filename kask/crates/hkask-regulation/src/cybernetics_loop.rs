@@ -4,7 +4,7 @@
 //! Its functional contract:
 //!
 //! 1. **Sense** — receive `reg.*` spans from all loops (tool invocations,
-//!    prompt outcomes, agent pod lifecycle, connector I/O).
+//!    prompt outcomes, agent lifecycle, connector I/O).
 //! 2. **Compare** — evaluate each signal against homeostatic set-points:
 //!    call-cap remaining, variety counter balance, error rate threshold,
 //!    connector latency envelope.
