@@ -113,6 +113,11 @@ env: `{ "target_composite": <target>, "current_composite": <latest iteration>, "
 
 To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `eqm-aggregate.j2`: `per_rationale_scores`,`forecaster_groups`
+- `eqm-score.j2`: `scoring_batch`,`selected_subset`
+
+
 ## Constraints
 
 - All flow templates have Public visibility.

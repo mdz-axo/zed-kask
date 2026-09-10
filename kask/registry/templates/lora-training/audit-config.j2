@@ -4,7 +4,6 @@ contract:
   input:
     config_paths: array
     selected_method: string
-    existing_regressions: array
     userpod_host: string
     dataset_profile: object
     runtime_metrics: object
@@ -26,7 +25,6 @@ thinking_budget = "full"
 
 INPUT: config_paths = {{ config_paths | default([]) }}
 INPUT: selected_method = {{ selected_method }} (operator-selected; do not replace)
-INPUT: existing_regressions = {{ existing_regressions | default([]) }}
 INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory)
 INPUT: dataset_profile = {{ dataset_profile | default({}) | tojson }} (v0.31.0 — from G-D0 dataset profiling; feeds G-D1 dataset size/quality assessment)
 INPUT: runtime_metrics = {{ runtime_metrics | default({}) | tojson }} (v0.32.0 — runtime metrics from training; feeds G-R1 runtime alert gate. Empty/absent in preflight.)
@@ -130,6 +128,13 @@ STATIC_CONFIG
 - G-Q6 NF4 assumption: applicable in QLoRA/NF4 mode. Warn only when supplied
   evidence establishes materially non-normal base weights; absent weight
   distribution evidence is `not_evaluated`, not pass or fail.
+- G-Q2 Compute dtype: in QLoRA mode (`load_in_4bit: true`), a declared
+  `bnb_4bit_compute_dtype: "fp32"` is `refuse` — fp32 compute through a
+  4-bit frozen base silently upcasts and forfeits the quantization memory
+  savings. Any value other than `bf16`/`fp16` is `warn`; an absent value
+  passes (bitsandbytes defaults to fp16).
+  [Citation: QLoRA paper §3 — https://arxiv.org/abs/2305.14314]
+  Runtime enforcement: `lora_validation::validate_compute_dtype()`.
 - G-D1 Dataset size/quality: evaluate only from supplied sample count and
   quality-audit evidence. Missing values are `not_evaluated`.
 - G-H1 Harness-method compatibility: assert the selected harness supports
@@ -248,7 +253,7 @@ shapes for passes, observations, or deficiencies:
 - `epistemic_mode`: `declarative | probabilistic | subjunctive`.
 - `citation`: array of only the sources needed to support this finding's
   claim. Use PEFT docs for API/config behavior, papers for research claims,
-  local contracts/regressions for project requirements; do not force both
+  local contracts for project requirements; do not force both
   PEFT and arXiv citations.
 - `recommendation`: advisory next action or null; never overwrites
   `selected_method`.
@@ -277,9 +282,6 @@ EVIDENCE AND CITATION INTEGRITY (P8)
 - Findings based solely on unavailable evidence may record the requirement
   with `evidence_kind: not_available` and a non-failure state; they must not
   fabricate a location.
-- Before proposing any regression, verify concrete contradictory evidence in
-  an actual declared artifact. Deferred/planned/not_evaluated checks are not
-  regressions by themselves.
 
 NO-FICTION ENFORCEMENT (v0.31.0 — mechanical, not voluntary):
 Findings with `evidence_kind` of `config_value`, `code_presence`, or

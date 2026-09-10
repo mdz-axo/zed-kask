@@ -88,6 +88,10 @@ Goal specification and verification. Extracts structured goals from user intent,
 
 To render a template, call the `render_template` tool with the template ref (e.g., `goal-analysis/create`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `judge_command.j2`: `completion_criteria`,`command_results`
+
+
 ## Constraints
 
 - All templates declare `visibility: Public` at the template level; goal-level visibility defaults to `private` to preserve user sovereignty.

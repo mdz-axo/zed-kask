@@ -18,8 +18,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
   audit the selected concrete configuration and declared harness.
 - When runtime or post-training measurements are supplied, to assess established
   contracts without fabricating execution results.
-- To report training findings, readiness, contract gaps, and evidence-backed
-  `surface: training` regression proposals.
+- To report training findings, readiness, and contract gaps.
 - To compute convergence for the current lifecycle phase and expose preflight,
   runtime-contract, and post-training posture separately.
 - To recommend a training harness (Axolotl, TRL, or Ludwig) and trainer based
@@ -224,14 +223,10 @@ Do not create alternate finding shapes. A recommendation never overwrites
 4. Record `deferred`, `planned`, and `not_evaluated` requirements as contract
    gaps with the next evidence needed; exclude `not_applicable`. Do not mutate
    findings to create gaps.
-5. Propose `status: pending`, `surface: training` regressions only from eligible,
-   concretely evidenced `fail`/`refuse` findings, or policy-permitted `warn`
-   findings. Never propose one solely from unavailable evidence or an unevaluated
-   state.
-6. Derive readiness with precedence:
+5. Derive readiness with precedence:
    `Refuse > Fail > Conditional > Deferred > Not evaluated > Pass`.
    A different method recommendation cannot change the verdict.
-7. Preserve claim-appropriate citations and emit `reg.lora.report` with exact
+6. Preserve claim-appropriate citations and emit `reg.lora.report` with exact
    phase, state, severity, and evidence-kind counts.
 
 ## Registry Templates
@@ -241,7 +236,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 | `preflight-dataset.j2` | v0.32.0: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
 | `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. v0.31.0: G6 reasons over the full capability space (3 harnesses × 6 trainers × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (mechanical PDCA loop closure via manifest). |
 | `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. v0.31.0: emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. v0.32.0: consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. v0.32.0: G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
-| `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Propose RR-NNNN.yaml entries with surface: training for CI-enforced config gates. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. Context: `existing_regressions` (array of already-known RR-NNNN findings, so the report can distinguish new findings from tracked ones). |
+| `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) and a context object with the required variables.
 
@@ -252,7 +247,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Preserve operator sovereignty and authenticated `userpod_host` identity.
 - Emit only values, findings, states, citations, and measurements supported by
   declared evidence. Do not invent defaults, snippets, line numbers, benchmark
-  results, training outcomes, or regression counts.
+  results, or training outcomes.
 - No-fiction enforcement is mechanical (v0.31.0): findings with
   `config_value`/`code_presence`/`code_absence` evidence_kind and null
   `config_path`/`line` are rejected at the audit gate, not merely discouraged.

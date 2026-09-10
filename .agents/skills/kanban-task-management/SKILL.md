@@ -125,6 +125,11 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `coordinate-agents.j2`: `triage_phase`,`board_name` `active_tasks`
+- `escalate.j2`: `triage_phase`,`board_name` `escalation_candidates`
+
+
 ## Constraints
 
 - Process manifest: `kask/registry/manifests/kanban-task-management.yaml`

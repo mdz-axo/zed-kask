@@ -69,6 +69,10 @@ When an output-shaping skill (e.g., adhd-mode) is active in the session:
 
 To render a template, call the `render_template` tool with the template ref (e.g., `coding-guidelines/anti-patterns`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `guidelines-assess.j2`: `task_description`,`code_context`
+
+
 ## Constraints
 
 - Visibility is Public across all templates; the anti-patterns fragment has no standalone contract

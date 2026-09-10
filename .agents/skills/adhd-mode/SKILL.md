@@ -138,6 +138,10 @@ env: `required` (the active process skill's content obligations), `sections`
 
 To render a template, call the `render_template` tool with the template ref (e.g., `adhd-mode/pre-send-gate`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `caveman-compress.j2`: `draft_response`,`context_topic`
+
+
 ## Constraints
 
 The list cap is 5 — pass it to Form G as `cap`. This is the single source;

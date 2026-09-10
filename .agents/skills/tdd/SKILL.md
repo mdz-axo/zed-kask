@@ -134,6 +134,11 @@ Test-driven development with red-green-refactor loop, code-anchored testing with
 
 To render a template, call the `render_template` tool with the template ref (e.g., `tdd/tdd-plan`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `tdd-refactor.j2`: `crate_scope`,`passing_tests`
+- `tdd-verify.j2`: `crate_scope`,`behaviors_tested`
+
+
 ## Constraints
 
 - `tdd-plan.j2`: Public. Planning only — do not write code in this phase.

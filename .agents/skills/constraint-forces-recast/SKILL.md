@@ -65,6 +65,13 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 
 To render a template, call the `render_template` tool with the template ref (e.g., `constraint-forces-recast/cfr-represent`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `cfr-control.j2`: `axiom_graph`,`target_ontology`
+- `cfr-frontier.j2`: `current_frontier`,`new_variants` `frontier_size`
+- `cfr-represent.j2`: `seed_concept`,`source_ontology`
+- `cfr-violate.j2`: `axiom_graph`,`target_ontology`
+
+
 ## Constraints
 
 - All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.

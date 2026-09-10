@@ -113,6 +113,10 @@ escalation.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `idiomatic-rust/idiomatic-rust-inquiry`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `idiomatic-rust-inquiry.j2`: `design_problem`,`existing_code` `design_constraints`,`compiler_diagnostics` `iteration_focus`
+
+
 ## Constraints
 
 - `idiomatic-rust-inquiry.j2`: Public.

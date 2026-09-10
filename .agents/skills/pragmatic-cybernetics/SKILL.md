@@ -62,6 +62,12 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-cybernetics/cybernetics-analyze-loop`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `cybernetics-analyze-loop.j2`: `loop_description`,`system_context`
+- `cybernetics-variety-check.j2`: `loop_analysis`,`system_context`
+- `cybernetics-vsm-map.j2`: `loop_analysis`,`variety_result` `system_context`
+
+
 ## Constraints
 
 - `cybernetics-analyze-loop.j2`: Public. Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.

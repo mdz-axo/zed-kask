@@ -235,6 +235,13 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-maintenance/skill-maintenance-validate`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `skill-maintenance-audit.j2`: `skill_name`,`workspace_context`
+- `skill-maintenance-build.j2`: `skill_description`,`scope`
+- `skill-maintenance-coverage.j2`: `skill_catalog`,`task_patterns`
+- `skill-maintenance-translate.j2`: `source_skill`,`target_domain`
+
+
 ## Constraints
 
 - SKILL.md is the source of truth. When SKILL.md and templates disagree,

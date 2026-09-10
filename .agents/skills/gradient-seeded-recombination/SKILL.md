@@ -65,6 +65,10 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-seeded-recombination/gsr-inventory`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `gsr-inventory.j2`: `ontology_registry`,`ontology_sources` `bioportal_apikey`
+
+
 ## Constraints
 
 - All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.

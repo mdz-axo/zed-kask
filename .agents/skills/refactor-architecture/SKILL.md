@@ -120,6 +120,13 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 To render a template, call the `render_template` tool with the template ref (e.g., `refactor-architecture/ra-explore`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `ra-audit.j2`: `focus_area`,`code_context` `known_adrs`,`constraint_forces`
+- `ra-candidates.j2`: `friction_points`,`shallow_modules` `focus_area`,`known_adrs`
+- `ra-deepen.j2`: `selected_candidate`,`focus_area` `known_adrs`,`glossary_terms`
+- `ra-explore.j2`: `focus_area`,`code_context` `known_adrs`
+
+
 ## Constraints
 
 - All templates are prompt templates with `Public` visibility.

@@ -69,6 +69,12 @@ design's ranked residual (the honest exit), not iterated past.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `idiomatic-lisp/idiomatic-lisp-inquiry`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `idiomatic-lisp-challenge.j2`: `design_problem`,`design_proposal` `assessment`,`design_constraints` `lint_results`
+- `idiomatic-lisp-design.j2`: `design_problem`,`existing_code` `assessment`,`repl_actions` `iteration_focus`
+- `idiomatic-lisp-inquiry.j2`: `design_problem`,`existing_code` `design_constraints`,`repl_results` `iteration_focus`
+
+
 ## Constraints
 
 - Use `lisp_eval` to verify deterministic structural properties (invariant checks, scoring, convergence signals). The interpreter is sandboxed: no I/O, no filesystem, no network, bounded steps+depth.

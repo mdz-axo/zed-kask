@@ -149,6 +149,10 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 
 To render a template, call the `render_template` tool with the template ref (e.g., `eqm-improvement/eqm-imp-direction`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `eqm-imp-predict.j2`: `target_condition`,`prioritized_markers` `current_composite`,`target_composite_score`
+
+
 ## Constraints
 
 - All flow templates have Public visibility.

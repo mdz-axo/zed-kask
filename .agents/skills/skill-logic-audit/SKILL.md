@@ -66,6 +66,10 @@ Present the proposal to the user and capture accept/reject/counter-proposal.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-logic-audit/logic-load-goal`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `logic-load-goal.j2`: `target_path`,`target_content`
+
+
 ## Constraints
 
 - `logic-load-goal.j2`: Operates on .j2 templates and .yaml manifests ONLY. SKILL.md files are NOT valid audit targets.

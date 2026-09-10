@@ -56,6 +56,12 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 
 To render a template, call the `render_template` tool with the template ref (e.g., `hypothesis-framer/finer-evaluate`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `finer-evaluate.j2`: `broad_topic`,`domain` `research_context`,`question_hint`
+- `hypothesis-operationalize.j2`: `structured_question`,`pico_elements` `domain`,`finer_result`
+- `pico-structure.j2`: `research_question`,`domain` `finer_result`,`population_hints`
+
+
 ## Constraints
 
 - All templates are prompt templates with `Public` visibility

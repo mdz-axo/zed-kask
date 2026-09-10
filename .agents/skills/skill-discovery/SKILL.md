@@ -103,6 +103,10 @@ flowchart LR
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-discovery/skill-discovery-detect-gap`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `skill-discovery-evaluate.j2`: `candidate_skill_content`
+
+
 ## Constraints
 
 - `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to skill-discovery-search and skill-router-match (standardized naming across the routing/discovery ecosystem). `epistemic` gaps are distinct from `knowledge` gaps: epistemic = missing certainty-finding methods; knowledge = missing facts.

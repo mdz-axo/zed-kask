@@ -71,6 +71,12 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 
 To render a template, call the `render_template` tool with the template ref (e.g., `deep-module/deep-module-assess`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `deep-module-assess.j2`: `module_path`,`module_source` `caller_paths`,`codebase_context`
+- `deep-module-delete.j2`: `module_assessment`,`caller_code` `dependency_code`,`codebase_context`
+- `deep-module-design.j2`: `deletion_test_result`,`domain_requirements` `dependency_interfaces`,`constraint_classification`
+
+
 ## Constraints
 
 - All templates are prompt templates with `Public` visibility.

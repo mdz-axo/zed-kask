@@ -78,6 +78,10 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-semantics/semantics-classify-statement`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `semantics-conflict-resolve.j2`: `provenance_result`,`classification_result`
+
+
 ## Constraints
 
 - `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.

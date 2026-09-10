@@ -107,6 +107,13 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 
 To render a template, call the `render_template` tool with the template ref (e.g., `scenario-builder/axes-and-narratives`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `axes-and-narratives.j2`: `refined_question`,`critical_uncertainties` `planning_horizon`
+- `driving-forces.j2`: `refined_question`,`key_forces`
+- `focal-question.j2`: `focal_question`,`planning_horizon` `domain`,`prior_calibration`
+- `key-forces.j2`: `refined_question`,`planning_horizon` `domain`,`market_context`
+
+
 ## Constraints
 
 - `axes-and-narratives.j2`: Public.

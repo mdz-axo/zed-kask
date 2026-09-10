@@ -1,14 +1,12 @@
-{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, propose evidence-backed regressions, emit reg.lora.report (P9), and require userpod_host (P12). #}
+{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, emit reg.lora.report (P9), and require userpod_host (P12). #}
 [inference]
 contract:
   input:
     findings: array
     gate_results: object
-    existing_regressions: array
     userpod_host: string
   output:
     findings_grouped: array
-    proposed_regressions: array
     verdict: string
     contract_gaps: array
 visibility: Public
@@ -23,7 +21,6 @@ thinking_budget = "full"
 
 INPUT: findings = {{ findings }} (normalized array from audit-config)
 INPUT: gate_results = {{ gate_results }}
-INPUT: existing_regressions = {{ existing_regressions }}
 INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory)
 
 AUTHORITATIVE INPUT CONTRACT
@@ -57,7 +54,7 @@ finding field. In particular:
   `not_applicable` to warn/fail.
 - Do not convert missing evidence to failure.
 - Do not replace `selected_method` with a recommendation.
-- Do not manufacture evidence to make a finding regression-eligible.
+- Do not manufacture evidence to make a finding fail or refuse.
 
 REPORT ACTIONS
 
@@ -86,17 +83,7 @@ REPORT ACTIONS
    - `not_applicable`: exclude from gaps.
    A contract gap describes the missing requirement/evidence and next
    evidence needed; it is not a reclassified finding.
-6. Propose regressions only for existing `fail` or `refuse` findings (or
-   `warn` findings when the project regression policy explicitly permits the
-   evidenced anti-pattern) that include concrete contradictory evidence:
-   `config_value`, `code_presence`, `code_absence`, or
-   `runtime_measurement`.
-   - `code_absence` is eligible only when the finding states that the complete
-     declared harness scope was searched for established required behavior.
-   - Never propose a regression solely from `not_available`, an operator plan,
-     or a deferred/planned/not_evaluated state.
-   - Deduplicate against `existing_regressions` without modifying findings.
-7. Rank recommended next actions from the existing `recommendation` fields
+6. Rank recommended next actions from the existing `recommendation` fields
    and contract gaps. Ranking is report metadata, not finding mutation.
 
 READINESS VERDICT
@@ -118,39 +105,13 @@ A recommendation for a different method MUST NOT change this verdict. A
 runtime or post-training pass requires supplied `runtime_measurement`; this
 report never executes the check.
 
-REGRESSION PROPOSAL FORMAT
-
-For each eligible finding, propose a human-reviewed entry following the
-actual `security/regressions/README.md` contract:
-- `id: RR-XXXX` (placeholder; human assigns final number)
-- `title`
-- `surface: training`
-- `gate`: copied from `finding.gate_id`
-- `discovered_in`: copied from concrete evidence path/artifact
-- `discovered_by: lora-training`
-- `discovered_at`
-- `severity`: copied unchanged from finding
-- `detection`: concrete grep pattern for stable artifact evidence, or a
-  runtime assertion specification owned by the training boundary when the
-  source finding contains an actual runtime measurement
-- `mitigation`: copied/derived directly from finding.recommendation without
-  changing selected_method
-- `status: pending`
-- `ci_gate: scripts/check-lora-training-regressions.sh`
-- `finding_id`: source finding identity
-
-Propose `status: pending` only. Do not claim a runtime assertion is currently
-implemented unless supplied code evidence proves it. A proposed future
-assertion is a requirement, not an executed result.
-
 CITATION POLICY (P8)
 - Preserve each finding's `citation` array unchanged.
 - Build top-level `source_citations` as a deduplicated union of citations
-  actually present in findings, gate requirements, and regression-format
-  references.
+  actually present in findings and gate requirements.
 - Citations must be claim-appropriate: PEFT documentation for API/config
-  behavior, an arXiv paper for research/math claims, local documentation or
-  regression YAML for project contracts, and measured artifacts for observed
+  behavior, an arXiv paper for research/math claims, local documentation for
+  project contracts, and measured artifacts for observed
   outcomes.
 - Do not force both PEFT and arXiv citations onto every claim.
 - Do not add sources that were not consulted or do not support the claim.
@@ -166,7 +127,7 @@ EVIDENCE INTEGRITY
 
 Regulation SPAN (P9)
 Emit `reg.lora.report` with exact counts by phase, state, severity, and
-`evidence_kind`; proposed regression count; selected_method; readiness
+`evidence_kind`; selected_method; readiness
 verdict; contract-gap count; userpod_host; latency_ms. Namespace remains
 registered in `CANONICAL_NAMESPACES`. Emit no anonymous action.
 
@@ -187,7 +148,6 @@ JSON object with:
 - `method_recommendations`: advisory, separate from readiness
 - `readiness`: `Pass | Conditional | Fail | Refuse | Deferred | Not evaluated`
 - `contract_gaps`: requirement/evidence gaps without finding reclassification
-- `proposed_regressions`: pending human-review entries
 - `input_contract_errors`
 - `userpod_host`
 - `source_citations`
@@ -197,10 +157,10 @@ JSON object with:
 phase-aware audit report; Where = supplied audit artifacts; When = after
 configuration/harness audit and whenever runtime/post-training evidence is
 supplied; Why = transparent readiness without fabricated execution; How =
-preserve findings, summarize states, separate recommendations, propose only
-evidence-backed regressions, and emit Regulation span.
+preserve findings, summarize states, separate recommendations,
+and emit Regulation span.
 
 REGISTRY AUTHORITATIVE (P5.1): This template is the canonical report phase.
-PUBLIC VISIBILITY (P11): regression proposals remain `pending`. USERPOD HOST
+PUBLIC VISIBILITY (P11): report outputs are public. USERPOD HOST
 (P12): mandatory throughout. CONVERGENCE INDEPENDENT: this report does not
 compute the convergence metric.

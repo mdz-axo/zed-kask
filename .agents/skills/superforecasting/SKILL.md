@@ -185,6 +185,14 @@ probability (alignment invariant) — before re-invoking superforecasting.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `superforecasting/stage_0_triage`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `forecast-quality-gate.j2`: `forecasting_question`,`calibration_result` `record_result`,`synthesis_output`
+- `stage_1_fermi_decompose.j2`: `forecasting_question`,`triage_output`
+- `stage_5_synthesis.j2`: `forecasting_question`,`updated_probability` `hypothesis_analysis`
+- `stage_6_calibration.j2`: `forecasting_question`,`synthesized_probability` `synthesis_output`
+- `stage_7_record.j2`: `forecasting_question`,`final_probability` `confidence_level`,`pipeline_summary` `resolution_criteria`,`expiration_date`
+
+
 ## Constraints
 
 - `stage_0_triage.j2`: Public.

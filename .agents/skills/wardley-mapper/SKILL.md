@@ -95,6 +95,13 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 To render a template, call the `render_template` tool with the template ref (e.g., `wardley-mapper/inventory-components`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `identify-movement.j2`: `current_map`,`previous_map`
+- `inventory-components.j2`: `target_system`,`component_inventory`
+- `map-value-chain.j2`: `classified_components`
+- `synthesize-recommendations.j2`: `movement_analysis`,`current_map`
+
+
 ## Constraints
 
 - `inventory-components.j2`: Public.

@@ -76,6 +76,13 @@ Brier. Evaluate convergence after each iteration.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `sequential-inquiry/sequential-inquiry-grasp`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `sequential-inquiry-delegate-diagnose.j2`: `delegation_requests`
+- `sequential-inquiry-delegate-falsifiability.j2`: `delegation_requests`
+- `sequential-inquiry-delegate-hypothesis-framer.j2`: `delegation_requests`
+- `sequential-inquiry-delegate-mcda.j2`: `delegation_requests`
+
+
 ## Constraints
 
 - All flow templates are prompt templates with Public visibility.

@@ -112,6 +112,10 @@ Key non-obvious rules the taxonomy encodes:
 
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-hunter/gradient-prior`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `gradient-prior.j2`: `target_region`,`field_type` `prior_iteration`
+
+
 ## Constraints
 
 - All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.
