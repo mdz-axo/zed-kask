@@ -10,6 +10,10 @@
 #      present in the template body (comments stripped). Low overlap
 #      flags a transcription mismatch (wrong goal on the wrong template)
 #      for read-triage.
+#   4. Goal-wrap detection — a goal spread across consecutive
+#      {# ... #} blocks parses as only its first line (mid-phrase).
+#      Flags first-block goals lacking terminal punctuation for
+#      read-triage (a complete unpunctuated goal is a benign flag).
 #
 # Advisory instrument: findings are proposals for read-triage, not edits.
 # Usage: ./skill-corpus-prescreen.sh [overlap_floor]   (default 0.25)
@@ -73,6 +77,18 @@ for file in "$REG"/*/*.j2; do
         flagged=$((flagged + 1))
         continue
     fi
+    # Goal-wrap detection: the canonical parse (extract_goal above and
+    # skill-logic-audit's logic-load-goal) reads ONE {# goal: ... #}
+    # block. A goal wrapped across consecutive blocks parses as only
+    # its first line, which ends mid-phrase.
+    case "$goal" in
+        *[.!?]*) ;;
+        *)
+            echo "  $rel: GOAL WRAP? | ${goal:0:90}"
+            flagged=$((flagged + 1))
+            continue
+            ;;
+    esac
     body="$(strip_comments "$file")"
     total=0
     hits=0
