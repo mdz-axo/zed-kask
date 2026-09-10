@@ -15,7 +15,7 @@ Authorization history: the operator first requested this regression-first plan, 
 
 The target is to prevent the identified loss of recoverable data, private-network boundary bypass, over-authorized external dispatch, duplicate agent creation, and false completion evidence. Fix one observable failure path at a time; deepen existing modules only after behavioral tests pass.
 
-Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **State 2026-09-09: T01–T03 (+T02b), D01, T04–T06, T07–T08, T16–T19 (automated), and the follow-up queue T09–T15 are ALL verified (T15: both operator-feedback channels, per the operator's a-and-b ruling); the Phase E teardown (C1–C5) is complete. Remaining: the live application-quit smoke test (operator-controlled timing) and Checkpoint D operator review.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
+Audit findings are source-backed hypotheses with concrete triggers, not reproduced incidents. **State 2026-09-10: T01–T03 (+T02b), D01, T04–T06, T07–T08, T16–T19 (automated + the live quit test PASSED CLEAN), and the follow-up queue T09–T15 are ALL verified (T15: both operator-feedback channels, per the operator's a-and-b ruling); the Phase E teardown (C1–C5) is complete. Checkpoint D RATIFIED 2026-09-10 — the program's planned surface is COMPLETE.** Owner for technical closure is the receiving coding agent; unresolved policy decisions remain with the operator. Later-wave tasks remain tracked, not silently abandoned or declared safe.
 
 ## Current validation close-out — 2026-09-08
 
@@ -507,6 +507,10 @@ Net effect: the operator's setting changes what regulation MONITORS while the mo
 **Refused shortcut:** relying on pipe-EOF graceful exits (a blocked server ignores EOF); PDEATHSIG (needs `unsafe`, forbidden by crate policy); only killing live connections (a mid-retry server would resurrect).
 
 **Checkpoint D:** T16–T19 regressions, affected crate suites/checks/lints, residue review, operator review of the retraction record.
+
+**Live quit verification (2026-09-10, PASSED — the T19/D51 live check closes):** the watcher (`target/kask-quit-watch-20260910T205542Z/`, armed 20:55:43Z tracking editor PID 29973 + 11 managed children) observed the operator's normal quit: **RESULT: CLEAN** — editor exit observed, all 11 tracked children terminated, zero reparenting, no stray `hkask-mcp-*` in the final scan; `ALL_TRACKED_TERMINATED` at elapsed=530s, all deaths within one 2s poll window (consistent with the quit hook's `shutdown_all` killing children at exit, not after). The operator performed and confirmed the quit manner (announced in advance, executed via the normal Quit action). The acceptance line "on quit, every managed server process is gone" is now live-verified, not just unit/integration-pinned. Evidence: `summary.txt` + `watcher.log` in the watcher directory.
+
+**Checkpoint D RATIFIED by the operator 2026-09-10** — the live quit test (CLEAN), the corrected consolidation retraction, and the constructor-time memory setting semantics reviewed; the corpus method-metadata backfill stands declined (ruling 2026-09-09). With A (2026-09-08), B (2026-09-09), and C (2026-09-09, "as is") before it, all four checkpoints are ratified and the reliability program's planned surface is complete.
 
 ## Follow-up queue: elaborated at Checkpoint C (2026-09-09, ratified) — awaiting operator scheduling
 
