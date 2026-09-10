@@ -6,7 +6,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hkask_mcp_server::server::{validate_resolved_addresses, validate_tool_url_literal};
+use hkask_mcp_server::server::{
+    McpToolError, validate_resolved_addresses, validate_tool_url_literal,
+};
 
 /// Redirect hops raw fetch will follow before surfacing an error. Matches the
 /// reqwest default (`redirect::Policy::limited(10)`); a custom policy must
@@ -88,17 +90,33 @@ fn redirect_policy(attempt: reqwest::redirect::Attempt) -> reqwest::redirect::Ac
 /// The redirect decision for one hop, extracted so it is testable without
 /// reqwest's `Attempt` (which cannot be constructed outside the crate).
 /// `previous` holds the already-visited URLs of this chain, target excluded.
-fn check_redirect_target(target: &reqwest::Url, previous: &[reqwest::Url]) -> Result<(), String> {
+fn check_redirect_target(
+    target: &reqwest::Url,
+    previous: &[reqwest::Url],
+) -> Result<(), RedirectPolicyError> {
     if previous.len() >= MAX_REDIRECTS {
-        return Err(format!("too many redirects (limit {MAX_REDIRECTS})"));
+        return Err(RedirectPolicyError::TooManyRedirects(MAX_REDIRECTS));
     }
     if previous.contains(target) {
-        return Err(format!("redirect loop back to {target}"));
+        return Err(RedirectPolicyError::Loop(target.clone()));
     }
     if let Err(error) = validate_tool_url_literal(target.as_str()) {
-        return Err(format!("redirect to {target} rejected: {error}"));
+        return Err(RedirectPolicyError::Rejected(target.clone(), error));
     }
     Ok(())
+}
+
+/// Per-hop redirect policy refusals: the chain bound, a cycle back to a
+/// visited URL, or a target that fails the strict literal checks. Feeds
+/// reqwest's `Attempt::error`, so it implements `std::error::Error`.
+#[derive(Debug, thiserror::Error)]
+enum RedirectPolicyError {
+    #[error("too many redirects (limit {0})")]
+    TooManyRedirects(usize),
+    #[error("redirect loop back to {0}")]
+    Loop(reqwest::Url),
+    #[error("redirect to {0} rejected: {1}")]
+    Rejected(reqwest::Url, #[source] McpToolError),
 }
 
 /// DNS resolver that gates every connect-time resolution: no hostname may
@@ -471,11 +489,11 @@ mod tests {
             })
             .collect();
         let bound = check_redirect_target(&public, &full_chain).unwrap_err();
-        assert!(bound.contains("too many redirects"), "{bound}");
+        assert!(bound.to_string().contains("too many redirects"), "{bound}");
 
         // Cycle: returning to a visited URL is refused.
         let cycle = check_redirect_target(&public, &[second, public.clone()]).unwrap_err();
-        assert!(cycle.contains("redirect loop"), "{cycle}");
+        assert!(cycle.to_string().contains("redirect loop"), "{cycle}");
 
         // Forbidden literals are refused regardless of chain depth.
         for forbidden in [
@@ -488,7 +506,7 @@ mod tests {
             let target = reqwest::Url::parse(forbidden).expect("forbidden target");
             let error = check_redirect_target(&target, std::slice::from_ref(&public)).unwrap_err();
             assert!(
-                error.contains("rejected"),
+                error.to_string().contains("rejected"),
                 "forbidden redirect target {forbidden} must be refused: {error}"
             );
         }

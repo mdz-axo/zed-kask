@@ -100,6 +100,17 @@ pub enum AlertQueueOutcome {
     Attempted,
 }
 
+/// Persistence failure for an algedonic alert. Best-effort surface: the
+/// caller logs it and never propagates — alert persistence is never a
+/// correctness path. The queue lives behind the sink boundary, so the
+/// variant carries the underlying store's formatted error rather than the
+/// store's own error type.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AlertPersistError {
+    #[error("escalation queue write failed: {0}")]
+    QueueWrite(String),
+}
+
 pub trait AlertEscalationSink: Send + Sync {
     /// Compare durable triggering conditions with fresh observations each tick.
     /// Missing observations must never resolve an escalation.
@@ -122,7 +133,7 @@ pub trait AlertEscalationSink: Send + Sync {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<AlertQueueOutcome, String> {
+    ) -> Result<AlertQueueOutcome, AlertPersistError> {
         self.persist_alert(output, confidence, error_context);
         Ok(AlertQueueOutcome::Attempted)
     }

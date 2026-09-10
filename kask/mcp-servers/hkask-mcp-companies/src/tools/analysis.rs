@@ -394,7 +394,7 @@ impl CompaniesServer {
                                 Err(reason) => {
                                     exchange_errors.insert(
                                         code.clone(),
-                                        serde_json::Value::String(reason),
+                                        serde_json::Value::String(reason.to_string()),
                                     );
                                 }
                             }
@@ -666,11 +666,11 @@ impl CompaniesServer {
     /// distinct non-USD currency among the codes. A failed exchanges-list
     /// fetch degrades the whole conversion (Err); individual rate failures
     /// surface per-exchange via [`ScreenerFx::rate_for`].
-    async fn acquire_screener_fx(&self, codes: &[String]) -> Result<ScreenerFx, String> {
+    async fn acquire_screener_fx(&self, codes: &[String]) -> Result<ScreenerFx, ScreenerFxError> {
         let list = self
             .cached_exchanges_list()
             .await
-            .map_err(|error| format!("EODHD exchanges list fetch failed: {error}"))?;
+            .map_err(ScreenerFxError::ExchangesList)?;
 
         let mut currency_by_exchange = std::collections::HashMap::new();
         if let Some(entries) = list.as_array() {
@@ -1057,6 +1057,19 @@ impl CompaniesServer {
 
 // ── Screener USD conversion ─────────────────────────────────────────────
 
+/// USD-conversion context failures for the screener: the exchanges-list
+/// failure degrades the whole conversion; per-exchange failures surface
+/// per-exchange via [`ScreenerFx::rate_for`].
+#[derive(Debug, thiserror::Error)]
+enum ScreenerFxError {
+    #[error("EODHD exchanges list fetch failed: {0}")]
+    ExchangesList(#[source] McpToolError),
+    #[error("no currency mapping for exchange {code} — not in the EODHD exchange list")]
+    NoCurrencyMapping { code: String },
+    #[error("FX rate USD{currency} unavailable")]
+    RateUnavailable { currency: String },
+}
+
 /// USD conversion context for the screener: the exchange→currency map from
 /// the EODHD Exchanges API and USD→currency rates from EODHD FOREX EOD
 /// closes, both cached 24h in the fibo cache.
@@ -1070,17 +1083,17 @@ impl ScreenerFx {
     /// USD→listing-currency rate for an exchange code (1.0 for USD).
     /// Errors name the reason: an unmapped code (not in the EODHD exchange
     /// list) or a missing rate for its currency.
-    fn rate_for(&self, code: &str) -> Result<f64, String> {
+    fn rate_for(&self, code: &str) -> Result<f64, ScreenerFxError> {
         match self.currency_by_exchange.get(code) {
-            None => Err(format!(
-                "no currency mapping for exchange {code} — not in the EODHD exchange list"
-            )),
+            None => Err(ScreenerFxError::NoCurrencyMapping {
+                code: code.to_string(),
+            }),
             Some(currency) if currency == "USD" => Ok(1.0),
-            Some(currency) => self
-                .rate_by_currency
-                .get(currency)
-                .copied()
-                .ok_or_else(|| format!("FX rate USD{currency} unavailable")),
+            Some(currency) => self.rate_by_currency.get(currency).copied().ok_or_else(|| {
+                ScreenerFxError::RateUnavailable {
+                    currency: currency.clone(),
+                }
+            }),
         }
     }
 }

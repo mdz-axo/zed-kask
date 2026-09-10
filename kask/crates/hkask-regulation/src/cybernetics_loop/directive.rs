@@ -704,7 +704,7 @@ mod tests {
     /// `try_persist_alert` outcome — the T08 delivery seam under test.
     struct ScriptedEscalationSink {
         received: Mutex<Vec<(String, f64, String)>>,
-        result: Result<crate::AlertQueueOutcome, String>,
+        result: Result<crate::AlertQueueOutcome, crate::AlertPersistError>,
     }
 
     impl ScriptedEscalationSink {
@@ -729,7 +729,7 @@ mod tests {
             output: &str,
             confidence: f64,
             error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, String> {
+        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
             self.persist_alert(output, confidence, error_context);
             self.result.clone()
         }
@@ -886,7 +886,9 @@ mod tests {
             loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
         regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
-            result: Err("queue unavailable".to_string()),
+            result: Err(crate::AlertPersistError::QueueWrite(
+                "queue unavailable".to_string(),
+            )),
         })
             as Arc<dyn crate::AlertEscalationSink>));
 

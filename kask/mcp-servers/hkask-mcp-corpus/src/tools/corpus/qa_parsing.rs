@@ -120,7 +120,9 @@ pub(crate) fn parse_qa_record(line: &str) -> Option<ParsedQa> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::qa_pipeline::{PreparedQaPrompt, QaCompletion, QaOutput};
+    use crate::services::qa_pipeline::{
+        PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
+    };
 
     /// expect: [P8] Generated QA rows remain ingestible with their source metadata; failure rows are never training data.
     #[test]
@@ -144,7 +146,11 @@ mod tests {
             prompt_id: "qa-2".into(),
             ..prompt.clone()
         };
-        output.complete(&failed, Err("failed inference".into()), "offline-model")?;
+        output.complete(
+            &failed,
+            Err(QaCompletionError::BatchProvider("failed inference".into())),
+            "offline-model",
+        )?;
         let summary = output.finish("unused", false)?;
         assert_eq!(summary["qa_rows_written"], 1);
         let text = String::from_utf8(bytes)?;

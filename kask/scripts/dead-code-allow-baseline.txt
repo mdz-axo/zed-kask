@@ -51,4 +51,5 @@ crates/tabular_data_preview/src/settings.rs:1
 crates/title_bar/src/onboarding_banner.rs:1
 crates/title_bar/src/update_version.rs:1
 crates/zed/src/visual_test_runner.rs:1
+kask/crates/hkask-types/src/tool_schema.rs:1
 tooling/xtask/src/tasks/workflows/steps.rs:1

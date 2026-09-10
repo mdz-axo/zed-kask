@@ -103,6 +103,27 @@ pub(crate) struct QaCompletion {
     pub tokens_used: u64,
 }
 
+/// Per-prompt inference failure to produce a QA completion. Recorded via
+/// Display in the output record for later inspection — downstream code
+/// never matches variants.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum QaCompletionError {
+    #[error("Batch API returned no result for prompt")]
+    BatchNoResult,
+    #[error("Batch provider error: {0}")]
+    BatchProvider(String),
+    #[error("Malformed batch result: expected exactly one of text or error")]
+    BatchMalformed,
+    #[error("Batch API returned {0} duplicate results for prompt")]
+    BatchDuplicates(usize),
+    #[error("LLM failed after {0} retries: {1}")]
+    LlmFailed(usize, String),
+    #[error("QA task join failed: {0}")]
+    JoinFailed(String),
+    #[error("QA response rejected: {0}")]
+    Rejected(String),
+}
+
 /// One owner writes completions as they arrive; neither transport owns counts
 /// or swallows output failures. Generic Write permits real I/O failure tests.
 pub(crate) struct QaOutput<W: Write> {
@@ -144,7 +165,7 @@ impl<W: Write> QaOutput<W> {
     pub fn complete(
         &mut self,
         prompt: &PreparedQaPrompt,
-        completion: Result<QaCompletion, String>,
+        completion: Result<QaCompletion, QaCompletionError>,
         model: &str,
     ) -> Result<(), McpToolError> {
         let parsed = completion.and_then(|completion| {
@@ -154,7 +175,7 @@ impl<W: Write> QaOutput<W> {
                 None,
             )
             .map(|response| (response, completion.tokens_used))
-            .map_err(|error| format!("QA response rejected: {error}"))
+            .map_err(|error| QaCompletionError::Rejected(error.to_string()))
         });
         match parsed {
             Ok((response, tokens_used)) => {
@@ -169,7 +190,7 @@ impl<W: Write> QaOutput<W> {
                     "prompt_id": prompt.prompt_id,
                     "chunk_ref": prompt.chunk_ref,
                     "source": prompt.source,
-                    "error": error,
+                    "error": error.to_string(),
                 }))?;
                 self.prompts_failed += 1;
             }
@@ -349,7 +370,7 @@ mod tests {
         }
     }
 
-    fn accepted() -> Result<QaCompletion, String> {
+    fn accepted() -> Result<QaCompletion, QaCompletionError> {
         Ok(QaCompletion { text: json!({"qa_pairs": [{"question":"Question?", "answer":"Answer.", "bloom_level":"factual"}]}).to_string(), tokens_used: 10 })
     }
 
@@ -429,7 +450,11 @@ mod tests {
         );
         assert!(
             output
-                .complete(&prepared(), Err("provider failure".into()), "offline-model")
+                .complete(
+                    &prepared(),
+                    Err(QaCompletionError::BatchProvider("provider failure".into())),
+                    "offline-model",
+                )
                 .is_err()
         );
         Ok(())

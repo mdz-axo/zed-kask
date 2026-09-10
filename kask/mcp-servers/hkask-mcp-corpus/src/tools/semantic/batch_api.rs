@@ -8,7 +8,9 @@ use hkask_types::InferencePort;
 use hkask_types::inference_ipc::BatchPromptEntry;
 
 use crate::McpToolError;
-use crate::services::qa_pipeline::{PreparedQaPrompt, QaCompletion, QaOutput, qa_llm_parameters};
+use crate::services::qa_pipeline::{
+    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters,
+};
 
 /// Forward prepared instructions unchanged. The bridge holds credentials and
 /// resolves the original model routing prefix/suffix, never the corpus server.
@@ -51,21 +53,16 @@ pub(crate) async fn generate_qa_via_batch_api<W: Write>(
             .remove(prompt.prompt_id.as_str())
             .ok_or_else(|| McpToolError::internal("Batch prompt identity disappeared"))?;
         let completion = match entries.as_slice() {
-            [] => Err("Batch API returned no result for prompt".to_string()),
+            [] => Err(QaCompletionError::BatchNoResult),
             [result] => match (&result.text, &result.error) {
                 (Some(text), None) => Ok(QaCompletion {
                     text: text.clone(),
                     tokens_used: result.total_tokens,
                 }),
-                (None, Some(error)) => Err(format!("Batch provider error: {error}")),
-                _ => {
-                    Err("Malformed batch result: expected exactly one of text or error".to_string())
-                }
+                (None, Some(error)) => Err(QaCompletionError::BatchProvider(error.clone())),
+                _ => Err(QaCompletionError::BatchMalformed),
             },
-            _ => Err(format!(
-                "Batch API returned {} duplicate results for prompt",
-                entries.len()
-            )),
+            _ => Err(QaCompletionError::BatchDuplicates(entries.len())),
         };
         output.complete(prompt, completion, model)?;
     }

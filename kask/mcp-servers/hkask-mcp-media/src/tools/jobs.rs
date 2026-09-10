@@ -16,16 +16,26 @@ use crate::*;
 /// [P7] Motivating: server and panel share one response contract.
 /// pre: output is the tool's serialized response.
 /// post: valid arrays (including empty) decode; malformed data and tool errors fail.
-pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, String> {
-    let value: serde_json::Value = serde_json::from_str(output)
-        .map_err(|error| format!("invalid job_list response: {error}"))?;
+pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, JobListParseError> {
+    let value: serde_json::Value =
+        serde_json::from_str(output).map_err(JobListParseError::InvalidJson)?;
     let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
     if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
-        return Err(error.message);
+        return Err(JobListParseError::ToolError(error.message));
     }
-    serde_json::from_value(payload).map_err(|error| {
-        format!("invalid job_list response (expected an array of job records): {error}")
-    })
+    serde_json::from_value(payload).map_err(JobListParseError::ShapeMismatch)
+}
+
+/// `job_list` wire-contract decode failures. Shared by the server tests and
+/// the media panel — both consume the same response contract [P7].
+#[derive(Debug, thiserror::Error)]
+pub enum JobListParseError {
+    #[error("invalid job_list response: {0}")]
+    InvalidJson(#[source] serde_json::Error),
+    #[error("{0}")]
+    ToolError(String),
+    #[error("invalid job_list response (expected an array of job records): {0}")]
+    ShapeMismatch(#[source] serde_json::Error),
 }
 
 /// Marks a job `failed` when dropped without being defused — a panic or

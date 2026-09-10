@@ -192,7 +192,7 @@ impl BridgeAlertEscalationSink {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<hkask_regulation::AlertQueueOutcome, String> {
+    ) -> Result<hkask_regulation::AlertQueueOutcome, hkask_regulation::AlertPersistError> {
         let condition = hkask_regulation::alert_condition(output);
         match self.queue.supersede_pending_by_condition(
             condition,
@@ -238,7 +238,7 @@ impl BridgeAlertEscalationSink {
                 error_context.to_string(),
             )
             .map(|id| hkask_regulation::AlertQueueOutcome::Confirmed(Some(id.to_string())))
-            .map_err(|e| e.to_string())
+            .map_err(|e| hkask_regulation::AlertPersistError::QueueWrite(e.to_string()))
         {
             Ok(outcome) => {
                 if let hkask_regulation::AlertQueueOutcome::Confirmed(Some(ref id)) = outcome {
@@ -278,7 +278,7 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<hkask_regulation::AlertQueueOutcome, String> {
+    ) -> Result<hkask_regulation::AlertQueueOutcome, hkask_regulation::AlertPersistError> {
         self.persist_alert_reporting(output, confidence, error_context)
     }
 

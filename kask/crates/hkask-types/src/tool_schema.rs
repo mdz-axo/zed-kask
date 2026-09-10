@@ -251,6 +251,9 @@ mod tests {
     /// object-typed permissive schema — the shape tool-call parsers bind.
     #[test]
     fn any_json_value_property_renders_object_typed_in_parent_schema() {
+        // Fixture field: it exists only for the JsonSchema derive — schema
+        // generation is type-level and never reads the value. A justified
+        // allow, recorded on scripts/dead-code-allow-baseline.txt.
         #[derive(schemars::JsonSchema)]
         struct Request {
             #[allow(dead_code)]

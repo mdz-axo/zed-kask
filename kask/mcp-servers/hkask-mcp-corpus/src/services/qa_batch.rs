@@ -8,7 +8,9 @@ use hkask_types::{ChatMessage, InferencePort};
 
 use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
-use crate::services::qa_pipeline::{QaCompletion, QaOutput, qa_llm_parameters, read_prompts};
+use crate::services::qa_pipeline::{
+    QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters, read_prompts,
+};
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
 use crate::tools::semantic::qa::configured_qa_model;
 
@@ -108,7 +110,10 @@ impl QaBatchService {
                     }
                     Err(error) => {
                         slot.report_failure();
-                        Err(format!("LLM failed after {MAX_RETRIES} retries: {error}"))
+                        Err(QaCompletionError::LlmFailed(
+                            MAX_RETRIES as usize,
+                            error.to_string(),
+                        ))
                     }
                 }
             });
@@ -121,7 +126,10 @@ impl QaBatchService {
         while let Some(result) = tasks.join_next_with_id().await {
             let (identity, completion) = match result {
                 Ok((identity, completion)) => (identity, completion),
-                Err(error) => (error.id(), Err(format!("QA task join failed: {error}"))),
+                Err(error) => (
+                    error.id(),
+                    Err(QaCompletionError::JoinFailed(error.to_string())),
+                ),
             };
             let prompt = pending.remove(&identity).ok_or_else(|| {
                 McpToolError::internal("QA task completed without prompt metadata")
