@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# commit-msg guard — rejects fence-leaked commit messages.
+#
+# The external commit flow has passed chat-fenced text to `git commit`
+# verbatim 97 times on main between 2026-07-23 and 2026-09-09 (the
+# subject renders as "``` <title>" in git log --oneline). A message whose
+# first line or last non-empty line is a bare ``` fence is a
+# chat-presentation artifact, never intended message content.
+#
+# Wiring (once per clone — without this the hook is inert):
+#   git config core.hooksPath kask/githooks
+#
+# Contract: git passes the message file path as $1 (NOT on stdin — reading
+# stdin here silently accepts every message, the bug the first version had).
+msg="$(cat "$1")"
+first_line="$(printf '%s\n' "$msg" | head -1)"
+last_line="$(printf '%s\n' "$msg" | sed -e '/^[[:space:]]*$/d' | tail -1)"
+if [ "$first_line" = '```' ] || [ "$last_line" = '```' ]; then
+    echo "commit-msg: rejected — the message is wrapped in a markdown code fence." >&2
+    echo "The first or last line is a bare \`\`\`. Pass the message CONTENT" >&2
+    echo "(between the fences) to git commit, never the fenced block. If a" >&2
+    echo "script assembles the message from agent chat output, strip bare" >&2
+    echo "fence lines first, e.g.: sed '/^\`\`\`$/d'." >&2
+    exit 1
+fi
