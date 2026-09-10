@@ -2,11 +2,13 @@
 contract:
   input:
     context: object
-    challenge: string
-    next_experiment: string
-    prediction: string
+    learner_bot: string
+    previous_steps: array|null
   output:
-    response: string
+    coach_question: string
+    learner_response: string
+    when_to_check: string
+    what_to_measure: string
 visibility: Public
 ---
 {# hKask v0.39.0 — A Minimal Viable Container for UserPods #}

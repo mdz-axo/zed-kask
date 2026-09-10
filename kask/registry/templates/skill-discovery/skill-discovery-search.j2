@@ -94,19 +94,10 @@ Respond with a JSON object:
 - Score every skill in the catalog — do not skip entries.
 - fit_score must be a float in [0.0, 1.0], computed as the weighted sum.
 - Rank candidates by fit_score descending.
-- Return at most `max_candidates` (default 5) candidates, only those with fit_score ≥ 0.20.
+- Return at most {{ max_candidates | default(5) }} candidates, only those with fit_score ≥ 0.20.
 - If search_coverage is "empty", candidates may be empty — the gap requires creating a new skill.
 - Do not recommend skill-discovery or skill-router as candidates — they are meta-skills.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 
-{% if safety_mode %}
-## Safety Mode
-
-Safety mode is enabled. Additional restrictions:
-- No file system access
-- No network calls
-- No environment variable access
-- Strict Jinja2 sandbox enforcement
-{% endif %}

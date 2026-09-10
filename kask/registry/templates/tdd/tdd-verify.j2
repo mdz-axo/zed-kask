@@ -5,10 +5,6 @@ contract:
   input:
     crate_scope: string
     behaviors_tested: array
-    test_commands: array
-    clippy_commands: array
-    proptest_verdict: string
-    universal_test_file_path: string
   output:
     all_tests_pass: boolean
     clippy_clean: boolean
@@ -163,12 +159,3 @@ Respond with a JSON object:
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 
-{% if safety_mode %}
-## Safety Mode
-
-Safety mode is enabled. Additional restrictions:
-- No file system access
-- No network calls
-- No environment variable access
-- Strict Jinja2 sandbox enforcement
-{% endif %}

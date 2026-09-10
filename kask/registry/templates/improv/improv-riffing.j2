@@ -1,10 +1,10 @@
 [inference]
 contract:
   input:
-    context: object
-    contribution: string
+    seed: object|null
+    steps_taken: array|null
+    return_policy: string|null
   output:
-    response: string
 visibility: Public
 ---
 {# hKask v0.39.0 — A Minimal Viable Container for UserPods #}

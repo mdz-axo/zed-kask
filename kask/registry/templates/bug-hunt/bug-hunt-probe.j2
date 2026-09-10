@@ -3,16 +3,13 @@
 contract:
   input:
     charter: object
-    target: object
-    quality_criteria: string
-    probe_depth: string
     probe_findings: string
+    files_read: integer|null
+    tests_run: integer|null
+    probes_executed: integer|null
+    crates_examined: array|null
   output:
     probe_findings: string
-    files_read: integer
-    tests_run: integer
-    probes_executed: integer
-    crates_examined: array
     probe_escalation: array
 visibility: Public
 ---

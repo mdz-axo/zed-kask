@@ -2,11 +2,13 @@
 contract:
   input:
     context: object
-    learner_profile: object
-    selector_result: object
+    learner_bot: string
+    previous_steps: array|null
   output:
-    analysis: object
-    recommendation: string
+    event_described: string
+    observations: array
+    interpretations: array
+    hidden_interpretations_found: number
 visibility: Public
 ---
 {# hKask v0.39.0 — A Minimal Viable Container for UserPods #}

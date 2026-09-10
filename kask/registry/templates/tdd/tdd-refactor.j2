@@ -4,7 +4,6 @@ contract:
   input:
     crate_scope: string
     passing_tests: array
-    refactor_candidates: array
   output:
     refactor_steps: array
     each_step_passes: boolean
@@ -132,12 +131,3 @@ Each refactor step must be independently verifiable by running `cargo test -p <c
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 
-{% if safety_mode %}
-## Safety Mode
-
-Safety mode is enabled. Additional restrictions:
-- No file system access
-- No network calls
-- No environment variable access
-- Strict Jinja2 sandbox enforcement
-{% endif %}

@@ -91,12 +91,3 @@ Respond with a JSON object:
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 
-{% if safety_mode %}
-## Safety Mode
-
-Safety mode is enabled. Additional restrictions:
-- No file system access
-- No network calls
-- No environment variable access
-- Strict Jinja2 sandbox enforcement
-{% endif %}

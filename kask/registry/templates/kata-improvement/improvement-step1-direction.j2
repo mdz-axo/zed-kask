@@ -2,12 +2,15 @@
 contract:
   input:
     context: object
-    challenge: string
     prior_kanban: object|null
     prior_boards: object|null
+    learner_bot: string
+    previous_steps: array|null
   output:
-    response: string
-    prediction: string
+    challenge: string
+    excellent_performance: string
+    measurement_plan: string
+    knowledge_threshold: string
 visibility: Public
 ---
 {# hKask v0.39.0 — A Minimal Viable Container for UserPods #}
