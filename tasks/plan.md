@@ -601,7 +601,7 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 **Verification:** recover the completion-manifest test seam (a fixture manifest the status tool can read) first; then RED-first per defect.
 **Refused shortcut:** asserting only the happy path; leaving the nil-UUID fallback in place.
 
-### T20 — Full zed-kask seam and divergence audit — AWAITING OPERATOR SCHEDULING (operator-requested 2026-09-09)
+### T20 — Full zed-kask seam and divergence audit — VERIFIED 2026-09-09 (operator-requested, executed same day)
 
 **Request:** the operator asked for a full seam and divergence audit with two explicit tracks — check and clean up the code, and check and clean up the DIVERGENCE.md documentation, "which probably isn't fully aligned with the code."
 
@@ -620,12 +620,28 @@ Each entry below is the recovered-spec elaboration (defect verified against curr
 
 **Scope: L (full surface). Depends: a quiet tree — the audit reads every seam; schedule when no other session is mid-flight.**
 
+**Verification (2026-09-09, commit 3f7e04f0cc):** the documentation track executed in full — 543 cited identifiers and 172 cited paths extracted and verified against the tree (9 broken citations found and fixed: D48's pin name lacks the `test_` prefix the doc claimed; D35's media tool count had drifted 68→80 with the test renamed; D42's "known residual" was removed by D49; D2's `set_swarm_mode` invalidate site is now the compose flow + mode observer; D33's `detail.rs` and editor fields were reworked into compose/author forms; D32's `ensure_openai_compatible_entries` and D8's `call_inference_stream` are removed functions now marked historical; the `thread-hooks-refactor-2026-08-26.md` plan doc is deleted (3 citations); two curator-gate tests deleted per D6 were still cited as live pins; `compute_context_server_health_snapshot` is gone; both section ranges and the runbook range were stale; D26 sat in the supporting section instead of the main table). Ten unrecorded `// zed-kask:` marker files recorded: tool_retry_tracker (the retry death-spiral guard — a significant unrecorded mechanism), api_key (env-var lock removal — a genuine behavioral seam), collab SQLite bootstrap, zed_credentials_provider (always-keychain), remote-server test accommodations, marketplace chrome survival, plus context_server_store added to the self-heal entry and the title_bar auto_update sites added to D7. The kask-seam-audit skill's D-range updated D1–D33 → D1–D52. Test verification: ~2,900 pinned tests green across 30+ crates (agent 875; kask_bridge 187; media ~615; markdown 129; open_ai 163; settings 96; edit_prediction 138; git_ui 108; language_models 37; editor/agent_ui/settings_ui/ui targeted pins; all kask crates and MCP servers full suites). Retired seams verified gone: hkask-guard (D4), kask_panel (D10), the skill marketplace (D30). Code track spawned one follow-up: **T21** — the store-side self-heal divergence in `context_server_store.rs` (transport-death state moves + the public trigger) has no pinning tests, only test-support constructors; the agent-side half is pinned. Known residual accepted: D38's guard value (`thinking_allowed = supports_thinking()`) remains asserted only via the classifier/retry leg — documented in its own entry.
+
+### T21 — Pin the store-side self-heal divergence — AWAITING OPERATOR SCHEDULING (spawned by T20, 2026-09-09)
+
+**Defect (verified by T20's code track):** `crates/project/src/context_server_store.rs` carries two zed-kask behavior changes with `// zed-kask: D-seam` markers and no tests: (1) non-auth transport deaths move the server to a recoverable state (:783) instead of the upstream auth-required path; (2) the public self-heal trigger (:1728) called by the agent-side retry path. The file contains only test-support constructors (`pub fn test`, `test_maintain_server_loop`, `test_start_server`) — no pinning tests. The agent-side half of the seam IS pinned (`timeout_and_transport_death_classify_into_distinct_retry_verdicts` + `test_mcp_tool_timeout_does_not_retry` in context_server_registry.rs), so the divergence's behavior is half-pinned — the .rules "every zed-kask comment needs a test" gap.
+
+**Fix:** RED-first pins in context_server_store.rs for both markers — a transport death (non-auth) moves the server to the recoverable state (not AuthRequired), and the public trigger is callable and idempotent. Use the existing test-support constructors as the fixture seam.
+
+**Acceptance:** both markers' behaviors pinned; a revert of either marker fails a test; the store's test-support constructors gain their first real consumers.
+
+**Verification:** project crate tests green; the agent-side pins unchanged.
+
+**Refused shortcut:** pinning only the public trigger (the state-move is the behavior an upstream rebase would revert first).
+
+**Scope: S. Depends: none — schedule freely.**
+
 ### Scheduling proposal (groups of 2–3 with cumulative checkpoints, per the plan)
 
 - **Group 1 — evidence fidelity (memory/event substrate):** T09 + T10. Both S; both are "the recorded evidence must survive to the reader" defects in the memory/event layer. Cumulative: hkask-memory + kask_bridge suites.
 - **Group 2 — measurement integrity (calibration/regulation):** T11 + T12. Both S/M; both are "evidence destroyed or deduped before observation" defects. Cumulative: prediction-markets + hkask-regulation suites. T11 carries the legacy-migration operator gate (additive-only default).
 - **Group 3 — lifecycle/infra:** T13 + T14 + T15. T13 and T14 have confirmed defects (S/M); T15 is gated on spec recovery — schedule it last in the group so the recovery work (read-only) can start anytime without blocking T13/T14.
-- **Group 4 — seam/divergence alignment:** T20 standalone (scope L). Schedule when the tree is quiet — no parallel session mid-flight — since the audit reads every seam, and its findings feed the next upstream rebase's strategy decisions.
+- **Group 4 — seam/divergence alignment:** T20 executed 2026-09-09 (documentation track complete, commit 3f7e04f0cc; one code-track follow-up spawned). T21 (store-side self-heal pins, scope S) remains — schedule freely.
 
 Each group ends with a checkpoint: cumulative regressions, build/lints, operator review before the next group.
 
