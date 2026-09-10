@@ -420,18 +420,22 @@ async fn overlay_matches_standalone_dcf() {
         .await;
 }
 
+/// EODHD's real wire shape (verified live 2026-09-10, DNB.OL): Financials
+/// monetary values arrive as decimal strings; Highlights and General are
+/// JSON numbers. The normalizer coerces the strings to numbers so the
+/// normalized payload matches FMP's shape.
 fn eodhd_fixture() -> Value {
     json!({
         "General":{"Code":"GLOBAL","Name":"Global","GicSector":"Technology","Industry":"Software"},
         "Highlights":{"MarketCapitalization":3000000000.0,"DividendYield":0.02,"EBITDA":300000000.0},
         "Financials":{
             "Income_Statement":{"yearly":{
-                "2025-12-31":{"totalRevenue":1000000000.0,"grossProfit":400000000.0,"costOfRevenue":600000000.0,"netIncome":150000000.0},
-                "2024-12-31":{"totalRevenue":900000000.0,"grossProfit":360000000.0,"costOfRevenue":540000000.0,"netIncome":135000000.0}
+                "2025-12-31":{"totalRevenue":"1000000000.00","grossProfit":"400000000.00","costOfRevenue":"600000000.00","netIncome":"150000000.00"},
+                "2024-12-31":{"totalRevenue":"900000000.00","grossProfit":"360000000.00","costOfRevenue":"540000000.00","netIncome":"135000000.00"}
             }},
             "Balance_Sheet":{"yearly":{
-                "2025-12-31":{"totalAssets":1200000000.0,"totalStockholderEquity":750000000.0,"netInvestedCapital":900000000.0,"netDebt":150000000.0,"accountsPayable":50000000.0,"netReceivables":100000000.0,"inventory":50000000.0,"commonStockSharesOutstanding":100000000.0},
-                "2024-12-31":{"totalAssets":1080000000.0,"totalStockholderEquity":675000000.0,"netInvestedCapital":810000000.0,"netDebt":135000000.0}
+                "2025-12-31":{"totalAssets":"1200000000.00","totalStockholderEquity":"750000000.00","netInvestedCapital":"900000000.00","netDebt":"150000000.00","accountsPayable":"50000000.00","netReceivables":"100000000.00","inventory":"50000000.00","commonStockSharesOutstanding":"100000000.00"},
+                "2024-12-31":{"totalAssets":"1080000000.00","totalStockholderEquity":"675000000.00","netInvestedCapital":"810000000.00","netDebt":"135000000.00"}
             }}
         }
     })
@@ -1684,8 +1688,9 @@ async fn screener_overrides_merge_over_parsed_criteria() {
                         .unwrap_or("")
                         .contains("No criteria parsed"))
             );
-            // The override bound reached the VN query converted into VND
-            // (1e9 USD × 25000 VND/USD = 2.5e13).
+            // The override bound reached the VN query unconverted — EODHD's
+            // market_capitalization filter is USD-denominated — while the
+            // VND rate annotates rows with market_capitalization_usd.
             let vn_bounds = fixture
                 .requests()
                 .iter()
@@ -1693,8 +1698,8 @@ async fn screener_overrides_merge_over_parsed_criteria() {
                 .map(|request| decode_screener_cap_bounds(request))
                 .unwrap_or_default();
             assert!(
-                vn_bounds.contains(&(">=".to_string(), 25_000_000_000_000.0)),
-                "VN lower bound converted: {vn_bounds:?}"
+                vn_bounds.contains(&(">=".to_string(), 1_000_000_000.0)),
+                "VN lower bound unconverted: {vn_bounds:?}"
             );
             assert_eq!(output["fx"]["usd_rates"]["VND"], json!(25000.0));
             // exchanges-list + USDVND + the VN screener query
@@ -1718,14 +1723,16 @@ fn decode_screener_cap_bounds(path: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// expect: [P5] USD-stated market-cap bounds are converted into each
-/// exchange's listing currency (EODHD FOREX daily close): per-exchange
-/// queries carry converted bounds, rows carry market_capitalization_usd,
-/// results rank by USD cap, foreign lines whose home market is also
-/// screened are dropped, and the band is enforced client-side.
+/// expect: [P5] USD-stated market-cap bounds are sent UNCONVERTED on every
+/// exchange — EODHD's screener market_capitalization filter compares
+/// USD-denominated values while its returned field is listing-currency
+/// (verified live 2026-09-10: a converted NOK bound behaved as a USD
+/// threshold on Oslo) — while rows carry market_capitalization_usd, results
+/// rank by USD cap, foreign lines whose home market is also screened are
+/// dropped, and the band is enforced client-side.
 /// dcterms:identifier: CompaniesServer::company_screener / ScreenerFx / screener_row_currency_pass
 #[tokio::test]
-async fn screener_converts_usd_bounds_per_exchange() {
+async fn screener_sends_usd_bounds_unconverted_per_exchange() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
         if path.starts_with("/eodhd/exchanges-list") {
@@ -1799,8 +1806,8 @@ async fn screener_converts_usd_bounds_per_exchange() {
                     .expect("screener tool"),
             );
 
-            // Per-exchange queries carry converted bounds: XETRA at 0.8
-            // EUR/USD (2e9×0.8 = 1.6e9, 2e11×0.8 = 1.6e11), US unchanged.
+            // Per-exchange queries carry the raw USD bounds: EODHD's filter
+            // is USD-denominated, so XETRA receives the same 2e9/2e11 as US.
             let mut xetra_bounds = Vec::new();
             let mut us_bounds = Vec::new();
             for request_path in fixture.requests() {
@@ -1811,12 +1818,12 @@ async fn screener_converts_usd_bounds_per_exchange() {
                 }
             }
             assert!(
-                xetra_bounds.contains(&(">=".to_string(), 1_600_000_000.0)),
-                "XETRA lower bound converted: {xetra_bounds:?}"
+                xetra_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
+                "XETRA lower bound unconverted: {xetra_bounds:?}"
             );
             assert!(
-                xetra_bounds.contains(&("<".to_string(), 160_000_000_000.0)),
-                "XETRA upper bound converted: {xetra_bounds:?}"
+                xetra_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
+                "XETRA upper bound unconverted: {xetra_bounds:?}"
             );
             assert!(
                 us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),

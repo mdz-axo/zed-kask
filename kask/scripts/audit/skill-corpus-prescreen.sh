@@ -90,13 +90,17 @@ for file in "$REG"/*/*.j2; do
             ;;
     esac
     body="$(strip_comments "$file")"
+    # Grep reads the body from a herestring (a temp file), not a pipe:
+    # grep -q exits at the first match, and an early-exiting reader on a
+    # pipe SIGPIPEs the writer — pipefail then drops a counted hit and
+    # can flip a borderline template's overlap below the floor.
     total=0
     hits=0
     for word in $(printf '%s' "$goal" | tr '[:upper:]' '[:lower:]' \
         | grep -oE '[a-z_][a-z0-9_-]{2,}' | sort -u \
         | grep -vE "$STOPWORDS" || true); do
         total=$((total + 1))
-        if printf '%s' "$body" | grep -qiw -- "$word"; then
+        if grep -qiw -- "$word" <<< "$body"; then
             hits=$((hits + 1))
         fi
     done

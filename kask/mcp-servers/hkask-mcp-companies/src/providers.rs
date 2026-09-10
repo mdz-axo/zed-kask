@@ -415,7 +415,7 @@ pub async fn companies_get(
             if primary == Provider::Eodhd && mapping.normalize_eodhd {
                 emit_provider_reg(tool, symbol, "EODHD", true);
                 Ok(ProviderResponse {
-                    value: normalize_eodhd(tool, &value, symbol),
+                    value: truncate_to_limit(normalize_eodhd(tool, &value, symbol), extra_params),
                     provider: Provider::Eodhd,
                     warnings: Vec::new(),
                 })
@@ -468,7 +468,10 @@ pub async fn companies_get(
                     if secondary == Provider::Eodhd && mapping.normalize_eodhd {
                         emit_provider_reg(tool, symbol, "EODHD", true);
                         Ok(ProviderResponse {
-                            value: normalize_eodhd(tool, &value, symbol),
+                            value: truncate_to_limit(
+                                normalize_eodhd(tool, &value, symbol),
+                                extra_params,
+                            ),
                             provider: Provider::Eodhd,
                             warnings: Vec::new(),
                         })
@@ -789,8 +792,82 @@ fn map_field(map: &mut serde_json::Map<String, Value>, from: &str, to: &str) {
     }
 }
 
+/// EODHD's fundamentals return monetary values as decimal strings
+/// ("89443000000.00") where FMP returns JSON numbers, and every downstream
+/// consumer — `as_f64()` readers, the DCF history builder, derived key
+/// metrics — requires the FMP shape. Date and identifier fields stay
+/// strings; a string that does not parse as a number is left untouched.
+const EODHD_TEXT_FIELDS: &[&str] = &[
+    "date",
+    "calendarYear",
+    "fiscalYear",
+    "filing_date",
+    "filingDate",
+    "period",
+    "currency_symbol",
+    "currency",
+    "symbol",
+    "code",
+];
+
+fn coerce_map_numeric_strings(map: &mut serde_json::Map<String, Value>) {
+    for (key, value) in map.iter_mut() {
+        if EODHD_TEXT_FIELDS.contains(&key.as_str()) {
+            continue;
+        }
+        if let Value::String(text) = value
+            && let Ok(number) = text.trim().parse::<f64>()
+        {
+            *value = Value::from(number);
+        }
+    }
+}
+
+fn coerce_eodhd_numeric_strings(fundamentals: &Value) -> Value {
+    let mut coerced = fundamentals.clone();
+    let Some(financials) = coerced.get_mut("Financials") else {
+        return coerced;
+    };
+    let Some(sections) = financials.as_object_mut() else {
+        return coerced;
+    };
+    for (_statement, section) in sections.iter_mut() {
+        let Some(yearly) = section.get_mut("yearly") else {
+            continue;
+        };
+        let Some(entries) = yearly.as_object_mut() else {
+            continue;
+        };
+        for (_date, entry) in entries.iter_mut() {
+            if let Some(map) = entry.as_object_mut() {
+                coerce_map_numeric_strings(map);
+            }
+        }
+    }
+    coerced
+}
+
+/// EODHD's fundamentals endpoint has no `limit` parameter — it returns the
+/// full yearly history — while FMP honors `limit`. Truncate the normalized
+/// array so identical requests produce identical shapes regardless of
+/// provider.
+fn truncate_to_limit(value: Value, extra_params: &[(&str, &str)]) -> Value {
+    let Some(limit) = extra_params
+        .iter()
+        .find(|(key, _)| *key == "limit")
+        .and_then(|(_, raw)| raw.parse::<usize>().ok())
+    else {
+        return value;
+    };
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().take(limit).collect()),
+        other => other,
+    }
+}
+
 /// Normalize EODHD response based on which logical tool endpoint was requested.
 fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> Value {
+    let eodhd_value = &coerce_eodhd_numeric_strings(eodhd_value);
     match tool {
         "company_profile" => normalize_eodhd_profile(eodhd_value),
         "income_statement" => normalize_eodhd_income_statement(eodhd_value),
