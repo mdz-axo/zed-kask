@@ -12118,6 +12118,7 @@ dependencies = [
  "hkask-viz-core",
  "marketplace_ui_common",
  "project",
+ "remote_connection",
  "serde_json",
  "settings",
  "theme",

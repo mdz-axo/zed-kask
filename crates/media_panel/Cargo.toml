@@ -32,6 +32,23 @@ workspace.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+# Feature-propagation-only dev-deps: not `use`d in source. Any build that
+# turns on `remote/test-support` — e.g. pairing this crate with one whose
+# dev-deps request `project`'s `test-support`, such as `settings_ui` in
+# `-p settings_ui -p media_panel --all-targets` — exposes the `Mock`
+# variants of `RemoteConnectionOptions` and `RemoteConnectionIdentity`.
+# The match arms handling those variants are gated on the consuming
+# crate's own `test-support` (`project/src/trusted_worktrees.rs`,
+# `remote_connection/src/remote_connection.rs`,
+# `workspace/src/persistence.rs`), so all three must be on together or
+# the matches are non-exhaustive (E0004). Same trap as `agent`'s and
+# `swarm_panel`'s propagation deps.
+project = { workspace = true, features = ["test-support"] }
+remote_connection = { workspace = true, features = ["test-support"] }
 settings.workspace = true
 theme_settings.workspace = true
 theme.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["remote_connection"]

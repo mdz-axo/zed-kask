@@ -1621,7 +1621,7 @@ mod tool_behavior_tests {
         let result = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1657,7 +1657,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1684,7 +1684,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1724,7 +1724,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1742,7 +1742,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id: "no-such-transcript".to_string(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1764,7 +1764,7 @@ mod tool_behavior_tests {
         let result = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: Some("text".to_string()),
                 structured: None,
             }))
@@ -1804,7 +1804,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: Some("text".to_string()),
                 structured: None,
             }))
@@ -1835,7 +1835,7 @@ mod tool_behavior_tests {
         let result = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: None,
                 structured: None,
             }))
@@ -1861,7 +1861,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: Some("bogus".to_string()),
                 structured: None,
             }))
@@ -1884,7 +1884,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: Some("audio".to_string()),
                 structured: None,
             }))
@@ -1907,7 +1907,7 @@ mod tool_behavior_tests {
         let stored = server
             .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1941,7 +1941,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
                 transcript_id: transcript_id.clone(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -1989,7 +1989,7 @@ mod tool_behavior_tests {
             .educt_highlight_pass(Parameters(crate::types::EductHighlightPassRequest {
                 transcript_id: transcript_id.clone(),
                 request: "where he explains the curve".to_string(),
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: None,
             }))
             .await
@@ -2023,7 +2023,7 @@ mod tool_behavior_tests {
         let result = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: Some(true),
             }))
             .await
@@ -2054,7 +2054,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_paragraph_pass(Parameters(crate::types::EductParagraphPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 structured: Some(true),
             }))
             .await
@@ -2073,7 +2073,7 @@ mod tool_behavior_tests {
         let error = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
-                model: Some("test-pass-model".to_string()),
+                model: Some("test-stt-model".to_string()),
                 source: None,
                 structured: Some(true),
             }))
