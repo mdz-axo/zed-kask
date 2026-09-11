@@ -133,6 +133,26 @@ async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()>
         chunk("d", "book-b"),
     ];
     seed(directory.path(), &chunks)?;
+    let store = crate::helpers::open_memory_store(
+        directory
+            .path()
+            .join("memory.db")
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("path"))?,
+        PASSPHRASE,
+    )?;
+    for reference in [
+        "corpus:test:centroid",
+        "corpus:test:lovelace:centroid",
+        "corpus:test:rule:precision",
+    ] {
+        store.store_embedding(
+            reference,
+            &vec![1.0; crate::embedding_dim()],
+            "offline-vector",
+            None,
+        )?;
+    }
     let server = server();
     let all = build(&server, request(directory.path(), "all", &chunks)?).await?;
     assert_eq!(all.len(), 12);

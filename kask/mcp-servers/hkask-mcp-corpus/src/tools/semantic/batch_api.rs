@@ -31,7 +31,9 @@ pub(crate) async fn generate_qa_via_batch_api<W: Write>(
     let batch_results = inference_router
         .generate_batch(model, &batch_prompts, 2000, qa_llm_parameters().temperature)
         .await
-        .map_err(|error| McpToolError::unavailable(format!("Batch API IPC failed: {error}")))?;
+        // Submission is not idempotent: retain the typed failure without
+        // retrying a batch whose remote acceptance may be unknown.
+        .map_err(crate::tools::semantic::qa::map_qa_inference_error)?;
 
     // Retain duplicates as errors rather than last-write-wins. Prepopulate the
     // map to distinguish missing expected results from unsolicited identities.

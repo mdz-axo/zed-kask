@@ -254,10 +254,7 @@ async fn public_tagging_identity_contract() {
             .expect("reason")
             .contains("mock inference failure")
     }));
-    assert_eq!(
-        port.prompts.lock().expect("prompts").len(),
-        MAX_RETRIES as usize
-    );
+    assert_eq!(port.prompts.lock().expect("prompts").len(), 1);
 
     // Multibyte strings cross both former byte-slice panic boundaries.
     let (summary, rows, _) = run(&["a"], "界".repeat(200), 1, false).await;

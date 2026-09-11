@@ -1,1187 +1,399 @@
 ---
 name: build-corpus-pipeline
-description: "Ingest a folder of source documents through a complete text-processing pipeline (convert → chunk → embed → tag) with optional style exemplar construction and QA pair generation for LoRA training. 10-stage PDCA pipeline grounded in PKO procedural ontology, Dublin Core metadata, and Bloom's Taxonomy for QA generation."
+description: "Build a source-complete corpus through convert → chunk → embed → classify, with optional style centroids and evidence-carrying QA for operator-approved LoRA training. Gate every stage on identity, actual outcomes, source coverage and semantic review."
 ---
 
 # Build Corpus Pipeline
 
-Ingest a folder of source documents through a complete text-processing
-pipeline: document conversion → segmentation → vectorization → ontology
-annotation, with optional style exemplar construction and QA pair
-generation for LoRA training.
+Build a functioning, verifiable corpus pipeline, not a hand-produced substitute
+for a failed stage. Use one canonical corpus and current schemas throughout.
+A tool return, a nonempty file, and a completed capability are different claims.
 
-## Ontological Anchors
+## Anchors and contract
 
-| Ontology | Domain | Role in skill |
-|----------|--------|---------------|
-| **PKO** (Procedural Knowledge Ontology) | Industrial processes | The pipeline is a procedure with specification/execution separation — each stage has a specification (what it should produce) and an execution (the MCP tool call). Stages are sequential with dependency edges. |
-| **Dublin Core** | Metadata, documentation | Stage 4 tags chunks with Dublin Core metadata (creator, date, subject, source, type). The corpus itself is a metadata-managed artifact. |
-| **Bloom's Taxonomy** | Educational assessment | Stage 6–7 QA generation uses Bloom cognitive levels to drive question difficulty distribution. |
-| **Text processing pipeline** (standard NLP) | Corpus construction | The canonical pipeline: convert → segment → vectorize → annotate. Each stage's output feeds the next stage's input. Embedding precedes tagging because `corpus_embed` accepts `tagged_jsonl` as optional — the full corpus can be vectorized without waiting for LLM-based annotation. |
+- **PKO** separates a procedure from its execution: record each stage's inputs,
+  outputs, measured outcomes and unresolved failures.
+- **Dublin Core / PROV-O** anchor source identity and derivation. A citation is
+  `QaEvidence { chunk_ref, source, quote }`, not a semantic verdict.
+- **Bloom's taxonomy** informs QA difficulty. The engine's five labels are
+  `factual`, `conceptual`, `analyze`, `evaluate`, `create`; labels alone do not
+  establish actual cognitive difficulty.
 
-## PDCA Shape
+The [corpus README](../../../kask/mcp-servers/hkask-mcp-corpus/README.md) specifies
+wire contracts; the [tool reference](../../../kask/docs/reference/mcp-servers/corpus.md)
+lists parameters. Enforcement anchors (paths relative to the repository root):
 
-Derived from the standard NLP corpus construction pipeline, adapted
-through PKO's specification/execution separation. Embedding (Stage 3)
-precedes tagging (Stage 4) because the embedding tool accepts tags as
-optional input — this allows the full corpus to be vectorized immediately
-after chunking, while the slower LLM-based tagging proceeds in batches
-for QA generation.
+| Invariant | Current enforcement |
+|---|---|
+| One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:373` |
+| Required terminal classification and identity-correlated tags | `kask/crates/hkask-types/src/corpus.rs:228`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:66` |
+| Full-source stored context and partition-stable prompt IDs | `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:119`; `kask/crates/hkask-types/src/corpus.rs:38` |
+| Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:19`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |
+| Exclusive QA output ownership and typed retries | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:99`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:73` |
 
-```
-Plan:  Stage 0 — Validate   → Check corpus source exists, is non-empty, has readable files
-Plan:  Stage 1 — Convert    → Extract text from all documents in the source folder
-Do:    Stage 2 — Chunk      → Segment text into passages at configurable token granularity
-Do:    Stage 3 — Embed      → Generate ontology-anchored embedding vectors for ALL chunks
-Check: Stage 4 — Tag        → Annotate chunks in batches (5W1H + Dublin Core + PKO + FIBO/GOLEM)
-Do:    Stage 5 — Compose    → (Optional) Build style exemplar from the embedded corpus
-Do:    Stage 6 — QA Prompts → (Optional) Build QA generation prompts from tagged chunks
-Do:    Stage 7 — QA Gen     → (Optional) Batch-generate QA pairs from prompts
-Do:    Stage 8 — Ingest QA  → (Optional) Parse, quality-filter, dedup, write training JSONL
-Act:    Stage 9 — Assemble  → (Optional) Assemble QA pairs into ChatML training dataset
-Act:   Stage 10 — Verify    → Grill-me interrogation + convergence check
-```
+## Inputs and preflight
 
-## When to Use
+Resolve real paths and credentials before calling tools. Keep sources, accepted
+extractions, stage outputs and scratch controls separate. Never put probes,
+duplicate sources or synthetic fixtures in an extraction input directory.
 
-- You have a folder of source documents (PDFs, HTML, TXT, MD) and need to
-  build a text corpus with embeddings for semantic retrieval.
-- You want to construct a style exemplar (authorial style model) from a
-  corpus of authored works.
-- You want to generate QA pairs from a corpus for LoRA fine-tuning.
-- You need the full convert → chunk → embed → tag pipeline as a single
-  governed sequential process with per-stage convergence checks.
+| Input | Contract |
+|---|---|
+| `corpus_source` | Retained source directory; inventory every source before processing |
+| `entity_ref_prefix` | One namespace; use `style:{author}` for an author corpus, with the exact same author identifier in compose/centroid calls |
+| `db_path`, `passphrase` | One corpus DB; resolve the current `HKASK_DB_PASSPHRASE` from authorized credentials, never invent or print it |
+| `max_tokens` | Optional approximate size target; absent uses `HKASK_CHUNK_MAX_TOKENS` / shared settings (code default 256), not a model tokenizer |
+| `overlap_tokens` | Default **64**, yielding **48 words**; explicit `0` disables repetition |
+| `multi_tier` | False for the directory QA substrate; per-file/text retrieval can request coarse/medium/fine tiers |
+| embedding `model`, `batch_size` | Use the configured embedding model and tool's batching; do not substitute a training or chat model |
+| `tag_batch_size` | **10** chunks per tagging inference call by default; distinct from the number of rows in a file partition |
+| `concurrency` | Bound tool concurrency to available capacity; AIMD starts at up to 2, grows by 1, halves on capacity failure |
+| `enable_qa` | Select before work; if true, QA stages are required, not silently skipped on failure |
+| `reference_author`, `config_path` | Optional style branch; exact author identity and current cognition YAML |
+| `prompts_per_chunk` | Skill/run setting **2**; pass explicitly because the tool default is **5** |
+| `context_k` | Tool default **3**; `0` explicitly disables KNN, never a recovery from failed context reads |
+| `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
+| `max_prompts` | Explicitly `classified_count × prompts_per_chunk`, or `0` for all; not a small fixed cap |
+| `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split; never inherit another corpus's defaults |
 
-## When NOT to Use
+QA requires a dedicated non-thinking generator: explicit tool `model`, otherwise
+Settings → Kask → Models → **QA Generation Model** (`kask.models.qa_generation_model`,
+injected as `HKASK_QA_GENERATION_MODEL`). The setting defaults empty. Missing,
+malformed or unresolved configuration must fail visibly. No chat, classifier,
+`HKASK_QA_MODEL`, or training-base fallback. Tagging independently requires the
+configured classifier; OCR requires the configured image-capable OCR model.
+The training base model and LoRA configuration still require operator approval.
 
-- You have a single document, not a folder — use `corpus_convert` directly.
-- You already have chunks and only need embeddings — call `corpus_embed` directly.
-- You need real-time interactive Q&A, not a build pipeline — use `corpus_query`.
-- You want to discover an author's works from the web — use `corpus_discover`.
+Use tool concurrency by default. Additional agent threads require explicit
+operator approval and disjoint stage output paths. File partitioning changes
+scheduling only: preserve every row, source, entity reference and prompt ID.
+Never copy source files into nested input directories to simulate partitioning.
+Do not fan out DB ingestion with independently restarting retained-row indices.
 
-## Inputs
+## Stage 0 — Establish scope and rebuild plan
 
-All inputs are parameterized. None are hardcoded.
+1. Inventory retained originals and accepted extractions, including their exact
+   paths, source identities and per-source word counts. A bad extraction is a
+   processing failure, not permission to remove its source from scope.
+2. Record the target source set, chunk/overlap parameters, two prompts per chunk,
+   desired QA type mix, semantic quality criteria and dataset-size requirement.
+3. Confirm model configuration, writable output paths, DB identity and credential
+   access. Do not bypass containment with terminal conversions or manual QA.
+4. Classify each stage as required or explicitly not requested. A requested style
+   branch may fail without blocking independent QA, but the whole goal remains
+   incomplete until the branch succeeds or the operator changes the scope.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `corpus_source` | string | yes | — | Absolute path to a folder containing source documents |
-| `entity_ref_prefix` | string | yes | — | Prefix for entity references in chunk IDs. For a style corpus this MUST be `style:{author}` (e.g. "style:john-brooks"): `corpus_compose` retrieves exemplars by the `style:{author}:` entity-ref prefix, so any other prefix (e.g. "john-brooks") retrieves zero exemplars. |
-| `db_path` | string | yes | — | Path to the vector database file for embeddings and h_mems |
-| `passphrase` | string | yes | — | Passphrase for the encrypted vector DB. Resolve via `hkask_mcp_server::server::resolve_db_passphrase` helper if available, otherwise from credentials. |
-| `reference_author` | string | no | null | Author name for style exemplar construction (e.g. "John Brooks"). When provided, Stage 5 runs. |
-| `config_path` | string | no | null | Path to a cognition config YAML (mashup or style synthesizer). When provided to `corpus_compose`, loads the Jinja2 system prompt template, embedding model, retrieval parameters, and validation thresholds from the file. |
-| `enable_qa` | boolean | no | true | Whether to run Stages 6–9 (QA generation and training dataset assembly) |
-| `max_tokens` | integer | no | 512 | Maximum tokens per chunk |
-| `overlap_tokens` | integer | no | 64 | Token overlap between adjacent chunks |
-| `multi_tier` | boolean | no | false | Whether to use multi-tier chunking (coarse + medium + fine). PER-FILE path/text mode only — directory mode (`input_dir`) writes a single-tier JSONL (the tag/QA substrate) and rejects `multi_tier=true` with a typed error. Use per-file calls with `index: true` when the retrieval index needs tiered passages. |
-| `embedding_model` | string | no | from config or `DEFAULT_EMBEDDING_MODEL` | Embedding model for vectorization |
-| `batch_size` | integer | no | 25 | Embedding batch size |
-| `tag_batch_size` | integer | no | 1 | Number of chunks per tagging LLM call. MUST be 1 — the classifier model returns a single JSON object, not a JSON array, so batch_size > 1 results in only the first chunk getting real tags (10% success rate). With batch_size=1, success rate is 75-100%. Do NOT set this higher than 1. |
-| `bloom_levels` | list | no | ["remember","understand","apply","analyze","evaluate","create"] | Bloom levels for QA difficulty distribution |
-| `prompts_per_chunk` | integer | no | 2 | QA prompts generated per chunk. With Bloom expansion across 5 levels (factual/conceptual/analyze/evaluate/create), each chunk can produce up to 5 QA pairs. Default 2 balances dataset size against generation cost. |
-| `max_prompts` | integer | no | tagged_count × prompts_per_chunk | Maximum total QA prompts. MUST be set to at least `tagged_count × prompts_per_chunk` to avoid capping output below the target. For a 33K-chunk corpus at 2 prompts/chunk, this is 67,646. Setting max_prompts to 500 or 600 produces a toy dataset — do NOT do this. |
-| `context_k` | integer | no | 5 | KNN context scaffold chunks per QA prompt |
-| `train_split` | float | no | 0.9 | Fraction of QA pairs for training split |
-| `dataset_name` | string | no | derived from `entity_ref_prefix` | Dataset name for training assembly |
-| `concurrency` | integer | no | 4 | Per-tool internal concurrency for tagging and QA generation |
-| `parallel_subagents` | boolean | no | true | Whether to use `spawn_agent` subagents for parallelizable stages (Convert, Tag, QA Gen). When false, stages run sequentially with tool-level concurrency only. |
+### One Brooks corpus from retained sources
 
-## Concurrency and Parallel Execution
+This is an execution procedure, **not a claim that a rebuild has run**.
+Preserve **all retained sources and two prompts per chunk**. The prior approvals
+of **27,518 chunks / 55,036 prompts** must be **remeasured under the real-overlap
+contract**; do not force those totals or lower coverage to reproduce them.
 
-The pipeline parallelizes independent work units using `spawn_agent`
-subagents, bounded by the process-wide concurrency settings in
-`KaskGeneralSettings`:
+Before a rebuild, inspect and explicitly identify the obsolete Brooks DB and
+derived chunks, tags, prompts, generated QA, training exports and centroid
+artifacts. Verify ownership, stopped workers, dependencies and that retained
+sources/extractions suffice for reconstruction. Delete only those verified
+obsolete DB/derived artifacts, including coupled DB sidecars when safe with the
+DB closed. Do not retain a second Brooks DB, numbered corpus variant, backup or
+compatibility dataset. Do not delete originals or accepted source extractions.
+Ambiguous ownership or insufficient retained sources blocks deletion.
 
-| Setting | Default | Role |
-|---------|---------|------|
-| `max_concurrency` | 96 | Process-wide ceiling on concurrent cloud inference calls. Shared across skill execution, corpus OCR, and MCP tool calls. OCR page concurrency reads this same ceiling (with an adaptive AIMD limiter in the executor) — there is no separate OCR concurrency setting. |
+Rebuild the single canonical corpus from Stage 2 when accepted extractions are
+complete, otherwise from Stage 1. Clear stale in-memory retrieval before selecting
+the rebuilt DB. Recompute embeddings, classifications, prompts, QA and centroids;
+do not relabel stale rows as current. Cleanup and rebuild are explicit data
+operations: a docs-only request authorizes none of them.
 
-### Concurrency dispatch pattern
+## Stage 1 — Convert and audit extraction
 
-When dispatching parallel work units (file conversions, chunk batches,
-tagging batches), start with a small batch of 4 concurrent subagents and
-scale up on success:
+Use `corpus_convert(path, output)` for the source set. Directory conversion
+requires an output directory, resumes only quality-passing outputs, and places
+OCR-derived text in `{output}-ocr-staging`. File mode writes its requested output;
+that write is not a quality acceptance verdict.
 
-1. **Start** with 4 concurrent subagents.
-2. **On success** (all agents returned without error or throttle), add
-   4 more agents for the next round.
-3. **On throttle** (429/503 from the inference provider), back off to the
-   last successful concurrency level and hold there.
-4. **Ceiling**: never exceed `max_concurrency` concurrent agents.
+For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidence.
+Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then
+inspect the report before bulk work. Missing configuration, endpoint errors,
+`error_count`, `quality_failed_pages` or breaker-open results block expansion.
+Source-confirmed blank pages can be recorded as such; never infer that every empty
+page is benign. `include_structure=true` is only needed for the block view.
 
-This avoids jumping straight to `max_concurrency` and triggering
-provider throttles.
+Audit every extraction against the original: source coverage, word counts,
+legibility, repetition, script/language consistency and deterministic OCR quality
+results. The directory resume floor is 50 words plus its quality gates; it is not
+semantic proof. Merge staged OCR into accepted extractions only after review.
+For deliberate replacement of a passing extraction, verify it is derived and
+reproducible from a retained original before deletion/reconversion; no backup
+corpus. Audit failures stay blocked, not promoted by a copy operation.
 
-### When to use subagents vs. tool concurrency
+**Gate:** every inventoried source is represented exactly once by accepted text;
+no unresolved failed extraction or duplicate/probe artifact remains. Bash and
+`jq` can measure files/JSON; do not introduce Python tooling.
 
-- **`spawn_agent` subagents**: use when work units are independent files
-  or batch files that can be processed without shared state. Each
-  subagent gets its own session and can call MCP tools independently.
-  `MAX_SUBAGENT_DEPTH` is 1 — subagents cannot spawn further subagents.
-- **Tool-level `concurrency` parameter**: `corpus_tag_chunks` and
-  `corpus_generate_qa_batch` accept a `concurrency` parameter that
-  controls internal parallelism within a single tool call. Use this for
-  batches small enough to complete within the tool's timeout.
-- **Combined pattern**: for large corpora, split work into batches,
-  dispatch batches to subagents (step-up ramp), and let each subagent
-  call the tool with its own `concurrency` parameter. The subagent count
-  × per-subagent concurrency should stay within `max_concurrency`.
+## Stage 2 — Chunk once, measure coverage and overlap
 
-### Parallelizable stages
+Call `corpus_chunk` with `input_dir` set to the accepted `.txt` directory,
+explicit `output`, `entity_ref_prefix`, selected `max_tokens`, `overlap_tokens`,
+`multi_tier=false`, and `index=false` when Stage 3 will persist embeddings.
+Directory mode enumerates immediate `.txt` children, not a recursive file tree.
+Every child is containment-checked before reading; broken/escaping symlinks fail.
 
-| Stage | Parallelizable? | Work unit | Pattern |
-|-------|----------------|-----------|--------|
-| Stage 1 (Convert) | Yes — per file | Each source file | Spawn subagents per file (or per file group), step-up ramp |
-| Stage 1a (OCR) | Yes — per PDF | Each complex PDF | Spawn subagents per PDF, bounded by the process-wide `max_concurrency` |
-| Stage 2 (Chunk) | Partial — per sub-directory | Groups of extracted text files | Split input dir, dispatch chunk calls to subagents, merge outputs |
-| Stage 3 (Embed) | No — single DB write | All chunks at once | Use tool's `batch_size` parameter for internal batching |
-| Stage 4 (Tag) | Yes — per batch | Chunks JSONL batch files | Spawn subagents per batch, step-up ramp, each with `concurrency` param |
-| Stage 6 (QA Prompts) | Partial — per batch | Tagged chunk batches | Dispatch to subagents if prompt count is large |
-| Stage 7 (QA Gen) | Yes — per batch | Prompt batch files | Spawn subagents per batch, step-up ramp |
+All chunk modes use the shared structural/sentence word-window engine. Effective
+maximum and overlap are `floor(tokens / 1.33)` whitespace words. Each passage is
+bounded, contributes new source words, and positive overlap repeats the preceding
+suffix exactly; zero follows the same engine with no repetition. A small final
+passage is valid. `max_tokens` must yield at least one word, and positive overlap
+must yield at least one word and remain smaller than the maximum in both units.
 
-### Fixed vs Parameterizable
+Directory source ID components are reversible `utf8-` plus fixed-width hex of
+UTF-8 filename bytes, not punctuation substitution. Keep the original `source`
+string alongside the encoded `entity_ref`. For file/text calls, use a unique
+namespace per source; do not invent IDs by replacing punctuation.
 
-- **Fixed**: the pipeline shape (convert → chunk → embed → tag), the ontology
-  annotation dimensions (5W1H + Dublin Core + PKO + FIBO/GOLEM), and the
-  embedding output format (ontology-anchored vectors stored in the DB).
-- **Parameterizable**: chunk granularity, overlap, embedding model, batch
-  size, tag batch size, multi-tier chunking, Bloom level distribution,
-  prompts per chunk, max prompts, context scaffold size, train split ratio.
+**Gate:** reconcile parsed records with `total_chunks`, unique references,
+`total_documents`, the complete source set and empty `zero_chunk_files`. Measure
+word bounds and adjacent overlap per source. Estimate counts using effective
+stride `max_words - overlap_words`, then measure actual output: structural ends
+and final fragments affect counts. A JSONL line count alone cannot verify any of
+these properties. Never change overlap or remove sources to hit an old count.
 
-## Composed Skills
+## Stage 3 — Persist all embeddings and provenance
 
-| Skill | Role | When invoked |
-|-------|------|-------------|
-| `essentialist` | Stage 0 deletion test | Apply G1 (deletion test) to each stage — is this stage necessary? Stages 5–9 are already optional. |
-| `task-breakdown` | Pipeline decomposition | Decompose the stages into INVEST-compliant verifiable tasks for execution tracking |
-| `pragmatic-semantics` | QA certainty classification | QA quality checks classify pair certainty (IS/OUGHT, epistemic mode) to prevent mixing declarative with speculative in training data |
-| `grill-me` | Verification (Stage 10) | Socratic interrogation of pipeline output across escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis) |
-| `idiomatic-lisp` | Deterministic invariant checks | Use `lisp_eval` for structural invariants between stages (chunk counts, embedding completeness, QA pair counts). Full idiomatic-lisp design principles not needed for sequential pipeline. |
+Call `corpus_embed(chunks_jsonl, tagged_jsonl=null, db_path, passphrase, model,
+batch_size)` for every chunk in the single corpus. Tags are optional here.
+The stored original `passage_text` and text h_mem `ontology.dc_source` support
+later context retrieval; vectors alone are insufficient.
 
-## Process Awareness Scaffolding
+**Gate:** successful embeddings equal measured chunk count; reconcile all failed
+and cancelled rows, with none unresolved. Read/store errors are not zero counts.
+Do not accept a small loss merely because a tool's degraded threshold is 10%.
+A bad DB credential is not an excuse to leave a second DB alongside the first.
 
-### The anti-degradation principle (STRONGER than per-stage gates)
+## Stage 4 — Classify, then count actual outcomes
 
-The per-stage quality gates below check individual stage output. But the
-meta-failure is declaring the PIPELINE complete when the final output is
-below target. The rule:
+Call `corpus_tag_chunks(chunks_jsonl, output, concurrency, tag_batch_size=10,
+dry_run=false)`. Split input JSONL into bounded disjoint files if necessary;
+keep original identities and verify the merged identity set equals the input.
 
-**The pipeline is NOT complete until `train_examples ≥ target_condition.min_qa_pairs`.
-A pipeline producing 542 examples when the target is 40,000 is FAILING at
-98.6%, not 'complete' or 'improved' or 'a good start'.**
+Each output `TaggedChunk` requires `classification`:
 
-Do NOT compare output to zero (542 > 0 = success). Compare output to the
-target (542/40,000 = 1.4% = failure).
-
-### Semantic quality verification (not just structural)
-
-Structural counts (JSON validity, non-empty answers, deduplication and
-stage reconciliation) are NECESSARY but NOT SUFFICIENT. Keep them separate
-from quality evidence. Audit the generated envelope BEFORE ingestion loses
-metadata, then reconcile generated, ingested and assembled rows. A positive
-row count is a structural precondition, never authorization for a pilot or
-full run and never a semantic acceptance verdict.
-
-1. **Grounding verification**: compose canonical `grounding-verify` against
-   the identified source chunks. Retain claim text, source reference,
-   provenance, cross-check and `why` (at least 40 characters). Use only its
-   closed vocabulary: `tool_verified`, `platform_derived`, `model_inference`,
-   `unavailable`, `tool_no_match`, `pending_check`, `rejected`. Verify each
-   nonempty cited substring exactly in the chunk identified by BOTH
-   `chunk_ref` and `source`; finding it elsewhere in the corpus is not a
-   match. A matching evidence quote does not elevate a paraphrased answer:
-   synthesis remains `model_inference`. Only actually verified derivations
-   from sourced inputs may be `platform_derived`.
-2. **Boilerplate contamination**: measure six-gram document frequency
-   (each phrase counts once per answer, never across answer boundaries).
-   The audit lists phrases in at least 5% of answers as review candidates.
-   Determine whether they come from the source or the prompt before judging
-   contamination; repetition alone is not semantic proof.
-3. **Bloom distribution**: measure envelope `qa_type` counts across
-   factual/conceptual/analyze/evaluate/create, including absent levels.
-   Missing or unknown labels are gaps. Check actual cognitive difficulty
-   separately: even metadata counts do not verify Bloom-level correctness.
-4. **Subject diversity**: measure identified source coverage, then review
-   whether answers cover the corpus's subject matter rather than an imposed
-   frame. Source diversity is not semantic subject diversity. Missing source
-   identity prevents coverage measurement; do not label unknown coverage zero.
-
-#### Read-only mechanical audit and its limits
-
-Run `bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>`.
-It emits a JSON report with separate `structural_counts`, `quality_evidence`,
-per-row `verified_claims`, findings and gaps. Input shapes are:
-
-- Generated: `response.{instruction,output,evidence_quotes:[strings]}` with
-  `chunk_ref`, `source`, `qa_type` on the envelope. `output` is a string.
-- Source chunks: `entity_ref`, `source`, `text`.
-- Flat training: `instruction`, `output`. Lost citations/source/qa_type are
-  explicit gaps, not inferred from word similarity or invented metadata.
-
-All physical JSONL rows reconcile, including malformed JSON, invalid shapes
-and generation-error rows. A source lookup must be unique; duplicate chunk
-identifiers, invalid source rows and missing source text surface as gaps.
-Exit 0 means the narrow mechanical checks completed; 1 means high citation
-findings; 2 means missing checks/data; 64 means usage error. None authorizes
-an ingestion, pilot or full run. The withdrawn overlap threshold argument
-is no longer accepted. The script loads inputs in memory; use bounded
-controls before invoking it on a full artifact and report actual coverage.
-
-This is a **mechanical subset**, not a replacement for `grounding-verify`.
-It verifies citation bytes and identity, records the whole prose answer as
-an unclassified candidate, and does not extract/classify every IS/OUGHT
-claim, verify paraphrase entailment, compute sourced derivations, assess
-reasoning or completeness, scan semantic narrative leaks, or judge an
-imposed subject frame. Ordinary prose has an unperformed narrative check,
-even when it is copied verbatim. No empty caller-supplied narrative list can
-waive that check. A narrow explicit citation-only fixture is supported:
-`output` encodes a JSON array of nonempty strings, each an evidence quote.
-Only this non-prose representation has no narrative fields; disclose
-`no narrative fields — NLR vacuous`. Do not reformat ordinary QA prose to
-this fixture shape to manufacture an acceptance score.
-
-The canonical sub-metrics are SAR (source-anchored claims / factual claims),
-CVR (verified citations / provisional tool-verified citations), HFR
-(surviving non-rejected claims / factual claims), and NLR (clean narrative
-fields / narrative fields). Use weights **0.30 / 0.25 / 0.20 / 0.25**.
-Zero claims, zero citations, missing sources and unperformed applicable
-checks produce gaps/null, never zero or success. NLR is 1 only for the
-explicit no-narrative case. If any sub-metric is null or `claims_checked`
-is zero, `fact_score` is null. The subset also leaves SAR/HFR null when
-factual-claim extraction was not performed. It never averages just the
-measurable/passing rows: one incomplete row keeps the aggregate null.
-A fully covered verbatim citation-only control scores 1 within numerical
-tolerance; that validates the checker, not generated QA quality.
-
-Run the bounded controls with
-`bash kask/scripts/test-audit-qa-quality.sh`; use `shellcheck` when installed.
-Preserve any real verbatim control read-only and rerun it with its sources
-when available. Flat controls without metadata must still report gaps.
-Keep synthetic fixtures/reports in scratch space outside production inputs.
-
-#### Pilot/full-run quality gate
-
-Before authorizing a pilot expansion or full run, and again before declaring
-the pipeline complete, require **all** of:
-
-- Structural counts reconcile with the agreed target, including errors,
-  filtered rows and source coverage; training size reaches
-  `target_condition.min_qa_pairs` rather than merely exceeding zero.
-- Every applicable canonical `grounding-verify` report has a non-null
-  `fact_score >= 0.80` and no high/critical findings in those reports. After
-  correction, rerun verification and retain the previous report rather than
-  erasing its findings. A high aggregate cannot hide a failed report or a
-  load-bearing false citation.
-- All missing applicable checks are resolved with retained evidence.
-  Record genuinely inapplicable checks with their scope justification;
-  unperformed is not inapplicable. Never substitute a partial mechanical
-  audit aggregate for this requirement.
-- Boilerplate, actual Bloom difficulty and subject diversity receive semantic
-  review. Operator semantic judgment remains required when automated checks
-  are unperformed; if that review does not perform/resolve the missing
-  checks, the gate stays blocked. Structural success is not a waiver.
-
-The coordinator owns ingestion, model choices, centroid work and live runs.
-This audit reports evidence and blockers; it does not execute or authorize
-those operations.
-
-### Stage 4 tagging constraint
-
-The `corpus_tag_chunks` tool's `tag_batch_size` parameter MUST be 1. The
-classifier model (glm-5.2) returns a single JSON object, not a JSON array.
-With batch_size > 1, only the first chunk per LLM call receives real
-ontology tags — the rest get fallback tags (`{sumo: [entity]}`). This was
-the root cause of the 90% tagging failure rate observed across multiple
-sessions. With batch_size=1, the success rate is 75-100%.
-
-Throughput with batch_size=1: each 20-chunk file at concurrency=10 takes
-~5 seconds. For 33,823 chunks in 677 batch files of 50, split each into
-2-3 calls of 20 chunks, totaling ~1,700 calls × 5s = ~2.4 hours.
-
-
-Every stage has a **quality gate** — a deterministic check that the stage's
-output meets expected parameters. Quality gates are NOT soft warnings. If a
-gate fails, the pipeline HALTS. Do not proceed to downstream stages with
-degraded input.
-
-### The anti-degradation rule
-
-**Never silently reduce input size to work around a stage failure.** If a
-stage produces fewer outputs than expected, either:
-1. Fix the root cause and re-run the stage, OR
-2. Halt with a failure report explaining what went wrong.
-
-Do NOT create a "representative subset" or "sample" to bypass a timeout or
-failure. A 33,000-chunk corpus that gets reduced to 380 chunks is a 98.8%
-data loss — the pipeline's downstream stages would produce garbage
-embeddings and a meaningless style exemplar. The quality gate exists to prevent
-exactly this.
-
-### Expected-range estimation
-
-Before running the pipeline, estimate the expected chunk count:
-
-```
-expected_chunks ≈ total_text_words / words_per_chunk
+```json
+{"status":"classified"}
 ```
 
-At the default `max_tokens=512` (~380 words/chunk after overlap), a
-9.5M-word / 138-document corpus yields ~25,000–40,000 chunks. Record this
-estimate and use it in Stage 2's quality gate.
-
-## Instructions
-
-### Stage 0 — Validate corpus source
-
-1. Check the `corpus_source` path exists and is a directory:
-   ```
-   ls -la {{ corpus_source }}
-   find {{ corpus_source }} -type f | wc -l
-   ```
-
-2. Count files by extension to confirm the corpus has readable content:
-   ```
-   find {{ corpus_source }} -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn
-   ```
-
-3. Apply the essentialist deletion test: is this corpus worth processing?
-   If the file count is 0, halt with error: "corpus_source is empty or
-   does not exist".
-
-4. **Quality gate**: verify file count > 0 AND at least one readable
-   file type (pdf, html, txt, md). Call `lisp_eval`:
-   ```
-   form: "(if (and (> file_count 0) (> readable_count 0)) 'pass 'fail)"
-   ```
-   Substitute the actual counts as literals. If `'fail`, halt.
-
-### Stage 1 — Convert documents to text
-
-**Parallelizable**: per-file. If `parallel_subagents` is true, spawn
-subagents to convert files concurrently with the step-up ramp.
-
-1. Enumerate all source files and classify by type:
-   ```
-   find {{ corpus_source }} -type f -name '*.pdf' -o -name '*.PDF' | wc -l
-   find {{ corpus_source }} -type f -name '*.html' | wc -l
-   find {{ corpus_source }} -type f -name '*.txt' -o -name '*.md' | wc -l
-   ```
-
-2. **Sequential fallback**: if `parallel_subagents` is false or the
-corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
-   - `path`: `{{ corpus_source }}`
-   - `output`: `corpus/extracted/{{ entity_ref_prefix }}/`
-
-   If `corpus_convert` is unavailable or the source path is outside the
-   MCP tool's allowed root, convert files via terminal commands:
-   - PDFs: `pdftotext -q <input> <output>`
-   - HTML: Python `html.parser` to extract text
-   - TXT/MD: copy as-is
-   Run a conversion script that handles all file types and logs per-file
-   results.
-
-3. **Parallel subagent dispatch** (if `parallel_subagents` is true and
-   corpus has > 20 files): split files into groups and spawn subagents
-   with the step-up ramp:
-
-   a. Group files into work units of ~10 files each (or 1 file per group
-      for large PDFs > 10 MB).
-   b. Start with 4 subagents. Call
-      `spawn_agent` for each work unit:
-      - `label`: "Convert batch {{ batch_index }}"
-      - `message`: "Convert these files to text in
-        `corpus/extracted/{{ entity_ref_prefix }}/`: {{ file_list }}.
-        Use `pdftotext -q` for PDFs, Python html.parser for HTML, copy
-        for TXT/MD. Log per-file results. Report the count of
-        successfully converted files."
-   c. On all agents succeeding, add 4 more agents for
-      the next round.
-   d. On any agent throttling (429/503) or erroring, hold at the current
-      level for the next round before ramping further.
-   e. Continue until all work units are dispatched, up to `max_concurrency`
-      concurrent agents.
-   f. Collect all subagent outputs and aggregate the converted file count.
-
-4. For PDFs that may need OCR, call `corpus_is_complex` first:
-   - `path`: path to each PDF
-   - `summary: true` for large PDFs — the routing decision reads
-     `needs_ocr` + `ocr_pages` (+ the `reason_counts` histogram); the full
-     per-page array is a ~100KB response for a 400-page book that the
-     decision never reads. Omit `summary` only when per-page diagnostics
-     are needed.
-   - If complex and OCR is available, call `corpus_convert` with
-     `force_ocr: true` for that file (the page-by-page OCR pipeline —
-     `corpus_ocr` is the single-image tool; on PDFs it routes through the
-     same pipeline and errors on zero text). OCR page concurrency is
-     bounded by the process-wide `max_concurrency` setting; the remote
-     OCR calls are additionally gated by an adaptive AIMD limiter
-     inside the executor (ramps up on success, halves on failure).
-     For multiple complex PDFs, spawn subagents per PDF, keeping the
-     fleet within the process-wide `max_concurrency` ceiling.
-   - If complex and OCR unavailable, HALT with a failure report naming
-     the file: "PDF {{ filename }} requires OCR but OCR is unavailable".
-     Never skip the file and continue — a silently skipped source is data
-     loss presented as progress.
-
-   **Pre-flight the OCR backend before any bulk run.** A 400-page book
-   burns endpoint budget against a dead backend — probe first with a
-   2-3 page slice (the result returns in-tool; nothing is written to
-   disk):
-   ```
-   corpus_convert: path=<pdf>, force_ocr=true, target_pages="30-32"
-   ```
-   Read the report fields:
-   - `verification_passed: true` with real text → the endpoint is healthy;
-     proceed with the bulk run.
-   - `error_count > 0` with `llm_breaker_open: true` → the endpoint is DOWN
-     or quarantined. HALT the bulk run and report to the operator: fix the
-     endpoint (RunPod console: worker health, GPU, credits) or switch the
-     model (`kask.models.ocr_model`). There is NO fallback backend — a
-     dead endpoint is a hard stop, never a silent degradation.
-   - `quality_failed_pages` non-empty → the endpoint responds but produces
-     degenerate output (CJK hallucination, repetition loops, garbled
-     tokens — see `quality_failures` for the per-page evidence). Do not
-     bulk-run against a model that fails quality gates on the probe; report
-     to the operator with the measured ratios.
-
-   **Interpret every OCR verification report** (bulk runs included):
-   - `passed=false` with a handful of `empty_pages` → spot-check those
-     pages in the source PDF. Scanned books have blank divider/chapter
-     pages; if the source page is genuinely blank, the failure is benign —
-     record it and proceed. Many empty pages is a real failure — HALT.
-     Do NOT re-run the book or probe the endpoint over a few empty pages.
-   - `quality_failed_pages` non-empty → pages whose output failed a
-     deterministic quality gate. The text is retained but the verdict is
-     FAILED — never merge a run with quality failures into the corpus
-     without the operator explicitly accepting them. `quality_failures`
-     carries the per-page gate names and measured ratios (the evidence
-     behind the verdict).
-   - `error_count > 0` → pages that got no text at all (endpoint errors,
-     breaker-open, empty output). Each error carries the model and the
-     failure reason. A run with errors is incomplete input for every
-     downstream stage — re-run after fixing the endpoint.
-
-   **Probe hygiene**: never write probe or diagnostic artifacts into
-   corpus directories (`extracted/`, the corpus root, chunk input dirs).
-   Use `target_pages` slices (results return in-tool) or a scratch
-   directory outside the corpus tree, and delete stray artifacts before
-   Stage 2 — a probe file left in `extracted/` becomes a duplicate source
-   that chunks into the corpus twice.
-
-   - After OCR, verify the OCR output the same way as any extraction
-     (word-count floor in step 5). An OCR result with zero words is a
-     failure, not a success.
-
-5. Verify the conversion output — count reconciliation AND per-file word
-   counts. Byte-size checks are insufficient: a 412-byte extraction of a
-   scanned PDF is zero-word garbage that passes a `< 100c` check (observed:
-   5 of 138 extractions were 21–412 bytes of garbage and passed the old
-   gate). Run the word-count audit:
-   ```
-   python3 -c "
-   import os
-   d = 'corpus/extracted/{{ entity_ref_prefix }}'
-   files = sorted(os.listdir(d))
-   failed = []
-   for f in files:
-       text = open(os.path.join(d, f), encoding='utf-8', errors='replace').read()
-       words = len(text.split())
-       if words < 50:
-           failed.append((f, len(text), words))
-   print(f'{len(files)} extracted, {len(failed)} failed the word-count floor')
-   for f, size, words in failed:
-       print(f'  {f}: {size}B, {words} words')
-   "
-   ```
-
-6. **Quality gate**: extracted_count == source_count (every input file
-   has an output — no silent skips) AND zero failed extractions (every
-   file passes the ≥ 50-word floor or has been routed through OCR). A file
-   whose extraction is empty or garbage is a FAILED EXTRACTION requiring
-   OCR — it is NEVER "not a valid source". Call `lisp_eval`:
-   ```
-   form: "(if (= extracted_count source_count)
-            (if (= failed_extractions 0) 'pass 'fail-quality)
-            'fail-coverage)"
-   ```
-   Substitute actual counts as literals.
-   - `'pass`: proceed to Stage 2
-   - `'fail-coverage`: HALT — files were skipped silently; identify them
-     before proceeding
-   - `'fail-quality`: route every failed extraction through OCR
-     (`corpus_convert` with `force_ocr: true`), re-run the audit, and do
-     not proceed until all pass. Never drop a failed file from the corpus.
-     Re-runs are self-healing: directory-mode `corpus_convert` skips only
-     outputs that pass the ≥ 50-word floor, so a garbage extraction is
-     re-extracted on the next run instead of being honored as existing
-     output.
-
-7. **Merge staged OCR outputs into the extraction set (explicit,
-   audit-gated).** OCR'd texts land in the staging sibling directory
-   (`{output}-ocr-staging/`, e.g.
-   `corpus/extracted/{{ entity_ref_prefix }}-ocr-staging/`); the
-   low-word garbage extractions they replace still sit in the main
-   extracted directory. Model output never enters the extraction set
-   on its own — the merge is the caller's explicit step, and each
-   staged file must pass a file-level audit first:
-   - **Dictionary-miss rate** — `aspell list --lang=en` over the file,
-     miss-count / word-count. Clean book text measures ~1.5–6%
-     (proper nouns, technical terms); the degenerate OCR cases
-     measured 29–49% (Berlin 48.6%, Soft_Matter 41.1%,
-     InformationRules 32.0%, clark 28.9%) and a symbol-soup
-     extraction measured 13%.
-   - **CJK character count** — clean Latin-script text is 0;
-     hallucinated CJK measured 277K–746K chars per file.
-   - **8-word shingle repetition ratio** — clean prose ~0.0;
-     repetition loops ~0.9.
-   A staged file failing the audit STAYS staged — never merge it,
-   never delete it. The next directory-mode run re-extracts it
-   automatically (the resume skip honors the deterministic quality
-   gates, so quality-failed outputs never persist as idempotency).
-   Merge only audit-passing files: overwrite each failed extraction
-   with its staged OCR output (same base filename), so the extracted
-   directory holds exactly `source_count` files — every source
-   represented once, no duplicates, no garbage. Re-run the word-count
-   audit (step 5) over the merged set. A probe file or OCR duplicate
-   left in this directory is a corpus-quality bug — the chunk stage
-   would ingest it as a second source.
-
-8. **Re-OCR procedure (quality upgrade of passing outputs).** When
-   existing extractions pass the word-count floor but must be re-OCR'd
-   (model upgrade, endpoint recovery, quality improvement), the same
-   machinery runs the job — no bespoke scripts, no per-run model
-   pinning:
-   a. **Pre-flight the backend** (the standard pre-flight slice). The
-      model comes from the platform chain: `kask.models.ocr_model`
-      setting → `HKASK_OCR_MODEL` env → `DEFAULT_OCR_MODEL`
-      (RunPod/kask-ocr). If the default endpoint is unhealthy, the
-      OPERATOR decides the fallback: fix the endpoint, or set a cloud
-      fallback model via the `kask.models.ocr_model` setting (the
-      designed surface). An agent never pins a model per-run.
-   b. **No move-aside is needed for quality-failed outputs**: the
-      resume skip honors the deterministic quality gates, so a re-run
-      automatically re-extracts any output that fails them (garbage
-      never persists as idempotency). Only outputs that PASS the gates
-      are skipped. For a deliberate full re-OCR of passing outputs
-      (model upgrade), move them to a sibling backup dir first — never
-      delete: the backup is the rollback.
-   c. **Run `corpus_convert` directory mode** (`force_ocr: true`) —
-      the machinery re-extracts exactly the failing/moved-aside sources
-      and skips the rest. The run is interruptible and resumable: the
-      quality-gated skip means a re-launch continues where it stopped.
-      Do not restart the OCR backend mid-run — in-flight pages fail
-      with typed errors and the skip keeps the previously passing text.
-   d. **Audit the new outputs** (the step-5 word-count audit) and
-      spot-check quality against the backup — word count is a floor,
-      not a quality signal.
-   e. **Re-merge** (step 7), re-audit, and re-chunk (Stage 2) —
-      downstream stages always rebuild from the current extraction
-      set; a re-OCR without a re-chunk leaves the corpus stale.
-
-### Stage 2 — Chunk the text
-
-**Parallelizable**: per sub-directory for very large corpora. For most
-corpora (≤ 500 files), a single `corpus_chunk` call is sufficient.
-
-1. **Sequential** (default): call `corpus_chunk` on the extracted text
-   directory:
-   - `input_dir`: `corpus/extracted/{{ entity_ref_prefix }}/`
-   - `output`: `corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl`
-   - `entity_ref_prefix`: `{{ entity_ref_prefix }}`
-   - `max_tokens`: `{{ max_tokens }}`
-   - `overlap_tokens`: `{{ overlap_tokens }}`
-
-   Directory mode writes a SINGLE-TIER chunks JSONL — the tag/QA substrate
-   — and REJECTS `multi_tier=true` with a typed error (do not pass it).
-   Multi-tier retrieval indexing (coarse/medium/fine passages into the
-   vector index) is the per-file path's job: call `corpus_chunk` with
-   `path` per file and `index: true` when the retrieval index needs
-   tiered passages. The two artifacts serve different consumers: the
-   JSONL feeds tagging and QA generation; the index serves `corpus_query`.
-
-   The result carries `zero_chunk_files`: sources that yielded zero
-   passages after processing (boilerplate misclassification, empty
-   extraction). A non-empty list is silent data loss SURFACED — halt and
-   investigate those files before proceeding; the source-coverage
-   reconciliation in step 4 is the hard gate that catches any residue.
-
-2. **Parallel subagent dispatch** (if `parallel_subagents` is true and
-   extracted file count > 500): split the extracted directory into
-   sub-directories of ~100 files each, then spawn subagents with the
-   step-up ramp:
-   a. Create sub-directories:
-      ```
-      cd corpus/extracted/{{ entity_ref_prefix }}/
-      files=(*)
-      batch_size=100
-      for i in "${!files[@]}"; do
-        batch=$((i / batch_size))
-        mkdir -p "batch-$batch"
-        cp "${files[$i]}" "batch-$batch/"
-      done
-      ```
-   b. Spawn subagents per sub-directory with `spawn_agent`:
-      - `label`: "Chunk batch {{ batch_index }}"
-      - `message`: "Call `corpus_chunk` on
-        `corpus/extracted/{{ entity_ref_prefix }}/batch-{{ batch_index }}/`
-        with entity_ref_prefix `{{ entity_ref_prefix }}-batch-{{ batch_index }}`,
-        max_tokens {{ max_tokens }}, overlap_tokens {{ overlap_tokens }},
-        multi_tier {{ multi_tier }}. Output to
-        `corpus/chunks/{{ entity_ref_prefix }}-batch-{{ batch_index }}.jsonl`.
-        Report the chunk count."
-   c. Follow the concurrency dispatch pattern: start at 4, add
-      4 per round on success, cap at `max_concurrency`.
-   d. After all subagents complete, merge batch outputs:
-      ```
-      cat corpus/chunks/{{ entity_ref_prefix }}-batch-*.jsonl > corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl
-      ```
-   e. Verify merged chunk count = sum of batch chunk counts.
-
-3. Count the chunks produced:
-   ```
-   wc -l corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl
-   ```
-
-3. Verify chunk content quality — check average text length is in a
-   reasonable range (not all tiny or all huge):
-   ```
-   python3 -c "
-   import json
-   lengths = []
-   with open('corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl') as f:
-       for line in f:
-           d = json.loads(line)
-           lengths.append(len(d.get('text','')))
-   avg = sum(lengths) / len(lengths) if lengths else 0
-   print(f'chunks={len(lengths)} avg_len={avg:.0f} min={min(lengths)} max={max(lengths)}')
-   "
-   ```
-
-4. Verify source coverage — every extracted file must appear in the chunk
-   output. A silent per-file drop here corrupted a real run (13 of 133
-   sources vanished from the v2 chunk set with no error). Reconcile:
-   ```
-   python3 -c "
-   import json, os
-   sources = set()
-   with open('corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl') as f:
-       for line in f:
-           sources.add(json.loads(line).get('source'))
-   extracted = set(os.listdir('corpus/extracted/{{ entity_ref_prefix }}'))
-   missing = extracted - sources
-   print(f'{len(sources)} of {len(extracted)} sources chunked')
-   for m in sorted(missing):
-       print(f'  MISSING: {m}')
-   "
-   ```
-
-5. **Quality gate**: chunk count > 0 AND chunk count in the expected
-   range AND source coverage complete (distinct_sources ==
-   extracted_count). Call `lisp_eval`:
-   ```
-   form: "(if (and (> chunk_count 0)
-                    (>= chunk_count expected_min)
-                    (<= chunk_count expected_max)
-                    (= distinct_sources extracted_count))
-            'pass
-            (if (> chunk_count 0)
-              'suspicious
-              'fail))"
-   ```
-   Substitute actual values as literals. `expected_min` and `expected_max`
-   come from the expected-range estimation (see Quality Gate Discipline).
-   - `'pass`: proceed to Stage 3
-   - `'suspicious`: log warning with actual vs expected range, investigate
-     chunking parameters, but proceed if investigation confirms the count
-     is reasonable for this corpus
-   - `'fail`: halt with error: "chunking produced no output"
-   - Missing sources (coverage failure) is a HALT regardless of the chunk
-     count: re-chunk the missing files; never proceed with silent coverage
-     loss. The chunk tool's own result reports `total_documents` — verify
-     it equals the extracted file count at invocation time.
-
-### Stage 3 — Embed the chunks
-
-**Pre-flight the DB.** Use a FRESH `db_path` for a fresh corpus run — a
-DB from a prior run carries stale embeddings (and may be unopenable
-after passphrase rotation: a mismatch surfaces as an open error, not
-an empty result). Creating a new DB with the current passphrase works
-by construction; verify the tool result reports the expected chunk
-count, not zero.
-
-**This stage embeds ALL chunks.** The `corpus_embed` tool accepts
-`tagged_jsonl` as an optional parameter — embeddings can be generated
-without tags. Tags (Stage 4) are only needed for QA generation, not for
-embedding or style exemplar building.
-
-1. Call `corpus_embed` on the full chunks JSONL:
-   - `chunks_jsonl`: `corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl`
-   - `tagged_jsonl`: null (tags not yet available; embedding proceeds
-     without them)
-   - `db_path`: `{{ db_path }}`
-   - `passphrase`: `{{ passphrase }}`
-   - `model`: `{{ embedding_model }}`
-   - `batch_size`: `{{ batch_size }}`
-
-2. The tool result reports how many embeddings were generated. Record
-   `embedding_count` from the result.
-
-3. **Quality gate**: embedding_count == chunk_count (100% embedded).
-   Call `lisp_eval`:
-   ```
-   form: "(let ((fail_rate (- 1.0 (/ embedding_count chunk_count))))
-            (cond ((= embedding_count chunk_count) 'complete)
-                  ((> fail_rate 0.10) 'halt)
-                  (t 'partial)))"
-   ```
-   Substitute actual values as literals.
-   - `'complete`: proceed to Stage 4
-   - `'partial`: log warning with failure rate, investigate failed chunks.
-     Proceed only if the failures are isolated and explainable.
-   - `'halt`: halt with error summary listing failed chunks. Do NOT
-     proceed to style exemplar or QA with incomplete embeddings.
-
-### Stage 4 — Tag the chunks (batched, parallel)
-
-**Parallelizable**: per batch. The `corpus_tag_chunks` tool makes LLM
-calls per chunk and will time out on large inputs (observed: timeout on
-382 chunks at concurrency 4). Split the chunks JSONL into batches of
-`tag_batch_size` (default 200) and process batches concurrently via
-`spawn_agent` subagents with the step-up ramp.
-
-1. Split the chunks JSONL into batches:
-   ```
-   python3 -c "
-   import json
-   batch_size = {{ tag_batch_size }}
-   with open('corpus/chunks/{{ entity_ref_prefix }}-chunks.jsonl') as f:
-       lines = f.readlines()
-   for i in range(0, len(lines), batch_size):
-       batch = lines[i:i+batch_size]
-       with open(f'corpus/chunks/{{ entity_ref_prefix }}-batch-{i//batch_size}.jsonl', 'w') as out:
-           out.writelines(batch)
-   print(f'Split {len(lines)} chunks into {(len(lines) + batch_size - 1) // batch_size} batches')
-   "
-   ```
-
-2. **Sequential fallback** (if `parallel_subagents` is false): for each
-   batch file, call `corpus_tag_chunks`:
-   - `chunks_jsonl`: path to the batch file
-   - `output`: path to the tagged batch output file
-   - `concurrency`: `{{ concurrency }}`
-
-   If a batch times out, reduce `concurrency` to 2 and retry. If it still
-   times out, reduce the batch size to 100 and re-split. Do NOT skip
-   batches — every chunk must be tagged or the quality gate fails.
-
-3. **Parallel subagent dispatch** (if `parallel_subagents` is true):
-   Spawn subagents to tag batches concurrently with the concurrency dispatch pattern:
-   a. Start with 4 subagents. For each,
-      call `spawn_agent`:
-      - `label`: "Tag batch {{ batch_index }}"
-      - `message`: "Call `corpus_tag_chunks` on
-        `corpus/chunks/{{ entity_ref_prefix }}-batch-{{ batch_index }}.jsonl`
-        with output
-        `corpus/chunks/{{ entity_ref_prefix }}-batch-{{ batch_index }}-tagged.jsonl`
-        and concurrency {{ concurrency }}. Report the tagged chunk count.
-        If the tool times out, reduce concurrency to 2 and retry. If it
-        still times out, report the error — do NOT skip the batch."
-   b. On all agents succeeding, add 4 more agents for
-      the next round.
-   c. On any agent throttling (429/503) or erroring, hold at the current
-      concurrency level for the next round.
-   d. Cap at `max_concurrency` concurrent agents. The product
-      (subagent count × per-subagent `concurrency`) should stay within
-      `max_concurrency` to avoid exceeding the process-wide limiter.
-   e. Collect all subagent outputs. Any batch that failed must be retried
-      — either by the same subagent (using `session_id`) or a new one.
-
-4. Concatenate all tagged batch outputs into the final tagged JSONL:
-   ```
-   cat corpus/chunks/{{ entity_ref_prefix }}-batch-*-tagged.jsonl > corpus/chunks/{{ entity_ref_prefix }}-tagged.jsonl
-   ```
-
-5. The tagging annotates each chunk with:
-   - 5W1H interrogatory dimensions (Who, What, When, Where, Why, How)
-   - Dublin Core metadata (creator, date, subject, source, type)
-   - PKO process concepts (Procedure, Step, StepExecution)
-   - FIBO/GOLEM domain concepts
-   - Expertise level
-
-6. Count the tagged chunks produced:
-   ```
-   wc -l corpus/chunks/{{ entity_ref_prefix }}-tagged.jsonl
-   ```
-
-7. **Quality gate**: tagged_count ≥ 90% of chunk_count. Call `lisp_eval`:
-   ```
-   form: "(let ((ratio (/ tagged_count chunk_count)))
-            (cond ((>= ratio 0.90) 'pass)
-                  ((= tagged_count 0) 'fail)
-                  (t 'partial)))"
-   ```
-   Substitute actual values as literals.
-   - `'pass`: proceed to Stage 5
-   - `'partial`: log warning with coverage rate, investigate which batches
-     failed, re-run failed batches. Proceed only after coverage reaches 90%.
-   - `'fail`: halt with error: "tagging produced no output"
-
-   **Note**: If `enable_qa` is false, Stage 4 can be skipped entirely —
-   embeddings (Stage 3) and style exemplar (Stage 5) do not require tags.
-
-### Stage 5 — Build style exemplar (optional)
-
-**Gate**: runs only if `reference_author` is provided.
-
-1. If `config_path` is provided, use it. Otherwise, note that a config
-   YAML must exist or be generated for the style exemplar.
-
-2. Compute and store the style centroid with `corpus_centroid`:
-   - `author`: `{{ reference_author }}`
-   - `db_path`: `{{ db_path }}`
-   - `passphrase`: `{{ passphrase }}`
-
-   The tool averages every embedding under the `style:{author}:`
-   entity-ref prefix (excluding the centroid ref itself and `:rule:`
-   refs) and stores the mean at `style:{author}:centroid` — the entity
-   ref `corpus_compose` reads for centroid validation. Without a stored
-   centroid, `corpus_compose` runs unvalidated (validation silently
-   returns None) — the centroid MUST be computed and stored first.
-
-3. Call `corpus_compose` with the author's style config to generate a
-   style sample and validate it against the stored centroid:
-   - `prompt`: a brief description of the desired style
-   - `author`: `{{ reference_author }}`
-   - `db_path`: `{{ db_path }}`
-   - `passphrase`: `{{ passphrase }}`
-   - `config_path`: `{{ config_path }}` (if provided — loads the
-     cognition YAML with the Jinja2 system prompt template and
-     validation thresholds; omit for the generic inline config)
-
-4. **Quality gate**: generated prose within centroid validation
-   thresholds. Call `lisp_eval`:
-   ```
-   form: "(let ((dist centroid_distance)
-                 (ex exemplar_count))
-            (and (<= dist 0.40)
-                 (>= ex 100)
-                 (<= ex 10000)))"
-   ```
-   Substitute actual values as literals.
-   If false, log warning: "generated prose outside style validation
-   thresholds" but continue — QA generation can proceed without the
-   style exemplar.
-
-   **Calibrate `centroid_distance_max` per corpus before trusting the
-   gate.** The threshold must be satisfiable by the corpus's own text:
-   run one `corpus_compose` call whose prompt asks for verbatim
-   reproduction of a corpus passage — the measured distance of corpus
-   text to the centroid is the floor. A threshold below that floor is
-   unsatisfiable by construction (observed 2026-09-11 on the 125-book
-   John Brooks corpus: verbatim corpus passage 0.485, generated
-   in-style prose 0.474–0.495, inherited threshold 0.40 — the corpus
-   itself failed it). Heterogeneous multi-book corpora have wide
-   centroid clouds; set the threshold above the verbatim anchor with
-   margin for generation variance. Also: the cognition config schema
-   requires `centroid_entity_ref` INSIDE the `embedding:` section — a
-   top-level placement fails config parsing with `missing field
-   centroid_entity_ref`.
-
-5. If `corpus_centroid` or `corpus_compose` fails, log the error and
-   continue without the style exemplar. Do not halt — the QA pipeline
-   does not depend on it.
-
-### Stage 6 — Build QA prompts (optional)
-
-**Gate**: runs only if `enable_qa` is true AND Stage 4 produced tagged chunks.
-
-1. Call `corpus_build_prompts` on the tagged chunks:
-   - `tagged_jsonl`: `corpus/chunks/{{ entity_ref_prefix }}-tagged.jsonl`
-   - `output`: `corpus/qa/{{ entity_ref_prefix }}-prompts.jsonl`
-   - `db_path`: `{{ db_path }}`
-   - `passphrase`: `{{ passphrase }}`
-   - `context_k`: `{{ context_k }}`
-   - `prompts_per_chunk`: `{{ prompts_per_chunk }}`
-   - `max_prompts`: `{{ max_prompts }}`
-   - `type_distribution`: derived from `{{ bloom_levels }}`
-
-2. Count the prompts produced:
-   ```
-   wc -l corpus/qa/{{ entity_ref_prefix }}-prompts.jsonl
-   ```
-
-3. **Quality gate**: prompt_count > 0. Call `lisp_eval`:
-   ```
-   form: "(if (> prompt_count 0) 'pass 'fail)"
-   ```
-   Substitute actual value as literal.
-   If `'fail`, warning: "no QA prompts generated — check prompt generation"
-   and skip Stages 7–9.
-
-### Stage 7 — Generate QA pairs (optional, parallel)
-
-**Gate**: runs only if `enable_qa` is true and Stage 6 produced prompts.
-
-**Parallelizable**: per prompt batch. If the prompt count is large
-(> 200), split prompts into batches and dispatch to subagents with the
-step-up ramp.
-
-1. **Sequential** (default for ≤ 200 prompts): call
-   `corpus_generate_qa_batch`:
-   - `prompts_jsonl`: `corpus/qa/{{ entity_ref_prefix }}-prompts.jsonl`
-   - `output`: `corpus/qa/{{ entity_ref_prefix }}-generated.jsonl`
-   - `concurrency`: `{{ concurrency }}`
-
-2. **Parallel subagent dispatch** (if `parallel_subagents` is true and
-   prompt count > 200): split the prompts JSONL into batches of ~200
-   prompts each, then spawn subagents with the step-up ramp:
-   a. Split prompts:
-      ```
-      split -l 200 corpus/qa/{{ entity_ref_prefix }}-prompts.jsonl corpus/qa/{{ entity_ref_prefix }}-prompt-batch-
-      ```
-   b. Spawn subagents per prompt batch with `spawn_agent`:
-      - `label`: "QA gen batch {{ batch_index }}"
-      - `message`: "Call `corpus_generate_qa_batch` on
-        `corpus/qa/{{ entity_ref_prefix }}-prompt-batch-{{ batch_index }}`
-        with output
-        `corpus/qa/{{ entity_ref_prefix }}-gen-batch-{{ batch_index }}.jsonl`
-        and concurrency {{ concurrency }}. Report the QA pair count."
-   c. Follow the concurrency dispatch pattern: start at 4, add
-      4 per round on success, cap at `max_concurrency`.
-   d. Merge batch outputs:
-      ```
-      cat corpus/qa/{{ entity_ref_prefix }}-gen-batch-*.jsonl > corpus/qa/{{ entity_ref_prefix }}-generated.jsonl
-      ```
-
-3. Count the QA pairs generated:
-   ```
-   wc -l corpus/qa/{{ entity_ref_prefix }}-generated.jsonl
-   ```
-
-4. **Quality gate**: qa_count > 0. Call `lisp_eval`:
-   ```
-   form: "(if (> qa_count 0) 'pass 'fail)"
-   ```
-   Substitute actual value as literal.
-   If `'fail`, warning: "no QA pairs generated" and skip Stages 8–9.
-
-### Stage 8 — Ingest QA pairs (optional)
-
-**Gate**: runs only if `enable_qa` is true and Stage 7 produced QA pairs.
-
-1. Call `corpus_ingest_qa`:
-   - `generated_jsonl`: `corpus/qa/{{ entity_ref_prefix }}-generated.jsonl`
-   - `output`: `corpus/qa/{{ entity_ref_prefix }}-training.jsonl`
-   - `db_path`: `{{ db_path }}`
-   - `passphrase`: `{{ passphrase }}`
-   - `dataset`: `{{ dataset_name }}`
-   - `owner`: `{{ entity_ref_prefix }}`
-
-2. The ingestion applies quality filters:
-   - Exact-match dedup (case-insensitive on instruction)
-   - Non-empty answer check
-   - Answer length range check
-   - Bloom level coverage check
-
-3. Count the ingested QA pairs:
-   ```
-   wc -l corpus/qa/{{ entity_ref_prefix }}-training.jsonl
-   ```
-
-4. **Quality gate**: ingested_count > 0. Call `lisp_eval`:
-   ```
-   form: "(if (> ingested_count 0) 'pass 'filtered_all)"
-   ```
-   Substitute actual value as literal.
-   If `'filtered_all`, warning: "all QA pairs filtered by quality checks".
-
-### Stage 9 — Assemble training dataset (optional)
-
-**Gate**: runs only if `enable_qa` is true and Stage 8 ingested QA pairs.
-
-1. Call `training_assemble_dataset`:
-   - `output_path`: `corpus/qa/{{ entity_ref_prefix }}-chatml.jsonl`
-   - `dataset`: `{{ dataset_name }}`
-   - `train_split`: `{{ train_split }}`
-   - `db_path`: the corpus memory DB path used by `corpus_ingest_qa` in Stage 8
-   - `passphrase`: the corpus DB passphrase (HKASK_DB_PASSPHRASE)
-
-   WITHOUT `db_path` + `passphrase` the assembler queries the TRAINING
-   server's own DB, which is empty for this corpus — Stage 8's QA pairs
-   live in the corpus DB, and the assembler finds zero pairs. Always pass
-   both fields.
-
-2. Count the training examples:
-   ```
-   wc -l corpus/qa/{{ entity_ref_prefix }}-chatml.jsonl
-   ```
-
-3. **Quality gate**: example_count > 0. Call `lisp_eval`:
-   ```
-   form: "(if (> example_count 0) 'pass 'fail)"
-   ```
-   Substitute actual value as literal.
-   If `'fail`, warning: "no training examples assembled".
-
-### Stage 10 — Verify pipeline output
-
-1. Call `corpus_query` with a test question to verify the vector index:
-   - `query`: a question relevant to the corpus content
-   - `top_k`: 5
-   - `db_path`: `{{ db_path }}` and `passphrase`: `{{ passphrase }}` —
-     REQUIRED. The in-memory index is empty after a server restart; the
-     query hydrates from the DB, and without `db_path` it returns zero
-     results with a note, which reads like an empty corpus.
-
-   OCR quality knob (apply at Stage 1 when the OCR model's output on
-   scanned books is too noisy): `HKASK_OCR_RENDER_DPI` (default 72,
-   chosen to keep the per-page JPEG payload small). Raising it to ~150
-   improves OCR accuracy on scanned books at the cost of render memory
-   and payload size — set it in the server env and restart before the
-   OCR run. The OCR model comes from the platform chain
-   (`kask.models.ocr_model` → `HKASK_OCR_MODEL` → `DEFAULT_OCR_MODEL`,
-   RunPod/kask-ocr) — a dedicated OCR endpoint, not a general vision
-   model. `corpus_convert` responses carry
-   `structure: null` by default (the per-page block view duplicated the
-   full text and doubled response size); pass `include_structure: true`
-   only when the block layout is actually needed.
-
-2. Call the `grill-me` skill to interrogate the pipeline output:
-   - **Recall**: How many chunks? Embeddings? QA pairs?
-   - **Mechanism**: Does embedding count match chunk count? All chunks tagged?
-   - **Rationale**: Why was chunk granularity set to {{ max_tokens }}? Appropriate?
-   - **Edge cases**: HTML files converted correctly? PDFs skipped due to OCR?
-     Were any batches dropped during tagging?
-   - **Synthesis**: Does the style centroid match expected style? Would QA
-     set produce a capable model?
-
-3. **Final convergence check**: first resolve the Pilot/full-run quality
-   gate above. Set `qa_quality_gate_passed` to true ONLY with retained
-   per-applicable-report scores >=0.80, no high/critical findings in those reports,
-   resolved missing checks, reconciled counts and operator semantic review.
-   Missing evidence means false; the mechanical audit's aggregate or exit
-   code cannot set it true. Call `lisp_eval` with all stage results:
-   ```
-   form: "(let ((conv_rate (/ extracted_count source_count))
-                 (chunk_ok (> chunk_count 0))
-                 (embed_complete (eq embedding_count chunk_count))
-                 (tag_ok (>= (/ tagged_count chunk_count) 0.90))
-                 (qa_ok (if enable_qa (> ingested_count 0) t))
-                 (train_ok (if enable_qa (>= example_count min_qa_pairs) t))
-                 (query_ok (> query_result_count 0)))
-            (and (>= conv_rate 1.0)
-                 chunk_ok
-                 embed_complete
-                 (if enable_qa tag_ok t)
-                 qa_ok
-                 train_ok
-                 (if enable_qa qa_quality_gate_passed t)
-                 query_ok))"
-   ```
-   Substitute observed values; `min_qa_pairs` is the agreed target condition,
-   not a lowered fallback. True supports completion only with the cited
-   quality-gate evidence. If false, report the blockers and their owners;
-   do not authorize a live run on structural success.
-
-## Failure Modes
-
-| Failure | Detection | Action |
-|---------|-----------|--------|
-| Empty corpus source folder | `find` returns 0 files | Error: "corpus_source is empty or does not exist" — HALT |
-| No text-extractable files | All files are binary/corrupt | Error: "no readable text files in corpus_source" — HALT |
-| OCR needed but unavailable | `corpus_is_complex` returns true, OCR fails | HALT with a failure report naming the file — never skip silently |
-| LLM OCR endpoint down | Pre-flight slice: `error_count > 0`, `llm_breaker_open: true`, per-page errors naming the model and reason (empty output / inference failure / breaker open) | HALT bulk OCR; report to operator (fix endpoint or switch `kask.models.ocr_model`). No fallback backend exists — a dead endpoint is a hard stop, never a silent degradation |
-| OCR `passed=false` with few `empty_pages` | Verification report lists a handful of empty pages | Spot-check those pages in the source PDF — blank divider pages are benign (record and proceed); many empty pages is a real failure (HALT). Do NOT re-run or endpoint-probe over a few blank dividers |
-| Probe artifacts in corpus dirs | Stray `probe`/`ocr-probe` files in `extracted/` or the corpus root | Delete before Stage 2 — they chunk as duplicate sources. Probes belong in-tool (`target_pages` slices) or a scratch dir outside the corpus tree |
-| Empty conversion output | `corpus_convert` produces 0 text files | Error: "no text extracted from any file" — HALT |
-| Low conversion quality | any extraction fails the ≥ 50-word floor | Route failed files through OCR and re-audit — HALT until all pass; a failed extraction is never "not a valid source" |
-| Zero chunks produced | `corpus_chunk` output has 0 lines | Error: "chunking produced no output" — HALT |
-| Chunk count outside expected range | chunk_count < expected_min or > expected_max | Warning: investigate chunking parameters before proceeding |
-| Tagging batch timeout | `corpus_tag_chunks` times out on a batch | Reduce concurrency to 2, retry. If still fails, reduce batch size to 100 and re-split. Do NOT skip batches. |
-| Tagging partial failures | Some chunks lack annotations | Re-run failed batches. If coverage < 90% after re-runs, HALT. |
-| Embedding failures | Per-chunk embedding errors | If >10% fail, halt with error summary. If ≤10%, proceed with warning. |
-| Embedding count mismatch | embedding_count != chunk_count | Investigate. If >10% missing, HALT. Do NOT proceed to style exemplar with incomplete embeddings. |
-| Style exemplar build failure | `corpus_compose` returns error | Log error, continue without style exemplar (QA can proceed) — non-blocking |
-| Zero QA prompts | `corpus_build_prompts` produces 0 prompts | Warning, skip Stages 7–9 |
-| Zero QA pairs generated | `corpus_generate_qa_batch` produces 0 pairs | Warning, skip Stages 8–9 |
-| Zero QA pairs ingested | `corpus_ingest_qa` ingests 0 pairs | Warning: "all QA pairs filtered by quality checks" |
-| Input degradation attempted | Agent tries to reduce input size to bypass a failure | HALT: "anti-degradation rule violated — fix root cause or halt, do not silently reduce input" |
-| Subagent throttle | Inference provider returns 429/503 during parallel dispatch | Back off to last successful concurrency level, hold there for next round. Do not exceed `max_concurrency`. |
-| Subagent depth exceeded | Subagent tries to spawn another subagent | `MAX_SUBAGENT_DEPTH` is 1 — subagents cannot spawn further subagents. Plan batch sizes so each subagent completes independently. |
-| Subagent batch failure | A subagent's assigned batch fails or times out | Retry the batch with reduced concurrency (2) or reduced batch size (100). Do NOT skip. Use `session_id` to resume a failed subagent. |
-
-## Convergence Criteria
-
-The pipeline is complete when ALL of the following hold:
-
-1. `corpus_convert` produced text files for 100% of source documents (the Stage 1 hard gate: `extracted_count == source_count`, merged with OCR outputs, zero probe artifacts)
-2. `corpus_chunk` produced >0 chunks AND chunk count is in the expected range
-3. `corpus_embed` embedded 100% of chunks (embedding_count == chunk_count)
-4. (If QA enabled) `corpus_tag_chunks` tagged ≥90% of chunks
-5. (If style exemplar enabled) `corpus_centroid` stored a style centroid AND `corpus_compose` generated prose within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
-6. (If QA enabled) `corpus_ingest_qa` ingested >0 QA pairs
-7. (If QA enabled) `training_assemble_dataset` reached `target_condition.min_qa_pairs`, with generated/ingested/assembled and error counts reconciled
-8. `corpus_query` returns relevant results for a test question
-9. (If QA enabled) the Pilot/full-run quality gate passes: every applicable canonical grounding report has non-null `fact_score >=0.80`, no high/critical findings in those reports, missing applicable checks resolved, and operator semantic judgment retained; a partial mechanical aggregate does not qualify
-10. `lisp_eval` final convergence check (Stage 10, step 3) returns true with its quality evidence
-
-If any criterion fails, log the failure and halt — do not continue to
-downstream stages with incomplete input. The only exceptions are:
-- Stage 5 (style exemplar build) is non-blocking: a style exemplar failure does not
-  halt the QA pipeline.
-- Stage 4 (tagging) can be skipped if `enable_qa` is false, since
-  embeddings and style exemplar do not require tags.
-
-## Constraints
-
-- The pipeline stages are sequential — each stage depends on the prior
-  stage's output. Do not run stages in parallel. Within a stage, work
-  units (files, batches) MAY be parallelized via `spawn_agent` subagents
-  following the step-up ramp pattern.
-- **Anti-degradation rule**: Never silently reduce input size to work
-  around a stage failure. If a stage fails or times out, either fix the
-  root cause (reduce batch size, reduce concurrency, fix the tool call)
-  or halt with a failure report. Do NOT create subsets or samples to
-  bypass the failure. A 33,000-chunk corpus reduced to 380 chunks is a
-  98.8% data loss — the downstream stages would produce garbage.
-- **Concurrency dispatch pattern**: when dispatching parallel subagents, start
-  at 4 concurrent agents, add 4 per round on success, and cap at
-  `max_concurrency` (default 96). On throttle (429/503), hold at the last
-  successful level. The product of subagent count × per-subagent tool
-  `concurrency` should stay within `max_concurrency` to avoid exceeding the
-  process-wide limiter. `max_concurrency` lives in `KaskGeneralSettings` and
-  is configurable via the settings UI (General page).
-- **Subagent depth limit**: `MAX_SUBAGENT_DEPTH` is 1 — subagents spawned
-  by the pipeline agent cannot spawn further subagents. Each subagent
-  must complete its assigned work unit independently. Plan batch sizes
-  accordingly.
-- Stages 5–9 are optional and gated by their respective parameters.
-  A missing style exemplar does not block QA generation.
-- Stage 4 (tagging) can be skipped if `enable_qa` is false — embeddings
-  (Stage 3) and style exemplar (Stage 5) do not require tags.
-- Use `lisp_eval` for all deterministic invariant checks between stages.
-  Do not eyeball counts. Substitute actual values as literals in the
-  `form` parameter — the `env` parameter binding is unreliable.
-- Every quality gate is a HARD gate. If a gate fails, HALT. Do not
-  convert a failure into a warning and proceed.
-- Passphrase resolution: use the `hkask_mcp_server::server::resolve_db_passphrase`
-  helper if available (2-tier chain: ctx.credentials → env → `hkask-keystore` keychain).
-  Do not inline re-implementations. A missing credential is an
-  authorization failure, not a transient error.
-- If any MCP tool call fails, call `curator_report_skill_use_issue` with:
-  `skill_name: "build-corpus-pipeline"`, `tool_name: <failed tool>`,
-  `error: <error message>`. Then either fix and retry, or halt — do not
-  silently continue with degraded input.
-- Tagging must be batched. The `corpus_tag_chunks` tool makes LLM calls
-  per chunk and times out on large inputs. Default batch size: 200
-  chunks. If a batch times out, reduce concurrency first, then batch
-  size. Never skip batches.
-- OCR page concurrency is bounded by the process-wide `max_concurrency`
-  setting (`HKASK_MAX_CONCURRENCY`, default 96) and gated by an
-  adaptive AIMD limiter inside the OCR executor (ramps up on success,
-  halves on failure). When spawning subagents for multiple OCR runs,
-  keep the fleet within `max_concurrency` — there is no separate
-  OCR-specific concurrency setting.
-- Do not fabricate corpus metadata. If a document's creator is unknown,
-  tag the Dublin Core `creator` field as "unknown" rather than guessing.
+or `{"status":"failed","reason":"the actual failure"}` or
+`{"status":"unverified"}`. Missing status is invalid, not implicit success.
+A classifier response is an array keyed by exact `chunk_ref`; a singleton object
+is allowed only for one input. Missing, duplicate, unknown or malformed entries
+reject the entire affected batch. There is no positional or string fallback.
+Failure annotations and deterministic method signals do not make a row classified.
+Synthesized consolidation text is `unverified` and must itself be classified.
+
+**Gate:** count `.classification.status == "classified"`, reconcile it with
+returned `tagged`, `failed` and `total_chunks`, and require all chunk identities
+classified. Failed/unverified rows block QA; output line count and annotation
+presence are not substitutes. Re-run only after diagnosing the failure and
+replace affected terminal records by identity, never duplicate them in a merge.
+If QA was explicitly disabled, tagging may be marked not requested.
+
+## Stage 5 — Optional style centroid and measured composition
+
+Call `corpus_centroid(author, db_path, passphrase)` after complete embedding.
+It selects `style:{author}:` and stores `style:{author}:centroid`. Optional
+`refs_file` selects existing newline-delimited references without copying vectors;
+optional `dimension` stores `style:{author}:{dimension}:centroid`. Empty or missing
+eligible selections fail; duplicates count once. The shared
+`hkask_types::corpus::is_corpus_passage_ref` excludes empty, `:rule:` and all
+suffix-`:centroid` refs from centroid sources, compose exemplars and prompt context.
+Recomputation replaces the destination, not a new centroid version.
+
+Use `corpus_compose` with the same author/DB and current cognition `config_path`.
+The YAML places `centroid_entity_ref` inside `embedding`. Compare measured
+`centroid_distance`/`style_passed` to the config thresholds; calibrate thresholds
+against real corpus text, not a universally hardcoded distance or exemplar count.
+`centroid_missing=true` with null distance/pass is unvalidated, not a pass.
+`no_validate=true` explicitly skips validation. Rewrite always targets its
+requested dimension (default `composite`), even with a literary config.
+
+**Gate:** requested centroid exists and the measured style criterion is met,
+or report the branch blocked. Independent QA may continue, not erase the blocker.
+
+## Stage 6 — Build complete-source QA prompts
+
+Call `corpus_build_prompts` with `tagged_jsonl`, `output`, the single `db_path`
+and `passphrase`, explicit `prefix` matching the chunk namespace, `context_k`,
+`prompts_per_chunk=2`, `type_distribution`, and `max_prompts=classified_count*2`
+(or `0` for all). Pass `ontology_bloom_overrides` only when deliberately selected.
+No inference occurs in this stage.
+
+The builder rejects nonclassified/duplicate refs, blank source/text, invalid
+salience, prefix mismatches and absent required templates. With KNN enabled it
+reads stored passages across the entire namespace, groups by original source,
+and selects nearest neighbors from the primary source even across input file
+splits. Context includes actual text, `chunk_ref` and `source`, not a display
+preview. Missing/ambiguous provenance, missing text, invalid vectors, primary
+text/source disagreement or failed DB reads are errors. `context_k=0` explicitly
+disables KNN only; DB/knowledge-graph reads still occur and must succeed.
+
+Builder IDs are deterministic `qa-<UUIDv5>` from source, chunk ref, QA type and
+within-type ordinal. Preserve them when splitting/merging; do not renumber files.
+The eight required `PreparedQaPrompt` fields are `prompt_id`, `chunk_ref`,
+`source`, `concepts`, `salience`, `qa_type`, `system`, `user`. Unknown fields fail.
+
+**Gate:** `prompts_written == classified_count*2`, unique prompt IDs, full primary
+source/chunk coverage, and expected `context_enabled`, `context_scope`,
+`stored_passages`, `context_links`. `context_links` counts neighbors per processed
+chunk, not per prompt. The type rotation restarts for each chunk: at two prompts
+and equal weights it selects factual/conceptual, not all five labels. Report the
+actual distribution and any gap against the requested mix; never claim even
+five-level coverage or increase prompts per chunk without operator approval.
+
+## Stage 7 — Generate QA with owned outputs
+
+Start with an operator-authorized bounded pilot, keeping the full source/prompt
+inventory as the target. Run Stage 8 on that pilot before expanding to full
+production; a pilot is evidence for a gate, never a reduced completion scope.
+Call `corpus_generate_qa_batch(prompts_jsonl, output, concurrency, model)`.
+Preflight validates the whole prepared file/model before creating output.
+Input/output aliases (including symlink and hard-link aliases) are rejected.
+A process-wide lease owns the canonical output across service instances and both
+transports. It remains owned until workers are destroyed, not merely until abort
+is requested. Never race a timed-out/cancelled call with a replacement writer.
+
+Synchronous inference retries only typed Connection/Overloaded/Timeout failures,
+at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failures
+and rejected QA are not retried. Provider-batch submission is not retried because
+remote acceptance can be unknown. `:batch` selects that transport; prepared
+`system`/`user` messages and prompt IDs remain unchanged.
+
+Every pair must include nonblank `question`, `answer`, requested `bloom_level`
+and `evidence_quotes`, an array of structured `QaEvidence` objects. The array may
+be empty (no citation), never absent, a string array or numeric passage citations.
+Example model response:
+
+```json
+{"qa_pairs":[{"question":"What is the delay?","answer":"72 hours","bloom_level":"factual","evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]}]}
+```
+
+Generated envelopes retain `prompt_id`, primary `chunk_ref`/`source`, `qa_type`,
+`salience`, `response.{instruction,output,type,concepts,evidence_quotes}`,
+`provenance` and `tokens_used`. Each citation has its own identity, including
+context citations. Matching quotation bytes does not validate answer synthesis.
+Manual single/cross-reference `corpus_generate_qa` calls with only text have no
+source identity: they request empty evidence, not invented sources. They are not
+a cited replacement for this prepared pipeline or a failed stage.
+
+**Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
+all prepared IDs, require no unresolved failed prompts, and separately measure
+`qa_rows_written`. A prompt may yield multiple pairs; row count is not prompt
+coverage. Failure rows have identity plus `error`, never training data.
+Writes/flushes can fail and leave explicit partial output. Cancellation warns;
+no automatic resume, atomic replacement or fsync guarantee exists. Once owners
+stop, inspect/reconcile partial records before any explicit rerun, which overwrites
+the destination. Do not append blindly or treat `degraded=false` as completion.
+
+## Stage 8 — Audit before ingestion
+
+Run the read-only mechanical checker on current generated envelopes and the
+complete chunks file:
+
+```bash
+bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>
+```
+
+Use actual discovered paths in execution. Inputs use structured evidence in both
+envelopes and flat QA; source rows carry `entity_ref`, `source`, `text`. Verify
+each quote against its own unique chunk **and** source. Bare string quotes,
+missing metadata, malformed rows, duplicate refs and generation errors are gaps
+or findings, not silently repaired evidence. An empty evidence array is valid
+generation structure but a missing-citation quality gap.
+
+The audit reports reconciled physical rows, citation verification, six-gram
+**document frequency** (5% review-candidate threshold), QA-label distribution and
+identified source coverage. These are not semantic contamination, actual Bloom
+difficulty or subject-diversity verdicts. It does not extract every factual/IS/OUGHT
+claim, check paraphrase entailment, compute sourced derivations, judge reasoning
+or completeness, or perform narrative-leak review. Ordinary prose retains
+unperformed claim/narrative checks even if verbatim. Exact evidence does not
+promote answer prose beyond `model_inference`.
+
+Canonical provenance vocabulary: `tool_verified`, `platform_derived`,
+`model_inference`, `unavailable`, `tool_no_match`, `pending_check`, `rejected`.
+Keep claim/source, cross-check and a substantive `why` (at least 40 characters).
+SAR/CVR/HFR/NLR weights are **0.30/0.25/0.20/0.25**. Missing applicable checks,
+zero checked claims/citations or incomplete rows propagate null; never average
+only passing/measurable rows. Only the explicit citation-only control, where
+`output` encodes a JSON array of canonical citation objects also present in
+`evidence_quotes`, has no narrative fields: disclose “NLR vacuous”. Do not convert
+ordinary QA into that control to manufacture a score.
+
+Exit codes: 0 narrow mechanical checks complete; 1 high citation findings;
+2 missing checks/data; 64 usage error. **None authorizes ingestion or a live run.**
+Use `bash kask/scripts/test-audit-qa-quality.sh` and, if available, `shellcheck`
+for bounded synthetic controls in scratch; preserve real controls read-only.
+The checker loads inputs in memory: bound controls before full-artifact audits
+and disclose coverage. No synthetic controls belong in production input paths.
+
+**Semantic gate before pilot expansion, full generation or ingestion:** require
+every applicable canonical `grounding-verify` report to have non-null
+`fact_score >= 0.80`, no high/critical findings, all missing applicable checks
+resolved with evidence, plus semantic review of boilerplate, actual cognitive
+difficulty and subject matter. Record genuinely inapplicable checks explicitly.
+Operator review must actually resolve the missing checks; it is not a blanket
+waiver. A partial mechanical audit cannot open this gate. Retain current
+verification evidence and correction findings, not duplicate corpus versions.
+
+## Stage 9 — Ingest, assemble and seek training approval
+
+1. Dry-run `corpus_ingest_qa(generated_jsonl, output, db_path, passphrase,
+   dataset, owner, dry_run=true)`. It validates/deduplicates without opening the
+   DB or writing output. Admission is structural only: nonblank instruction,
+   output, QA type, source and chunk ref; complete structured evidence entries.
+   Concise answers survive. First valid case-insensitive exact instructions win;
+   no minimum length, semantic dedup, DB dedup or semantic quality test is implied.
+2. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
+   inspect the exact `training:qa:{dataset}:` prefix in the named DB and explicitly
+   purge it before replacement. Do not infer/broaden a purge or retain parallel
+   datasets. Retained-row indices restart per call; arbitrary partitioned calls
+   to the same dataset are not a safe replacement for whole-dataset reconciliation.
+3. Reconcile `total_nonblank_rows = generator_errors + malformed + parsed`,
+   `parsed = filter_drops + duplicates + retained`, and non-dry
+   `retained = stored + failed`. `stored_h_mems = stored`, `deduped = retained`,
+   `filtered = duplicates + retained`. `status=partial_failure` and each
+   `storage_errors` entry block completion. The file includes all retained rows
+   even if storage fails; file writing and DB inserts are not one transaction.
+4. Preserve `evidence_quotes`, source/chunk identity, `prompt_id`, `provenance`,
+   concepts, difficulty and QA type in the retained training JSONL/h_mems for
+   audits. For ChatML, call `training_assemble_dataset` with the same explicit
+   corpus `db_path` and `passphrase`, `dataset`, `train_split`, `output_path`;
+   omitting the DB queries the training server's separate store. Reconcile actual
+   train/validation totals with stored survivors and the agreed size target.
+   If using `corpus_prepare_training_dataset`, supply the operator-approved
+   `base_model`; its PEFT recommendation is advisory, not approval to train.
+5. Stop before training submission until the operator approves the base model
+   and LoRA configuration under `lora-training`. Do not infer approval from a
+   valid dataset, recommendation or audit exit code.
+
+## Stage 10 — Verify and report actual state
+
+Clear the in-memory index before testing a different DB; query with explicit
+`db_path`, `passphrase`, `include_text=true` and a relevant question. DB hydration
+occurs only when the index is empty; a nonempty index is not switched by `db_path`.
+Verify source/text identity and relevant retrieval, not merely a positive count.
+
+Use `lisp_eval` to check measured stage equalities and a separately evidenced
+semantic-gate boolean. Require all requested sources, complete embeddings,
+classified chunks, two prompts per chunk, reconciled generation/ingestion/export,
+semantic acceptance, relevant retrieval and requested style validation. Never
+substitute fixed totals, incomplete coverage, a model's success claim or file size.
+
+Report every stage as not requested, blocked/failed, partial, or verified with
+its actual tool outcome and evidence. Manual extraction merges, file partitions,
+cleanup, audits and reruns carry the same status/accounting discipline. A blocked
+optional branch is not an overall pass. Name unresolved IDs/errors and the next
+owner/action; three no-progress retries halt for operator attention. Report tool
+failures via `curator_report_skill_use_issue`, never silently bypass the engine.
+No claim of a rebuild, ingestion, centroid or training completion is valid without
+the corresponding run. Code/doc work cites its commit, or explicitly says
+**uncommitted**; training readiness is not evidence of trained capability.

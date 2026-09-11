@@ -1,475 +1,412 @@
 # hkask-mcp-corpus
 
-Unified corpus MCP server — gather, process, and output. Combines document
-processing and style composition into a single server organized by corpus
-flow stage.
+Corpus processing, retrieval, evidence-carrying QA and style composition over
+MCP. The server has **24 registered tools**; parameters extend existing tools,
+not the tool count. The router and count test are in
+`src/hkask_mcp_corpus.rs:264–290`.
 
-## Architecture
+Use the [tool reference](../../docs/reference/mcp-servers/corpus.md) for parameters
+and the [build-corpus-pipeline skill](../../../.agents/skills/build-corpus-pipeline/SKILL.md)
+for source-complete execution and operator quality gates. This document describes
+the current code contract, not a completed live corpus run.
 
-```
-hkask_mcp_corpus.rs  — Server struct, shared helpers (embedding_dim, normalize_concept,
-                        extract_text, filter_outcome_to_pages, OCR fallback threshold)
-index.rs              — Passage identity, upsert/publication, scoped invalidation and DB hydration
-batch.rs              — Shared batch infrastructure (retry_with_backoff, BatchOutcome,
-                        DEGRADED_FAILURE_THRESHOLD, MAX_RETRIES)
-text.rs               — Text processing wrappers (chunk_text, strip_gutenberg_headers)
-                        — delegates to MemoryStore pure functions, localizes the
-                        dependency so callers don't import a DB type for text processing
-guard.rs              — Content safety guard (GUARD, INPUT_GUARD_ENABLED) — shared
-                        across all LLM-boundary tool groups
-fetch.rs              — Shared HTTP fetch + PDF/OCR fallback + HTML stripping
-                        (corpus/fetch.rs) — eliminates duplicated download pipelines
-template.rs           — Cached minijinja environment + render_one_shot helper
-helpers.rs            — Shared utilities (cosine_similarity, cosine_distance,
-                        tokens_to_words, chunk_word_bounds, serialize_passages,
-                        chunk_structure, read_jsonl, read_jsonl_lenient)
-convert.rs            — Format detection, HTML stripping, markdown frontmatter removal,
-                        URL sanitization (sanitize_links)
-services/
-  convert.rs          — ConvertService (document conversion + directory chunking)
-  triples.rs          — TriplesService (RDF h_mem extraction from chunks)
-  consolidation.rs    — ConsolidationService (cluster + LLM-synthesize + re-embed)
-  prompt_builder.rs   — PromptBuilderService (KNN + concept graph + prepared QA records)
-  qa_batch.rs         — Prepared QA transport selection and AIMD synchronous scheduling
-  qa_pipeline.rs      — Canonical prepared record, validation, completion and fallible output
-tools/
-  gather/             — corpus_discover, corpus_cache_work
-  document.rs         — corpus_convert, corpus_ocr, corpus_chunk (thin wrappers → ConvertService)
-  semantic/           — corpus_generate_qa, corpus_generate_qa_batch, corpus_extract_assertions,
-                        corpus_embed (thin wrappers → TriplesService)
-  corpus/             — corpus_dedup_chunks, corpus_consolidate_chunks, corpus_build_prompts,
-                        corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
-                        (thin wrappers → ConsolidationService / PromptBuilderService)
-  tagging/            — corpus_tag_chunks (ontology tagging with validate_ontology_tags)
-  compose_tools.rs    — corpus_compose, corpus_rewrite, corpus_centroid
-  storage.rs          — corpus_cache, corpus_query, corpus_clear_index
-ocr/ (13 modules)
-  pipeline.rs         — OcrExecutor trait, run_pipeline orchestrator, cross-validation
-  config.rs           — ComplexityTier, ThresholdConfig, TriageConfig
-  document.rs         — OcrResult, CrossValidation, PipelineOutcome, split_pdftotext_pages
-  llm_ocr.rs          — Vision LLM OCR + shared vision_ocr_bytes primitive
-  decimation.rs       — PDF→images via pdftoppm + Otsu binarization
-  complexity.rs       — Sobel edge detection → page complexity scoring
-  routing.rs          — Complexity-driven backend selection with deterministic sampling
-  tesseract.rs        — Classical OCR via tesseract CLI (TSV confidence parsing)
-  triage.rs           — Per-page pre-OCR complexity detection
-  verification.rs     — Post-pipeline quality checks
-  calibration.rs      — Threshold drift analysis with Regulation alerting
-  server.rs           — PipelineExecutor (Tesseract + LLM backend bundler)
-  mod.rs              — Re-exports
-backend/              — Office format backends (docx, pptx, xlsx) + shared markdown parser
-bridge/               — Ontology bridges (golem, fibo, eso)
-corpus/
-  discover/           — Academic author discovery (search, cache, concept extraction, config)
-  fetch.rs            — Shared HTTP fetch + PDF/OCR/HTML pipeline
-runtime/              — Section classifier + provider intelligence + adaptive monitor
-```
+## Implementation map
 
-## QA model routing
+| Boundary | Owner |
+|---|---|
+| Tool registration and shared model/concurrency resolution | `src/hkask_mcp_corpus.rs` |
+| Convert, OCR and directory chunking | `src/tools/document.rs`, `src/services/convert.rs`, `src/ocr/` |
+| Word-window chunking | `hkask-memory/src/text_chunking.rs`; corpus budget adapter in `src/helpers.rs`, source encoding in `src/text.rs` |
+| Identity-correlated classification | `src/tools/tagging/ops.rs` |
+| Canonical `TaggedChunk`, `ClassificationOutcome`, `QaEvidence`, prompt IDs and passage-ref exclusion | `hkask-types/src/corpus.rs` |
+| Durable passage publication and warm/DB retrieval | `src/index.rs`, `src/tools/storage.rs` |
+| Source-scoped context and prepared prompts | `src/services/prompt_builder.rs` |
+| QA validation, envelope and accounting | `src/services/qa_pipeline.rs`, `src/tools/semantic/qa.rs` |
+| Output ownership, transport and retry | `src/services/qa_batch.rs`, `src/tools/semantic/batch_api.rs`, `src/batch.rs`, `src/path_safety.rs` |
+| QA ingestion and retained metadata | `src/tools/corpus.rs`, `src/tools/corpus/qa_parsing.rs` |
+| Style selection, centroid and validation | `src/compose.rs`, `src/tools/compose_tools.rs`, `hkask-memory/src/memory_store.rs` |
 
-`corpus_generate_qa` and `corpus_generate_qa_batch` require a dedicated non-thinking
-generator: explicit tool `model` > Settings → Kask → Models → QA Generation Model
-(`kask.models.qa_generation_model`, injected as `HKASK_QA_GENERATION_MODEL`).
-The setting defaults empty. Missing or malformed configuration fails visibly before
-inference (and before batch output creation); unresolvable models fail at the bridge
-or provider, never by substituting chat, classifier, or training base models.
-Synchronous and provider-batch QA both disable reasoning with effort `none` on the
-OpenRouter wire. A `:batch` suffix retains the existing provider-batch transport.
-`HKASK_QA_MODEL` is retained only for consolidation; it is not a QA-generation alias.
-Offline coverage: `tools::semantic::qa_model_tests` drives both public tools; the
-batch service tests cover provider-batch selection and role-aware synchronous calls.
-
-## Concurrency
-
-Remote LLM work **ramps; it never launches at the ceiling.** The motivating
-failure (2026-09-03): a 412-page OCR run fired 96 concurrent page requests at
-a 32-worker RunPod endpoint — instant rejections collapsed to "empty output"
-and the whole book silently degraded to Tesseract.
-
-- **Adaptive remote gate** — `batch.rs::AdaptiveLimiter` (AIMD): start at
-  floor 2, +1 per success, halve per failure, ceiling = `HKASK_MAX_CONCURRENCY`
-  (`KaskGeneralSettings.max_concurrency`, default 96). A service with lower
-  capacity is discovered by probing, not by stampede. Gates every remote LLM
-  call site: the OCR vision executor (process-lifetime — capacity learning
-  persists across runs) and the batch services (assertions, consolidation,
-  QA batch, embedding, tagging — per-request).
-- **Static local bound** — the OCR pipeline's page semaphore caps total
-  in-flight pages (local Tesseract execution + LLM tasks waiting on the
-  adaptive gate). Local resources don't need adaptation.
-- **Circuit breaker stays subordinate** (`ocr/llm_ocr.rs`) — the limiter adapts
-  to capacity; the breaker hard-quarantines a dead endpoint.
-- **Outcome signal** — the LLM call's own result: `Ok` grows the allowance,
-  `Err` (including typed `EmptyOcrOutput`) backs it off. Quality-only issues
-  (JSON parse failures after a successful call) stay neutral.
-
-> **Decision record (PM, 2026-09-03):** This AIMD design is the ratified spec
-> (operator decision, Option B). It supersedes the stepped-ramp design of
-> `93b9951afe` (start at `concurrency_step`, +step per success, one-step
-> backoff on 429/503 throttles only, `general.concurrency_step` setting) —
-> deleted with the manifest executor in `a71f79b263` and recovered from git
-> history during the 2026-09-03 incident. Do not "restore" the superseded
-> design from history; this section is the contract.
+Source identity and derivation use [Dublin Core](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/)
+and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
+anchors do not turn generated assertions or exact citations into verified prose.
 
 ## Tools (24)
 
-### Gather (2)
+| Group | Registered tools |
+|---|---|
+| Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
+| Process (9) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
+| QA output (5) | `corpus_build_prompts`, `corpus_generate_qa`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
+| Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
+| Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
-| Tool | Description |
-|------|-------------|
-| `corpus_discover` | Discover an academic author's body of work and generate a corpus.yaml for style exemplar construction. Delegates to the corpus-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
-| `corpus_cache_work` | Cache an extracted work's content to disk for reuse by the embedding pipeline. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading. |
+## Extraction and chunking
 
-### Process (8)
+`corpus_convert` handles documents or a source directory. Directory mode requires
+`output`, persists one `.txt` per supported source and resumes only outputs that
+pass its 50-word floor and deterministic quality checks. OCR-derived directory
+outputs go to `{output}-ocr-staging`; merging into accepted extractions is an
+explicit quality-gated operation. File mode honors its `output` path, but writing
+text does not certify quality (`src/tools/document.rs:30–101`).
 
-| Tool | Description |
-|------|-------------|
-| `corpus_convert` | Extract text from a document. For PDFs: tries fast text extraction first (~50ms for text-native), falls back to typed OCR pipeline (decimate→score→route→OCR→verify) if near-empty. Supports `force_ocr` mode. Formats: PDF, MD, HTML, TXT. |
-| `corpus_ocr` | OCR a document using the configured OCR model (a dedicated OCR endpoint). Requires `HKASK_OCR_MODEL` or explicit `model` parameter. |
-| `corpus_chunk` | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store. |
-| `corpus_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
-| `corpus_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
-| `corpus_extract_assertions` | Extract assertions with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags. |
-| `corpus_dedup_chunks` | Deduplicate chunks by semantic embedding similarity (cosine > 0.85 default). Clusters within each source file, keeps highest-salience chunk per cluster. |
-| `corpus_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis. Clusters by cosine > 0.75, synthesizes each multi-chunk cluster into a single passage, re-embeds. Merges ontology tags with normalization. |
+`corpus_is_complex` performs PDF text-layer/image-inventory triage; `summary=true`
+returns routing counts and examples instead of every page. OCR uses the configured
+image-capable model through the page pipeline. PDFs are decimated into pages;
+zero text is an error. Results expose verification, empty/quality-failed pages,
+error counts and breaker state. Review them before accepting text or expanding a
+probe into a bulk run (`src/tools/document.rs:103–167`). There is no alternate
+OCR backend to silently accept on endpoint failure.
 
-### QA Output (5)
+All text, document and directory chunk modes use **one shared structural/sentence
+word-window engine** (`hkask-memory/src/text_chunking.rs:123–197`). It sanitizes
+text, prefers structural/sentence ends within the budget, advances on every
+window and permits a short final fragment. Positive overlap repeats exactly the
+preceding suffix while adding new words; explicit zero uses the same engine with
+no repetition. Cleaning can remove boilerplate, so source coverage still needs
+caller verification.
 
-| Tool | Description |
-|------|-------------|
-| `corpus_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `corpus_generate_qa_batch`. |
-| `corpus_generate_qa` | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
-| `corpus_generate_qa_batch` | Execute canonical prepared QA records unchanged under one optional provider-prefixed model. AIMD synchronous processing with 3-attempt retry or provider Batch API; shared completion accounting and fallible incremental output. |
-| `corpus_ingest_qa` | Structurally validate, exact-dedup, and store generated QAs with evidence metadata; preserve concise answers and report reconciled row/storage counts. |
-| `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
-| `corpus_purge_qa` | Purge embeddings and h_mems by entity-ref prefix in the named DB; invalidate matching warm passages and overlapping in-flight publications. |
+- `max_tokens` resolves from the request, otherwise shared chunk settings
+  (`HKASK_CHUNK_MAX_TOKENS` overrides settings; code default 256).
+- `overlap_tokens` defaults to **64 approximate tokens = 48 whitespace words**.
+  It is repeated context, not a minimum chunk length. `0` is explicit off.
+- Both effective bounds are `floor(tokens / 1.33)`. These are **not BPE/model-token
+  limits**. Unicode, code and long words can consume more model tokens.
+- The maximum must yield a word; positive overlap must yield a word and be smaller
+  than the maximum in both token and word units. Invalid budgets fail before
+  extraction/output (`src/helpers.rs:336–398`).
+- Directory mode consumes immediate `.txt` children, requires `output`, writes
+  single-tier JSONL and rejects `multi_tier=true`. Per-file/text multi-tier uses
+  coarse/medium/fine defaults 2048/512/128, each validated against the overlap.
+- Directory IDs use `prefix:utf8-<filename UTF-8 hex>:<ordinal>`. Fixed-width hex is
+  reversible and collision-free for distinct source strings; punctuation is not
+  collapsed (`src/text.rs:7–16`). Original `source` remains separate provenance.
+  Reusing a prefix/source identity across unrelated inputs is caller error.
+- Directory enumeration containment-checks **each child**, including symlink
+  targets, before reading. It publishes JSONL from a temporary file only after
+  all sources serialize. Indexing, if requested, is not part of that file's
+  publication transaction (`src/services/convert.rs:935–1113`).
 
-### Prepared QA JSONL contract
+Directory results include `total_documents`, `total_chunks`, resolved
+`max_tokens`, `overlap_tokens`, `overlap_words`, `budget_basis`,
+`source_id_encoding`, `zero_chunk_files`, `indexed` and paths. Reconcile actual
+source/record identity and bounds, not just file lines. Nonempty `zero_chunk_files`
+is an explicit coverage failure for the pipeline.
 
-> **Decision record (operator, 2026-09-05):** Adopt one canonical prepared QA
-> record and shared completion/accounting before the separate media-contract
-> work. No backward compatibility is required. This supersedes the dual-read
-> formats pinned by `45db8da1ef`. Regenerate old prompt files with
-> `corpus_build_prompts`; `chunk_id`/`text`/`bloom_levels` aliases and prepared
-> files without prompt identity are rejected. The AIMD ratification above is
-> unchanged.
+## Classification contract
 
-Each nonblank input line is exactly one `PreparedQaPrompt` (`services/qa_pipeline.rs`):
-
-```json
-{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","concepts":["mechanism"],"salience":0.5,"qa_type":"factual","system":"Generate grounded QA. Return JSON with a qa_pairs array of question, answer and bloom_level (factual).","user":"The primary passage and its context."}
-```
-
-All eight fields are required; unknown fields are rejected. `prompt_id`,
-`chunk_ref`, `source`, `qa_type`, `system`, and `user` are nonblank strings.
-`prompt_id` is unique **within the input file**, 1–64 ASCII letters, digits,
-hyphens or underscores. Repeated `chunk_ref` values are valid. `concepts` is
-an array of nonblank strings (the array may be empty); `salience` is a finite
-JSON number. `qa_type` names the requested Bloom level and must match every
-accepted pair's `bloom_level` exactly. The builder currently rotates factual,
-conceptual, analyze, evaluate and create. Blank lines are ignored; an empty
-file or any invalid/duplicate record rejects the entire request **before
-inference or output creation**.
-
-The builder supplies the response instructions as part of `system`. It emits
-`qa-1`, `qa-2`, … identities in file order; when combining files, identities
-must remain unique. `max_prompts` caps **prompt records**, not chunks;
-`0` emits all `chunks × prompts_per_chunk` records. `prompts_per_chunk` must
-be positive. Builder summary: `total_chunks`, `prompts_written`, `output`.
-
-Both transports forward the prepared `system` and `user` unchanged (separate
-roles for synchronous inference; separate messages and `custom_id=prompt_id`
-for provider batches). Neither formats the instructions as source text or
-adds another generation template. Inference must return:
+Every on-disk `TaggedChunk` requires a `classification: ClassificationOutcome`:
 
 ```json
-{"qa_pairs":[{"question":"A grounded question?","answer":"A grounded answer.","bloom_level":"factual"}]}
+{"classification":{"status":"classified"}}
 ```
 
-The entire response must parse and every pair must have nonblank question and
-answer and the requested Bloom level. One accepted pair becomes one
-`corpus_ingest_qa`-compatible JSONL row:
+The other outcomes are `{"status":"failed","reason":"actual failure"}` and
+`{"status":"unverified"}`. Missing classification is a schema error; synthesized
+consolidation text is unverified until classified itself
+(`hkask-types/src/corpus.rs:223–260`).
+
+`corpus_tag_chunks` defaults to **10 chunks per inference call**. Each returned
+entry must carry exact `chunk_ref`, matching one input `entity_ref`. Array order
+is irrelevant. A singleton object is accepted only for one input. Unknown,
+duplicate, omitted or malformed entries reject the entire affected batch before
+any tags are accepted; no position-based association or string-only fallback
+exists (`src/tools/tagging/ops.rs:66–108`).
+
+Failed inference, rejected responses and task join failures emit failed outcomes
+with reasons. Structural fallback annotations and deterministic `method_signals`
+remain measurable but do not imply classification. The returned `tagged` count
+is **classified successes**; `tagged + failed = total_chunks`. Dry-run reports
+inputs only and writes no tagged artifact. A full-source QA pipeline requires all
+input identities classified, irrespective of the shared 10% degraded threshold.
+
+Tag normalization filters dimensions, normalizes/caps concepts and constrains
+expertise labels. Graph salience uses concepts, not numeric method measurements.
+Tagging includes `how` and stores measured signals in `ontology.method_signals`;
+consolidation recomputes signals from synthesized text. These measurements do not
+certify classifier accuracy (`src/tools/tagging/ops.rs:453–510`).
+
+## Complete-source prompt context
+
+`corpus_build_prompts` takes classified tagged rows, the corpus DB, and an explicit
+matching `prefix` (tool default `corpus:researcher:`). It rejects duplicate refs,
+blank source/text, non-finite salience and prefix mismatches before building.
+
+With `context_k > 0`, the builder loads stored embeddings and full `passage_text`
+across the namespace, excluding reserved rule/centroid refs. Each passage must
+have a valid vector and exactly one original source in text h_mem
+`ontology.dc_source`. It groups candidates by source and selects the nearest
+neighbors for the primary passage **from the complete source**, not just rows in
+the current tagged input file. Ties use reference order. Missing text, invalid
+vectors, ambiguous/missing provenance, duplicate stored refs, dimension mismatch,
+primary source/text disagreement or failed reads are errors, not empty context
+(`src/services/prompt_builder.rs:119–246`).
+
+Context carries each neighbor's full text, `chunk_ref`, `source` and similarity.
+Knowledge-graph values are contextual assertions, not independently verified
+facts. Required `docproc/build-prompts` template failure is visible.
+`context_k=0` explicitly disables KNN, reports `context_enabled=false`, and still
+opens the DB and reads the primary's knowledge graph; it is not a fallback.
+
+Builder defaults: `context_k=3`, `prompts_per_chunk=5`,
+`type_distribution="1,1,1,1,1"`, `max_prompts=0` (all). Positive prompt counts are
+required; a positive cap limits prompt **records**, not chunks. QA labels rotate
+in factual/conceptual/analyze/evaluate/create order, restarting per chunk.
+Five weights expand that rotation; optional `ontology_bloom_overrides` selects
+namespace-specific rotations. Validate supplied distributions before running;
+malformed/empty distributions can resolve to factual-only in the parser.
+
+For the Brooks build, explicitly pass **2 prompts per chunk** and measure the new
+chunk count; equal weights then yield factual/conceptual, not five-level balance.
+The returned `total_chunks`, `prompts_written`, `output`, `context_enabled`,
+`context_links`, `context_scope="complete_source"`, `stored_passages` support
+reconciliation. `context_links` counts selected neighbors per processed chunk,
+not multiplied by prompt count (`src/services/prompt_builder.rs:247–342`).
+
+## Prepared QA JSONL contract
+
+Each nonblank line has exactly these eight required fields
+(`src/services/qa_pipeline.rs:23–103`):
+
+| Field | Contract |
+|---|---|
+| `prompt_id` | Unique in the input; 1–64 ASCII letters/digits/`-`/`_` |
+| `chunk_ref`, `source` | Nonblank primary passage and source identities |
+| `concepts` | Array of nonblank strings; empty allowed |
+| `salience` | Finite JSON number |
+| `qa_type` | Nonblank requested level; each accepted pair must match exactly |
+| `system`, `user` | Nonblank fully prepared messages, including response instructions |
+
+Unknown fields are rejected. The builder generates deterministic `qa-<UUIDv5>`
+IDs from length-framed source, chunk ref, QA type and within-type ordinal
+(`hkask-types/src/corpus.rs:38–49`). Splitting/reordering input does not renumber
+identities. Preserve them on merge and check duplicates. Both transports forward
+prepared system/user roles unchanged; provider batches use `custom_id=prompt_id`.
+
+### Evidence and generated records
+
+The canonical inference response is:
 
 ```json
-{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","salience":0.5,"qa_type":"factual","response":{"instruction":"A grounded question?","output":"A grounded answer.","type":"factual","concepts":["mechanism"]},"provenance":{"generator_model":"<selected model or router_default>","prompt_template":"prepared-qa","prompt_id":"qa-1","source_chunk_ref":"corpus:doc:1"},"tokens_used":10}
+{"qa_pairs":[{"question":"What is the delay?","answer":"72 hours","bloom_level":"factual","evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]}]}
 ```
 
-`tokens_used` is the prompt completion's usage, repeated on each pair row;
-it is not per-pair usage. A failed prompt instead writes
-`{"prompt_id":"qa-1","chunk_ref":"corpus:doc:1","source":"doc.txt","error":"reason"}`
-(no `response`, so it is not admitted as training data). Out-of-order provider
-results are matched by prompt ID. Missing results, duplicate results for a
-known ID, provider errors, malformed result envelopes, rejected QA, and task
-join failures each count as one failed prompt. Unknown provider IDs and
-batch-level IPC failures return a tool error rather than dropping results.
+`QaEvidence` has exactly three nonblank strings: `chunk_ref`, `source`, `quote`.
+Every citation carries its own identity, so a context quotation need not point at
+the envelope's primary passage. `evidence_quotes` is **required**, may be empty,
+and accepts neither bare quoted strings nor numeric passage indices. Unknown
+fields in the response/pairs/evidence are rejected. Empty pair arrays, blank
+question/answer, incorrect Bloom levels or malformed evidence reject the whole
+prompt (`src/tools/semantic/qa.rs:29–110`).
 
-Successful tool returns have exactly these summary fields:
+Generation validates structure, **not citation membership, substring truth or
+answer entailment**. Source-free `corpus_generate_qa(text/texts, chunk_id)` asks
+for empty evidence rather than inventing source identities. Use the prepared
+pipeline for attributable QA. Audit actual quotations against source text before
+semantic acceptance; an empty array is valid structure but a citation gap.
 
-| Field | Meaning |
+One accepted pair becomes one ingestible envelope:
+
+```json
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","salience":0.5,"qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":[],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_template":"prepared-qa","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"},"tokens_used":10}
+```
+
+The model identifier above is illustrative, not a configured default. Usage is
+per prompt completion, repeated on its pair rows, not per-pair consumption.
+A failed prompt instead writes `prompt_id`, `chunk_ref`, `source`, `error`, with
+no response. It is never training data (`src/services/qa_pipeline.rs:169–235,333–359`).
+
+## QA routing, scheduling and output ownership
+
+A dedicated non-thinking QA generator is mandatory: explicit `model` overrides
+Settings → Kask → Models → QA Generation Model (`kask.models.qa_generation_model`,
+injected as `HKASK_QA_GENERATION_MODEL`). The setting defaults empty. Missing or
+malformed configuration fails before output creation/inference; unresolved
+models fail at the bridge/provider. No chat, classifier, consolidation-model or
+training-base substitution. Both QA paths disable reasoning; `:batch` selects
+provider-batch transport. The QA model is not approval of a training base.
+
+Synchronous inference uses AIMD: starts at up to 2, adds one on success and halves
+on transient capacity failure, bounded by requested concurrency. Each retry gets
+its own slot. Only typed `Connection`, `Overloaded`, `Timeout` errors retry,
+with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures,
+open circuits and rejected/malformed QA do not retry. Provider-batch submission
+is not retried because acceptance may be unknown; it preserves typed tool errors
+(`src/batch.rs:73–153`; `src/services/qa_batch.rs:163–205`;
+`src/tools/semantic/batch_api.rs:31–38`).
+
+Before truncating output, both transports validate the entire input, resolve the
+model and reject input/output identity aliases, including symlinks and hard links.
+A **process-wide canonical-path lease** excludes competing writers across service
+instances and transports, including unresolved destination symlinks. The lease
+is not a cross-process lock. Synchronous workers hold it until actually destroyed;
+requesting abort does not release ownership early. On cancellation/write failure,
+`JoinSet` aborts remaining local tasks; this is not a promise that remote work was
+cancelled (`src/services/qa_batch.rs:24–66,99–239`; `src/path_safety.rs`).
+
+Rows are written incrementally in synchronous completion order, directly to a
+file; flush occurs every 10 prompt completions and at finish. Provider results
+are correlated by ID: missing/duplicate known IDs, malformed entries and provider
+errors each fail that prompt. Unknown IDs and batch-level IPC errors are tool
+errors. Join failures retain prompt identity for a failed-prompt row.
+
+| Summary field | Meaning |
 |---|---|
 | `prompts_total` | Validated input record count |
-| `prompts_succeeded` | Prompts whose entire QA response passed validation and whose rows were written |
-| `prompts_failed` | Prompts with an identified failure row |
-| `qa_rows_written` | Accepted QA pair rows only; excludes failure rows |
-| `output` | Requested output path |
-| `batch_api` | Whether provider batch transport was used |
-| `degraded` | Existing `BatchOutcome` failure-rate classification (at least 10%) |
+| `prompts_succeeded` | Entire response accepted and rows written |
+| `prompts_failed` | Identified failed-prompt records |
+| `qa_rows_written` | Accepted pairs only; a prompt can yield multiple pairs |
+| `output`, `batch_api` | Requested destination and selected transport |
+| `degraded` | Shared failure-rate classification, at least 10%; not completeness |
 
-`prompts_total = prompts_succeeded + prompts_failed`; row count is independent
-(a prompt can produce multiple pairs). Output is opened before inference,
-written incrementally in completion order for synchronous calls, flushed
-every 10 prompt completions and once at the end. Serialization, body write,
-newline write, or flush errors propagate as tool errors, **never an OK
-summary**. Output may be partial on error; this is not atomic replacement or
-an `fsync` durability guarantee. The single-chunk/cross-reference
-`corpus_generate_qa` capability is unchanged.
+Every successful return reconciles `prompts_total = prompts_succeeded +
+prompts_failed`. Serialization/write/newline/flush errors propagate. Partial
+output remains explicit in errors and cancellation warnings; no automatic retry,
+resume, atomic replacement or fsync guarantee exists. After all workers stop,
+a caller may explicitly rerun, **overwriting** output. Inspect/reconcile the
+partial artifact first; never append blindly or race a timeout with a new call.
 
-### Ingest QA contract (Brooks fix, operator-approved 2026-09-11)
+## Ingest QA contract
 
-`corpus_ingest_qa` reads `generated_jsonl` with the shared contained, size-capped
-UTF-8 reader (`read_text_capped`). Flat QA objects and generation envelopes are
-accepted. `dataset` and `owner` must be nonblank, including in dry-run mode.
+`corpus_ingest_qa` accepts generated envelopes or flat QA with the same required
+metadata/evidence. It uses contained, size-capped UTF-8 input. `dataset` and
+`owner` must be nonblank, including dry-run. In envelopes, instruction/output
+and evidence are in `response`; primary `qa_type`, `source`, `chunk_ref` are
+outside. Flat rows carry them beside instruction/output.
 
-Admission is **structural only**, not semantic quality scoring: `instruction`,
-`output`, `qa_type`, `source`, and `chunk_ref` must be nonblank strings. In an
-envelope, instruction/output come from `response` and the required metadata
-comes from the outer object. No minimum question or answer length applies;
-`Thirty`, `72 hours`, `A collision`, and `exp(-E/kB T)` are valid answers.
-Whitespace-only fields fail, but retained text is not trimmed or rewritten.
-Deduplication keeps the **first structurally valid row** for each case-insensitive
-exact instruction, within this input file; it does not trim or semantically
-compare instructions, or deduplicate against the existing DB.
+Admission is **structural only**: nonblank instruction, output, QA type, source
+and chunk ref, required structured evidence array, and complete evidence entries.
+Concise answers are valid; retained text is not trimmed or rewritten. Invalid
+concepts, blank supplied prompt IDs, non-object provenance or malformed evidence
+are malformed rows. First structurally valid case-insensitive exact instructions
+win in file order; there is no semantic dedup or existing-DB dedup
+(`src/tools/corpus/qa_parsing.rs:53–112`; `src/tools/corpus.rs:181–239`).
 
-Training JSONL retains `instruction`, empty `input`, and `output`, and now also
-carries `qa_type`, `type`, `source`, `chunk_ref`, `evidence_quotes`, `difficulty`,
-and `concepts`. The supplied string `type` is preserved (or defaults to
-`qa_type` if absent); it does not replace the required `qa_type`. QA h_mem values
-preserve the same metadata plus the existing `question`, `answer`, `bloom_level`
-(from `qa_type`) and `dataset`. Dublin Core/BIBO and PKO metadata remain in the
-queryable ontology column. Evidence quotes remain optional; ingestion neither
-verifies quotations nor makes semantic grounding claims. This path stores h_mems,
-not embeddings.
+Training JSONL retains `instruction`, empty `input`, `output`, `qa_type`, `type`,
+`source`, `chunk_ref`, `evidence_quotes`, `prompt_id`, `provenance`, `difficulty`
+and `concepts`. h_mem values preserve these alongside question/answer,
+`bloom_level` and dataset; DC/BIBO and PKO metadata are in the ontology column.
+An absent supplied `type` uses `qa_type`. No embeddings are generated and no
+quotation/answer semantic verification occurs (`src/tools/corpus.rs:264–354`).
 
-Every returned summary reconciles:
+| Reconciliation | Meaning |
+|---|---|
+| `total_nonblank_rows = generator_errors + malformed + parsed` | Blank lines excluded; non-null outer/response `error` is a generator failure |
+| `parsed = filter_drops + duplicates + retained` | All parsed QA accounted for |
+| `filtered = duplicates + retained`; `deduped = retained` | Exposed filter/dedup counts |
+| Non-dry `retained = stored + failed`; `stored_h_mems = stored` | Failed inserts never count as stored |
+| `storage_errors` | Logged and returned entity/reason for every insert failure |
+| `status` | `dry_run`, `complete`, or `partial_failure` |
 
-- `total_nonblank_rows = generator_errors + malformed + parsed`. Blank lines
-  are ignored. A non-null top-level `error` marks a generator-error row (never
-  training data); invalid JSON, non-object rows and non-object `response`
-  envelopes are malformed. Objects with missing/blank required fields count
-  as parsed, then as filter drops.
-- `parsed = filter_drops + duplicates + retained`.
-- Existing fields remain: `filtered = duplicates + retained`,
-  `deduped = retained`, and `stored_h_mems = stored`.
-- Non-dry runs satisfy `retained = stored + failed`. `failed` counts failed
-  h_mem insert attempts, not generator or parse failures. Each failure is logged
-  and returned in `storage_errors` with its entity and reason;
-  `status: "partial_failure"` is not completed storage. With no insert failures,
-  status is `complete`.
-- Dry-run returns `dry_run: true`, `status: "dry_run"`, and zero `stored`,
-  `stored_h_mems`, and `failed`, without writing output or opening the DB.
+Dry-run writes no output, opens no DB, and returns zero storage attempts. Non-dry
+output contains all retained QA even when DB storage fails. File writing precedes
+DB opening; output and per-row inserts are not one transaction. A tool error or
+partial status may leave output/earlier inserts intact.
 
-Non-dry output contains **all retained QA**, even when a DB insert fails.
-Serialization, file-write and DB-open failures propagate as tool errors, not
-stored counts. Output writing precedes DB opening; the file and per-row inserts
-are not atomic, so a tool error can leave output or earlier inserts intact.
+Before re-ingestion, inspect and explicitly purge only the verified
+`training:qa:{dataset}:` prefix in the named DB. Ingest does not replace or purge a
+prior run. Its entity format is `training:qa:{dataset}:{source}:{retained_index}`;
+indices restart per call, so independent input partitions do not provide a
+whole-dataset idempotency guarantee. Reconcile the complete dataset rather than
+silently colliding or leaving stale records.
 
-**Before re-ingestion:** inspect the target DB and verify the exact dataset
-prefix `training:qa:{dataset}:`, then explicitly purge that verified prefix with
-`corpus_purge_qa` in that DB. Do not purge a broad or inferred prefix. Existing
-entity naming stays `training:qa:{dataset}:{source}:{retained_index}`; ingest
-neither purges nor replaces a prior run, and reordered survivors can leave stale
-records. Live purge/re-ingestion is an operator/coordinator action, not an
-automatic migration.
+## Audit and training gates
 
-Offline public-tool coverage is in `tools/corpus/ingest_tests.rs`: contained
-fixtures and isolated SQLCipher DBs test dry-run, concise answers, metadata
-read-back, exact duplicates, rejection accounting, invalid requests, input caps,
-and injected storage failures. No active corpus DB is used.
+`bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>` is read-only
+with respect to inputs. It verifies each structured citation against its own
+unique `(chunk_ref, source)` and exact nonempty substring. It reports every
+physical row, missing/invalid metadata, boilerplate six-gram document frequencies,
+QA-label counts and source coverage. It does **not** certify paraphrase entailment,
+claim completeness, actual Bloom difficulty, semantic subject diversity or
+narrative leaks. Ordinary prose leaves applicable checks unperformed; missing
+checks propagate null scores rather than a passing partial average. The explicit
+citation-only control uses JSON-encoded structured citation objects, not prose.
 
-### Compose Output (3)
+Exits 0/1/2/64 mean narrow checks complete / high citation findings / missing
+checks or data / usage error. No exit authorizes ingestion, a pilot or training.
+Run bounded synthetic controls via `kask/scripts/test-audit-qa-quality.sh` in
+scratch, then apply the skill's canonical semantic review gates. Keep current
+source/evidence artifacts available after ChatML conversion.
 
-| Tool | Description |
-|------|-------------|
-| `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. Accepts an optional `config_path` to load a cognition config YAML (mashup or style synthesizer) with a Jinja2 system prompt template. |
-| `corpus_rewrite` | Rewrite for a quality dimension (gentle/schriver/hopper/lovelace/composite), validating against `style:{author}:{dimension}:centroid`. Optional `config_path` supplies prompt/retrieval/threshold settings, not the centroid target. |
-| `corpus_centroid` | Average existing embeddings and store a centroid. Optional `refs_file` selects newline-delimited entity refs; optional quality `dimension` selects the destination. |
+`training_assemble_dataset` must receive the corpus DB/path credentials to read
+its stored QA; its default DB belongs to the training server.
+`corpus_prepare_training_dataset` converts Alpaca to ChatML and supplies advisory
+PEFT recommendations for a provided base model. The operator still approves the
+base model and LoRA configuration before training submission.
 
-**Step 6 — operator continuation, 2026-09-11:** `corpus_centroid` still uses
-`style:{author}:` sources and stores `style:{author}:centroid` when both new
-parameters are omitted. `refs_file` is a path-contained UTF-8 file (project root
-or Kask data directory); whitespace and blank lines are ignored, duplicate refs
-count once, and missing eligible refs fail before writing. It can select
-existing refs across prefixes without copying embeddings. An empty selection
-is an error, not a fallback. Rules (`:rule:`) and all derived `:centroid` refs
-are excluded. Recomputing replaces destination rows rather than accumulating
-duplicate centroids.
+## Centroids and composition
 
-Optional `dimension` stores at `style:{author}:{dimension}:centroid`; it is
-independent of embedding vector size (`HKASK_EMBEDDING_DIM`). It is trimmed and
-lowercased and must be nonblank with no `:`. Dimension alone retains the author
-source prefix; refs_file alone retains the author centroid destination.
+`corpus_centroid(author, db_path, passphrase)` selects `style:{author}:` and stores
+`style:{author}:centroid`. Optional `refs_file` is a contained UTF-8 file of existing
+refs, one per line; whitespace/blank lines are ignored and duplicates count once.
+Missing eligible refs or an empty selection fail before storage. Optional quality
+`dimension` targets `style:{author}:{dimension}:centroid`; it is trimmed/lowercased,
+nonblank, has no `:`, and is independent of vector size. Recomputing replaces the
+destination, not additional centroid rows (`src/tools/compose_tools.rs:161–175,250–300`).
 
-`corpus_rewrite` always requests validation against that dimension target
-(including the default `composite`), even when YAML names another centroid.
-Both compose and rewrite expose `centroid_missing`: true means validation was
-requested but the centroid is absent, with null `centroid_distance` and
-`style_passed`. A measured result reports false plus distance/pass. Explicit
-`corpus_compose(no_validate=true)` reports false with null validation values.
-Other centroid lookup failures are errors, not missing-centroid results.
+The shared `hkask_types::corpus::is_corpus_passage_ref` excludes empty refs, `:rule:`
+refs and every suffix-`:centroid` ref. Prefix and explicit-ref centroid selection,
+compose retrieval and prompt context use this same helper; this consolidation of
+the predicate does not change selection behavior (`hkask-types/src/corpus.rs:13`;
+`hkask-memory/src/memory_store.rs:523–566`; `src/compose.rs:324`).
 
-The registered surface remains **24 tools**: adding parameters does not add a
-tool. `tool_surface_tests` pins both the router count and optional schema fields.
+Cognition YAML places `centroid_entity_ref` inside `embedding` and can declare
+`embedding.retrieval.declared_method.signal` thresholds. All supplied signal
+thresholds must match. Missing method signals exclude passages and increment
+`method_signals_missing`; malformed metadata/read failures are errors.
 
-### Manage (3)
+Compose uses config prompt/retrieval/validation settings. Rewrite **always**
+validates against the requested dimension (default `composite`), even when YAML
+names another centroid. Both expose `centroid_missing`: absent requested target
+means true with null distance/pass, not successful validation or fallback.
+Explicit `corpus_compose(no_validate=true)` returns false with null validation
+values; other lookup failures are errors. Judge measured `style_passed` against
+the configured threshold, not a universally hardcoded distance.
 
-| Tool | Description |
-|------|-------------|
-| `corpus_cache` | Cache processed document text keyed by label in `~/.config/hkask/docproc-cache/`. |
-| `corpus_query` | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
-| `corpus_clear_index` | Clear the in-memory vector index between document sets. |
+## Passage retrieval contract
 
-### Passage retrieval contract
+`corpus_query(db_path=...)` hydrates stored embeddings/text only when the index is
+empty. It is **not a per-query DB selector** on a nonempty index. Call
+`corpus_clear_index` before selecting a different DB alone. Ephemeral chunk
+indexing is not persistent. Durable identity is canonical DB path plus entity ref;
+repeated embed/consolidate replaces that entry. Original/synthesized
+`passage_text`, not annotation-prefixed embedding input, supplies retrieved text
+and answer context. Publication also upserts text/method-signals h_mems.
 
-The approved retrieval slice retains the **empty-index-only** DB fallback from
-`a2134949e2` and persisted `passage_text` hydration from `b51bd23106`.
-`corpus_query(db_path=...)` hydrates the index only when empty; `db_path` is
-**not** a per-query DB selector and is ignored on a nonempty index. Clear the
-index explicitly to query a different DB alone. Ephemeral `corpus_chunk`
-passages are not persisted or recovered after restart.
+`include_text=false` defaults in plain/Lisp modes and affects returned text only.
+Rows without usable stored text expose `text_available=false`,
+`missing_passage_text` and a note; they are omitted from answer context. If no
+usable context remains, `answer_error` surfaces the gap without generation.
+Do not fabricate missing text; reconstruct from retained sources.
 
-Durable identity is `(canonical DB path, entity_ref)`; relative, absolute and
-symlink paths to the same DB share identity. Ephemeral passages have a separate
-source/ref identity. Embedding or consolidating the same durable ref replaces
-its vector/text rather than duplicating it. Original source entities survive
-consolidation. Ontology annotations affect embedding input only: original or
-synthesized text is stored as `passage_text`, returned in warm and restarted
-search, and used as answer context.
+The index owner serializes DB publication/hydration/invalidation without holding
+its lock across inference. Clear cancels pending publications; purge invalidates
+matching canonical DB/ref namespaces and overlapping in-flight operations only.
+Cancellation is explicit, including `corpus_embed.cancelled` and `note` (also
+counted failed). Other DBs/ephemeral entries survive a scoped purge. Later new
+operations may publish again. These guarantees coordinate this server's tools,
+not independent external DB writers (`src/index.rs`; `src/retrieval_tests.rs`).
 
-`include_text` defaults to **false** in plain and Lisp modes. It controls only
-returned result text, not answer context. Lisp answers use the normalized
-natural-language question. Legacy/centroid rows without usable stored text
-carry `text_available: false`; `missing_passage_text` and `note` surface the gap.
-They are omitted from answer context. If no usable text is retrieved,
-`answer_error` explains the gap and generation is not called. No legacy text
-is fabricated or resynthesized; re-embed available sources to restore it.
-
-The index owner serializes synchronous DB publication, hydration and purge.
-Consolidation registers its input/output namespace protection before reading
-source embeddings, so invalidation between snapshot acquisition and inference
-cannot revive a purged snapshot. No mutex is held during inference. Clear cancels all pending publications;
-purge cancels pending operations whose input/output refs overlap the named
-DB/prefix, leaving other cached DBs and ephemeral passages intact. Cancellation
-is visible (`corpus_embed`: `cancelled` count and `note`, also counted in
-`failed`; consolidation/chunk indexing: explicit error). A new operation
-started after invalidation may publish again. Hydration completes before query
-inference, so a paused query cannot later republish a cleared DB snapshot.
-
-Replacement and purge use existing MemoryStore APIs, **not a cross-operation
-transaction**. Cache invalidation precedes deletion. Errors report partial
-application; a failed replacement may have removed its previous embedding,
-and an h_mem deletion failure does not restore already-purged embeddings.
-Storage-publication errors propagate through both embedding and consolidation
-with their partial-replacement warning; they are not reduced to failure counts.
-h_mem purge uses one literal, case-sensitive SQL deletion, not a capped recall
-query: `%`, `_`, and backslash are ordinary prefix characters, and no matching
-rows are hidden behind a query limit. Counts are never replaced with zero on DB
-errors. Failed inference batches (including short or dimension-mismatched
-responses) are counted honestly.
-These guarantees coordinate this server's tools, not independent external DB writers.
-
-Retrieval distinguishes a missing effective model (`permission_denied`, naming
-`HKASK_EMBEDDING_MODEL`) from an unavailable embedding service (`unavailable`).
-An absent environment override alone does not mean the model is missing: the
-2026-09-04 operator ruling restored settings defaults (`55a366a30c`). The smoke
-test `corpus_query_without_inference_surfaces_structured_error` exercises default,
-explicitly blank, and environment-overridden settings in isolated subprocesses.
-
-## OCR Pipeline
-
-The OCR subsystem implements a **typed, multi-backend, self-verifying** pipeline:
-
-```
-PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → PipelineOutcome
-```
-
-- **Decimation:** PDF→page images via `pdftoppm` with Otsu binarization. Per-page fault tolerant — individual corrupt pages are skipped rather than aborting the entire document.
-- **Scoring:** Sobel edge detection classifies pages as Simple/Moderate/Complex.
-- **Routing:** Simple pages → Tesseract. Complex pages → LLM vision OCR. Moderate pages → Tesseract with 10% dual-routing for cross-validation.
-- **Backends:** Tesseract (CLI with TSV confidence parsing) and LLM vision (via `hkask-inference`, quality heuristic confidence scoring).
-- **Verification:** Page count matching, empty page detection, degraded-page detection (pages served by a fallback backend after the routed primary failed or the circuit breaker was open), and the final-backend distribution. Every `corpus_ocr`/`corpus_convert` result carries `verification_passed`, `empty_pages`, `degraded_pages`, `backends`, `llm_breaker_open`, and `llm_concurrency` — a dead LLM endpoint can never wear a passing verdict.
-- **Circuit breaker:** After 5 consecutive LLM failures the breaker opens; the cooldown escalates per consecutive opening (30s × 2^(n-1), capped at 300s) so a dead endpoint on a long book run does not re-burn a doomed vision call every fixed window. A success resets the escalation.
-- **Calibration:** Accumulates cross-validation data. When ≥100 samples show >95% agreement between backends, suggests raising routing thresholds via Regulation alert. **Never auto-adjusts** — P4 affirmative consent required.
+Purge/replacement are not cross-operation transactions. Storage errors propagate
+with partial-application warnings, not zero counts. h_mem prefix deletion is
+literal and case-sensitive: `%`, `_` and backslash do not widen the selection.
 
 ## Configuration
 
-| Variable | Description |
-|----------|-------------|
-| `HKASK_OCR_MODEL` | Vision model for OCR (e.g., `DI/allenai/olmOCR-2-7B-1025`). Required for OCR tools. Fallback: `~/.config/hkask/settings.json` → `ocr_model`. |
-| `HKASK_EMBEDDING_MODEL` | Embedding model for vectorization and semantic search. Overrides `~/.config/zed-kask/settings.json` → `kask.models.embedding_model`, which overlays the shared settings default. |
-| `HKASK_EMBEDDING_DIM` | Embedding vector dimension. Default: 1024 (Qwen3-Embedding-0.6B). Malformed values warn and fall back to 1024. |
-| `HKASK_TEMPLATE_ROOT` | Root containing `templates/docproc/`. Default: `registry` (relative to CWD). |
-| `HKASK_QA_MODEL` | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`. |
-| `HKASK_DEFAULT_MODEL` | Default generation model for all inference (also used for prose composition). |
-| `HKASK_CLASSIFIER_MODEL` | Model for section type classification. Falls back to `HKASK_DEFAULT_MODEL`. |
-| `HKASK_DB_PASSPHRASE` | Passphrase for the semantic memory DB. Default: `"hkask-default-passphrase-2024"` (dev only — set a real passphrase in production). |
-| `HKASK_ENABLE_CONTENT_GUARD` | Set to `false` to disable input-guard scanning (output guard is always active). Default: enabled. |
-| `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
+| Setting / environment | Use |
+|---|---|
+| `kask.models.qa_generation_model` / `HKASK_QA_GENERATION_MODEL` | Required dedicated QA generator; no chat fallback |
+| `HKASK_CLASSIFIER_MODEL` | Configured tag/assertion classifier |
+| `HKASK_OCR_MODEL` | Configured image-capable OCR model |
+| `HKASK_EMBEDDING_MODEL` | Embedding override over shared model settings/defaults |
+| `HKASK_EMBEDDING_DIM` | Vector dimension, default 1024; malformed values warn |
+| `HKASK_CHUNK_MAX_TOKENS` | Approximate chunk-size override |
+| `HKASK_MAX_CONCURRENCY` | Shared default concurrency ceiling (96); tools accept narrower bounds |
+| `HKASK_DB_PASSPHRASE` | Authorized shared SQLCipher credential; no doc-supplied password |
+| `HKASK_TEMPLATE_ROOT` | Root for docproc templates |
+| `HKASK_QA_MODEL` | Consolidation model, not a QA-generation alias |
+| `HKASK_DEFAULT_MODEL` | General generation, including composition; not QA fallback |
+| `HKASK_OCR_RENDER_DPI` | Page render resolution (default 72); higher values cost memory/payload |
 
-### OCR Pipeline (via env vars or `settings.json`)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HKASK_OCR_RENDER_DPI` | 72 | Page-render resolution for the OCR pipeline. Default 72 keeps the image payload inside the vision model's 128K-token context; raise to ~150 for better accuracy on scanned books at the cost of render memory and LLM payload size. Malformed values warn and fall back to 72. |
-
-The former complexity-tier thresholds (`HKASK_OCR_SIMPLE_MAX`,
-`HKASK_OCR_MODERATE_MAX`, `HKASK_OCR_SAMPLE_RATE`, `HKASK_OCR_TUNEABLE`)
-were removed with the Tesseract backend (2026-09-10): every OCR page goes
-to the configured vision model, and output quality is gated deterministically
-(CJK hallucination, repetition loop, garbled tokens) instead of routed by
-pixel-density heuristics.
-
-### Page Triage Thresholds (per-page pre-OCR complexity detection)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN` | 20 | Per-page word count at/above which a page is text-native (no OCR) |
-| `HKASK_OCR_TRIAGE_MIN_IMAGE_PT` | 25.0 | Min image side (points) to count as a substantial image |
-| `HKASK_OCR_TRIAGE_FULL_PAGE_PT` | 500.0 | Image dims (pt) at/above which a no-text page is classified `Scanned` |
-| `HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT` | 150.0 | Min image side (pt) to flag `EmbeddedImages` on a text page |
-| `HKASK_OCR_TRIAGE_TUNEABLE` | true | Whether Regulation calibration may suggest triage threshold adjustments |
-
-## Regulation Observability
-
-The server emits Regulation spans under these targets for cybernetic feedback:
-
-| Target | When |
-|--------|------|
-| `reg.pipeline.ocr` | Pipeline verification (every run) |
-| `reg.pipeline.ocr.verification_failed` | Verification report fails |
-| `reg.pipeline.ocr.low_confidence` | LLM OCR confidence < 0.3 |
-| `reg.pipeline.ocr.rate_limit` | Inference rate-limited (429) |
-| `reg.pipeline.ocr.collusion` | Both backends produce empty output |
-| `reg.pipeline.decimation` | Page load failures |
-| `reg.pipeline.decimation.binarize` | Otsu produces uniform output |
-| `reg.pipeline.calibration` | Threshold drift detected |
-| `reg.docproc.index` | Indexing requested but embedding unavailable |
-
-## Shared Infrastructure
-
-Corpus server integrates with hkask's shared service layer:
-
-- **Settings:** Model defaults from `~/.config/hkask/settings.json` via `hkask-services-core::HkaskSettings`
-- **Template rendering:** Minijinja-based (`render_docproc_template` cached, `render_one_shot` for one-shot)
-- **Templates:** `registry/templates/docproc/{generate-qa,extract-hmems,rag-answer,tag-chunks,build-prompts,consolidate-chunks,ocr-extract}.j2`
-- **Regulation:** Daemon-backed event persistence for Curator consumption
-- **Inference:** `hkask-inference` router with provider-prefixed model names
-- **Compose:** `compose.rs` — `ComposeService` for prose generation with exemplar retrieval
-- **Services:** `services/` — `ConvertService`, `TriplesService`, `ConsolidationService`, `PromptBuilderService`
-
-## Quick Start
-
-```bash
-# The server starts automatically with kask
-the zed-kask editor
-# Or standalone:
-hkask-mcp-corpus
-```
+The server runs as an editor-managed MCP child process. Source reading,
+configuration/authorization failure, partial output and unperformed validation
+must remain distinguishable from an empty corpus or successful execution.

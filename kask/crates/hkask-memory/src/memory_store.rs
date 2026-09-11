@@ -532,7 +532,9 @@ impl MemoryStore {
             .embedding
             .get_all_by_prefix(prefix)?
             .into_iter()
-            .filter(|(entity_ref, _)| Self::centroid_passage_ref(entity_ref, exclude_ref))
+            .filter(|(entity_ref, _)| {
+                entity_ref != exclude_ref && hkask_types::corpus::is_corpus_passage_ref(entity_ref)
+            })
             .collect();
         self.centroid_from_embeddings(&matching, prefix, dim, store_as, model)
     }
@@ -554,18 +556,15 @@ impl MemoryStore {
         let mut seen = std::collections::HashSet::new();
         let mut matching = Vec::new();
         for entity_ref in entity_refs {
-            if Self::centroid_passage_ref(entity_ref, exclude_ref) && seen.insert(entity_ref) {
+            if entity_ref != exclude_ref
+                && hkask_types::corpus::is_corpus_passage_ref(entity_ref)
+                && seen.insert(entity_ref)
+            {
                 let embedding = self.embedding.get(entity_ref)?;
                 matching.push((entity_ref.clone(), embedding.vector));
             }
         }
         self.centroid_from_embeddings(&matching, "explicit entity refs", dim, store_as, model)
-    }
-
-    fn centroid_passage_ref(entity_ref: &str, exclude_ref: &str) -> bool {
-        entity_ref != exclude_ref
-            && !entity_ref.ends_with(":centroid")
-            && !entity_ref.contains(":rule:")
     }
 
     fn centroid_from_embeddings(

@@ -121,10 +121,10 @@ impl PromptBuilderService {
             let rows = store.all_embeddings_with_text().map_err(|error| {
                 map_memory_store_error(error, "Cannot load complete-source QA context")
             })?;
-            for (reference, mut vector, text) in rows
-                .into_iter()
-                .filter(|(reference, _, _)| reference.starts_with(prefix))
-            {
+            for (reference, mut vector, text) in rows.into_iter().filter(|(reference, _, _)| {
+                reference.starts_with(prefix)
+                    && hkask_types::corpus::is_corpus_passage_ref(reference)
+            }) {
                 let text = text.filter(|text| !text.trim().is_empty()).ok_or_else(|| {
                     McpToolError::failed_precondition(format!(
                         "QA context '{reference}' has no stored passage_text"

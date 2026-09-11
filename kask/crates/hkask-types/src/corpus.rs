@@ -7,6 +7,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Reserved centroid and rule refs are derived artifacts, never source passages.
+/// Retrieval and centroid selection share this boundary so derived vectors cannot
+/// become their own source context.
+pub fn is_corpus_passage_ref(entity_ref: &str) -> bool {
+    !entity_ref.is_empty() && !entity_ref.ends_with(":centroid") && !entity_ref.contains(":rule:")
+}
+
 /// A source-attributed, exact quotation. This records a citation, not a verdict
 /// about the semantic support of the generated answer (PROV-O / Dublin Core).
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]

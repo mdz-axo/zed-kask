@@ -7,6 +7,8 @@
 
 use std::future::Future;
 
+use hkask_types::InferenceError;
+
 /// Failure-rate threshold (percent) above which a batch run reports `degraded`
 /// outcome. A run exceeding this rate indicates systemic issues (model
 /// unavailable, rate limiting, adversarial input) and must not be reported as
@@ -69,7 +71,38 @@ impl BatchOutcome {
     }
 }
 
-/// Retry an async operation with exponential backoff.
+/// Only transport/capacity failures warrant another inference attempt. Do not
+/// guess retryability from provider prose (which can contain arbitrary text).
+pub(crate) fn inference_error_is_transient(error: &InferenceError) -> bool {
+    matches!(
+        error,
+        InferenceError::Connection(_) | InferenceError::Overloaded(_) | InferenceError::Timeout(_)
+    )
+}
+
+/// The two concrete error types already used by this helper retain their
+/// identity; authorization/configuration failures must not become retryable
+/// merely because callers share a scheduling loop.
+pub(crate) trait BatchRetryError: std::fmt::Display {
+    fn is_transient(&self) -> bool;
+}
+
+impl BatchRetryError for InferenceError {
+    fn is_transient(&self) -> bool {
+        inference_error_is_transient(self)
+    }
+}
+
+impl BatchRetryError for hkask_types::EmbeddingGenerationError {
+    fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::Connection(_) | Self::Api(408 | 429 | 500..=599, _)
+        )
+    }
+}
+
+/// Retry a typed inference operation with exponential backoff.
 ///
 /// Backoff: `2^attempts` seconds (2s, 4s for attempts 1, 2). The previous
 /// `2^attempts * 5` schedule (10s, 20s) caused multi-hour wall times for
@@ -78,8 +111,9 @@ impl BatchOutcome {
 /// schedule is sufficient for transient throttles without making large
 /// runs impractical.
 ///
-/// Returns `Ok(result)` on success, `Err(last_error)` after `max_retries`
-/// failures. Each retry logs a warning with the attempt number and backoff.
+/// Returns the original typed error immediately for permanent failures, or
+/// after at most `max_retries` attempts for transient failures. Each retry logs
+/// its actual attempt number and backoff; cancellation drops the active future.
 pub(crate) async fn retry_with_backoff<T, E, F, Fut>(
     max_retries: u32,
     target: &str,
@@ -89,7 +123,7 @@ pub(crate) async fn retry_with_backoff<T, E, F, Fut>(
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
+    E: BatchRetryError,
 {
     let mut attempts = 0u32;
     loop {
@@ -97,13 +131,13 @@ where
             Ok(result) => return Ok(result),
             Err(e) => {
                 attempts += 1;
-                if attempts >= max_retries {
+                if !e.is_transient() || attempts >= max_retries.min(MAX_RETRIES) {
                     tracing::warn!(
                         target = target,
                         context = %context,
                         attempts = attempts,
                         error = %e,
-                        "Operation failed after {max_retries} retries",
+                        "Inference stopped after {attempts} attempts",
                     );
                     return Err(e);
                 }
@@ -297,6 +331,88 @@ impl Drop for AdaptiveSlot {
         state.in_flight = state.in_flight.saturating_sub(1);
         drop(state);
         self.limiter.inner.slot_open.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use hkask_types::EmbeddingGenerationError;
+
+    /// expect: Slice5 preserves both existing caller error types without treating credentials or invalid payloads as transient.
+    #[tokio::test]
+    async fn slice5_shared_retry_preserves_error_types() {
+        let mut calls = 0;
+        let inference: Result<(), InferenceError> =
+            retry_with_backoff(MAX_RETRIES, "test", "auth", || {
+                calls += 1;
+                std::future::ready(Err(InferenceError::Auth("same credential error".into())))
+            })
+            .await;
+        assert_eq!(calls, 1);
+        assert!(
+            matches!(inference, Err(InferenceError::Auth(message)) if message == "same credential error")
+        );
+
+        let mut calls = 0;
+        let embedding: Result<(), EmbeddingGenerationError> =
+            retry_with_backoff(MAX_RETRIES, "test", "embedding auth", || {
+                calls += 1;
+                std::future::ready(Err(EmbeddingGenerationError::Api(
+                    401,
+                    "same API error".into(),
+                )))
+            })
+            .await;
+        assert_eq!(calls, 1);
+        assert!(
+            matches!(embedding, Err(EmbeddingGenerationError::Api(401, message)) if message == "same API error")
+        );
+
+        for error in [
+            InferenceError::Generation("not a transport classification".into()),
+            InferenceError::Json("bad response".into()),
+            InferenceError::CircuitOpen("quarantined".into()),
+        ] {
+            assert!(!error.is_transient());
+        }
+        for error in [
+            EmbeddingGenerationError::InvalidRequest("bad request".into()),
+            EmbeddingGenerationError::Api(400, "bad payload".into()),
+            EmbeddingGenerationError::Api(403, "forbidden".into()),
+            EmbeddingGenerationError::Json("bad response".into()),
+            EmbeddingGenerationError::EmptyResponse,
+            EmbeddingGenerationError::DimensionMismatch {
+                expected: 4,
+                actual: 2,
+            },
+        ] {
+            assert!(!error.is_transient());
+        }
+        for error in [
+            EmbeddingGenerationError::Connection("offline".into()),
+            EmbeddingGenerationError::Api(408, "timeout".into()),
+            EmbeddingGenerationError::Api(429, "busy".into()),
+            EmbeddingGenerationError::Api(503, "unavailable".into()),
+        ] {
+            assert!(error.is_transient());
+        }
+    }
+
+    /// expect: Slice5 keeps the existing three-attempt ceiling even if a caller requests more.
+    #[tokio::test]
+    async fn slice5_retry_ceiling_and_transient_type() {
+        let mut calls = 0;
+        let result: Result<(), InferenceError> =
+            retry_with_backoff(MAX_RETRIES + 1, "test", "bounded transient", || {
+                calls += 1;
+                std::future::ready(Err(InferenceError::Timeout("same timeout".into())))
+            })
+            .await;
+        assert_eq!(calls, MAX_RETRIES);
+        assert!(
+            matches!(result, Err(InferenceError::Timeout(message)) if message == "same timeout")
+        );
     }
 }
 

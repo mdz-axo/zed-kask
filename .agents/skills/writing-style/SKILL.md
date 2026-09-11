@@ -103,11 +103,13 @@ report), not just the tone.
    becomes one rewrite so validation is per-section and no voice drift
    accumulates across a long document.
 3. For each unit call `corpus_rewrite` with `config_path` (the style's
-   cognition config), `author`, and the unit text as `content`. Do NOT
-   set `no_validate` — the centroid check per section is the point of
-   recomposition. (The `dimension` parameter is for the quality
-   dimensions; with a literary `config_path` it is superseded by the
-   author's voice.)
+   cognition config), `author`, the unit text as `content`, and the intended
+   quality `dimension` (default `composite`). Rewrite always validates against
+   `style:{author}:{dimension}:centroid`: a literary config supplies prompts
+   and thresholds but does not override that target. Rewrite has no
+   `no_validate` parameter. Confirm the target exists; `centroid_missing=true`
+   with null distance/pass is unvalidated, not a successful check
+   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:303–366`).
 4. Reassemble the recomposed units, preserving the document's structure
    (headings, code blocks, tables stay verbatim — a style voice never
    rewrites code or identifiers).
@@ -117,10 +119,12 @@ report), not just the tone.
 
 ### Degraded modes — surface, never fake
 
-- **Centroids unavailable** (embedding DB not hydrated, DB path wrong):
-  composition still runs — the synthesizer prompts carry the mechanics —
-  but validation cannot run. The tool reports the failure; report it to
-  the operator as *unvalidated* style prose, not as Hemingway-verified.
+- **Requested centroid missing**: compose/rewrite reports
+  `centroid_missing=true`, `centroid_distance=null`, `style_passed=null`.
+  Report *unvalidated* prose, not an author-verified result. DB-open/read
+  failures are errors, not missing-centroid fallbacks. In cognition YAML,
+  `centroid_entity_ref` belongs inside `embedding`; rewrite selects its
+  dimension target regardless of that configured value.
 - **Technical corpora without cognition configs** (gentle-lovelace,
   david-dunning): they cannot be composed in — `corpus_compose` with
   their paths would find no `jinja2_template`. They are for evaluation

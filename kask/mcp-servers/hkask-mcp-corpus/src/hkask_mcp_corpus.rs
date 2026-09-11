@@ -758,13 +758,15 @@ mod smoke {
     /// under a different prefix silently got "(none — no embedding context
     /// available)" with a normal prompts_written count.
     #[tokio::test]
-    async fn build_prompts_knn_scaffold_honors_the_prefix_param() {
+    async fn build_prompts_knn_scaffold_honors_the_prefix_param() -> anyhow::Result<()> {
         use crate::tools::corpus::BuildPromptsRequest;
 
         // Under the crate root: the corpus tools contain caller-supplied
         // paths to the allowed roots (CWD-relative is accepted), unlike /tmp.
-        let dir = std::path::Path::new("target/test-corpus-prefix");
-        std::fs::create_dir_all(dir).expect("create scratch dir");
+        let root = std::path::Path::new("target/test-corpus-prefix");
+        std::fs::create_dir_all(root)?;
+        let scratch = tempfile::tempdir_in(root)?;
+        let dir = scratch.path();
         let db_path = dir.join("memory.db");
         let tagged_path = dir.join("tagged.jsonl");
         let prompts_path = dir.join("prompts.jsonl");
@@ -792,12 +794,33 @@ mod smoke {
                 "corpus:custom:doc2",
                 &vec![0.9; dim],
                 "test-model",
-                Some("A passage about capital returns."),
+                Some("A passage about capital returns and their durability."),
             )
             .expect("seed chunk embedding");
 
-        // Two tagged chunks under the same custom prefix and source (the
-        // KNN scaffold is source-scoped over the tagged chunks themselves).
+        for (reference, text) in [
+            ("corpus:custom:doc1", context_text),
+            (
+                "corpus:custom:doc2",
+                "A passage about capital returns and their durability.",
+            ),
+        ] {
+            store.store(
+                hkask_storage::HMem::new(
+                    reference,
+                    "text",
+                    serde_json::json!(text),
+                    hkask_types::WebID::new(),
+                )
+                .with_ontology(hkask_types::HMemOntology::state(
+                    "bibo:Document",
+                    Vec::new(),
+                    "doc.txt",
+                )),
+            )?;
+        }
+
+        // Source context is loaded from stored passages and their provenance.
         let doc1 = serde_json::json!({
             "entity_ref": "corpus:custom:doc1",
             "classification": {"status": "classified"},
@@ -839,7 +862,7 @@ mod smoke {
         );
         let prompts_text = std::fs::read_to_string(&prompts_path).expect("prompts file written");
         assert!(
-            prompts_text.contains("Similarity:"),
+            prompts_text.contains("similarity"),
             "the KNN scaffold must carry scored passages when the prefix matches"
         );
         assert!(
@@ -847,11 +870,9 @@ mod smoke {
             "the KNN scaffold must carry the context passage when the prefix matches"
         );
 
-        // With the default prefix (no prefix passed), the custom-prefix
-        // embeddings are invisible — the scaffold degrades, and the
-        // degradation is the caller's to see in the prompt text.
+        // A mismatched prefix is rejected before producing a misleading scaffold.
         let default_prompts = dir.join("prompts-default.jsonl");
-        server
+        let error = server
             .corpus_build_prompts(Parameters(BuildPromptsRequest {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: default_prompts.to_string_lossy().to_string(),
@@ -865,17 +886,9 @@ mod smoke {
                 ontology_bloom_overrides: None,
             }))
             .await
-            .expect("build_prompts ok");
-        let default_text = std::fs::read_to_string(&default_prompts).expect("prompts file written");
-        assert!(
-            !default_text.contains("Similarity:"),
-            "the default prefix must not see custom-prefix embeddings in the scaffold"
-        );
-        assert!(
-            default_text.contains("(none — no embedding context available)"),
-            "the default-prefix scaffold must surface the honest no-context note"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
+            .expect_err("mismatched prefix must fail");
+        assert!(error.to_string().contains("prefix"));
+        assert!(!default_prompts.exists());
+        Ok(())
     }
 }

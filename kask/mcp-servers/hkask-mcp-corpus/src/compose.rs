@@ -323,8 +323,7 @@ impl ComposeService {
         for r in &results {
             if !r.embedding.entity_ref.starts_with(&prefix)
                 || r.embedding.entity_ref == request.cognition.embedding.centroid_entity_ref
-                || r.embedding.entity_ref.ends_with(":centroid")
-                || r.embedding.entity_ref.contains(":rule:")
+                || !hkask_types::corpus::is_corpus_passage_ref(&r.embedding.entity_ref)
                 || r.distance > retrieval.distance_threshold
             {
                 continue;
