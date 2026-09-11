@@ -222,48 +222,6 @@ impl EmbeddingStore {
         );
         Ok(id)
     }
-    /// Atomically replace all embeddings for one entity with a single value.
-    /// Unlike `store`, this does not append. Metadata and vector-index changes
-    /// roll back together if either INSERT fails.
-    pub fn replace(
-        &self,
-        entity_ref: &str,
-        vector: &[f32],
-        model: &str,
-        passage_text: Option<&str>,
-    ) -> Result<String, EmbeddingError> {
-        self.validate_dim(vector)?;
-        let id = hkask_types::EmbeddingID::new().to_string();
-        let blob = Self::encode_vector(vector);
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        // Acquire the writer lock before selecting/deleting destination rows so
-        // concurrent replacements cannot retain each other's prior value.
-        let transaction =
-            conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1)",
-            rusqlite::params![entity_ref],
-        )?;
-        transaction.execute(
-            "DELETE FROM embeddings WHERE entity_ref = ?1",
-            rusqlite::params![entity_ref],
-        )?;
-        transaction.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, entity_ref, blob, vector.len() as i32, model, passage_text],
-        )?;
-        let rowid = transaction.last_insert_rowid();
-        transaction.execute(
-            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
-            rusqlite::params![rowid, &blob],
-        )?;
-        transaction.commit()?;
-        Ok(id)
-    }
-
     /// Retrieve an embedding by entity reference.
     /// Retrieve an embedding by entity_ref.
     ///
