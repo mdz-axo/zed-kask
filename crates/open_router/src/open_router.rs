@@ -493,7 +493,7 @@ pub async fn stream_completion(
                     Some(Err(OpenRouterError::ApiError(ApiError {
                         status: None,
                         code: error.code,
-                        message: error.message,
+                        message: error.message_with_details(),
                         retry_after: None,
                     })))
                 }
@@ -727,7 +727,7 @@ impl OpenRouterError {
         Self::ApiError(ApiError {
             status: Some(status_code.as_u16()),
             code: error_response.code,
-            message: error_response.message,
+            message: error_response.message_with_details(),
             retry_after: retry_after_with_rate_limit_default(status_code, &headers),
         })
     }
@@ -751,6 +751,28 @@ pub struct OpenRouterErrorBody {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl OpenRouterErrorBody {
+    fn message_with_details(&self) -> String {
+        let mut message = self.message.clone();
+        // zed-kask: D43 — the generic wrapper hides the actionable upstream
+        // rejection. Keep its diagnostic fields, not arbitrary metadata.
+        if let Some(metadata) = &self.metadata {
+            for key in ["provider_name", "raw"] {
+                if let Some(value) = metadata.get(key).filter(|value| !value.is_null()) {
+                    let detail = match value {
+                        Value::String(detail) => detail.clone(),
+                        value => value.to_string(),
+                    };
+                    if !detail.is_empty() {
+                        message.push_str(&format!("\n{key}: {detail}"));
+                    }
+                }
+            }
+        }
+        message
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -934,6 +956,95 @@ mod tests {
             model_from_entry(plain_entry).mode,
             ModelMode::Default
         ));
+    }
+
+    #[test]
+    fn provider_error_details_survive_http_and_streaming_responses() -> Result<()> {
+        let raw = serde_json::json!({"error": {
+            "code": "context_length_exceeded",
+            "message": "This model's maximum context length is 1048576 tokens, but the request requires 1303727 tokens (720023 input including image/vision expansion + 583704 for the completion). Reduce the input length or max_tokens."
+        }}).to_string();
+        for status in [400, 200] {
+            for with_metadata in [true, false] {
+                let mut body = serde_json::json!({"error": {
+                    "code": 400, "message": "Provider returned error"
+                }});
+                if with_metadata {
+                    body["error"]["metadata"] = serde_json::json!({
+                        "provider_name": "Together", "raw": raw,
+                        "unrelated_metadata": "must not be exposed"
+                    });
+                }
+                let body = if status == 200 {
+                    format!("data: {body}\n\ndata: [DONE]\n\n")
+                } else {
+                    body.to_string()
+                };
+                let client = FakeHttpClient::create(move |_| {
+                    let body = body.clone();
+                    async move {
+                        Ok(Response::builder()
+                            .status(status)
+                            .body(AsyncBody::from(body))?)
+                    }
+                });
+                let request = serde_json::from_value(serde_json::json!({
+                    "model": "z-ai/glm-5.3", "messages": [], "stream": true,
+                    "temperature": 0.4, "usage": {"include": true}, "provider": null
+                }))?;
+                let error = block_on(async {
+                    match stream_completion(
+                        client.as_ref(),
+                        OPEN_ROUTER_API_URL,
+                        "test-key",
+                        request,
+                        &CustomHeaders::default(),
+                    )
+                    .await
+                    {
+                        Err(error) => error,
+                        Ok(mut stream) => stream
+                            .next()
+                            .await
+                            .expect("error event")
+                            .expect_err("provider rejection"),
+                    }
+                });
+                let error = language_model_core::LanguageModelCompletionError::from(error);
+                let language_model_core::LanguageModelCompletionError::ProviderRejection {
+                    status: actual_status,
+                    code,
+                    message,
+                    category,
+                    ..
+                } = error
+                else {
+                    panic!("expected provider rejection: {error:?}")
+                };
+                assert_eq!(
+                    actual_status.map(|status| status.as_u16()),
+                    (status == 400).then_some(400)
+                );
+                assert_eq!(code.as_deref(), Some("400"));
+                assert!(message.starts_with("Provider returned error"));
+                assert!(!message.contains("must not be exposed"));
+                if with_metadata {
+                    assert!(message.contains("Together"), "{message}");
+                    assert!(message.contains(&raw), "{message}");
+                    assert_eq!(
+                        category,
+                        language_model_core::ProviderErrorCategory::PromptTooLarge { tokens: None }
+                    );
+                } else {
+                    assert_eq!(message, "Provider returned error");
+                    assert_eq!(
+                        category,
+                        language_model_core::ProviderErrorCategory::InvalidRequest
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

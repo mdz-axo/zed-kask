@@ -5950,6 +5950,15 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         watch_settings(fs.clone(), cx);
     });
 
+    // Drive the async settings watcher to completion before constructing the
+    // thread below: `Thread::new` fixes `profile_id` from `default_profile` at
+    // construction, so if the test profile hasn't loaded yet the thread is
+    // stuck on the default "write" profile, whose tool allowlist omits every
+    // test tool — all tool calls then fail with "No tool named X exists"
+    // (observed 2026-09-11: five streaming tests failed this way, and several
+    // passing ones ran with a silently empty tool surface).
+    cx.run_until_parked();
+
     let templates = Templates::new();
 
     fs.insert_tree(path!("/test"), json!({})).await;
