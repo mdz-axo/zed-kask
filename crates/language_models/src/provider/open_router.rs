@@ -1314,6 +1314,12 @@ mod tests {
             model.mandatory_reasoning = true;
             let result = into_open_router(LanguageModelRequest::default(), &model, None)
                 .expect("mandatory reasoning request");
+            // D42: inspect the actual wire request, not just the in-memory enum.
+            // `exclude` only hides tokens; effort "none" must survive serialization.
+            let wire = serde_json::to_value(&result).expect("OpenRouter request JSON");
+            assert_eq!(wire["reasoning"]["effort"], "none");
+            assert_eq!(wire["reasoning"]["enabled"], false);
+            assert!(wire["reasoning"].get("max_tokens").is_none());
             let reasoning = result
                 .reasoning
                 .expect("operator disable overrides metadata");

@@ -143,7 +143,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_TEMPLATE_ROOT",
             "HKASK_DEFAULT_MODEL",
             "HKASK_CLASSIFIER_MODEL",
-            // QA model override — read by qa.rs, falls back to HKASK_DEFAULT_MODEL.
+            // Dedicated QA generator — no default/chat fallback.
+            hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
+            // Legacy consolidation selector; not used by QA generation.
             "HKASK_QA_MODEL",
             // Model cache TTL — read by model_cache.rs, falls back to 4h default.
             "HKASK_MODEL_CACHE_TTL_SECS",
@@ -893,6 +895,50 @@ pub(crate) fn filter_config_env_for_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qa_generation_setting_round_trips_and_reaches_only_its_consumer() {
+        use hkask_inference::model_constants::QA_GENERATION_MODEL_ENV;
+        let mut content = settings::KaskSettingsContent::default();
+        let models = content.models.get_or_insert_default();
+        models.default_model = Some("OpenRouter/z-ai/glm-5.3-flash".into());
+        models.qa_generation_model = Some("OpenRouter/~openai/gpt-sol-latest".into());
+        let saved = serde_json::to_string(&content).expect("serialize settings content");
+        let reloaded = serde_json::from_str::<settings::KaskSettingsContent>(&saved)
+            .expect("reload settings content");
+        let settings: KaskSettings = reloaded.into();
+        assert_eq!(
+            settings.models.qa_generation_model,
+            "OpenRouter/~openai/gpt-sol-latest"
+        );
+        let env = settings.mcp_env();
+        for server in BUILT_IN_MCP_SERVERS {
+            let filtered = filter_config_env_for_server(server.id, &env);
+            assert_eq!(
+                filtered.get(QA_GENERATION_MODEL_ENV).map(String::as_str),
+                (server.id == "corpus").then_some("OpenRouter/~openai/gpt-sol-latest"),
+                "{}",
+                server.id
+            );
+        }
+        // Clearing the setting removes it from the restart-diff environment.
+        let cleared: settings::KaskSettingsContent =
+            serde_json::from_str(r#"{"models":{"qa_generation_model":""}}"#)
+                .expect("cleared setting");
+        let cleared: KaskSettings = cleared.into();
+        assert!(!cleared.mcp_env().contains_key(QA_GENERATION_MODEL_ENV));
+        assert!(
+            !KaskSettings::default()
+                .mcp_env()
+                .contains_key(QA_GENERATION_MODEL_ENV)
+        );
+        assert!(
+            KaskSettings::default()
+                .models
+                .qa_generation_model
+                .is_empty()
+        );
+    }
 
     fn server_by_id(id: &str) -> &'static BuiltinMcpServer {
         BUILT_IN_MCP_SERVERS

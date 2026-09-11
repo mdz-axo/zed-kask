@@ -1015,6 +1015,102 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    /// Dedicated QA selection reaches the registered generator even when the
+    /// active model requires thinking. Unknown IDs fail without using chat.
+    #[gpui::test]
+    async fn qa_generator_override_bypasses_incompatible_chat(cx: &mut gpui::TestAppContext) {
+        use language_model::fake_provider::FakeLanguageModelProvider;
+        use language_model::{
+            LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
+        };
+        let chat = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "openrouter",
+            "z-ai/glm-5.3-flash",
+            "Chat",
+            true,
+        ));
+        chat.forbid_requests();
+        let generator = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "openrouter",
+            "~openai/gpt-sol-latest",
+            "QA generator fixture",
+            true,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("openrouter".to_string()),
+                LanguageModelProviderName::from("OpenRouter".to_string()),
+            )
+            .with_models(vec![chat.clone(), generator.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::test(cx);
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+                registry.set_default_model(
+                    Some(language_model::ConfiguredModel {
+                        provider,
+                        model: chat.clone(),
+                    }),
+                    cx,
+                );
+            });
+        });
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            chat.clone(),
+            Duration::from_secs(300),
+            2,
+            cx.to_async(),
+        );
+        let selected = hkask_inference::model_constants::resolve_qa_generation_model(Some(
+            "OpenRouter/~openai/gpt-sol-latest",
+        ))
+        .expect("qualified model");
+        let generate = cx.spawn(async move |_cx| {
+            port.generate_with_model(
+                "Generate QA",
+                &LLMParameters {
+                    thinking_allowed: false,
+                    ..Default::default()
+                },
+                Some(&selected),
+                None,
+            )
+            .await
+        });
+        cx.run_until_parked();
+        let requests = generator.pending_completions();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests.first().expect("QA request").thinking_allowed);
+        assert_eq!(chat.completion_count(), 0);
+        generator.send_last_completion_stream_text_chunk("QA output");
+        generator.end_last_completion_stream();
+        assert_eq!(
+            generate.await.expect("generator completion").text,
+            "QA output"
+        );
+
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            chat.clone(),
+            Duration::from_secs(300),
+            2,
+            cx.to_async(),
+        );
+        let error = port
+            .generate_with_model(
+                "Generate QA",
+                &LLMParameters::default(),
+                Some("OpenRouter/not-in-registry"),
+                None,
+            )
+            .await
+            .expect_err("unavailable generator");
+        assert!(matches!(error, InferenceError::Model(_)));
+        assert!(error.to_string().contains("no default substitution"));
+        assert_eq!(chat.completion_count(), 0);
+        assert_eq!(generator.completion_count(), 0);
+    }
+
     // ── Provider-rejection detail preservation (D43-adjacent, bridge path) ──
 
     #[test]

@@ -13,6 +13,8 @@ mod assertions;
 pub(crate) mod batch_api;
 mod ontology_io;
 pub(crate) mod qa;
+#[cfg(test)]
+mod qa_model_tests;
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
@@ -58,13 +60,16 @@ impl CorpusServer {
             let single_text = _text.unwrap_or_default();
 
             if !is_cross_ref && single_text.is_empty() {
-                return Err(McpToolError::invalid_argument("text must not be empty (or set texts for cross-reference mode)"));
+                return Err(McpToolError::invalid_argument(
+                    "text must not be empty (or set texts for cross-reference mode)",
+                ));
             }
             if chunk_id.is_empty() {
                 return Err(McpToolError::invalid_argument("chunk_id must not be empty"));
             }
 
-            let levels = bloom_levels.unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
+            let levels =
+                bloom_levels.unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
             let levels_str = levels.join(", ");
 
             let (prompt, template_source) = if let Some(passages) = cross_ref_passages {
@@ -83,13 +88,15 @@ impl CorpusServer {
                 );
                 (formatted.text, formatted.template_source)
             };
-            let selected_model = configured_qa_model(model);
+            let selected_model =
+                hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
+                    .map_err(qa::map_qa_inference_error)?;
 
             let params = crate::services::qa_pipeline::qa_llm_parameters();
 
             match self
                 .inference_router
-                .generate_with_model(&prompt, &params, selected_model.as_deref(), None)
+                .generate_with_model(&prompt, &params, Some(&selected_model), None)
                 .await
             {
                 Ok(response) => {
@@ -106,7 +113,7 @@ impl CorpusServer {
                         "cross_reference": is_cross_ref,
                         "qa_pairs": qa_response.qa_pairs,
                         "provenance": {
-                            "generator_model": selected_model.as_deref().unwrap_or("router_default"),
+                            "generator_model": selected_model,
                             "generator_parameters": params,
                             "prompt_template": template_source,
                             "source_chunk_ref": chunk_id,
@@ -115,7 +122,7 @@ impl CorpusServer {
                     });
                     Ok(result)
                 }
-                Err(e) => Err(McpToolError::unavailable(format!("QA generation failed: {}", e))),
+                Err(e) => Err(qa::map_qa_inference_error(e)),
             }
         })
         .await
@@ -465,8 +472,9 @@ pub(crate) struct GenerateQaRequest {
     pub chunk_id: String,
     #[serde(default)]
     pub bloom_levels: Option<Vec<String>>,
-    /// Optional provider-prefixed generation model (for example, `OpenRouter/openai/gpt-5.6-terra`).
-    /// When absent, uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`.
+    /// Optional provider-prefixed generation model; must accept non-thinking requests.
+    /// When absent, requires `kask.models.qa_generation_model`
+    /// (`HKASK_QA_GENERATION_MODEL`). Never uses the active chat or training model.
     #[serde(default)]
     pub model: Option<String>,
 }
@@ -483,6 +491,8 @@ pub(crate) struct GenerateQaBatchRequest {
     #[serde(default = "default_batch_concurrency")]
     pub concurrency: usize,
     /// Optional provider-prefixed generation model for every prompt in this batch.
+    /// Overrides `kask.models.qa_generation_model` (`HKASK_QA_GENERATION_MODEL`);
+    /// no active-chat or training-base fallback. Must accept non-thinking requests.
     #[serde(default)]
     pub model: Option<String>,
 }

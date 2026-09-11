@@ -1901,7 +1901,7 @@ pub struct KaskMediaSettingsContent {
 /// inference model, the embedding model used by the corpus/memory subsystems,
 /// and the classifier model used for guard/regulation classification tasks.
 /// All are provider-prefixed strings (e.g. `"openrouter/z-ai/glm-5.2"`).
-/// When empty, kask falls back to its built-in defaults.
+/// Defaults are resolved by KaskModelsSettings; QA generation has no default model.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskModelsSettingsContent {
     /// Default inference model for kask subsystems (provider-prefixed).
@@ -1915,6 +1915,9 @@ pub struct KaskModelsSettingsContent {
     /// Classifier model for guard/regulation classification tasks
     /// (provider-prefixed). When empty, falls back to the kask default.
     pub classifier_model: Option<String>,
+    /// Dedicated QA generator (provider-prefixed). Empty means unconfigured;
+    /// never falls back to the active chat model or training base model.
+    pub qa_generation_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
     pub ocr_model: Option<String>,

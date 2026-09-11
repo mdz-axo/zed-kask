@@ -12,7 +12,7 @@ use crate::services::qa_pipeline::{
     QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters, read_prompts,
 };
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
-use crate::tools::semantic::qa::configured_qa_model;
+use crate::tools::semantic::qa::map_qa_inference_error;
 
 pub(crate) struct QaBatchRequest {
     pub prompts_jsonl: String,
@@ -44,25 +44,25 @@ impl QaBatchService {
             model,
         } = request;
         let prompts = read_prompts(&prompts_jsonl)?;
-        let selected_model = configured_qa_model(model);
+        let selected_model =
+            hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
+                .map_err(map_qa_inference_error)?;
         let output_path = crate::path_safety::contain_for_write(&output)?;
         let file = std::fs::File::create(&output_path).map_err(|error| {
             map_corpus_io_error(error, &format!("Cannot create output file '{output}'"))
         })?;
         let mut completions = QaOutput::new(std::io::BufWriter::new(file), prompts.len());
 
-        if let Some(model) = selected_model.as_deref() {
-            if hkask_inference::batch::detect_batch_provider(model).is_some() {
-                // Keep the original routing prefix/suffix for bridge-side detection.
-                generate_qa_via_batch_api(
-                    &self.inference_router,
-                    &prompts,
-                    model,
-                    &mut completions,
-                )
-                .await?;
-                return completions.finish(&output, true);
-            }
+        if hkask_inference::batch::detect_batch_provider(&selected_model).is_some() {
+            // Keep the original routing prefix/suffix for bridge-side detection.
+            generate_qa_via_batch_api(
+                &self.inference_router,
+                &prompts,
+                &selected_model,
+                &mut completions,
+            )
+            .await?;
+            return completions.finish(&output, true);
         }
 
         let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
@@ -94,7 +94,7 @@ impl QaBatchService {
                         router.generate_with_messages(
                             &messages,
                             &parameters,
-                            selected_model.as_deref(),
+                            Some(&selected_model),
                             None,
                         )
                     },
@@ -134,11 +134,7 @@ impl QaBatchService {
             let prompt = pending.remove(&identity).ok_or_else(|| {
                 McpToolError::internal("QA task completed without prompt metadata")
             })?;
-            completions.complete(
-                &prompt,
-                completion,
-                selected_model.as_deref().unwrap_or("router_default"),
-            )?;
+            completions.complete(&prompt, completion, &selected_model)?;
         }
         completions.finish(&output, false)
     }
@@ -217,7 +213,7 @@ mod tests {
                     } else {
                         response_text(&user)
                     },
-                    model: "offline-model".into(),
+                    model: "OpenRouter/offline-model".into(),
                     usage: hkask_types::InferenceUsage {
                         prompt_tokens: 4,
                         completion_tokens: 6,
@@ -335,7 +331,7 @@ mod tests {
             prepared("qa-1", "first question"),
             prepared("qa-2", "second question"),
         ];
-        for model in ["offline-model", "offline-model:batch"] {
+        for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
             let directory = fixture_directory()?;
             let request = fixture(&directory, &prompts, model)?;
             let output = request.output.clone();
@@ -446,7 +442,7 @@ mod tests {
             record[field] = value;
             invalid_records.push(record);
         }
-        for model in ["offline-model", "offline-model:batch"] {
+        for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
             for bad in &invalid_records {
                 let directory = fixture_directory()?;
                 let request = fixture(&directory, &[], model)?;
@@ -466,7 +462,7 @@ mod tests {
             }
         }
         let directory = fixture_directory()?;
-        let request = fixture(&directory, &[], "offline-model")?;
+        let request = fixture(&directory, &[], "OpenRouter/offline-model")?;
         assert!(read_prompts(&request.prompts_jsonl).is_err());
         std::fs::write(&request.prompts_jsonl, format!("{good}\nnot JSON\n"))?;
         assert!(read_prompts(&request.prompts_jsonl).is_err());
@@ -500,7 +496,7 @@ mod tests {
             ..Default::default()
         });
         let directory = fixture_directory()?;
-        let request = fixture(&directory, &prompts, "offline-model:batch")?;
+        let request = fixture(&directory, &prompts, "OpenRouter/offline-model:batch")?;
         let output = request.output.clone();
         let summary = QaBatchService::new(router)
             .generate_qa_batch(request)
@@ -551,7 +547,7 @@ mod tests {
         let request = fixture(
             &directory,
             &[prepared("qa-1", "user")],
-            "offline-model:batch",
+            "OpenRouter/offline-model:batch",
         )?;
         let error = QaBatchService::new(router)
             .generate_qa_batch(request)
@@ -572,7 +568,7 @@ mod tests {
             prepared("qa-4", "valid"),
         ];
         let directory = fixture_directory()?;
-        let request = fixture(&directory, &prompts, "offline-model")?;
+        let request = fixture(&directory, &prompts, "OpenRouter/offline-model")?;
         let output = request.output.clone();
         let router = Arc::new(RecordingPort::default());
         let summary = QaBatchService::new(router.clone())
@@ -653,7 +649,7 @@ mod tests {
                         .contains("The passage supplies a verifiable fact.")
                 );
             }
-            for model in ["offline-model", "offline-model:batch"] {
+            for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
                 let router = Arc::new(RecordingPort::default());
                 let summary = QaBatchService::new(router.clone())
                     .generate_qa_batch(QaBatchRequest {
@@ -695,7 +691,7 @@ mod tests {
     /// expect: [P1] An unusable output path fails before either transport spends inference.
     #[tokio::test]
     async fn output_is_preflighted_for_both_transports() -> Result<(), Box<dyn std::error::Error>> {
-        for model in ["offline-model", "offline-model:batch"] {
+        for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
             let directory = fixture_directory()?;
             let mut request = fixture(&directory, &[prepared("qa-1", "user")], model)?;
             request.output = directory.path().to_string_lossy().into();

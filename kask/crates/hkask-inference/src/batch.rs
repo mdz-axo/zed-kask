@@ -272,6 +272,7 @@ struct BatchRequestBody {
     messages: Vec<BatchMessage>,
     max_tokens: u32,
     temperature: f32,
+    reasoning: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -360,6 +361,9 @@ fn format_batch_jsonl(
                 ],
                 max_tokens,
                 temperature,
+                // The batch interface serves QA generation, a non-thinking
+                // workload. Excluding reasoning text would not disable it.
+                reasoning: serde_json::json!({"effort": "none"}),
             },
         };
         lines.push(serde_json::to_string(&line).unwrap_or_default());
@@ -864,6 +868,10 @@ mod tests {
             assert_eq!(parsed["body"]["model"], "test-model");
             assert_eq!(parsed["body"]["max_tokens"], 100);
             assert_eq!(parsed["body"]["temperature"], 0.5);
+            assert_eq!(
+                parsed["body"]["reasoning"],
+                serde_json::json!({"effort": "none"})
+            );
         }
         // Verify custom IDs are preserved
         let first: serde_json::Value = serde_json::from_str(lines[0]).expect("valid json");

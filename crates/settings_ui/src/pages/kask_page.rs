@@ -455,6 +455,10 @@ pub(crate) fn kask_string_input(
                                 kask.models.get_or_insert_default().classifier_model =
                                     Some(parsed.clone());
                             }
+                            ("models", "qa_generation_model") => {
+                                kask.models.get_or_insert_default().qa_generation_model =
+                                    Some(parsed.clone());
+                            }
                             ("models", "ocr_model") => {
                                 kask.models.get_or_insert_default().ocr_model =
                                     Some(parsed.clone());

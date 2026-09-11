@@ -12,11 +12,67 @@
 //! bypass the settings chain.
 //!
 //! Naming convention:
+//! QA generation is intentionally unconfigured by default (2026-09-11).
+//! Unlike general inference, its resolver never consults the chat default.
+//!
+//! - `HKASK_QA_GENERATION_MODEL` — dedicated non-thinking QA generator
 //! - `HKASK_CLASSIFIER_MODEL` — primary classifier model
 //! - `HKASK_EMBEDDING_MODEL` — default embedding model
 //! - `HKASK_OCR_MODEL` — OCR model for scanned PDF fallback
 //! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
 //! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
+
+/// Environment binding for `kask.models.qa_generation_model`.
+pub const QA_GENERATION_MODEL_ENV: &str = "HKASK_QA_GENERATION_MODEL";
+
+/// Resolve an explicit tool model before the dedicated QA setting. There is
+/// deliberately no generator ID default, chat fallback, or training-base input.
+/// Registry/provider validation remains authoritative for model availability.
+pub fn resolve_qa_generation_model(
+    requested: Option<&str>,
+) -> Result<String, hkask_types::InferenceError> {
+    let configured = if requested.is_none() {
+        match std::env::var(QA_GENERATION_MODEL_ENV) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => {
+                return Err(hkask_types::InferenceError::Model(format!(
+                    "invalid {QA_GENERATION_MODEL_ENV}: {error}"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    select_qa_generation_model(requested, configured.as_deref())
+}
+
+fn select_qa_generation_model(
+    requested: Option<&str>,
+    configured: Option<&str>,
+) -> Result<String, hkask_types::InferenceError> {
+    let model = requested.or(configured).ok_or_else(|| {
+        hkask_types::InferenceError::NotConfigured(format!(
+            "QA generation requires kask.models.qa_generation_model ({QA_GENERATION_MODEL_ENV}) \
+             or an explicit tool model; the chat and training base models are never used"
+        ))
+    })?;
+    let qualified = model.split_once('/').is_some_and(|(provider, local)| {
+        !provider.is_empty()
+            && provider
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && !local.is_empty()
+            && !local.starts_with('/')
+    });
+    if !qualified || model.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(hkask_types::InferenceError::Model(format!(
+            "invalid QA generation model {model:?}: set kask.models.qa_generation_model \
+             ({QA_GENERATION_MODEL_ENV}) or tool model to Provider/model-id; no fallback"
+        )));
+    }
+    Ok(model.to_owned())
+}
 
 /// Read the classifier model from the env layer: `HKASK_CLASSIFIER_MODEL`
 /// → `None` when unset. The settings chain (which carries the code
@@ -53,6 +109,64 @@ pub fn rerank_model() -> Option<String> {
     std::env::var("HKASK_RERANK_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())
+}
+
+#[cfg(test)]
+mod qa_generation_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_model_wins_without_rewriting_the_operator_alias() {
+        let model = "OpenRouter/~openai/gpt-sol-latest";
+        assert_eq!(
+            select_qa_generation_model(Some(model), Some("invalid")).expect("override"),
+            model
+        );
+        assert_eq!(
+            select_qa_generation_model(None, Some(model)).expect("setting"),
+            model
+        );
+        let batch_model = format!("{model}:batch");
+        assert_eq!(
+            select_qa_generation_model(Some(&batch_model), None).expect("batch override"),
+            batch_model
+        );
+    }
+
+    #[test]
+    fn unconfigured_and_invalid_are_errors_not_fallbacks() {
+        assert!(matches!(
+            select_qa_generation_model(None, None),
+            Err(hkask_types::InferenceError::NotConfigured(_))
+        ));
+        for invalid in [
+            "",
+            " ",
+            "bare-model",
+            "/model",
+            "OpenRouter/",
+            "OpenRouter/ model",
+            "~openai/gpt-sol-latest",
+        ] {
+            assert!(
+                matches!(
+                    select_qa_generation_model(
+                        Some(invalid),
+                        Some("OpenRouter/~openai/gpt-sol-latest")
+                    ),
+                    Err(hkask_types::InferenceError::Model(_))
+                ),
+                "{invalid:?}"
+            );
+            assert!(
+                matches!(
+                    select_qa_generation_model(None, Some(invalid)),
+                    Err(hkask_types::InferenceError::Model(_))
+                ),
+                "{invalid:?}"
+            );
+        }
+    }
 }
 
 // ── Media pipeline defaults ───────────────────────────────────────────────

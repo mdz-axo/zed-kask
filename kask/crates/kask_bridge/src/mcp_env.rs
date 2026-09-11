@@ -431,6 +431,12 @@ pub(crate) fn emit_models_env(
             models.classifier_model.clone(),
         );
     }
+    if !models.qa_generation_model.is_empty() {
+        env.insert(
+            hkask_inference::model_constants::QA_GENERATION_MODEL_ENV.to_string(),
+            models.qa_generation_model.clone(),
+        );
+    }
     if !models.ocr_model.is_empty() {
         env.insert("HKASK_OCR_MODEL".to_string(), models.ocr_model.clone());
     }

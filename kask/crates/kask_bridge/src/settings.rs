@@ -594,6 +594,10 @@ pub struct KaskModelsSettings {
     /// default.
     pub classifier_model: String,
 
+    /// Dedicated non-thinking QA generator (provider-prefixed). Empty is
+    /// unconfigured; explicit tool models override this, never chat or training.
+    pub qa_generation_model: String,
+
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, the corpus server falls back to the kask default
     /// (env `HKASK_OCR_MODEL` → `HkaskSettings::ocr_model` →
@@ -608,11 +612,11 @@ pub struct KaskModelsSettings {
 }
 
 // Code defaults (operator ruling 2026-09-04, superseding the
-// no-hidden-models spec): every model has a code default so the system
-// works out of the box; the settings UI / settings.json overrides them.
+// no-hidden-models spec): configured models have code defaults; the settings
+// UI / settings.json overrides them. QA generation and rerank stay unconfigured.
 // The values are the operator's configured models, verbatim.
 //
-// `embedding_model` is the one exception: it stays empty HERE because its
+// `embedding_model` also stays empty HERE because its
 // precedence chain is two-layer (`models.embedding_model` →
 // `corpus.embedding_model` → default). A non-empty default at the models
 // layer would shadow every `corpus.embedding_model` override — the
@@ -632,6 +636,8 @@ impl Default for KaskModelsSettings {
             // thinking model that cannot disable it (operator ruling
             // 2026-09-04).
             classifier_model: "OpenRouter/z-ai/glm-5.2".to_string(),
+            // No verified generator default (operator ruling 2026-09-11).
+            qa_generation_model: String::new(),
             ocr_model: "ollama/glm-ocr:latest".to_string(),
             // No configured rerank model to default from — the research
             // server's rerank stage fails visibly naming the setting until
@@ -647,7 +653,7 @@ impl KaskModelsSettings {
     // in the `Default` impl above (operator ruling: defaults in code so the
     // code works; the settings UI overrides). The per-subsystem
     // `effective_*` methods below resolve settings → default; an empty
-    // effective value is now only possible for `rerank_model`, which has
+    // effective value remains possible for QA generation and `rerank_model`, which has
     // no configured default to draw from.
 }
 
@@ -959,6 +965,7 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
             default_model: c.default_model.unwrap_or(default.default_model),
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
             classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
+            qa_generation_model: c.qa_generation_model.unwrap_or(default.qa_generation_model),
             ocr_model: c.ocr_model.unwrap_or(default.ocr_model),
             rerank_model: c.rerank_model.unwrap_or(default.rerank_model),
         }
