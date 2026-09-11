@@ -48,6 +48,25 @@ resets — t goes back to 0, R = 1.0. Only h_mems that survive the
 `recall_limit` truncation are touched (prevents a write storm under
 concurrent recall).
 
+`query_by_attribute` is also a recall API: it applies confidence decay and
+resets matching rows' recall clocks. `query_by_attribute_untouched` applies
+the same decay without updating `recalled_at`; exports such as training dataset
+assembly use this path so scanning QA does not prolong its retention.
+
+## Deletion cleanup
+
+`delete_h_mems_by_entity_prefix` deletes with a literal, case-sensitive prefix:
+`%`, `_`, and backslash are ordinary characters. Storage returns the deleted-row
+count and distinct affected entities from `DELETE ... RETURNING` in one
+transaction, without a discovery cap or decoding memory payloads. A failed
+deletion rolls back before returning an error.
+
+The memory layer then reuses per-entity cleanup to remove embeddings, vector
+index entries, and memory links for emptied entities, including those beyond
+100,000 deleted rows. Unrelated entities are preserved. Cleanup remains a
+post-commit operation: failures are logged and retried by the periodic orphan
+sweep; it is not a cross-store transaction.
+
 ## Configuration
 
 | Variable                          | Description                            | Default |

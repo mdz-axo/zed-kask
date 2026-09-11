@@ -715,10 +715,47 @@ impl HMemStore {
     /// are removed from the database (operator ruling 2026-09-04: there
     /// is no "expired" state).
     pub fn delete_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
-        self.exec(
-            "DELETE FROM hmems WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY",
-            &[DbValue::Text(prefix.to_string())],
-        )
+        self.delete_by_entity_prefix_with_entities(prefix)
+            .map(|(count, _)| count)
+    }
+
+    /// Delete by literal prefix and return the count and distinct affected
+    /// entities for coupled-reference cleanup. Identities come from DELETE
+    /// RETURNING, not a capped or separately scoped discovery query. Payloads
+    /// are not decoded; even a malformed memory must remain deletable.
+    pub fn delete_by_entity_prefix_with_entities(
+        &self,
+        prefix: &str,
+    ) -> Result<(usize, std::collections::HashSet<String>), HMemError> {
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "HMemStore::delete_by_entity_prefix_with_entities requires a SqliteDriver",
+            ))
+        })?;
+        let mut conn = pool
+            .get()
+            .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        // Keep deletion, identity collection, and commit on one connection,
+        // as in update(). RAII also rolls back partially executed statements
+        // (e.g. a trigger using RAISE(FAIL)) before the connection is reused.
+        (|| -> rusqlite::Result<_> {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let mut count = 0;
+            let mut entities = std::collections::HashSet::new();
+            {
+                let mut stmt = tx.prepare(
+                    "DELETE FROM hmems WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY RETURNING entity",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![prefix])?;
+                while let Some(row) = rows.next()? {
+                    entities.insert(row.get::<_, String>(0)?);
+                    count += 1;
+                }
+            }
+            tx.commit()?;
+            Ok((count, entities))
+        })()
+        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))
     }
 
     /// Hard-delete a h_mem row entirely.
@@ -785,6 +822,52 @@ struct HMemRow {
 mod tests {
     use super::*;
     use crate::database::sqlite::SqliteDriver;
+
+    /// Approved slice 1: identities and deletion commit together; a partially
+    /// executed DELETE must roll back before the pool connection is reused.
+    #[test]
+    fn prefix_deletion_rolls_back_and_returns_exact_distinct_entities() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let first = HMem::new("qa:target", "first", serde_json::json!("one"), WebID::new());
+        let second = HMem::new(
+            "qa:target",
+            "second",
+            serde_json::json!("two"),
+            WebID::new(),
+        );
+        let unrelated = HMem::new("keep", "fact", serde_json::json!("keep"), WebID::new());
+        for memory in [&first, &second, &unrelated] {
+            store.insert(memory)?;
+        }
+        store.driver().execute_batch(
+            "CREATE TRIGGER fail_last_delete BEFORE DELETE ON hmems
+             WHEN OLD.entity = 'qa:target' AND (SELECT COUNT(*) FROM hmems WHERE entity = 'qa:target') = 1
+             BEGIN SELECT RAISE(FAIL, 'forced partial DELETE failure'); END;",
+        )?;
+        assert!(store.delete_by_entity_prefix_with_entities("qa:").is_err());
+        assert_eq!(
+            store.count()?,
+            3,
+            "even the first deleted row must be restored"
+        );
+        for memory in [&first, &second, &unrelated] {
+            assert!(store.get_by_id(&memory.id)?.is_some());
+        }
+        store
+            .driver()
+            .execute_batch("DROP TRIGGER fail_last_delete;")?;
+        let (count, entities) = store.delete_by_entity_prefix_with_entities("qa:")?;
+        assert_eq!(count, 2);
+        assert_eq!(
+            entities,
+            std::collections::HashSet::from(["qa:target".to_string()])
+        );
+        assert!(store.get_by_id(&unrelated.id)?.is_some());
+        let (count, entities) = store.delete_by_entity_prefix_with_entities("qa:")?;
+        assert_eq!(count, 0);
+        assert!(entities.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn update_deletes_prior_row_and_preserves_metadata() -> anyhow::Result<()> {

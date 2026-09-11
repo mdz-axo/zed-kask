@@ -330,24 +330,56 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
     distance.clamp(0.0, 2.0)
 }
 
-/// Approximate token-to-word conversion: 1 word ≈ 1.33 tokens.
-/// So tokens ÷ 1.33 = words. This is the standard BPE ratio for English text.
+/// Rough English-text heuristic: floor(tokens / 1.33) whitespace-delimited words.
+/// Not a BPE count or a model context limit; Unicode, code and long words can
+/// consume many more tokens. No tokenizer dependency is introduced.
 pub(crate) fn tokens_to_words(tokens: usize) -> usize {
     ((tokens as f64) / 1.33) as usize
 }
 
-/// Compute (max_words, min_words) from (max_tokens, overlap_tokens).
-/// `overlap_tokens` determines the minimum chunk size (hard floor below which
-/// a buffer won't flush). Falls back to HkaskSettings::chunk_max_tokens() when
-/// max_tokens is None.
+pub(crate) struct ChunkWordBounds {
+    pub max_tokens: usize,
+    pub max_words: usize,
+    pub min_words: usize,
+    pub overlap_words: usize,
+}
+
+/// expect: "Invalid chunk budgets fail before any input is read or output written."
+/// [P4] Motivating: reject non-progress settings rather than hang or silently ignore them.
+/// pre: optional token targets; omitted max resolves the existing setting
+/// post: max_words > overlap_words and max_words > 0; positive overlap repeats words
+/// post: omitted overlap preserves the legacy minimum-size heuristic, without repetition
 pub(crate) fn chunk_word_bounds(
     max_tokens: Option<usize>,
     overlap_tokens: Option<usize>,
-) -> (usize, usize) {
-    let default_max = HkaskSettings::load().chunk_max_tokens();
-    let max_w = tokens_to_words(max_tokens.unwrap_or(default_max));
-    let min_w = tokens_to_words(overlap_tokens.unwrap_or(64)).max(max_w / 4);
-    (max_w, min_w)
+) -> Result<ChunkWordBounds, McpToolError> {
+    let max_tokens = max_tokens.unwrap_or_else(|| HkaskSettings::load().chunk_max_tokens());
+    let max_words = tokens_to_words(max_tokens);
+    if max_words == 0 {
+        return Err(McpToolError::invalid_argument(
+            "max_tokens must be at least 2 (the approximate budget must contain a word)",
+        ));
+    }
+    let overlap = overlap_tokens.unwrap_or(0);
+    let overlap_words = tokens_to_words(overlap);
+    if overlap >= max_tokens || overlap_words >= max_words || (overlap > 0 && overlap_words == 0) {
+        return Err(McpToolError::invalid_argument(
+            "overlap_tokens must be 0 or yield at least one word, and be smaller than max_tokens in both tokens and effective words",
+        ));
+    }
+    // 64 is the old default floor, NOT a promise of repeated context. Clamp it
+    // for small budgets so the minimum cannot prevent a legal flush.
+    let min_words = if overlap_words > 0 {
+        (max_words / 4).max(1)
+    } else {
+        tokens_to_words(64).max(max_words / 4).min(max_words).max(1)
+    };
+    Ok(ChunkWordBounds {
+        max_tokens,
+        max_words,
+        min_words,
+        overlap_words,
+    })
 }
 
 /// Serialize (entity_ref, text) pair slice into json.
@@ -363,8 +395,8 @@ pub(crate) fn serialize_passages(passages: &[(String, String)]) -> Vec<serde_jso
 /// Groups blocks under their nearest preceding heading. Each group becomes
 /// one or more passages via `crate::text::chunk_text`. When a group exceeds
 /// `max_words`, it is split at sentence boundaries within the group. When a
-/// group is smaller than `min_words`, it is merged with the next group if
-/// possible (to avoid tiny chunks).
+/// group is smaller than `min_words`, its final passage is retained, including
+/// heading-only sections: headings are source content, not disposable metadata.
 ///
 /// Falls back to flat `chunk_text` when the structure has no headings.
 pub(crate) fn chunk_structure(
@@ -424,10 +456,8 @@ pub(crate) fn chunk_structure(
     // Chunk each section, prepending the heading as context.
     let mut passages = Vec::new();
     for (idx, (heading, body)) in sections.iter().enumerate() {
-        if body.trim().is_empty() {
-            continue;
-        }
-        // Prepend heading to body so each chunk knows its section.
+        // Prepend the heading once to the section's source text. Heading-only
+        // sections are content too; skipping an empty body would lose them.
         let section_text = if heading.is_empty() {
             body.clone()
         } else {

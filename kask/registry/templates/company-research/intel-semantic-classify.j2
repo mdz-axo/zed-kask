@@ -3,6 +3,7 @@ contract:
   input:
     ticker: string
     intel_bundle: object
+    source_outputs: array
   output:
     semantic_tags: array
     certainty_drift_risk: string
@@ -33,6 +34,18 @@ You are a pragmatic-semantics classifier applied to an equity-research intel mos
 {{ intel_bundle | tojson }}
 ```
 
+## Retained sources for attribution
+
+```json
+{{ source_outputs | default([]) | tojson }}
+```
+
+Resolve each item's source_keys against these retained records. A missing
+record is unknown provenance, not an observation. Preserve the distinction
+between original source content and generated summaries returned by tools.
+These semantic labels do not replace grounding-verify's mechanical checks or
+its closed provenance vocabulary.
+
 ## Classification Axes (per item)
 
 For each `news_item` and each `hypothesis` in the intel bundle, classify on:
@@ -54,8 +67,8 @@ For each `news_item` and each `hypothesis` in the intel bundle, classify on:
 - **Prohibition**: OUGHT + Declarative + inviolable (a hard rule).
 
 ### Provenance
-- **observation**: From a tool output (research_search, web_search, transcript).
-- **inference**: Derived by reasoning from other items.
+- **observation**: Directly attributed to retained original source content/provider data, with the matching source key and period. This reports what the source says, not independent confirmation of its truth.
+- **inference**: Derived by reasoning from other items, including generated summaries returned by MCP tools and calculations whose source derivation has not been checked.
 - **external**: From outside the pipeline (analyst prior knowledge — flag if present).
 - **unknown**: Source cannot be determined.
 
@@ -96,7 +109,7 @@ After classifying all items, assess the overall `certainty_drift_risk`:
 
 - Do NOT re-classify items the intel bundle already tagged (e.g., `source_tier`, `relevance`). This is a new axis, not a replacement.
 - A management quote is IS-declarative only if it is a verbatim report of what was said. If the quote is a forward-looking statement ("we expect to grow 15%"), it is IS-subjunctive (Hypothesis), not IS-declarative.
-- A financial metric from a tool output is IS-declarative (Evidence, observation provenance).
+- A historical financial metric attributed to original provider data may be IS-declarative with observation provenance; retain provider warnings, period and units. A model estimate or generated tool summary is inference, never an observation merely because it arrived through a tool.
 - An analyst hypothesis is IS-subjunctive (Hypothesis) by definition — it is a testable claim, not an observed fact.
 - Do not fabricate classifications. If an item's text is empty or unclear, set `confidence` ≤ 0.3 and `provenance: unknown`.
-- `confidence` ranges 0.0–1.0. FIBO-anchored financial metrics get +0.10 (OMG standard, high adoption).
+- `confidence` ranges 0.0–1.0 and describes classification uncertainty only. An ontology anchor supplies a shared definition, not additional factual evidence; never boost verification confidence merely because a metric has a FIBO label.

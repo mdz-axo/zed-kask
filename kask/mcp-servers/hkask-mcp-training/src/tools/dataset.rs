@@ -102,8 +102,22 @@ impl TrainingServer {
                     ));
                 }
                 let store = hkask_memory::MemoryStore::open(db_path, &passphrase, hkask_storage::embedding_dim())
-                    .map_err(|e| McpToolError::internal(format!("Cannot open memory DB '{db_path}': {e}")))?;
-                store.query_by_attribute("training_qa_pair")
+                    .map_err(|error| {
+                        use hkask_storage::DatabaseError;
+                        let message = format!("Cannot open memory DB '{db_path}': {error}");
+                        match error {
+                            DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
+                            DatabaseError::KeyDerivation(_) => McpToolError::permission_denied(format!(
+                                "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
+                            )),
+                            DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
+                            DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => {
+                                McpToolError::internal(message) // rr0044-ok: infra-db-failure
+                            }
+                            _ => McpToolError::internal(message), // rr0044-ok: non-exhaustive-fallback
+                        }
+                    })?;
+                store.query_by_attribute_untouched("training_qa_pair")
                     .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
             } else {
                 let Some(store) = &self.store else {
@@ -111,7 +125,7 @@ impl TrainingServer {
                         "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE, or provide db_path",
                     ));
                 };
-                store.query_by_attribute("training_qa_pair")
+                store.query_by_attribute_untouched("training_qa_pair")
                     .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
             };
             if h_mems.is_empty() {

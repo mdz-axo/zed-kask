@@ -661,3 +661,95 @@ impl EmbeddingStore {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Approved slice 1: real pooled writers (not an in-memory single-
+    /// connection queue) must leave exactly one paired replacement value.
+    #[test]
+    fn replacement_serializes_file_backed_writers_and_preserves_append() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = crate::Database::open(
+            &dir.path().join("replacement.db").to_string_lossy(),
+            "replacement-fixture",
+        )?;
+        let pool = db.sqlite_pool()?;
+        assert!(pool.max_size() > 1, "test must allow independent writers");
+        let driver = Arc::new(crate::database::sqlite::SqliteDriver::new(pool.clone()));
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(driver, dim)?;
+        let source = vec![1.0; dim];
+        let first = store.store("passages", &source, "source", Some("first"))?;
+        let second = store.store("passages", &source, "source", Some("second"))?;
+        assert_ne!(first, second);
+        store.store("centroid", &source, "old", None)?;
+        store.store("centroid", &source, "old", None)?;
+        assert_eq!(store.count()?, 4);
+        {
+            let a = pool.get()?;
+            let b = pool.get()?;
+            for conn in [&a, &b] {
+                let count: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+                assert_eq!(count, 4, "independent connections share the fixture DB");
+            }
+        }
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let handles: Vec<_> = (0..8)
+                .map(|writer| {
+                    let store = &store;
+                    let barrier = &barrier;
+                    scope.spawn(move || -> Result<(), EmbeddingError> {
+                        let vector = vec![(writer + 1) as f32; dim];
+                        barrier.wait();
+                        for _ in 0..4 {
+                            store.replace(
+                                "centroid",
+                                &vector,
+                                &writer.to_string(),
+                                Some("current"),
+                            )?;
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("replacement writer panicked"))??;
+            }
+            Ok(())
+        })?;
+        assert_eq!(store.count()?, 3);
+        let current = store.get("centroid")?;
+        let writer: usize = current.model.parse()?;
+        assert_eq!(current.vector, vec![(writer + 1) as f32; dim]);
+        assert_eq!(current.passage_text.as_deref(), Some("current"));
+        let conn = pool.get()?;
+        let vectors: i64 =
+            conn.query_row("SELECT COUNT(*) FROM vec_embeddings", [], |row| row.get(0))?;
+        assert_eq!(vectors, 3);
+        let indexed: Vec<u8> = conn.query_row(
+            "SELECT v.embedding FROM vec_embeddings v JOIN embeddings e ON e.rowid = v.rowid WHERE e.entity_ref = 'centroid'",
+            [], |row| row.get(0),
+        )?;
+        assert_eq!(
+            EmbeddingStore::decode_vector(&indexed, dim)?,
+            current.vector
+        );
+        let ids: Vec<String> = conn
+            .prepare("SELECT id FROM embeddings WHERE entity_ref = 'passages' ORDER BY rowid")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert_eq!(
+            ids,
+            vec![first, second],
+            "ordinary append rows survive replacement"
+        );
+        Ok(())
+    }
+}

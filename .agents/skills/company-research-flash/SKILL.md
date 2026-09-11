@@ -1,11 +1,11 @@
 ---
 name: company-research-flash
-description: "Equity research flash pipeline (EFRA-AI conversion). 23-step process: SCOUT alpha score → INTEL + earnings listening + semantic classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA + calibration gap → LENS five-framework audit → convergence check → PERSIST → CONDENSE ≤1000-word note. Early-exit gates DROP/HALT/BLOCK. Converges on LENS verdict consistency."
+description: "Equity research flash pipeline (EFRA-AI conversion): SCOUT → source collection → INTEL + listening + semantic classification → FORENSIC → CRITICAL FACTOR → VALUATION → provisional COMMUNICATION → KATA + LENS → mandatory independent grounding verification → PERSIST + CONDENSE. Preserves DROP/HALT/BLOCK gates; publication requires completed factual verification and the ENTER/confidence gates. Bounded correction loop."
 ---
 
 # Company Research — Flash Pipeline
 
-Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step process producing a flash note / initiation report. MCP tool calls (forecast_list, company_research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
+Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Governed process producing a flash note / initiation report, with mandatory independent grounding verification before publication. MCP tool calls (forecast_list, company_research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
@@ -22,6 +22,23 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 - Post-thesis monitoring — a published flash note's lifecycle is PERSIST/CONDENSE; monitoring belongs to the portfolio-review loop.
 
 ## Instructions
+
+Execution order: collection setup and SCOUT → remaining collection → INTEL →
+`listening` over the retained earnings transcript → semantic classification →
+FORENSIC pre-screen → CRITICAL FACTOR → FORENSIC full → VALUATION → provisional
+COMMUNICATION → KATA/calibration → LENS (and bounded revisions) →
+verify-before-publish → PERSIST/CONDENSE. Render each named synthesis template
+with the actual preceding outputs. Keep listening's verdict in `intel_bundle`
+and its original transcript in `source_outputs`; neither is interchangeable.
+DROP/HALT/BLOCK remain terminal and cannot be reopened by a passing fact_score.
+
+### collect-evidence
+
+1. Resolve the company with `resolve_symbol` and read `forecast_list` / relevant `report_load` outputs as prior analysis, not primary evidence. Begin a source ledger with `begin_research_run`; pass `run_id` to `web_search` / `web_extract` / `web_find_similar`. Preserve ledger failures as `data_gaps`, not as silent fallback. SCOUT's terminal DROP still avoids unnecessary deep collection.
+2. For companies that pass SCOUT, collect business context with `company_research_search`, `web_search`, `company_transcript` and the financial tools required below. Retrieve the original page or filing with `web_extract` for load-bearing claims and quotes; a search snippet or generated answer is only a lead. Retain provider warnings, entity identity, period, currency, units and audit status. A 10-Q is unaudited interim data, not an audited annual statement.
+3. Retain actual responses as `source_outputs`: `{tool_name, description, output_key, output, source_kind, url, retrieved_at, period, unit}`. Use a unique `output_key` also present in `pipeline_tool_log`; unknown metadata is null. `source_kind` is `original` (retrieved passages/provider data), `derived` (computed results), or `synthesis` (generated prose). Keep source content separate from model-written summaries and record failed calls with their errors. Pass this array to `company-research/intel-mosaic` and keep it through all downstream stages.
+4. Build `congruence_rules` using `{quantity, primary_source, cross_check_sources, tolerance, resolution}` for material financial comparisons: original financial statements for historical accounting inputs, `stock_quote` for the quoted market snapshot, declared derivations for calculated values. Align periods/units and justify tolerances from source precision. Build applicable `leak_rules` using `{block, rule_type, pattern}` for financial, valuation and paying-customer assertions. Neither source reputation nor tool transport substitutes for the checks.
+5. Keep full responses in an accessible source packet when too large for inline context; never replace them with the research ledger's short excerpts. Before release, read `get_research_run`, disclose recording limitations and annotate only checks actually performed. A source-level ledger annotation is not claim-level verification.
 
 ### scout-alpha-score
 
@@ -41,7 +58,7 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 ### intel-semantic-classify
 
-1. Classify every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance.
+1. Render `company-research/intel-semantic-classify` with `ticker`, `intel_bundle`, and retained `source_outputs`. Classify every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance. Generated summaries are inference even when returned by a tool; semantic tags do not replace mechanical verification.
 2. Emit semantic_tags and certainty_drift_risk (low/medium/high).
 3. Prevents certainty-level drift — a management quote treated as an ontological fact, a scenario treated as a forecast.
 
@@ -73,7 +90,7 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 3. Compute rr_ratio, rating, and the DROP gate via `lisp_eval` (rr = upside to PT / downside to bear-case PT):
    - rr form: "(/ (- pt_12m market_price) (- market_price bear_case_pt))"
    - rating form: "(let ((rr (/ (- pt_12m market_price) (- market_price bear_case_pt)))) (cond ((>= rr 2) 'BUY) ((>= rr 1) 'HOLD) (t 'UNDERPERFORM)))"
-   - DROP gate form: "(if (and (< rr 2) (eq rating \"UNDERPERFORM\")) 'DROP 'PROCEED)"
+   - DROP gate form: "(if (and (< rr 2) (member rating (list \"UNDERPERFORM\"))) 'DROP 'PROCEED)"
    - env: `{ "pt_12m": <blended target>, "market_price": <current price>, "bear_case_pt": <bear-case target>, "rating": <the emitted rating string> }`
 4. Compute FaVeS (variant expectations score — where your thesis differs from the market).
 5. Emit data_gaps for any failed MCP tool with LLM-derived fallback estimate + confidence penalty (L1/L2 fallback hierarchy).
@@ -86,7 +103,7 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
    - env: `{ "edge": <bool>, "new": <bool>, "timely": <bool>, "examples": <bool>, "revealing": <bool> }`
 2. Draft the CASCADE-format research note (Conclusion → Action → Scenarios → Catalysts → Data, 300–500 words).
 3. Compute final_confidence (blend of VALUATION confidence, FORENSIC severity, FaVeS).
-4. Confidence < 0.50 = NO_PUBLISH. publication_possible = false is a terminal DROP (KATA and LENS skip).
+4. Confidence < 0.50 = NO_PUBLISH. publication_possible = false is a terminal DROP (KATA and LENS skip). A true value and ENTER's PUBLISH/ALERT are provisional eligibility, not release permission: verify-before-publish must still pass.
 
 ### lens-five-frameworks
 
@@ -101,12 +118,27 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 3. Emit calibration_gap (0.0 calibrated → 1.0 maximum gap). No prediction recorded = 1.0 (broken feedback loop, not neutral).
 4. LENS consumes calibration_gap as a 6th axis alongside the existing five frameworks.
 
+### verify-before-publish
+
+1. After KATA/LENS and any consistency-driven revision, assemble the exact full report to be delivered: CASCADE note, all included stage outputs, financial tables, LENS memo and condensed summary if requested. Freeze it as `target_text`; checking only the headline or conclusion is insufficient.
+2. Render `company-research/verification-handoff` with `target_text`, accumulated `source_outputs`, `pipeline_tool_log`, applicable `leak_rules`, `congruence_rules`, and `historical_findings` (empty on first pass). Call `spawn_agent` with label `verify-flash-report` and the rendered handoff or an accessible file packet. The verifier must load `grounding-verify` and execute its mechanical checks against the retained original sources; it must not fetch its own evidence or substitute training knowledge. Delegation/file-access failure is `incomplete`, not permission to self-approve.
+3. Consume the canonical `fact_score`, `fact_score_breakdown`, `verified_claims`, `hallucination_findings`, `source_conflicts`, `data_gaps`, `confidence_adjustment`, `confidence_band`, `decoupling`, and `verification_scope_limitations`. Check the output shape, full target coverage and executed mechanical results, then execute the handoff's `lisp_eval` gate. `claims_checked` comes from `fact_score_breakdown.claims_checked`; missing fields are not zero/default success.
+4. Gate `incomplete` (including nil, zero claims, omitted sections, unperformed checks or in-thread verification): stop publication and return a labelled incomplete draft with the blocker. Gate `needs_work` (score < 0.60 or material failure): re-enter the earliest affected collection/synthesis stage, correct the claim or source and regenerate dependent outputs, including VALUATION/COMMUNICATION/LENS when affected, then re-verify. Preserve earlier records unchanged, keyed by iteration and stage. Do not remove material uncertainty just to improve a score. All retries share the existing maximum of three pipeline iterations; no new retry budget per gate.
+5. Only `passed` may reach the final publication decision. Apply the final verifier's `confidence_adjustment` once to COMMUNICATION's unadjusted confidence using `lisp_eval`; floor at zero. Reapply confidence ≥ 0.50 and the original ENTER eligibility. Preserve `confidence_band` separately: a score is not a probability of truth. Scores 0.60–0.79 carry the canonical -0.10 penalty; no score overrides a rejected/unsupported load-bearing factual claim, unresolved load-bearing conflict, or high/critical finding.
+6. Publication is permitted only if ENTER eligibility is true, adjusted confidence ≥ 0.50, and the verification gate is `passed`. Execute the following `lisp_eval` form with `enter_eligible` from COMMUNICATION's `publication_possible`, its original `unadjusted_confidence`, and the current verifier's `confidence_adjustment` and `verification_gate`. It returns `[adjusted_confidence, publish]`; missing inputs produce `[nil, false]` and an `incomplete` data gap. Validate numeric types/ranges before evaluation; any evaluation error also blocks publication.
+
+   ```lisp
+   (if (or (is_null enter_eligible) (is_null unadjusted_confidence) (is_null confidence_adjustment) (is_null verification_gate)) (list nil false) (let ((adjusted (+ unadjusted_confidence confidence_adjustment))) (list (if (< adjusted 0) 0 adjusted) (and enter_eligible (>= adjusted 0.50) (member verification_gate (list "passed"))))))
+   ```
+
+7. LENS consistency cannot override a failed grounding gate. Record the verification report alongside the research report. Any factual change after this check, including condensing, requires verification of the edited deliverable before release; otherwise label it unverified.
+
 ### persist-report
 
-1. After the LENS convergence verdict, write the full report as a **rich markdown file**.
+1. After verify-before-publish and the final publication decision, write the full report as a **rich markdown file** with its actual status. A blocked/incomplete run may persist a clearly labelled draft, not a published note. Include the canonical verification report, source references, confidence band and scope limitations.
 2. Reports are stored in the user-facing artifacts directory: `~/Documents/zk-data/companies-mcp/reports/`. This is separate from the internal data dir (`~/.local/share/zed-kask/`) — reports are user-facing artifacts that should be visible, not buried in a hidden cache directory.
 3. Create the reports directory if it does not exist: `mkdir -p ~/Documents/zk-data/companies-mcp/reports` via `terminal`.
-4. Write the markdown file to `~/Documents/zk-data/companies-mcp/reports/{ticker}-flash-{date}.md`. Use `write_file` with the full absolute path.
+4. Write the markdown file to `~/Documents/zk-data/companies-mcp/reports/{ticker}-flash-{date}.md`. Use a quoted `terminal` heredoc for this external artifacts path; project file tools cannot write outside the workspace.
 5. The markdown file is the deliverable — full rich markdown with all sections, source notes, and citations.
 6. Do NOT write reports to the source tree (`zed-kask/reports/` or similar) — that pollutes the user's code repository.
 7. Do NOT write reports to the hidden internal data dir (`~/.local/share/zed-kask/mcp/companies/reports/`) — that buries user-facing output where the user will never find it.
@@ -115,11 +147,11 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 1. The full markdown report written in persist-report IS the deliverable.
 2. If a condensed flash note is needed, write it as a separate markdown file at `~/Documents/zk-data/companies-mcp/reports/{ticker}-flash-summary-{date}.md`.
-3. Both files are markdown in `~/Documents/zk-data/companies-mcp/reports/`.
+3. Both files are markdown in `~/Documents/zk-data/companies-mcp/reports/`. Include the summary in verify-before-publish's target; a newly composed summary cannot inherit verification automatically.
 
 ## Convergence
 
-The flash pipeline converges on LENS verdict consistency: CONSISTENT = 0.0 (fully converged), PARTIAL = 0.5 (re-enter VALUATION synthesis with LENS tensions injected), INCONSISTENT = 1.0 (escalate). max_iterations: 3 bounds the loop.
+The consistency loop remains LENS-driven: CONSISTENT = 0.0, PARTIAL = 0.5 (re-enter VALUATION with tensions), INCONSISTENT = 1.0 (escalate). LENS remains advisory to publication, but is not a factuality check. Publication separately requires verify-before-publish `passed`, ENTER eligibility and adjusted confidence ≥ 0.50. Factual failures re-enter collection or the affected synthesis stage, not merely valuation weighting. `incomplete` stops publication and names the failed measurement. max_iterations: 3 bounds ALL correction cycles together; exhaustion returns a labelled needs_work/incomplete draft, never a publishable note.
 
 ## Cross-Skill Composition
 
@@ -127,6 +159,7 @@ The flash pipeline converges on LENS verdict consistency: CONSISTENT = 0.0 (full
 - Step 4 reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
 - Step 20 reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1).
 - The kata-calibration-measure adapter reuses `metacognition/meta-experiment` — closes the open kata loop by measuring the calibration gap using the market_calibration Brier score.
+- Mandatory verify-before-publish composes `grounding-verify` through `company-research/verification-handoff` and `spawn_agent`. The flash skill owns collection, correction and publication; the verifier checks the supplied evidence without rewriting the report.
 
 ## Registry Templates
 
@@ -134,6 +167,7 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 
 | Template | Purpose |
 |----------|---------|
+| `verification-handoff.j2` | Prepare a decoupled grounding-verify handoff for a complete company report and retained source outputs, preserving source provenance and surfacing missing evidence. |
 | `scout-alpha-score.j2` | Agent 01 SCOUT. Computes the firm-specific alpha score (coverage gap × 0.30 + market cap fit × 0.20 + sector relevance × 0.25 + valuation anomaly × 0.25, plus EM GDP / Bessembinder / low-coverage bonuses up to +25) and applies the 11-criterion excellence universe (S1–S11) where `in_excellence_universe` is true. Emits `decision` (MUST_COVER / REVIEW_ZONE / DROP), `alpha_score`, `horizon_tag`, `downstream_mode` (valentine / gunn / dual). DROP is a terminal early-exit gate. |
 | `intel-mosaic.j2` | Agent 02 INTEL (DEEPEN). Business-context 8-step + information mosaic. Consumes `company_research_search` and `web_search` MCP tool outputs (passed via the render_template context from prior direct tool calls) and the `listening/apply-template` earnings-call verdict (cross-skill step 3). Emits `mosaic_clear` (false = MNPI HALT terminal gate), `business_model`, `news_items`, `hypotheses` (PENDING / VALIDATED / UNRESOLVABLE lifecycle), `data_gaps`. Per .rules: failed MCP tools surface as `data_gaps` entries, never collapse to None. |
 | `forensic-pre-screen.j2` | Agent 04 FORENSIC (pre-screen). Quick risk pre-screen across accounting red flags, governance, going-concern signals. Emits `severity` (SEV-1 minor → SEV-5 fraud/restatement), `recommendation` (CLEAR+adj / CONDITIONAL / BLOCK), `eps_haircut`, `dr_add_bps`. BLOCK is a terminal early-exit gate. FORENSIC cannot be skipped (EFRA-AI invariant). |
@@ -142,7 +176,7 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `valuation-8step.j2` | Agent 05 VALUATION (DEEPEN). 8-step price target engine. Synthesizes over four direct MCP tool outputs passed via the render_template context: `dcf_valuation` (7a), `comparable_analysis` (7b), `expectations_gap` (7c), `scenario_impact_valuation` (7d). Emits `pt_12m`, `rr_ratio`, `rating` (BUY/HOLD/UNDERPERFORM), `FaVeS` (variant expectations score), `confidence`, `data_gaps` (names any failed MCP tool with LLM-derived fallback estimate + confidence penalty per EFRA-AI L1/L2 fallback hierarchy). RR < 2:1 + UNDERPERFORM = DROP terminal gate. |
 | `communication-enter.j2` | Agent 06 COMMUNICATION. ENTER gate (Edge / New / Timely / Examples / Revealing — 5/5 = PUBLISH, 4/5 = ALERT, ≤3/5 = DROP) and CASCADE-format research note (Conclusion → Action → Scenarios → Catalysts → Data). Emits `publication_possible`, `enter_score`, `cascade_note`, `final_confidence`. Confidence < 0.50 = NO_PUBLISH (EFRA-AI invariant). |
 | `lens-five-frameworks.j2` | Agent 09 LENS. Consistency auditor. Applies the firm's five intellectual frameworks: Lens 1 The Loop (economic potential, technological capability, variant expectations, valuation anchor Value = Profits / (r − g), target return > 12%, max P/E < 25×), Lens 2 Superforecasting (granular probabilities, inside/outside view balance, clashing forces, observable invalidation — cross-references `market_cmp_index` outside view), Lens 3 Dunning-Kruger (process_confidence vs final_confidence gap, overconfidence risk flag), Lens 4 Hidden Champions (Simon 8 characteristics), Lens 5 Kauffman / Adjacent Possible (ergodic vs nonergodic, new niches, Darwinian preadaptations). Emits `overall_verdict` (CONSISTENT / PARTIAL / INCONSISTENT), `key_tensions`, `pm_memo` (200 words). Never blocks publication. |
-| `company-8part.j2` | Agent 13 COMPANY (DEEPEN). Deep 8-part company analysis: Self-View, Business Franchise, Management Skill (CEO long-term + CFO working capital scorecards), Financial Profile (signposts + 3-stage valuation), Invisible Layer, Falstaffian Inversion, Value Gorilla Elevator Pitch, Investment Thesis Statement. Consumes `company_transcript`, `dcf_valuation`, `comparable_analysis`, `web_search`, `fetch` MCP tool outputs (passed via the render_template context from prior direct tool calls). Emits `CompanyBoard` with all 8 sections, `data_gaps`. |
+| `company-8part.j2` | Agent 13 COMPANY (DEEPEN). Deep 8-part company analysis: Self-View, Business Franchise, Management Skill (CEO long-term + CFO working capital scorecards), Financial Profile (signposts + 3-stage valuation), Invisible Layer, Falstaffian Inversion, Value Gorilla Elevator Pitch, Investment Thesis Statement. Consumes `company_transcript`, `dcf_valuation`, `comparable_analysis`, `web_search`, `fetch` MCP tool outputs (passed via the render_template context from prior direct tool calls). Consumes retained `source_outputs`; emits `CompanyBoard` with all 8 sections, `claim_sources`, and `data_gaps`. |
 | `falstaffian-competitive-rotation.j2` | v0.38.0 addition. Rotates the competitive framing of the Company Board before GORILLA scores it. Applies Falstaffian semantic rotation shapes (predicate hollow, subject expansion, object inversion, direction reversal) to expose framing errors in the analyst narrative. Emits rotated_board with competitor-complement analysis, market creator vs participant classification (Wardley evolution axis), framing errors detected, and rotated competitive position. Anchored to MAIA "Falstaff: Give Me Life", "Competition: Readings vs Reality", "Company Analysis", "Thinking Like an Owner". Cross-references metacognition/falstaffian-perspective-engine shapes and decision tree. |
 | `gorilla-4dim.j2` | Agent 10 GORILLA. Value Gorilla 4-dimension framework with fixed methodology weights (Obvious Problem 25% / Invisible Gorilla 30% / Combinatorial Solution 25% / Choke Point 20%). Weights are fixed by firm methodology — NOT user-tunable, so mcda was rejected (essentialist Surface gate: adds ceremony for fixed weights). Scoring is a `lisp_eval` call, not an mcda call. In v0.38.0, GORILLA consumes the ROTATED board (from falstaffian-competitive- rotation), not the raw Company Board — the rotation corrects framing errors before scoring. Emits `gorilla_score`, `verdict` (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50), per-dimension scores. |
 | `economic-trajectory.j2` | v0.38.0 addition. Economically-anchored imagination scaffold. Identifies the falling-cost trajectory in the subject's industry (McAfee dematerialization), the design constraint being removed (MAIA bottleneck framework), the Coasean firm-boundary shifts (Kauffman economic web), the Kauffman adjacent possible nodes (never-before-born goods and services, Darwinian preadaptations), and convergence vectors (Diamandis). Emits economic_trajectory with falling_cost, constraint_being_removed, coasean_shifts, adjacent_possible_nodes, convergence_vectors, implications_for_ subject, trajectory_velocity. IMAGINE consumes this as the anchor for its 5/10Y scenarios. Anchored to MAIA "Focus and Imagination", "More From Less", "Kauffman Readings", "The Future Is Faster", "Bottlenecks and Critical Mass", "Time Horizons". |
@@ -168,4 +202,7 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.
 - No `unwrap_or(0)` on regulation signals. Missing LENS verdict surfaces as 1.0 (worst case), not silently converged.
 - The THESIS quality gate in the deep pipeline uses `goal-analysis/judge` (semantic evaluation), not self-assessment — to avoid the LLM-improves-against-LLM-scored-target trap.
-- Reports are written as markdown files to `~/Documents/zk-data/companies-mcp/reports/` via the built-in `write_file` tool (see persist-report — never the source tree or the hidden internal data dir).
+- Reports are written as markdown files to `~/Documents/zk-data/companies-mcp/reports/` via `terminal` (see persist-report — never the source tree or the hidden internal data dir).
+- Rendering verification-handoff is not executing verification. A missing, nil, zero-claim, partial-coverage or in-thread verification result cannot authorize publication.
+- A high fact_score never overrides an unresolved material finding. LENS/ENTER are not substitutes for grounding; apply the current final verification adjustment once and retain its independently derived confidence band.
+- Historical findings remain append-only and outside the current score denominators. Corrections require a new verification record and regenerate affected downstream outputs; max_iterations: 3 is shared across all re-entry paths.

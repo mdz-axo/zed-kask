@@ -36,7 +36,7 @@ use crate::ocr::llm_ocr::LlmOcrExecutor;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
 use crate::ocr::triage::parse_target_pages;
 use crate::path_safety::{contain_for_read, contain_for_write};
-use crate::text::{chunk_text, strip_gutenberg_headers};
+use crate::text::{chunk_text_with_overlap, source_component, strip_gutenberg_headers};
 use crate::{
     OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds, default_embedding_model, max_concurrency,
     sanitize_links,
@@ -929,7 +929,7 @@ impl<'a> ConvertService<'a> {
     /// Mirrors the former `chunk_directory` helper: validate + contain paths,
     /// scan for `.txt` sources, chunk each with the configured token bounds,
     /// optionally index passages, and atomically publish the JSONL via a
-    /// `.tmp` rename. Returns a summary JSON (`input_dir`, `output`,
+    /// temporary-file rename. Returns a summary JSON (`input_dir`, `output`,
     /// `total_documents`, `total_chunks`, `indexed`).
     #[must_use = "result must be used"]
     pub async fn chunk_directory(
@@ -942,6 +942,9 @@ impl<'a> ConvertService<'a> {
         strip_gutenberg: Option<bool>,
         index: bool,
     ) -> Result<Value, McpToolError> {
+        let bounds = chunk_word_bounds(max_tokens, overlap_tokens)?;
+        hkask_mcp_server::validate_identifier("entity_ref_prefix", entity_ref_prefix, 256)
+            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
         hkask_mcp_server::validate_path("input_dir", input_dir, 4096)
             .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
         let input_dir = contain_for_read(input_dir)?;
@@ -952,14 +955,30 @@ impl<'a> ConvertService<'a> {
             .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
         let output_path = contain_for_write(output)?;
 
-        let mut sources = std::fs::read_dir(&input_dir)
-            .map_err(|e| {
-                map_corpus_io_error(e, &format!("Failed to read '{}'", input_dir.display()))
-            })?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "txt"))
-            .collect::<Vec<_>>();
+        let entries = std::fs::read_dir(&input_dir).map_err(|e| {
+            map_corpus_io_error(e, &format!("Failed to read '{}'", input_dir.display()))
+        })?;
+        let mut sources = Vec::new();
+        for entry in entries {
+            let source = entry
+                .map_err(|e| map_corpus_io_error(e, "Failed to enumerate chunk source"))?
+                .path();
+            if !source.extension().is_some_and(|ext| ext == "txt") {
+                continue;
+            }
+            let source_path = source
+                .to_str()
+                .ok_or_else(|| McpToolError::invalid_argument("Invalid UTF-8 source path"))?;
+            // A contained directory can contain escaping or broken symlinks.
+            // Resolve each txt child before inspecting/reading it; never silently skip errors.
+            let resolved = contain_for_read(source_path)?;
+            let metadata = std::fs::metadata(&resolved).map_err(|e| {
+                map_corpus_io_error(e, &format!("Failed to inspect '{}'", source.display()))
+            })?;
+            if metadata.is_file() {
+                sources.push((source, resolved));
+            }
+        }
         sources.sort();
         if sources.is_empty() {
             return Err(McpToolError::invalid_argument(format!(
@@ -973,11 +992,14 @@ impl<'a> ConvertService<'a> {
                 map_corpus_io_error(e, &format!("Failed to create '{}'", parent.display()))
             })?;
         }
-        let temp_path = std::path::PathBuf::from(format!("{}.tmp", output_path.display()));
-        let file = std::fs::File::create(&temp_path).map_err(|e| {
-            map_corpus_io_error(e, &format!("Failed to create '{}'", temp_path.display()))
-        })?;
-        let mut writer = std::io::BufWriter::new(file);
+        // RAII removes partial output on any error; an existing output is not
+        // replaced until every source was read and serialized successfully.
+        let parent = output_path
+            .parent()
+            .ok_or_else(|| McpToolError::invalid_argument("Output must have a parent directory"))?;
+        let temp_file = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|e| map_corpus_io_error(e, "Failed to create chunk output temporary file"))?;
+        let mut writer = std::io::BufWriter::new(temp_file);
         let mut total_chunks = 0usize;
         let mut indexed = 0usize;
         // A source that yields zero passages is data loss presented as
@@ -986,23 +1008,19 @@ impl<'a> ConvertService<'a> {
         // caller's coverage gate can halt on it.
         let mut zero_chunk_files: Vec<String> = Vec::new();
 
-        let (max_words, min_words) = chunk_word_bounds(max_tokens, overlap_tokens);
-
-        for source in &sources {
+        for (source, resolved) in &sources {
             let file_name = source
                 .file_name()
                 .and_then(std::ffi::OsStr::to_str)
                 .ok_or_else(|| McpToolError::invalid_argument("Invalid source filename"))?;
-            let source_prefix = format!(
-                "{}:{}",
-                entity_ref_prefix,
-                file_name.replace(['/', '\\', '.', ' '], "_")
-            );
+            let source_prefix = format!("{}:{}", entity_ref_prefix, source_component(file_name));
 
             // Read the .txt file directly — no recursive MCP tool call.
             // chunk_directory operates on already-extracted plain text;
-            // format detection and OCR are handled by corpus_convert.
-            let source_text = std::fs::read_to_string(source).map_err(|e| {
+            // format detection and OCR are handled by corpus_convert. Preserve
+            // this extracted-book path's uncapped read policy (not the generic
+            // 32 MiB document read cap). UTF-8/read failures remain errors.
+            let source_text = std::fs::read_to_string(resolved).map_err(|e| {
                 map_corpus_io_error(e, &format!("Failed to read '{}'", source.display()))
             })?;
             // Captured before `source_text` is moved into `processed` — the
@@ -1020,7 +1038,14 @@ impl<'a> ConvertService<'a> {
             let processed = strip_html_comments(&processed);
             let processed = filter_boilerplate_pages(&processed);
 
-            let passages = chunk_text(&processed, &source_prefix, min_words, max_words, ".!? ");
+            let passages = chunk_text_with_overlap(
+                &processed,
+                &source_prefix,
+                bounds.min_words,
+                bounds.max_words,
+                ".!? ",
+                bounds.overlap_words,
+            )?;
 
             if passages.is_empty() {
                 zero_chunk_files.push(file_name.to_string());
@@ -1060,17 +1085,16 @@ impl<'a> ConvertService<'a> {
         }
 
         use std::io::Write as _;
-        writer.flush().map_err(|e| {
-            map_corpus_io_error(e, &format!("Failed to flush '{}'", temp_path.display()))
-        })?;
-        std::fs::rename(&temp_path, &output_path).map_err(|e| {
+        writer
+            .flush()
+            .map_err(|e| map_corpus_io_error(e, "Failed to flush chunks"))?;
+        let temp_file = writer
+            .into_inner()
+            .map_err(|e| map_corpus_io_error(e.into_error(), "Failed to finish chunks"))?;
+        temp_file.persist(&output_path).map_err(|e| {
             map_corpus_io_error(
-                e,
-                &format!(
-                    "Failed to publish '{}' as '{}'",
-                    temp_path.display(),
-                    output_path.display()
-                ),
+                e.error,
+                &format!("Failed to publish '{}'", output_path.display()),
             )
         })?;
 
@@ -1079,6 +1103,11 @@ impl<'a> ConvertService<'a> {
             "output": output_path.display().to_string(),
             "total_documents": sources.len(),
             "total_chunks": total_chunks,
+            "max_tokens": bounds.max_tokens,
+            "overlap_tokens": overlap_tokens.unwrap_or(0),
+            "overlap_words": bounds.overlap_words,
+            "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
+            "source_id_encoding": "utf8-hex",
             "zero_chunk_files": zero_chunk_files,
             "indexed": indexed,
         }))

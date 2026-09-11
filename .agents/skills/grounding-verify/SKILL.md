@@ -545,8 +545,10 @@ architectural role of `essentialist` and `falsifiability`:
   after thesis-essentialist). The spawned agent receives the stage output
   + source outputs as inputs — it has no shared conversation history with
   the generator. This is the self-improvement §9.1 decoupling enforcement.
-- **company-research-flash** can invoke `grounding-verify` as a late gate
-  before the LENS consistency audit.
+- **company-research-flash** requires `grounding-verify` after KATA/LENS
+  and any revisions, before publication. Both company pipelines use
+  `company-research/verification-handoff` to pass the complete target and
+  retained sources; their SKILL.md bodies own correction and release gates.
 - Any pipeline that produces claims against source data can compose this
   skill as a verification step.
 

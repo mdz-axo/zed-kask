@@ -720,6 +720,24 @@ Skills and MCP tools evolve together. Skills reveal MCP tool design issues (miss
 
 The three co-evolution feedback loops are described in the Co-Evolution Loop principle above.
 
+### Company research verification handoff
+
+`company-research-deep` and `company-research-flash` retain actual source
+responses separately from generated analysis. Both render
+`company-research/verification-handoff` and delegate the retained packet to
+`grounding-verify`; rendering alone performs no verification. Deep checks the
+CompanyBoard before downstream analysis and the complete final report before
+its semantic quality gate. Flash checks the complete deliverable after
+KATA/LENS, before publication; ENTER's eligibility is provisional.
+
+The skill bodies own collection and the shared three-iteration correction
+budget. A missing/unperformed check, nil score, zero checked claims or
+in-thread self-check cannot approve a report. Material findings override an
+aggregate passing score. Corrected reports and newly composed summaries need
+new checks; prior verification records remain immutable history. The shared
+template defines the source packet and caller-executed `lisp_eval` gate; these
+are agent-executed process constraints, not a Rust publication interceptor.
+
 ### Gas Consumption
 
 Skill execution is bounded by the **per-agent call cap** (System A): every governed MCP tool call via `McpRuntime::invoke` charges one call against the agent's `CallCap` (`CallCapManager::charge_metered` → `CallMeterOutcome`). The cap resets to its ceiling each regulation tick. An agent with no registered cap is **auto-registered** at `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and the wiring gap is logged — a missing seed is a wiring omission, not an authorization decision (RR-0057).

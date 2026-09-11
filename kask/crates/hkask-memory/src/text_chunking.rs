@@ -206,6 +206,90 @@ pub fn chunk_text(
     passages
 }
 
+/// Chunk with explicit repeated context, measured in whitespace-delimited words.
+///
+/// expect: "Every overlapping passage repeats context and contributes new source words."
+/// [P3] Motivating: Generative Space — retain source content for retrieval.
+/// [P4] Constraining: bounded, advancing windows; no model-token guarantee.
+/// pre: max_words > 0, overlap_words < max_words
+/// post: positive overlap repeats exactly overlap_words from the previous suffix;
+///       each passage contributes new words and contains at most max_words.
+/// post: zero overlap delegates unchanged to the legacy best-effort chunker.
+///
+/// Uses the canonical sanitizer, structural splitter and sentence-end detector.
+/// For positive overlap, structural/sentence ends are preferred within the word
+/// budget, but never at the expense of forward progress. Whitespace is normalized.
+/// This is not a tokenizer: words (especially non-English text or long identifiers)
+/// may consume many model tokens.
+pub fn chunk_text_with_overlap(
+    text: &str,
+    entity_ref_prefix: &str,
+    min_words: usize,
+    max_words: usize,
+    sentence_boundary: &str,
+    overlap_words: usize,
+) -> anyhow::Result<Vec<(String, String)>> {
+    anyhow::ensure!(max_words > 0, "max_words must be positive");
+    anyhow::ensure!(
+        overlap_words < max_words,
+        "overlap_words must be less than max_words"
+    );
+    if overlap_words == 0 {
+        return Ok(chunk_text(
+            text,
+            entity_ref_prefix,
+            min_words,
+            max_words,
+            sentence_boundary,
+        ));
+    }
+
+    let sanitized = sanitize_text(text);
+    let paragraphs = split_structural(&sanitized);
+    let mut words = Vec::new();
+    let mut structural_ends = Vec::new();
+    for paragraph in &paragraphs {
+        words.extend(paragraph.split_whitespace());
+        structural_ends.push(words.len());
+    }
+    let boundary_chars: Vec<_> = sentence_boundary
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let mut passages = Vec::new();
+    let mut start = 0usize;
+    while start < words.len() {
+        let target = start.saturating_add(max_words).min(words.len());
+        let floor = start.saturating_add(min_words.max(overlap_words + 1).min(max_words));
+        let end = if target == words.len() {
+            target
+        } else {
+            // partition_point avoids rescanning all prior sections for every window.
+            let upper = structural_ends.partition_point(|&end| end <= target);
+            upper
+                .checked_sub(1)
+                .and_then(|index| structural_ends.get(index))
+                .copied()
+                .filter(|&end| end >= floor)
+                .or_else(|| {
+                    (floor..=target)
+                        .rev()
+                        .find(|&end| is_sentence_end(words[end - 1], &boundary_chars))
+                })
+                .unwrap_or(target)
+        };
+        passages.push((
+            format!("{entity_ref_prefix}:{}", passages.len()),
+            words[start..end].join(" "),
+        ));
+        if end == words.len() {
+            break;
+        }
+        start = end - overlap_words;
+    }
+    Ok(passages)
+}
+
 /// True when `word` ends a sentence: its final non-quote char is a boundary
 /// punctuation. Handles trailing quotes (`asked."`) and numeric decimals
 /// (`3.14` — a digit before the period is not a sentence end).
@@ -446,6 +530,71 @@ fn is_boilerplate_page(page: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: [P3] Legacy callers keep identical non-overlap chunks; the explicit API rejects non-progress even for empty input.
+    #[test]
+    fn overlap_zero_preserves_legacy_and_invalid_bounds_fail() -> anyhow::Result<()> {
+        let text = "First paragraph has words.\n\n# Heading\nNext paragraph with café and λ.";
+        assert_eq!(
+            chunk_text_with_overlap(text, "test", 3, 7, ".!?", 0)?,
+            chunk_text(text, "test", 3, 7, ".!?")
+        );
+        for (max, overlap) in [(0, 0), (2, 2), (2, 3)] {
+            assert!(chunk_text_with_overlap("", "test", 1, max, ".!?", overlap).is_err());
+        }
+        Ok(())
+    }
+
+    /// expect: [P3] Word windows reconstruct the entire sanitized source for every valid small overlap and budget, including near-full overlap.
+    #[test]
+    fn overlapping_windows_reconstruct_across_structural_boundaries() -> anyhow::Result<()> {
+        let text = "# Header\nλ1 λ2. λ3 \"λ4!\"\n\nλ5 λ6\n---\nλ7 λ8 λ9. λ10\tλ11 λ12 λ13 λ14 λ15";
+        let expected: Vec<_> = text.split_whitespace().collect();
+        for max in 2..=20 {
+            for overlap in 1..max {
+                let chunks = chunk_text_with_overlap(text, "t", 1, max, ".!?", overlap)?;
+                let mut reconstructed: Vec<&str> = Vec::new();
+                for (index, (_, passage)) in chunks.iter().enumerate() {
+                    let words: Vec<_> = passage.split_whitespace().collect();
+                    let repeated = if index == 0 { 0 } else { overlap };
+                    assert!(words.len() <= max && words.len() > repeated);
+                    if repeated > 0 {
+                        assert_eq!(
+                            &reconstructed[reconstructed.len() - repeated..],
+                            &words[..repeated]
+                        );
+                    }
+                    reconstructed.extend(&words[repeated..]);
+                }
+                assert_eq!(reconstructed, expected);
+            }
+        }
+        Ok(())
+    }
+
+    /// expect: [P3] Sentence ends and heading boundaries are preferred when they fit and still advance the window.
+    #[test]
+    fn overlapping_windows_prefer_source_boundaries() -> anyhow::Result<()> {
+        let sentences = chunk_text_with_overlap(
+            "alpha beta. gamma delta epsilon zeta eta theta iota",
+            "t",
+            1,
+            5,
+            ".!?",
+            1,
+        )?;
+        assert_eq!(sentences[0].1, "alpha beta.");
+        let structure = chunk_text_with_overlap(
+            "alpha beta gamma\n\n# Heading\ndelta epsilon zeta eta theta",
+            "t",
+            1,
+            6,
+            ".!?",
+            1,
+        )?;
+        assert_eq!(structure[0].1, "alpha beta gamma # Heading");
+        Ok(())
+    }
 
     #[test]
     fn sanitize_replaces_control_chars_with_space() {

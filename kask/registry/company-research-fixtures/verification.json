@@ -1,0 +1,42 @@
+{
+  "description": "Synthetic regression inputs, not real company research. Execute the gate from verification-handoff.j2; do not implement a second gate in the test.",
+  "gate_cases": [
+    {"name":"clean", "fact_score":0.9, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"passed"},
+    {"name":"threshold_with_penalty", "fact_score":0.6, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"passed"},
+    {"name":"below_threshold", "fact_score":0.59, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"needs_work"},
+    {"name":"material_failure_overrides_perfect_score", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":true, "expected":"needs_work"},
+    {"name":"nil_score", "fact_score":null, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
+    {"name":"zero_claims", "fact_score":1, "claims_checked":0, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
+    {"name":"missing_count", "fact_score":1, "claims_checked":null, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
+    {"name":"self_check", "fact_score":1, "claims_checked":3, "decoupling":"in_thread", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
+    {"name":"omitted_report_section", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":false, "material_failure":false, "expected":"incomplete"},
+    {"name":"missing_materiality_check", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":null, "expected":"incomplete"},
+    {"name":"invalid_score", "fact_score":1.1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"}
+  ],
+  "packet": {
+    "target_text": "Synthetic ExampleCo report. The company states: \"We announced partnerships.\" Reported revenue was 100 USD in FY2025. Revenue grew 25% from FY2024 to FY2025, calculated as (100 - 80) / 80 * 100.",
+    "source_outputs": [
+      {"tool_name":"web_extract", "description":"Synthetic original disclosure fixture", "output_key":"source:web_extract:disclosure", "output":{"content":"We announced partnerships.","url":"https://example.invalid/disclosure"}, "source_kind":"original", "url":"https://example.invalid/disclosure", "retrieved_at":null, "period":"FY2025", "unit":null},
+      {"tool_name":"income_statement", "description":"Synthetic provider financial data fixture", "output_key":"source:income_statement:revenue", "output":{"entity":"ExampleCo","revenues":[{"period":"FY2025","revenue":100},{"period":"FY2024","revenue":80}],"currency":"USD","warnings":["Synthetic test data; not an audited filing"]}, "source_kind":"original", "url":null, "retrieved_at":null, "period":"FY2024-FY2025", "unit":"USD"}
+    ],
+    "pipeline_tool_log": [
+      {"tool_name":"web_extract","output_key":"source:web_extract:disclosure","status":"fixture","note":"Supplied original-source fixture; no network call claimed"},
+      {"tool_name":"income_statement","output_key":"source:income_statement:revenue","status":"fixture","note":"Supplied provider-data fixture; no live call claimed"}
+    ],
+    "leak_rules": [{"block":"financial_profile","rule_type":"Quantity","pattern":"%"}, {"block":"paying_customers","rule_type":"Word","pattern":"paying customers"}],
+    "congruence_rules": [],
+    "historical_findings": []
+  },
+  "report_cases": [
+    {"name":"clean_original_and_derivation", "target":"packet.target_text", "expectation":"Original quote and historical numbers mechanically match; growth is platform_derived with sourced inputs. Disclose synthetic/provider data and inapplicable cross-source comparison; do not claim audited facts or live retrieval."},
+    {"name":"generated_answer_is_not_source", "target_text":"ExampleCo says: \"All partners are paying customers.\" This proves the investment thesis.", "additional_source":{"tool_name":"web_search","description":"Synthetic generated summary fixture", "output_key":"source:web_search:summary", "output":{"answer":"All partners are paying customers."}, "source_kind":"synthesis", "url":null, "retrieved_at":null, "period":null, "unit":null}, "expectation":"Matching the generated answer is not an original quotation. The original disclosure does not contain it. Unsupported load-bearing claim prevents publication; verifier must not promote it to tool_verified."},
+    {"name":"summary_reintroduces_rejected_claim", "target_text":"Executive summary: All partners are paying customers. Appendix: a prior quotation attribution was rejected.", "historical_findings":[{"iteration":1,"stage":"verify-early-anchor","claim_id":"prior-quotation","text":"ExampleCo says: All partners are paying customers.","provenance":"rejected","source_reference":"source:web_extract:disclosure","cross_check":{"quote":"All partners are paying customers.","source_text":"We announced partnerships.","matched":false},"why":"Synthetic prior check rejected this quotation attribution because it is absent from the retained original disclosure."}], "expectation":"The current executive-summary claim must be checked and blocked; an earlier record or appendix disclaimer cannot exempt current narrative. Preserve the supplied historical finding unchanged and exclude it from current-score denominators."},
+    {"name":"missing_source_packet", "source_outputs":[], "expectation":"Missing evidence is incomplete, not a passing score. No training-data fallback and no invented source keys."}
+  ],
+  "publication_cases": [
+    {"name":"penalty_changes_publication", "enter_eligible":true, "unadjusted_confidence":0.55, "confidence_adjustment":-0.10, "verification_gate":"passed", "expected_publish":false},
+    {"name":"exact_confidence_floor", "enter_eligible":true, "unadjusted_confidence":0.60, "confidence_adjustment":-0.10, "verification_gate":"passed", "expected_publish":true},
+    {"name":"enter_still_required", "enter_eligible":false, "unadjusted_confidence":0.90, "confidence_adjustment":0, "verification_gate":"passed", "expected_publish":false},
+    {"name":"verification_still_required", "enter_eligible":true, "unadjusted_confidence":0.90, "confidence_adjustment":0, "verification_gate":"incomplete", "expected_publish":false}
+  ]
+}

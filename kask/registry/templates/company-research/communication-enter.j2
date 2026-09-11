@@ -72,6 +72,11 @@ Score each criterion pass/fail:
 - ≤ 3/5 = DROP
 
 `publication_possible` is true only if ENTER score is 5/5 (PUBLISH) or 4/5 (ALERT).
+This is provisional editorial eligibility, not authorization to release the
+report. The calling flash pipeline must still run verify-before-publish over
+the complete deliverable, apply the verifier's confidence adjustment once, and
+recheck the 0.50 floor. Failed, missing or incomplete verification blocks
+publication regardless of ENTER or LENS. Do not describe this draft as verified.
 
 ## Confidence Check (EFRA-AI invariant)
 
@@ -117,5 +122,5 @@ The note should be 300–500 words. No filler. Every sentence must carry informa
 - `publication_possible: false` is a terminal DROP — KATA and LENS skip (the process conditions on them).
 - `final_confidence < 0.50` = NO_PUBLISH regardless of ENTER score.
 - The CASCADE note must be 300–500 words. Do not pad.
-- Do not introduce new analysis. You are communicating upstream outputs, not generating new conclusions.
+- Do not introduce new analysis. You are communicating upstream outputs, not generating new conclusions. Preserve source keys, periods, units and uncertainty qualifiers; a shortened sentence must not turn a hypothesis into a fact.
 - If ENTER score is 4/5 (ALERT), the note should be shorter (200–300 words) and flagged as an alert.

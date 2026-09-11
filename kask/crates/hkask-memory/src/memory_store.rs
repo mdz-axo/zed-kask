@@ -388,17 +388,10 @@ impl MemoryStore {
             .map_err(Into::into)
     }
 
-    /// Query by attribute, with confidence decay applied.
+    /// Query by attribute, applying confidence decay and resetting the recall
+    /// clocks. Exports and candidate scans should use the untouched variant.
     pub fn query_by_attribute(&self, attribute: &str) -> Result<Vec<HMem>, MemoryStoreError> {
-        let h_mems = self.h_mem_store.query_by_attribute(attribute)?;
-        let decayed: Vec<HMem> = h_mems
-            .into_iter()
-            .map(|mut t| {
-                let days_since = crate::bayesian::days_since(t.recalled_at);
-                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
-                t
-            })
-            .collect();
+        let decayed = self.query_by_attribute_untouched(attribute)?;
         for t in &decayed {
             if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
                 tracing::warn!(
@@ -410,6 +403,23 @@ impl MemoryStore {
             }
         }
         Ok(decayed)
+    }
+
+    /// Query by attribute with the same confidence decay as recall, without
+    /// updating `recalled_at`. Dataset assembly is an export, not a recall.
+    pub fn query_by_attribute_untouched(
+        &self,
+        attribute: &str,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_attribute(attribute)?;
+        Ok(h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect())
     }
 
     // ── Ontology recall (P5.4 dual-axis anchoring) ───────────────────────
@@ -657,15 +667,9 @@ impl MemoryStore {
     /// forgotten rows are removed from the database (operator ruling
     /// 2026-09-04: there is no "expired" state).
     pub fn delete_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
-        // Collect the affected entities before deleting — after the
-        // delete there is nothing left to enumerate.
-        let affected: HashSet<String> = self
+        let (count, affected) = self
             .h_mem_store
-            .query_by_entity_prefix(prefix, 100_000)?
-            .into_iter()
-            .map(|h_mem| h_mem.entity)
-            .collect();
-        let count = self.h_mem_store.delete_by_entity_prefix(prefix)?;
+            .delete_by_entity_prefix_with_entities(prefix)?;
         for entity in &affected {
             self.cleanup_orphaned_references_for_entity(entity);
         }
@@ -1193,6 +1197,50 @@ mod tests {
         );
     }
 
+    /// Approved slice 6: exports inspect without recall, while the genuine
+    /// recall API still applies decay and resets only matching rows' clocks.
+    #[test]
+    fn attribute_inspection_preserves_clocks_but_recall_still_touches() -> anyhow::Result<()> {
+        let store = test_store();
+        let mut qa = HMem::new(
+            "qa:one",
+            "training_qa_pair",
+            serde_json::json!("qa"),
+            WebID::new(),
+        );
+        qa.recalled_at = chrono::Utc::now() - chrono::Duration::days(30);
+        let mut other = HMem::new("other", "fact", serde_json::json!("fact"), WebID::new());
+        other.recalled_at = qa.recalled_at;
+        store.store(qa.clone())?;
+        store.store(other.clone())?;
+        let inspected = store.query_by_attribute_untouched("training_qa_pair")?;
+        let inspected = inspected
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing inspected QA"))?;
+        assert_eq!(inspected.id, qa.id);
+        assert_eq!(inspected.recalled_at, qa.recalled_at);
+        assert!(inspected.confidence < qa.confidence);
+        assert_eq!(
+            store.get_by_id(&qa.id)?.expect("QA exists").recalled_at,
+            qa.recalled_at
+        );
+        let recalled = store.query_by_attribute("training_qa_pair")?;
+        let recalled = recalled
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing recalled QA"))?;
+        assert_eq!(recalled.id, inspected.id);
+        assert!((recalled.confidence.value() - inspected.confidence.value()).abs() < 1e-6);
+        assert!(store.get_by_id(&qa.id)?.expect("QA exists").recalled_at > qa.recalled_at);
+        assert_eq!(
+            store
+                .get_by_id(&other.id)?
+                .expect("other exists")
+                .recalled_at,
+            other.recalled_at
+        );
+        Ok(())
+    }
+
     #[test]
     fn prune_by_age_deletes_old_h_mems() {
         let store = test_store();
@@ -1603,6 +1651,124 @@ mod tests {
             0,
             "pruning the last h_mem of an entity must remove its embeddings"
         );
+    }
+
+    /// Approved slice 1: cleanup must cover the rows beyond the former
+    /// 100,000-row discovery cap, with the same literal prefix as deletion.
+    #[test]
+    fn prefix_deletion_cleans_references_beyond_query_cap() -> anyhow::Result<()> {
+        let store = test_store();
+        let owner = WebID::new();
+        let prefix = "qa:%_Case:";
+        let bulk = HMem::new("qa:%_Case:bulk", "qa", serde_json::json!("bulk"), owner);
+        store.store(bulk.clone())?;
+        // One bulk entity fills the entire old discovery window; the oldest
+        // row belongs to another entity whose coupled references must go too.
+        store.h_mem_store.driver().execute(
+            "WITH RECURSIVE numbers(n) AS (
+                SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 99999
+             ) INSERT INTO hmems (id, entity, attribute, value, valid_from, recalled_at, owner_webid)
+             SELECT printf('00000000-0000-0000-0000-%012d', n), entity, attribute,
+                    value, valid_from, recalled_at, owner_webid
+             FROM numbers CROSS JOIN hmems WHERE id = ?1",
+            &[DbValue::Text(bulk.id.to_string())],
+        )?;
+        let mut tail = HMem::new("qa:%_Case:tail", "qa", serde_json::json!("tail"), owner);
+        tail.observed_at = chrono::Utc::now() - chrono::Duration::days(1);
+        store.store(tail.clone())?;
+        let retained = ["qa:%_case:keep", "qa:X_Case:keep", "qa:%XCase:keep"];
+        let vector = vec![0.2; hkask_storage::embedding_dim()];
+        for entity in &retained {
+            store.store(HMem::new(entity, "qa", serde_json::json!("keep"), owner))?;
+            store.store_embedding(entity, &vector, "test-model", Some("keep"))?;
+        }
+        for entity in [&bulk.entity, &tail.entity] {
+            store.store_embedding(entity, &vector, "test-model", Some("delete"))?;
+            store.record_co_occurrence(&[entity.clone(), retained[0].to_string()])?;
+        }
+        store.record_co_occurrence(&[retained[0].to_string(), retained[1].to_string()])?;
+        assert_eq!(store.h_mem_count()?, 100_001 + retained.len());
+        assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 100_001);
+        assert_eq!(store.h_mem_count()?, retained.len());
+        for entity in [&bulk.entity, &tail.entity] {
+            assert!(
+                matches!(
+                    store.embedding.get(entity),
+                    Err(EmbeddingError::NotFound(_))
+                ),
+                "deleted entity {entity} must not retain an embedding"
+            );
+            assert_eq!(
+                store.connectedness(entity)?,
+                0,
+                "deleted entity links must go"
+            );
+        }
+        for entity in &retained {
+            assert_eq!(store.h_mem_store.query_by_entity(entity)?.len(), 1);
+            assert_eq!(
+                store.embedding.get(entity)?.passage_text.as_deref(),
+                Some("keep")
+            );
+        }
+        assert_eq!(
+            store.connectedness(retained[0])?,
+            1,
+            "unrelated link survives"
+        );
+        let vectors = store
+            .h_mem_store
+            .driver()
+            .query("SELECT COUNT(*) FROM vec_embeddings", &[])?;
+        assert_eq!(
+            vectors
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("missing count"))?
+                .get(0)?
+                .as_int()?,
+            retained.len() as i64
+        );
+        assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 0);
+        Ok(())
+    }
+
+    /// Literal deletion must not decode unrelated wildcard/case matches or
+    /// require a valid QA payload to clean a selected entity's references.
+    #[test]
+    fn prefix_deletion_uses_identities_not_decoded_memories() -> anyhow::Result<()> {
+        for (prefix, unrelated) in [
+            ("qa:%:", "qa:other:"),
+            ("qa:_:", "qa:X:"),
+            ("qa:Case:", "qa:case:"),
+            ("qa:\\:", "qa:plain:"),
+        ] {
+            let store = test_store();
+            let target = HMem::new(
+                &format!("{prefix}target"),
+                "qa",
+                serde_json::json!("target"),
+                WebID::new(),
+            );
+            let retained = HMem::new(unrelated, "qa", serde_json::json!("keep"), WebID::new());
+            store.store(target.clone())?;
+            store.store(retained.clone())?;
+            let vector = vec![0.2; hkask_storage::embedding_dim()];
+            store.store_embedding(&target.entity, &vector, "test-model", None)?;
+            store.store_embedding(&retained.entity, &vector, "test-model", None)?;
+            store
+                .h_mem_store
+                .driver()
+                .execute("UPDATE hmems SET value = 'malformed JSON'", &[])?;
+            assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 1);
+            assert!(store.get_by_id(&target.id)?.is_none());
+            assert!(matches!(
+                store.embedding.get(&target.entity),
+                Err(EmbeddingError::NotFound(_))
+            ));
+            assert!(store.embedding.get(&retained.entity).is_ok());
+            assert_eq!(store.h_mem_count()?, 1);
+        }
+        Ok(())
     }
 
     /// Pin the periodic sweep: embeddings whose entity has no h_mem row

@@ -25,6 +25,20 @@ Simplified from 21 → 15 → 8 across 2026-07-19 cleanups.
 | `training_evaluate` | Evaluate a trained adapter against a test dataset. Runs inference for each test example and scores accuracy using exact match, substring containment, or semantic comparison |
 | `training_validate_config` | Run the lora-training skill's static math-contract gates (G-M1..G-M4, G-Q1, G-Q2, G-Q4, G-H1) on training params. Also profiles the dataset (G-D0) and validates dataset size (G-D1) if dataset_path is provided. Emits `reg.lora.audit` spans. This is the runtime enforcement point for the `.agents/skills/lora-training/` skill's `audit-config` phase |
 
+### QA dataset assembly
+
+`training_assemble_dataset` reads the server's configured memory store unless
+`db_path` selects another database (for example, the database used by corpus QA
+ingestion). An explicit `passphrase` takes precedence over the configured DB
+passphrase. A missing or incorrect passphrase returns `permission_denied`, not
+an internal error or a silent fallback to another key.
+
+Assembly is an export, not recall: neither the default-store path nor the
+explicit-DB path updates QA `recalled_at` timestamps. This includes rows excluded
+by dataset/source/Bloom filters or the example limit. Filtering, ChatML output,
+and optional train/test splitting are unchanged; genuine memory recall APIs
+continue to refresh recall clocks.
+
 ### Deleted tools (2026-07-19, second pass)
 
 - `training_deploy` / `training_deployment_status` / `training_teardown` — replaced by `hkask_mcp_training::adapter::AdapterPort::{create_endpoint, endpoint_status, teardown_endpoint}`. The MCP server was a thin wrapper; deployment now goes through the canonical AdapterPort surface directly.

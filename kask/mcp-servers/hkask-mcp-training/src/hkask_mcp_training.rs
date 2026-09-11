@@ -632,6 +632,167 @@ mod smoke {
         )
     }
 
+    struct AssemblyFixtureDir(std::path::PathBuf);
+
+    impl AssemblyFixtureDir {
+        fn new(parent: std::path::PathBuf) -> std::io::Result<Self> {
+            let path = parent.join(format!(".assembly-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for AssemblyFixtureDir {
+        fn drop(&mut self) {
+            if let Err(error) = std::fs::remove_dir_all(&self.0) {
+                tracing::warn!(%error, path = %self.0.display(), "Failed to remove assembly test fixture");
+            }
+        }
+    }
+
+    fn assembly_request(output: &std::path::Path) -> crate::types::AssembleDatasetRequest {
+        crate::types::AssembleDatasetRequest {
+            dataset: Some("selected".into()),
+            source: Some("book".into()),
+            bloom_level: Some("analyze".into()),
+            output_path: output.to_string_lossy().into_owned(),
+            train_split: Some(0.5),
+            max_examples: Some(2),
+            system_prompt: Some("Answer from the source.".into()),
+            db_path: None,
+            passphrase: None,
+        }
+    }
+
+    /// Approved slice 6: assembly is an export, not recall. Both database
+    /// routes must preserve every recall clock, including filtered-out QA.
+    #[tokio::test]
+    async fn assembly_does_not_refresh_qa_recall_clocks() -> anyhow::Result<()> {
+        for explicit_db in [false, true] {
+            // The output must satisfy the tool's real path-containment gate;
+            // this RAII directory is removed even when an assertion fails.
+            let output_dir = AssemblyFixtureDir::new(std::env::current_dir()?)?;
+            let db_dir = AssemblyFixtureDir::new(std::env::temp_dir())?;
+            let db_path = db_dir.path().join("qa.db");
+            let store = hkask_memory::MemoryStore::open(
+                &db_path.to_string_lossy(),
+                "assembly-fixture",
+                hkask_storage::embedding_dim(),
+            )?;
+            let mut seeded = Vec::new();
+            for (i, (dataset, source, bloom)) in [
+                ("selected", "book", "analyze"),
+                ("selected", "book", "analyze"),
+                ("selected", "book", "analyze"),
+                ("excluded", "book", "analyze"),
+                ("selected", "other", "analyze"),
+                ("selected", "book", "recall"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut memory = hkask_storage::HMem::new(
+                    &format!("training:qa:fixture:{i}"),
+                    "training_qa_pair",
+                    serde_json::json!({"dataset": dataset, "source": source, "bloom_level": bloom,
+                        "question": format!("Question {i}"), "answer": format!("Answer {i}")}),
+                    WebID::new(),
+                );
+                memory.recalled_at = chrono::Utc::now() - chrono::Duration::days(30);
+                store.store(memory.clone())?;
+                seeded.push(memory);
+            }
+            let mut server = make_server();
+            let mut request = assembly_request(&output_dir.path().join("train.jsonl"));
+            if explicit_db {
+                request.db_path = Some(db_path.to_string_lossy().into_owned());
+                request.passphrase = Some("assembly-fixture".into());
+            } else {
+                server.store = Some(store);
+            }
+            let output_path = request.output_path.clone();
+            let response = server
+                .training_assemble_dataset(Parameters(request))
+                .await?;
+            let result =
+                hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&response)?);
+            assert_eq!(result["total_matched"], 3);
+            assert_eq!(result["train_examples"], 1);
+            assert_eq!(result["test_examples"], 1);
+            for path in [&output_path, &format!("{output_path}.test.jsonl")] {
+                let text = std::fs::read_to_string(path)?;
+                assert_eq!(text.lines().count(), 1);
+                let row: serde_json::Value = serde_json::from_str(text.trim())?;
+                assert_eq!(row["messages"][0]["content"], "Answer from the source.");
+                let question = row["messages"][1]["content"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing question"))?;
+                assert!(["Question 0", "Question 1", "Question 2"].contains(&question));
+                assert_eq!(row["messages"][2]["role"], "assistant");
+            }
+            let reopened = hkask_memory::MemoryStore::open(
+                &db_path.to_string_lossy(),
+                "assembly-fixture",
+                hkask_storage::embedding_dim(),
+            )?;
+            for original in seeded {
+                let after = reopened
+                    .get_by_id(&original.id)?
+                    .ok_or_else(|| anyhow::anyhow!("assembly deleted a QA row"))?;
+                assert_eq!(
+                    after.recalled_at, original.recalled_at,
+                    "assembly must not count as recall: explicit_db={explicit_db}, entity={}",
+                    original.entity
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Approved slice 6: an explicit wrong key is an authorization error,
+    /// never an internal fault or an attempt to repair/recreate the database.
+    #[tokio::test]
+    async fn assembly_wrong_explicit_passphrase_is_permission_denied() -> anyhow::Result<()> {
+        let dir = AssemblyFixtureDir::new(std::env::temp_dir())?;
+        let db_path = dir.path().join("qa.db");
+        let store = hkask_memory::MemoryStore::open(
+            &db_path.to_string_lossy(),
+            "correct-fixture-key",
+            hkask_storage::embedding_dim(),
+        )?;
+        let sentinel =
+            hkask_storage::HMem::new("sentinel", "fact", serde_json::json!("keep"), WebID::new());
+        store.store(sentinel.clone())?;
+        drop(store);
+        let mut server = make_server();
+        server.db_passphrase = Some("correct-fixture-key".into());
+        let mut request = assembly_request(&dir.path().join("must-not-exist.jsonl"));
+        request.db_path = Some(db_path.to_string_lossy().into_owned());
+        request.passphrase = Some("wrong-fixture-key".into());
+        let error = server
+            .training_assemble_dataset(Parameters(request))
+            .await
+            .expect_err("wrong explicit key must not fall back to the configured key");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+        assert!(error.message.contains("Cannot open memory DB"));
+        assert!(
+            !error.message.contains("wrong-fixture-key"),
+            "do not echo a secret"
+        );
+        assert!(!dir.path().join("must-not-exist.jsonl").exists());
+        let reopened = hkask_memory::MemoryStore::open(
+            &db_path.to_string_lossy(),
+            "correct-fixture-key",
+            hkask_storage::embedding_dim(),
+        )?;
+        assert!(reopened.get_by_id(&sentinel.id)?.is_some());
+        Ok(())
+    }
+
     /// Pull the `{"content": <value>}` success envelope out of a tool's
     /// `String` output, panicking with the raw output on any shape mismatch.
     fn unwrap_content(output: &str) -> serde_json::Value {
