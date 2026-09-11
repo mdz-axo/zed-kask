@@ -56,7 +56,8 @@ fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
 fn flat(index: usize, answer: &str) -> Value {
     json!({"instruction":format!("Question {index}?"), "output":answer,
         "qa_type":"factual", "type":if index == 3 { "recall" } else { "factual" }, "source":"brooks.txt",
-        "chunk_ref":format!("corpus:brooks:{index}"), "evidence_quotes":[answer],
+        "chunk_ref":format!("corpus:brooks:{index}"),
+                "evidence_quotes":[{"chunk_ref":format!("corpus:brooks:{index}"),"source":"brooks.txt","quote":answer}],
         "concepts":["test concept"], "difficulty":2})
 }
 
@@ -345,5 +346,209 @@ async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
             .query_deduped_untouched("training:qa:brooks-test:brooks.txt:1")?
             .is_empty()
     );
+    Ok(())
+}
+
+struct CitationGeneration;
+impl InferencePort for CitationGeneration {
+    fn generate(
+        &self,
+        _: &str,
+        _: &LLMParameters,
+        _: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        panic!("prepared generation must use role-aware messages")
+    }
+    fn generate_with_messages(
+        &self,
+        messages: &[hkask_types::ChatMessage],
+        _: &LLMParameters,
+        _: Option<&str>,
+        _: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.role == "system"
+                    && message.content.contains("evidence_quotes"))
+        );
+        let primary = json!({"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"Thirty"});
+        let neighbor =
+            json!({"chunk_ref":"corpus:other:1","source":"other.txt","quote":"72 hours"});
+        let wrong = json!({"chunk_ref":"corpus:brooks:0","source":"other.txt","quote":"Thirty"});
+        let fabricated =
+            json!({"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"Forty"});
+        let rows = [
+            ("Literal?", vec![primary.clone(), neighbor], None),
+            ("Concise?", vec![primary], Some("Thirty")),
+            ("Wrong source?", vec![wrong], None),
+            ("Fabrication?", vec![fabricated], None),
+        ].into_iter().map(|(question, quotes, answer)| json!({
+            "question":question,"answer":answer.map(String::from).unwrap_or_else(|| json!(quotes).to_string()),
+            "bloom_level":"factual","evidence_quotes":quotes
+        })).collect::<Vec<_>>();
+        Box::pin(async move {
+            Ok(InferenceResult {
+                text: json!({"qa_pairs":rows}).to_string(),
+                model: "OpenRouter/offline-model".into(),
+                usage: hkask_types::InferenceUsage {
+                    prompt_tokens: 4,
+                    completion_tokens: 6,
+                    total_tokens: 10,
+                },
+                finish_reason: "stop".into(),
+                tool_calls: Vec::new(),
+                reasoning: None,
+                cost_usd: None,
+            })
+        })
+    }
+}
+
+/// expect: Actual public generation -> public ingest -> audit preserves each
+/// structured source identity and generator metadata, including short answers.
+/// A quote match cannot launder prose, wrong-source attribution or fabrication.
+#[tokio::test]
+async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
+    use crate::services::qa_pipeline::{PreparedQaPrompt, QA_RESPONSE_CONTRACT};
+    use crate::tools::semantic::GenerateQaBatchRequest;
+    let directory = fixture()?;
+    let port: Arc<dyn InferencePort> = Arc::new(CitationGeneration);
+    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
+    let server = CorpusServer::new(
+        hkask_types::WebID::new(),
+        None,
+        port,
+        Default::default(),
+        ocr,
+    );
+    let prompt = PreparedQaPrompt {
+        prompt_id: hkask_types::corpus::qa_prompt_id("brooks.txt", "corpus:brooks:0", "factual", 0),
+        chunk_ref: "corpus:brooks:0".into(),
+        source: "brooks.txt".into(),
+        concepts: vec!["test concept".into()],
+        salience: 0.5,
+        qa_type: "factual".into(),
+        system: QA_RESPONSE_CONTRACT.into(),
+        user: "Original text: Thirty. Context other.txt / corpus:other:1: 72 hours".into(),
+    };
+    let prompts = directory.path().join("prompts.jsonl");
+    std::fs::write(&prompts, serde_json::to_string(&prompt)?)?;
+    let req = request(directory.path(), false);
+    let generated = content(
+        server
+            .corpus_generate_qa_batch(Parameters(GenerateQaBatchRequest {
+                prompts_jsonl: prompts.to_string_lossy().into(),
+                output: req.generated_jsonl.clone(),
+                concurrency: 1,
+                model: Some("OpenRouter/offline-model".into()),
+            }))
+            .await?,
+    )?;
+    assert_eq!(generated["qa_rows_written"], 4);
+    assert_eq!(generated["prompts_failed"], 0);
+    let summary = content(
+        server
+            .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+            .await?,
+    )?;
+    reconciles(&summary);
+    assert_eq!(summary["stored"], 4);
+    let generated_rows: Vec<Value> = std::fs::read_to_string(&req.generated_jsonl)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    let training: Vec<Value> = std::fs::read_to_string(&req.output)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    let store = crate::helpers::open_memory_store(&req.db_path, PASSPHRASE)?;
+    for (index, (envelope, flat)) in generated_rows.iter().zip(&training).enumerate() {
+        for key in ["chunk_ref", "source", "qa_type", "prompt_id", "provenance"] {
+            assert_eq!(flat[key], envelope[key], "{key}");
+        }
+        assert_eq!(
+            flat["evidence_quotes"],
+            envelope["response"]["evidence_quotes"]
+        );
+        let records = store
+            .query_deduped_untouched(&format!("training:qa:brooks-test:brooks.txt:{index}"))?;
+        let record = records
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing stored QA"))?;
+        for key in [
+            "chunk_ref",
+            "source",
+            "qa_type",
+            "prompt_id",
+            "provenance",
+            "evidence_quotes",
+        ] {
+            assert_eq!(record.value[key], flat[key], "memory {key}");
+        }
+    }
+    let sources = directory.path().join("sources.jsonl");
+    std::fs::write(
+        &sources,
+        [
+            json!({"entity_ref":"corpus:brooks:0","source":"brooks.txt","text":"Thirty"}),
+            json!({"entity_ref":"corpus:other:1","source":"other.txt","text":"72 hours"}),
+        ]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )?;
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/audit-qa-quality.sh");
+    let audit = async |input: &str| -> anyhow::Result<Value> {
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .arg(&script)
+            .arg(input)
+            .arg(&sources)
+            .kill_on_drop(true);
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(10), command.output()).await??;
+        anyhow::ensure!(
+            output.status.code() == Some(1),
+            "audit status {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    let envelope_report = audit(&req.generated_jsonl).await?;
+    let flat_report = audit(&req.output).await?;
+    assert_eq!(
+        envelope_report["rows"], flat_report["rows"],
+        "audit must normalize both legitimate shapes identically"
+    );
+    let rows = flat_report["rows"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("audit rows"))?;
+    assert_eq!(rows.len(), 4);
+    assert!(
+        (rows[0]["fact_score"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("score"))?
+            - 1.0)
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(
+        rows[0]["verified_claims"][1]["source_reference"]["source"],
+        "other.txt"
+    );
+    assert_eq!(rows[1]["answer"], "Thirty");
+    assert_eq!(
+        rows[1]["verified_claims"][1]["provenance"],
+        "model_inference"
+    );
+    assert_eq!(rows[1]["fact_score"], Value::Null);
+    for row in &rows[2..] {
+        assert_eq!(row["verified_claims"][0]["provenance"], "rejected");
+    }
+    assert_eq!(flat_report["quality_evidence"]["fact_score"], Value::Null);
+    assert_eq!(flat_report["launch_authorized"], false);
     Ok(())
 }

@@ -178,7 +178,7 @@ async fn overlap_applies_to_all_tiers() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// expect: [P3] Colliding legacy filenames get distinct stable refs; JSONL preserves original source names and text.
+/// expect: [P3] Punctuation-distinct filenames get distinct stable refs; JSONL preserves original source names and text.
 #[tokio::test]
 async fn directory_source_ids_are_injective_and_stable() -> anyhow::Result<()> {
     let dir = fixture()?;
@@ -304,47 +304,101 @@ async fn structured_source_retains_heading_only_sections() -> anyhow::Result<()>
         .add_paragraph(paragraph("Last").style("Heading1"))
         .build()
         .pack(std::fs::File::create(&path)?)?;
-    for overlap in [None, Some(2)] {
+    for overlap in [None, Some(0), Some(2)] {
         let result = run(
             &server(),
-            json!({"text":null,"path":path,"max_tokens":16,"overlap_tokens":overlap}),
+            json!({"text":null,"path":path,"max_tokens":128,"overlap_tokens":overlap}),
         )
         .await?;
         let reconstructed = reconstruct(
             result["passages"].as_array().expect("passages"),
-            overlap.map_or(0, crate::tokens_to_words),
-            12,
+            crate::tokens_to_words(overlap.unwrap_or(64)),
+            crate::tokens_to_words(128),
         );
-        // DocStructure::text renders heading markers for the flat overlapping
-        // path; the legacy section path uses the heading text without markers.
-        let expected = if overlap.is_some() {
-            "# First # Second one two three four five six seven eight nine ten # Last"
-        } else {
-            "First Second one two three four five six seven eight nine ten Last"
-        };
+        let expected = "# First # Second one two three four five six seven eight nine ten # Last";
         assert_eq!(reconstructed, expected);
     }
     Ok(())
 }
 
-/// expect: [P3] Omitted overlap retains canonical non-overlap defaults, and result metadata reports the actual settings-derived budget.
+/// expect: [P3] Omission means the documented 64-token repeated context, identically in every mode; zero disables repetition without changing the engine.
 #[tokio::test]
-async fn omitted_overlap_preserves_default_chunking() -> anyhow::Result<()> {
+async fn omitted_overlap_uses_current_default_in_every_mode() -> anyhow::Result<()> {
     let text = (0..1000)
         .map(|n| format!("word{n}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let result = run(&server(), json!({"text":text})).await?;
-    let tokens = crate::HkaskSettings::load().chunk_max_tokens();
-    let max = crate::tokens_to_words(tokens);
-    let min = crate::tokens_to_words(64).max(max / 4);
-    let expected = hkask_memory::chunk_text(&text, "chunk-fixture", min, max, ".!? ");
+    let server = server();
+    for multi_tier in [false, true] {
+        let base = json!({"text":text,"multi_tier":multi_tier});
+        let omitted = run(&server, base.clone()).await?;
+        let mut explicit = base.clone();
+        explicit["overlap_tokens"] = json!(64);
+        assert_eq!(omitted, run(&server, explicit).await?);
+        assert_eq!(omitted["overlap_tokens"], 64);
+        assert_eq!(omitted["overlap_words"], 48);
+        let mut zero = base;
+        zero["overlap_tokens"] = json!(0);
+        let zero = run(&server, zero).await?;
+        let fields = if multi_tier {
+            vec![("coarse", 2048), ("medium", 512), ("fine", 128)]
+        } else {
+            vec![("passages", crate::HkaskSettings::load().chunk_max_tokens())]
+        };
+        for (field, tokens) in fields {
+            assert_eq!(
+                reconstruct(
+                    omitted[field].as_array().expect("passages"),
+                    48,
+                    crate::tokens_to_words(tokens)
+                ),
+                text
+            );
+            assert_eq!(
+                reconstruct(
+                    zero[field].as_array().expect("passages"),
+                    0,
+                    crate::tokens_to_words(tokens)
+                ),
+                text
+            );
+        }
+    }
+    let dir = fixture()?;
+    std::fs::write(dir.path().join("source.txt"), &text)?;
+    let output = dir.path().join("chunks.jsonl");
+    let base = json!({"text":null,"input_dir":dir.path(),"output":output});
+    let omitted = run(&server, base.clone()).await?;
+    let first = std::fs::read_to_string(&output)?;
+    let mut explicit = base;
+    explicit["overlap_tokens"] = json!(64);
+    assert_eq!(omitted, run(&server, explicit).await?);
+    assert_eq!(first, std::fs::read_to_string(output)?);
+    let rows: Vec<Value> = first
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
     assert_eq!(
-        result["passages"],
-        json!(crate::serialize_passages(&expected))
+        reconstruct(
+            &rows,
+            48,
+            crate::tokens_to_words(crate::HkaskSettings::load().chunk_max_tokens())
+        ),
+        text
     );
-    assert_eq!(result["max_tokens"], tokens);
-    assert_eq!(result["overlap_tokens"], 0);
+    let schema = serde_json::to_value(schemars::schema_for!(ChunkRequest))?;
+    assert_eq!(schema["properties"]["overlap_tokens"]["default"], 64);
+    // The default is real overlap, so a smaller effective budget must fail,
+    // not silently lower the overlap or switch to a different algorithm.
+    for mode in [
+        json!({"max_tokens":64}),
+        json!({"multi_tier":true,"fine_max_tokens":65}),
+    ] {
+        let error = run(&server, mode)
+            .await
+            .expect_err("default overlap cannot advance");
+        assert!(error.to_string().contains("overlap"));
+    }
     Ok(())
 }
 

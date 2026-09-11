@@ -61,11 +61,11 @@ For each dimension, apply five checks:
 ### Execution Evidence Check
 For each dimension scored above 50, cite one prior-quarter guidance item or stated milestone from the Company Board and whether it was delivered. Output: `prior guidance | delivered? | evidence`.
 
-If delivery is absent across 2+ dimensions, apply a maturity block to all undelivered dimensions — the score is treated as nil.
+If delivery is absent across 2+ dimensions, apply a maturity block to all undelivered dimensions. Retain the block and its evidence; the caller binds that dimension to 0 in the fixed-weight calculation, not nil and not the elicited score. This is an explicit maturity penalty, never a silent fallback for missing tool data.
 
 ### Customer Base Evidence Check
 For each dimension scored above 50, cite evidence of paying customers using the Data Provenance Hierarchy (see SKILL.md). Distinguish between:
-- **Paying customers (Level 1 — audited)**: recognized revenue from 10-K/10-Q, customer counts disclosed in audited filings, ARPU from audited revenue ÷ customer count
+- **Paying customers (Level 1 — audited)**: recognized revenue from audited annual statements. Customer counts require their own disclosure and audit-status check; a filing does not make every count audited. ARPU requires definition- and period-aligned sourced inputs. Unaudited 10-Q data is labelled interim context, not Level 1.
 - **Non-paying relationships (Level 2-3 — unaudited)**: partnerships, MoUs, letters of intent, "agreements" cited in transcripts or press releases that have not converted to recognized revenue
 
 If the company has no Level 1 evidence of paying customers but claims a large partner ecosystem (Level 2-3), apply a maturity block on Obvious Problem and Combinatorial Solution. A company that cannot get people to pay for its product has not demonstrated the capability to monetize the opportunity, regardless of opportunity size.
@@ -190,8 +190,8 @@ Record for completeness.
 - Do NOT re-score the dimensions. Evaluate whether the scores are defensible.
 - The execution evidence check is mandatory for any dimension scored above 50. A dimension without execution evidence is not credible.
 - The customer base evidence check is mandatory for Obvious Problem and Combinatorial Solution scored above 50.
-- A maturity block from execution evidence (2+ undelivered dimensions) means the lisp_eval scoring step treats those dimensions as nil.
-- A maturity block from customer base evidence (no Level 1 audited revenue from paying customers) means Obvious Problem and Combinatorial Solution scores are treated as nil.
+- A maturity block from execution evidence (2+ undelivered dimensions) contributes 0 for those dimensions in the caller's fixed-weight lisp_eval score; preserve the block separately.
+- A maturity block from customer base evidence (no Level 1 audited revenue from paying customers) contributes 0 for Obvious Problem and Combinatorial Solution. Do not renormalize the fixed weights or silently treat missing evidence as measured failure.
 - Default posture: skepticism. A high score is a claim requiring evidence, not a default.
 - Do not fabricate execution evidence. If prior guidance is not available in the Company Board, state "not_stated" — do not infer.
 - Do not substitute Level 2-3 data (transcript claims, press releases) for Level 1 data (audited financials) when evaluating customer base evidence. Partner counts from transcripts are not evidence of paying customers.

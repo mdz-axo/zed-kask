@@ -1,68 +1,19 @@
-{# Goal: Generate Bloom's taxonomy QA pairs grounded in the passage's actual content — no forced analytical frame. #}
-{#
-[inference]
-  This template wraps the prompt from build-prompts.j2 (which provides
-  ontological context, KNN scaffold, and concept graph) as the passage
-  text. The system prompt here is intentionally neutral — it does NOT
-  impose a specific analytical lens. The passage's own content determines
-  what the QA pairs are about.
-#}
+{# Goal: Generate Bloom QA about the supplied passage, with honest source availability. Single-text input supplies a chunk ID but no original source identity. #}
 <system>
-You are a training data generator. Generate question-answer pairs that test comprehension of the passage's actual content. The questions and answers must be about whatever the passage discusses — its subject matter, arguments, evidence, concepts, and terminology. Do not impose an external analytical frame. Do not force connections to themes that are not in the text.
+You are a training data generator. Test comprehension of the passage's own subject matter, arguments, evidence, concepts, and terminology. Do not impose an external analytical frame or invent facts. Concise questions and answers are valid; no minimum character count applies.
 </system>
-
 <task>
-Generate question-answer pairs from the passage below at these Bloom's taxonomy levels: {{ levels }}.
-
-Cognitive level definitions:
-- factual: Ask about a specific detail, definition, quantity, or claim directly stated in the passage. The answer must be findable in the text by a reader.
-- conceptual: Ask about a mechanism, relationship, or framework described in the passage. How do the concepts in the text connect to each other?
-- analyze: Ask to compare, contrast, or break down ideas within the passage. Identify patterns or structural relationships among the passage's components.
-- evaluate: Ask to assess the strength of arguments or evidence in the passage. What claims are well-supported? What is missing?
-- create: Ask to synthesize ideas from the passage into a new application, hypothesis, or design. How could the passage's concepts be applied elsewhere?
+Generate QA pairs at these Bloom levels: {{ levels }}.
+- factual: a stated detail, definition, quantity, or claim
+- conceptual: a mechanism, relationship, or framework
+- analyze: compare, contrast, or break down ideas
+- evaluate: assess arguments and identify limitations
+- create: synthesize a new application, hypothesis, or design, clearly distinguished from source facts
 </task>
-
 <passage chunk_id="{{ chunk_id }}">
 {{ text }}
 </passage>
-
-<example>
-Input: "The Lambek Calculus is a substructural logic where the structural rules of exchange and contraction are absent. This makes it suitable for modeling natural language syntax, where word order matters and resources are consumed. The non-associative variant (NL) further removes associativity, forcing a tree-like structure."
-Levels: [factual, conceptual]
-
-Output:
-{"qa_pairs": [
-  {
-    "question": "Which two structural rules are absent in the Lambek Calculus?",
-    "answer": "Exchange and contraction are the two structural rules absent in the Lambek Calculus. Their absence makes it suitable for modeling natural language syntax, where word order matters and resources are consumed.",
-    "bloom_level": "factual"
-  },
-  {
-    "question": "How does removing associativity in the non-associative variant (NL) change the logical structure compared to the base Lambek Calculus?",
-    "answer": "The base Lambek Calculus already lacks exchange and contraction, but retains associativity — meaning the grouping of operations can be rearranged. Removing associativity in NL forces a rigid tree-like structure where the order of composition is fixed. This is more restrictive but better models hierarchical syntactic structures in natural language, where the tree structure of a sentence is meaningful and cannot be flattened.",
-    "bloom_level": "conceptual"
-  }
-]}
-</example>
-
 <output_contract>
-Respond with ONLY a JSON object — no markdown wrapping, no explanations outside JSON.
-
-Schema:
-{
-  "qa_pairs": [
-    {
-      "question": "string (30-400 chars — specific, tests the stated Bloom level, about the passage's actual content)",
-      "answer": "string (100-1500 chars — grounded in passage, cites specific facts or claims from the text, complete sentences)",
-      "bloom_level": "factual|conceptual|analyze|evaluate|create"
-    }
-  ]
-}
-
-Quality checklist (self-evaluate before outputting):
-- The question tests the specific Bloom level, not a simpler one
-- The answer is grounded in the passage — cites specific facts, claims, or data from the text
-- The question is about the passage's actual subject matter, not an imposed external frame
-- No invented facts, metrics, or sources — if the passage doesn't provide evidence, acknowledge the limitation
-- Technical terminology from the passage is used precisely
+The input provides no original source identity. Return evidence_quotes: []; do not manufacture source labels from the chunk ID. Answer synthesis is model inference, not verified evidence.
+{{ response_contract }}
 </output_contract>

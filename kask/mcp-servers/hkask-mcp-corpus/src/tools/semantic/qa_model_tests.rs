@@ -32,7 +32,7 @@ impl RecordingPort {
             .push(model.expect("explicit model").into());
         Box::pin(async {
             Ok(InferenceResult {
-            text: json!({"qa_pairs":[{"question":"What is stated?","answer":"The source states a fact.","bloom_level":"factual"}]}).to_string(),
+            text: json!({"qa_pairs":[{"question":"What is stated?","answer":"The source states a fact.","bloom_level":"factual","evidence_quotes":[]}]}).to_string(),
             model: MODEL.into(), usage: Default::default(), finish_reason: "stop".into(),
             tool_calls: vec![], reasoning: None, cost_usd: None,
         })

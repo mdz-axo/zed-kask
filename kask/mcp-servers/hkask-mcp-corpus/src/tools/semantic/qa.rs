@@ -25,17 +25,18 @@ pub(crate) fn map_qa_inference_error(error: hkask_types::InferenceError) -> crat
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct QaGenerationResponse {
     pub qa_pairs: Vec<QaPair>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct QaPair {
     pub question: String,
     pub answer: String,
     pub bloom_level: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sources: Option<Vec<usize>>,
+    pub evidence_quotes: Vec<hkask_types::corpus::QaEvidence>,
 }
 
 /// Typed errors for QA response parsing.
@@ -49,13 +50,14 @@ pub(crate) enum QaParseError {
     EmptyField { index: usize },
     #[error("QA pair {index} has unsupported Bloom level '{level}'")]
     InvalidBloomLevel { index: usize, level: String },
-    #[error("cross-reference QA pair {index} must cite at least one passage")]
-    MissingCitation { index: usize },
-    #[error("cross-reference QA pair {index} cites a passage outside 1..={passage_count}")]
-    InvalidCitation { index: usize, passage_count: usize },
+    #[error("QA pair {index} has an incomplete structured citation")]
+    InvalidCitation { index: usize },
+    #[error("QA pair {index} cites more distinct passages than supplied ({passage_count})")]
+    TooManyPassages { index: usize, passage_count: usize },
 }
 
-/// Parse model output into source-grounded QA pairs.
+/// Parse model output and validate citation structure, not semantic grounding.
+/// An empty citation array explicitly makes no source-verification claim.
 ///
 /// expect: "Generated QA data is safe to admit to the corpus only when it is complete and grounded."
 /// [P4] Motivating: Clear Boundaries — the inference boundary rejects malformed or unsupported training data.
@@ -88,19 +90,24 @@ pub(crate) fn parse_qa_response(
                 level: pair.bloom_level.clone(),
             });
         }
+        if pair
+            .evidence_quotes
+            .iter()
+            .any(|citation| !citation.is_complete())
+        {
+            return Err(QaParseError::InvalidCitation { index });
+        }
         if let Some(passage_count) = cross_reference_passage_count {
-            if pair.sources.is_none() {
-                return Err(QaParseError::MissingCitation { index });
-            }
-            if let Some(ref sources) = pair.sources {
-                for &src in sources {
-                    if src == 0 || src > passage_count {
-                        return Err(QaParseError::InvalidCitation {
-                            index,
-                            passage_count,
-                        });
-                    }
-                }
+            let identities: std::collections::HashSet<_> = pair
+                .evidence_quotes
+                .iter()
+                .map(|citation| (&citation.chunk_ref, &citation.source))
+                .collect();
+            if identities.len() > passage_count {
+                return Err(QaParseError::TooManyPassages {
+                    index,
+                    passage_count,
+                });
             }
         }
     }

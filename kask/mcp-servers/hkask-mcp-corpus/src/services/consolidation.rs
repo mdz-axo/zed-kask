@@ -377,6 +377,8 @@ impl ConsolidationService {
                 ontology.method_signals =
                     Some(hkask_memory::salience::compute_method_signals(&text));
                 consolidated.push(TaggedChunk {
+                    // Merged source tags do not classify the newly synthesized text.
+                    classification: hkask_types::corpus::ClassificationOutcome::Unverified,
                     entity_ref,
                     source: source.clone(),
                     text,

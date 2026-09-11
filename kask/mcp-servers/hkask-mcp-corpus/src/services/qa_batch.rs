@@ -164,8 +164,8 @@ mod tests {
 
     fn response_text(question: &str) -> String {
         json!({"qa_pairs": [
-            {"question": question, "answer": "Grounded answer one.", "bloom_level": "factual"},
-            {"question": "Second question?", "answer": "Grounded answer two.", "bloom_level": "factual"}
+            {"question": question, "answer": "Grounded answer one.", "bloom_level": "factual", "evidence_quotes": []},
+            {"question": "Second question?", "answer": "Grounded answer two.", "bloom_level": "factual", "evidence_quotes": []}
         ]}).to_string()
     }
 
@@ -610,7 +610,7 @@ mod tests {
         use crate::services::prompt_builder::{BuildPromptsRequest, PromptBuilderService};
         let directory = fixture_directory()?;
         let tagged = directory.path().join("tagged.jsonl");
-        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "source":"source.txt", "text":"The passage supplies a verifiable fact.", "concepts":["fact"], "salience":0.5}).to_string())?;
+        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "classification":{"status":"classified"}, "source":"source.txt", "text":"The passage supplies a verifiable fact.", "concepts":["fact"], "salience":0.5}).to_string())?;
         for max_prompts in [0, 2, 4] {
             let path = directory.path().join("built.jsonl");
             let result = PromptBuilderService::new()

@@ -12,8 +12,8 @@ jq -nc '{entity_ref:"chunk:a",source:"book-a",text:"Revenue rose from ten to twe
         {entity_ref:"chunk:b",source:"book-b",text:"Costs fell from nine to seven units."}' > "$WORK/chunks.jsonl"
 jq -nc '{chunk_ref:"chunk:a",source:"book-a",qa_type:"factual",
          response:{instruction:"What happened to revenue?",
-                   output:(["Revenue rose from ten to twelve units."]|tojson),
-                   evidence_quotes:["Revenue rose from ten to twelve units."]}}' > "$WORK/base.jsonl"
+                   output:([{chunk_ref:"chunk:a",source:"book-a",quote:"Revenue rose from ten to twelve units."}]|tojson),
+                   evidence_quotes:[{chunk_ref:"chunk:a",source:"book-a",quote:"Revenue rose from ten to twelve units."}]}}' > "$WORK/base.jsonl"
 
 check() {
     local name=$1 expected=$2 input=$3 chunks=$4 assertion=$5 status=0
@@ -44,19 +44,19 @@ check 'fully covered literal citations score one (1e-12 tolerance)' 0 "$WORK/bas
 mutate '.response.output="Sales increased by a fifth."'
 check 'paraphrase retains model inference despite exact evidence' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[-1].provenance=="model_inference" and .rows[0].verified_claims[0].provenance=="tool_verified" and .rows[0].fact_score_breakdown.nlr==null and .quality_evidence.fact_score==null'
-mutate '.response.output=.response.evidence_quotes[0]'
+mutate '.response.output=.response.evidence_quotes[0].quote'
 check 'ordinary verbatim prose does not become narrative-free' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].narrative_check.status=="unperformed" and (.data_gaps|index("narrative_check_unperformed")!=null)'
-mutate '.response.evidence_quotes=["Revenue doubled to twenty units."] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.response.evidence_quotes[0].quote="Revenue doubled to twenty units." | .response.output=(.response.evidence_quotes|tojson)'
 check 'fabricated citation rejected and weighted score is 0.25' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[0].provenance=="rejected" and (.rows[0].fact_score-0.25|fabs)<1e-12 and (.hallucination_findings|length)>0'
-mutate '.source="book-b"'
+mutate '.source="book-b" | .response.evidence_quotes[0].source="book-b" | .response.output=(.response.evidence_quotes|tojson)'
 check 'correct quote attributed to wrong source is rejected' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].source_state=="wrong_source" and .rows[0].verified_claims[0].provenance=="rejected" and .quality_evidence.fact_score==null'
-mutate '.response.evidence_quotes=["Costs fell from nine to seven units."] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.response.evidence_quotes[0].quote="Costs fell from nine to seven units." | .response.output=(.response.evidence_quotes|tojson)'
 check 'quote found only in another chunk cannot ground this citation' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[0].provenance=="rejected"'
-mutate '.chunk_ref="missing"'
+mutate '.chunk_ref="missing" | .response.evidence_quotes[0].chunk_ref="missing" | .response.output=(.response.evidence_quotes|tojson)'
 check 'missing chunk propagates null rather than zero' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[0].provenance=="unavailable" and .rows[0].fact_score_breakdown.sar==null and .rows[0].fact_score_breakdown.cvr==null and .rows[0].fact_score_breakdown.hfr==null'
 mutate 'del(.source)'
@@ -68,15 +68,15 @@ check 'zero citations have null CVR and fact score' 2 "$WORK/case.jsonl" "$WORK/
 mutate '.response.output="" | .response.evidence_quotes=[]'
 check 'zero claims cannot produce a clean measurement' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].fact_score_breakdown.claims_checked==0 and (.data_gaps|index("zero_claims"))!=null and .quality_evidence.fact_score==null'
-mutate '.response.evidence_quotes=[""]'
+mutate '.response.evidence_quotes[0].quote=""'
 check 'empty citation never matches every string' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[0].provenance=="pending_check" and .rows[0].verified_claims[0].cross_check.performed==false'
 mutate '.response.evidence_quotes=[42]'
 check 'non-string citation is surfaced, not silently omitted' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].citation_count==1 and (.data_gaps|index("invalid_citation"))!=null'
 mutate '.response | del(.evidence_quotes)'
-check 'flat training metadata loss stays visible' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
-    '(.data_gaps|index("flat_training_metadata_unavailable"))!=null and .quality_evidence.qa_type.evenness==null and .quality_evidence.fact_score==null'
+check 'flat missing metadata stays visible'  2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("missing_source_metadata"))!=null and .quality_evidence.qa_type.evenness==null and .quality_evidence.fact_score==null'
 mutate '.response.output="The derived growth rate is 20%." | .response.provenance="platform_derived" | .response.cross_check="(+ 10 2)"'
 check 'unperformed derivation cannot be platform derived' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     'all(.rows[0].verified_claims[];.provenance!="platform_derived") and .rows[0].verified_claims[-1].provenance=="model_inference"'
@@ -116,13 +116,13 @@ check 'six-gram repetition within an answer counts once per document' 2 "$WORK/m
 jq -nc '{instruction:"A?",output:"one two three"},{instruction:"B?",output:"four five six"}' > "$WORK/mixed.jsonl"
 check 'six-grams never span answer boundaries' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.quality_evidence.boilerplate.repeated_sixgrams==0'
-mutate '.response.evidence_quotes=["Revenue rose from ten to twelve units.","Invented claim."] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.response.evidence_quotes += [{chunk_ref:"chunk:a",source:"book-a",quote:"Invented claim."}] | .response.output=(.response.evidence_quotes|tojson)'
 check 'mixed verified and rejected citations obey all four weights' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '(.rows[0].fact_score-0.625|fabs)<1e-12 and .rows[0].fact_score_breakdown=={sar:0.5,cvr:0.5,hfr:0.5,nlr:1,claims_checked:2}'
 mutate '.response.output="Unverified ordinary narrative." | .response.narrative_fields=[] | .response.provenance="tool_verified"'
 check 'caller cannot waive narrative check or elevate synthesis' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].narrative_check.status=="unperformed" and .rows[0].verified_claims[-1].provenance=="model_inference" and .rows[0].fact_score_breakdown.sar==null and .rows[0].fact_score_breakdown.hfr==null'
-mutate '.chunk_ref="chunk:b" | .source="book-b" | .response.evidence_quotes=["Costs fell from nine to seven units."] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.chunk_ref="chunk:b" | .source="book-b" | .response.evidence_quotes=[{chunk_ref:"chunk:b",source:"book-b",quote:"Costs fell from nine to seven units."}] | .response.output=(.response.evidence_quotes|tojson)'
 cat "$WORK/base.jsonl" "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'source diversity measures both identified books' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.quality_evidence.source_diversity.identified_sources==2 and .quality_evidence.source_diversity.coverage==1'
@@ -130,7 +130,22 @@ jq -c '.response' "$WORK/base.jsonl" > "$WORK/case.jsonl"
 check 'missing metadata makes source diversity unknown not zero' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.quality_evidence.source_diversity.coverage==null'
 # Case, punctuation and embedded newline changes are not exact byte matches.
-mutate '.response.evidence_quotes=["revenue rose from ten to twelve units."] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.response.evidence_quotes[0].quote="revenue rose from ten to twelve units." | .response.output=(.response.evidence_quotes|tojson)'
 check 'citation checking does not normalize case' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].verified_claims[0].provenance=="rejected"'
+mutate '. as $row | .response + {chunk_ref:$row.chunk_ref,source:$row.source,qa_type:$row.qa_type}'
+check 'flat with complete metadata is measurable like envelope' 0 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '(.quality_evidence.fact_score-1|fabs)<1e-12 and .rows[0].source_state=="identified"'
+mutate '.response.evidence_quotes += [{chunk_ref:"chunk:b",source:"book-b",quote:"Costs fell from nine to seven units."}] | .response.output=(.response.evidence_quotes|tojson)'
+check 'one QA can cite distinct sources with explicit identities' 0 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.rows[0].citation_count==2 and all(.rows[0].verified_claims[];.provenance=="tool_verified") and .rows[0].verified_claims[1].source_reference.source=="book-b"'
+mutate '.response.evidence_quotes=["Revenue rose from ten to twelve units."] | .response.output=(.response.evidence_quotes|tojson)'
+check 'old quoted-string evidence has no compatibility route' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_citation"))!=null and .rows[0].fact_score==null and all(.rows[0].verified_claims[];.provenance!="tool_verified")'
+mutate 'del(.response.evidence_quotes[0].source)'
+check 'each citation requires its own source even with primary metadata' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_citation"))!=null and .rows[0].verified_claims[0].cross_check.performed==false'
+mutate '.response.evidence_quotes[0].verified=true'
+check 'unknown citation fields are not a verification override' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_citation"))!=null and .rows[0].fact_score==null'
 echo "PASS: $passed bounded audit controls"

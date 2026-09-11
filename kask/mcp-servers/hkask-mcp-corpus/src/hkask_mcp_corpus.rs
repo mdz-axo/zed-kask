@@ -800,12 +800,14 @@ mod smoke {
         // KNN scaffold is source-scoped over the tagged chunks themselves).
         let doc1 = serde_json::json!({
             "entity_ref": "corpus:custom:doc1",
+            "classification": {"status": "classified"},
             "source": "doc.txt",
             "text": "The Cinderella curve describes firms with high returns on capital that fade over time.",
             "dimensions": ["what"],
         });
         let doc2 = serde_json::json!({
             "entity_ref": "corpus:custom:doc2",
+            "classification": {"status": "classified"},
             "source": "doc.txt",
             "text": "A passage about capital returns and their durability.",
             "dimensions": ["what"],

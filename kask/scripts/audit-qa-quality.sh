@@ -65,10 +65,19 @@ jq -n --arg qa_path "$1" --arg chunks_path "$2" \
 # Validate the registry contract even on error reports; this is not a
 # user-controllable provenance label or a substitute for semantic verification.
 jq -e '
-    [.rows[].verified_claims[]] | all(.[];
+    .quality_evidence.weights == {sar:0.30,cvr:0.25,hfr:0.20,nlr:0.25}
+    and all(.rows[];
+      .fact_score_breakdown as $m |
+      if .fact_score == null then true
+      else $m.claims_checked > 0 and ([$m.sar,$m.cvr,$m.hfr,$m.nlr] | all(. != null and . >= 0 and . <= 1))
+        and ((.fact_score - (0.30*$m.sar + 0.25*$m.cvr + 0.20*$m.hfr + 0.25*$m.nlr) | fabs) < 1e-12)
+      end)
+    and all(.rows[].verified_claims[];
       (.provenance as $p | ["tool_verified","platform_derived","model_inference",
        "unavailable","tool_no_match","pending_check","rejected"] | index($p) != null)
-      and (.why|length)>=40)' "$WORK/report.json" >/dev/null
+      and (.why|length)>=40
+      and (.strength == (if .provenance == "tool_verified" or .provenance == "platform_derived" then 2
+                        elif .provenance == "model_inference" then 1 else 0 end)))' "$WORK/report.json" >/dev/null
 cat "$WORK/report.json"
 case $(jq -r .status "$WORK/report.json") in
     findings) exit 1 ;;

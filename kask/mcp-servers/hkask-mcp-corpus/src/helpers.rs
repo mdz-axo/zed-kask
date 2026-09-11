@@ -339,47 +339,60 @@ pub(crate) fn tokens_to_words(tokens: usize) -> usize {
 
 pub(crate) struct ChunkWordBounds {
     pub max_tokens: usize,
+    pub overlap_tokens: usize,
     pub max_words: usize,
     pub min_words: usize,
     pub overlap_words: usize,
+}
+
+impl Default for ChunkWordBounds {
+    fn default() -> Self {
+        // The documented corpus default is repeated context, never a size floor.
+        Self::from_tokens(HkaskSettings::load().chunk_max_tokens(), 64)
+    }
+}
+
+impl ChunkWordBounds {
+    fn from_tokens(max_tokens: usize, overlap_tokens: usize) -> Self {
+        let max_words = tokens_to_words(max_tokens);
+        Self {
+            max_tokens,
+            overlap_tokens,
+            max_words,
+            min_words: (max_words / 4).max(1),
+            overlap_words: tokens_to_words(overlap_tokens),
+        }
+    }
 }
 
 /// expect: "Invalid chunk budgets fail before any input is read or output written."
 /// [P4] Motivating: reject non-progress settings rather than hang or silently ignore them.
 /// pre: optional token targets; omitted max resolves the existing setting
 /// post: max_words > overlap_words and max_words > 0; positive overlap repeats words
-/// post: omitted overlap preserves the legacy minimum-size heuristic, without repetition
+/// post: omitted overlap resolves Default; zero means no repetition through the same engine
 pub(crate) fn chunk_word_bounds(
     max_tokens: Option<usize>,
     overlap_tokens: Option<usize>,
 ) -> Result<ChunkWordBounds, McpToolError> {
-    let max_tokens = max_tokens.unwrap_or_else(|| HkaskSettings::load().chunk_max_tokens());
-    let max_words = tokens_to_words(max_tokens);
-    if max_words == 0 {
+    let defaults = ChunkWordBounds::default();
+    let bounds = ChunkWordBounds::from_tokens(
+        max_tokens.unwrap_or(defaults.max_tokens),
+        overlap_tokens.unwrap_or(defaults.overlap_tokens),
+    );
+    if bounds.max_words == 0 {
         return Err(McpToolError::invalid_argument(
             "max_tokens must be at least 2 (the approximate budget must contain a word)",
         ));
     }
-    let overlap = overlap_tokens.unwrap_or(0);
-    let overlap_words = tokens_to_words(overlap);
-    if overlap >= max_tokens || overlap_words >= max_words || (overlap > 0 && overlap_words == 0) {
+    if bounds.overlap_tokens >= bounds.max_tokens
+        || bounds.overlap_words >= bounds.max_words
+        || (bounds.overlap_tokens > 0 && bounds.overlap_words == 0)
+    {
         return Err(McpToolError::invalid_argument(
             "overlap_tokens must be 0 or yield at least one word, and be smaller than max_tokens in both tokens and effective words",
         ));
     }
-    // 64 is the old default floor, NOT a promise of repeated context. Clamp it
-    // for small budgets so the minimum cannot prevent a legal flush.
-    let min_words = if overlap_words > 0 {
-        (max_words / 4).max(1)
-    } else {
-        tokens_to_words(64).max(max_words / 4).min(max_words).max(1)
-    };
-    Ok(ChunkWordBounds {
-        max_tokens,
-        max_words,
-        min_words,
-        overlap_words,
-    })
+    Ok(bounds)
 }
 
 /// Serialize (entity_ref, text) pair slice into json.
@@ -390,83 +403,24 @@ pub(crate) fn serialize_passages(passages: &[(String, String)]) -> Vec<serde_jso
         .collect()
 }
 
-/// Chunk a `DocStructure` into passages, respecting heading boundaries.
-///
-/// Groups blocks under their nearest preceding heading. Each group becomes
-/// one or more passages via `crate::text::chunk_text`. When a group exceeds
-/// `max_words`, it is split at sentence boundaries within the group. When a
-/// group is smaller than `min_words`, its final passage is retained, including
-/// heading-only sections: headings are source content, not disposable metadata.
-///
-/// Falls back to flat `chunk_text` when the structure has no headings.
+/// Chunk cleaned structural text with the shared word-window engine.
+/// `DocStructure::text()` preserves heading markers, so office documents and
+/// plain text use the same boundary detection, cleaning and overlap contract.
 pub(crate) fn chunk_structure(
-    structure: &hkask_types::document::DocStructure,
+    text: &str,
     entity_ref_prefix: &str,
     min_words: usize,
     max_words: usize,
     boundary: &str,
-) -> Vec<(String, String)> {
-    use hkask_types::document::Block;
-
-    // Collect all blocks across pages, tracking heading starts.
-    let blocks: Vec<&Block> = structure.iter_blocks().collect();
-
-    // If no headings, flatten to text and use the standard chunker.
-    let has_headings = blocks.iter().any(|b| b.is_heading());
-    if !has_headings {
-        let flat_text = structure.text();
-        return crate::text::chunk_text(
-            &flat_text,
-            entity_ref_prefix,
-            min_words,
-            max_words,
-            boundary,
-        );
-    }
-
-    // Group blocks by section (each heading starts a new section).
-    let mut sections: Vec<(String, String)> = Vec::new(); // (heading_text, body_text)
-    let mut current_heading = String::new();
-    let mut current_body = String::new();
-
-    for block in &blocks {
-        match block {
-            Block::Heading { text, .. } => {
-                // Flush previous section
-                if !current_body.trim().is_empty() || !current_heading.is_empty() {
-                    sections.push((current_heading.clone(), current_body.clone()));
-                }
-                current_heading = text.clone();
-                current_body.clear();
-            }
-            _ => {
-                let block_text = block.text();
-                if !current_body.is_empty() {
-                    current_body.push_str("\n\n");
-                }
-                current_body.push_str(&block_text);
-            }
-        }
-    }
-    // Flush final section
-    if !current_body.trim().is_empty() || !current_heading.is_empty() {
-        sections.push((current_heading, current_body));
-    }
-
-    // Chunk each section, prepending the heading as context.
-    let mut passages = Vec::new();
-    for (idx, (heading, body)) in sections.iter().enumerate() {
-        // Prepend the heading once to the section's source text. Heading-only
-        // sections are content too; skipping an empty body would lose them.
-        let section_text = if heading.is_empty() {
-            body.clone()
-        } else {
-            format!("{heading}\n\n{body}")
-        };
-        let section_ref = format!("{entity_ref_prefix}:sec{idx}");
-        let section_passages =
-            crate::text::chunk_text(&section_text, &section_ref, min_words, max_words, boundary);
-        passages.extend(section_passages);
-    }
-    passages
+    overlap_words: usize,
+) -> Result<Vec<(String, String)>, McpToolError> {
+    hkask_memory::text_chunking::chunk_text_with_overlap(
+        text,
+        entity_ref_prefix,
+        min_words,
+        max_words,
+        boundary,
+        overlap_words,
+    )
+    .map_err(|error| McpToolError::invalid_argument(error.to_string()))
 }

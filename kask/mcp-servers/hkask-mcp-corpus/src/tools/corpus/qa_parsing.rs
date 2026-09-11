@@ -1,8 +1,9 @@
-//! QA record parsing — flat and envelope format support.
-//!
-//! Used by `corpus_ingest_qa` in `tools/corpus.rs` to parse generated QA JSONL.
+//! Normalize the two legitimate QA I/O shapes before validating metadata.
+//! Citation strings and numeric passage indices are not accepted formats.
 
-/// A parsed QA record from a JSONL line. Handles both flat and envelope formats.
+use hkask_types::corpus::QaEvidence;
+use serde::Deserialize;
+
 pub(crate) struct ParsedQa {
     pub instruction: String,
     pub output: String,
@@ -12,7 +13,9 @@ pub(crate) struct ParsedQa {
     pub concepts: Vec<String>,
     pub source: String,
     pub chunk_ref: Option<String>,
-    pub evidence_quotes: Vec<String>,
+    pub evidence_quotes: Vec<QaEvidence>,
+    pub prompt_id: Option<String>,
+    pub provenance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -21,122 +24,81 @@ pub(crate) enum QaRecordError {
     Malformed,
 }
 
-/// Parse object-shaped QA records; missing or blank fields are counted by the
-/// caller's structural filter, not confused with malformed JSON or generator failures.
-///
-/// Flat format: `{"instruction": ..., "output": ..., "qa_type": ...}`
-/// Envelope format: `{"chunk_ref": ..., "source": ..., "qa_type": ..., "response": {...}}`
+#[derive(Deserialize)]
+struct Body {
+    #[serde(default)]
+    instruction: String,
+    #[serde(default)]
+    output: String,
+    #[serde(rename = "type")]
+    response_type: Option<String>,
+    difficulty: Option<usize>,
+    #[serde(default)]
+    concepts: Vec<String>,
+    evidence_quotes: Vec<QaEvidence>,
+}
+
+#[derive(Deserialize)]
+struct Metadata {
+    #[serde(default)]
+    qa_type: String,
+    #[serde(default)]
+    source: String,
+    chunk_ref: Option<String>,
+    prompt_id: Option<String>,
+    provenance: Option<serde_json::Value>,
+}
+
+/// Envelope metadata is outside `response`; flat training metadata is beside
+/// `instruction`/`output`. Both use exactly the same citation and metadata
+/// validation. Ingest checks structure only; audit verifies against sources.
 pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
-    let v: serde_json::Value = serde_json::from_str(line).map_err(|_| QaRecordError::Malformed)?;
-    if !v.is_object() {
+    let value: serde_json::Value =
+        serde_json::from_str(line).map_err(|_| QaRecordError::Malformed)?;
+    if !value.is_object() {
         return Err(QaRecordError::Malformed);
     }
-    if v.get("error").is_some_and(|error| !error.is_null()) {
+    let body = value.get("response").unwrap_or(&value);
+    if [value.get("error"), body.get("error")]
+        .into_iter()
+        .flatten()
+        .any(|error| !error.is_null())
+    {
         return Err(QaRecordError::GeneratorError);
     }
-    if v.get("response")
-        .is_some_and(|response| !response.is_object())
+    let body: Body = serde_json::from_value(body.clone()).map_err(|_| QaRecordError::Malformed)?;
+    let metadata: Metadata = serde_json::from_value(value).map_err(|_| QaRecordError::Malformed)?;
+    if body
+        .evidence_quotes
+        .iter()
+        .any(|citation| !citation.is_complete())
+        || body
+            .concepts
+            .iter()
+            .any(|concept| concept.trim().is_empty())
+        || metadata
+            .prompt_id
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty())
+        || metadata
+            .provenance
+            .as_ref()
+            .is_some_and(|value| !value.is_object())
     {
         return Err(QaRecordError::Malformed);
     }
-    let (instruction, output, qa_type, difficulty, concepts, source, chunk_ref, evidence_quotes) =
-        if let Some(resp) = v.get("response").and_then(|r| r.as_object()) {
-            // Envelope format
-            (
-                resp.get("instruction")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                resp.get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("qa_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                resp.get("difficulty").and_then(|v| v.as_u64()).unwrap_or(3) as usize,
-                resp.get("concepts")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                v.get("source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("chunk_ref")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                resp.get("evidence_quotes")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            )
-        } else {
-            // Flat format
-            (
-                v.get("instruction")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("qa_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("difficulty").and_then(|v| v.as_u64()).unwrap_or(3) as usize,
-                v.get("concepts")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                v.get("source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                v.get("chunk_ref")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                v.get("evidence_quotes")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            )
-        };
-    let response_type = v
-        .get("response")
-        .unwrap_or(&v)
-        .get("type")
-        .and_then(|value| value.as_str())
-        .map(String::from);
     Ok(ParsedQa {
-        response_type,
-        instruction,
-        output,
-        qa_type,
-        difficulty,
-        concepts,
-        source,
-        chunk_ref,
-        evidence_quotes,
+        instruction: body.instruction,
+        output: body.output,
+        qa_type: metadata.qa_type,
+        response_type: body.response_type,
+        difficulty: body.difficulty.unwrap_or(3),
+        concepts: body.concepts,
+        source: metadata.source,
+        chunk_ref: metadata.chunk_ref,
+        evidence_quotes: body.evidence_quotes,
+        prompt_id: metadata.prompt_id,
+        provenance: metadata.provenance,
     })
 }
 
@@ -146,8 +108,10 @@ mod tests {
     use crate::services::qa_pipeline::{
         PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
     };
+    use serde_json::json;
 
-    /// expect: [P8] Generated QA rows remain ingestible with their source metadata; failure rows are never training data.
+    /// expect: Generation retains distinct source identities and quotes in both
+    /// legitimate ingest shapes; identified inference errors are never QA.
     #[test]
     fn shared_qa_output_is_ingest_compatible() -> Result<(), Box<dyn std::error::Error>> {
         let prompt = PreparedQaPrompt {
@@ -160,11 +124,22 @@ mod tests {
             system: "prepared system".into(),
             user: "prepared user".into(),
         };
+        let quotes = json!([
+            {"chunk_ref":"chunk-1", "source":"source.txt", "quote":"Answer."},
+            {"chunk_ref":"chunk-2", "source":"other.txt", "quote":"Other evidence."}
+        ]);
         let mut bytes = Vec::new();
         let mut output = QaOutput::new(&mut bytes, 2);
-        output.complete(&prompt, Ok(QaCompletion {
-            text: r#"{"qa_pairs":[{"question":"Question?", "answer":"Answer.", "bloom_level":"factual"}]}"#.into(), tokens_used: 10,
-        }), "offline-model")?;
+        output.complete(
+            &prompt,
+            Ok(QaCompletion {
+                text: json!({"qa_pairs":[{"question":"Question?", "answer":"Answer.",
+                "bloom_level":"factual", "evidence_quotes":quotes}]})
+                .to_string(),
+                tokens_used: 10,
+            }),
+            "offline-model",
+        )?;
         let failed = PreparedQaPrompt {
             prompt_id: "qa-2".into(),
             ..prompt.clone()
@@ -174,25 +149,55 @@ mod tests {
             Err(QaCompletionError::BatchProvider("failed inference".into())),
             "offline-model",
         )?;
-        let summary = output.finish("unused", false)?;
-        assert_eq!(summary["qa_rows_written"], 1);
+        assert_eq!(output.finish("unused", false)?["qa_rows_written"], 1);
         let text = String::from_utf8(bytes)?;
         let mut lines = text.lines();
-        let first = lines.next().expect("QA row");
-        let parsed = parse_qa_record(first).expect("ingest accepted QA");
+        let first = lines.next().ok_or("missing QA row")?;
+        let parsed = parse_qa_record(first).map_err(|_| "ingest rejected QA")?;
         assert_eq!(parsed.instruction, "Question?");
         assert_eq!(parsed.output, "Answer.");
         assert_eq!(parsed.qa_type, prompt.qa_type);
         assert_eq!(parsed.source, prompt.source);
         assert_eq!(parsed.chunk_ref.as_deref(), Some(prompt.chunk_ref.as_str()));
         assert_eq!(parsed.concepts, prompt.concepts);
+        assert_eq!(serde_json::to_value(parsed.evidence_quotes)?, quotes);
+        assert_eq!(parsed.prompt_id.as_deref(), Some("qa-1"));
+        assert_eq!(
+            parsed.provenance.as_ref().ok_or("missing provenance")?["generator_model"],
+            "offline-model"
+        );
         let value: serde_json::Value = serde_json::from_str(first)?;
-        assert_eq!(value["provenance"]["prompt_id"], prompt.prompt_id);
+        let mut flat = value["response"].clone();
+        for key in ["chunk_ref", "source", "qa_type", "prompt_id", "provenance"] {
+            flat[key] = value[key].clone();
+        }
+        let flat = parse_qa_record(&flat.to_string()).map_err(|_| "flat rejected")?;
+        assert_eq!(serde_json::to_value(flat.evidence_quotes)?, quotes);
+        assert_eq!(flat.provenance, parsed.provenance);
         assert!(matches!(
-            parse_qa_record(lines.next().expect("failure row")),
+            parse_qa_record(lines.next().ok_or("missing failure row")?),
             Err(QaRecordError::GeneratorError)
         ));
         assert!(lines.next().is_none());
         Ok(())
+    }
+
+    /// expect: No missing/old/malformed citation shape silently becomes evidence.
+    #[test]
+    fn rejects_obsolete_or_incomplete_citations() {
+        for quotes in [
+            json!(["quote"]),
+            json!([1]),
+            json!([{"quote":"quote"}]),
+            json!([{"chunk_ref":"c", "source":" ", "quote":"q"}]),
+            json!(null),
+        ] {
+            let row = json!({"instruction":"Q?", "output":"A", "qa_type":"factual",
+                "chunk_ref":"c", "source":"s", "evidence_quotes":quotes});
+            assert!(matches!(
+                parse_qa_record(&row.to_string()),
+                Err(QaRecordError::Malformed)
+            ));
+        }
     }
 }

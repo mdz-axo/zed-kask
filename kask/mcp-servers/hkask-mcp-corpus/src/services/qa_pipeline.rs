@@ -14,6 +14,10 @@ use crate::{
     CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response, render_docproc_template,
 };
 
+/// Canonical model response shape. Empty evidence means no source citation;
+/// quotes never confer semantic verification on ordinary answer prose.
+pub(crate) const QA_RESPONSE_CONTRACT: &str = r#"Respond only in JSON: {"qa_pairs":[{"question":"...","answer":"...","bloom_level":"factual|conceptual|analyze|evaluate|create","evidence_quotes":[{"chunk_ref":"exact supplied chunk ID","source":"exact supplied source ID","quote":"exact nonempty substring"}]}]}. Use only the requested Bloom levels. Question and answer must be nonblank; concise answers are valid. Cite only supplied source/chunk identities, never fabricate them. If source identity is unavailable, return evidence_quotes: []. No numeric passage citations or bare quoted-string arrays. A matching citation does not verify answer synthesis."#;
+
 /// The only prepared-prompt JSONL contract. Identity belongs to the prompt,
 /// not its source chunk: several prompts may refer to the same chunk.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -278,11 +282,12 @@ pub(crate) fn format_single_chunk_prompt(
     vars.insert("levels", levels_str.to_string());
     vars.insert("chunk_id", chunk_id.to_string());
     vars.insert("text", text.to_string());
+    vars.insert("response_contract", QA_RESPONSE_CONTRACT.to_string());
     let tpl = render_docproc_template("generate-qa", &vars);
     if tpl.is_empty() {
         FormattedQaPrompt {
             text: format!(
-                "{CONTENT_GUARD_INSTRUCTION}Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
+                "{CONTENT_GUARD_INSTRUCTION}Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}; source identity unavailable):\n{text}\n\nReturn evidence_quotes: [] because no source identity was supplied.\n{QA_RESPONSE_CONTRACT}",
             ),
             template_source: "inline-fallback",
         }
@@ -306,14 +311,14 @@ pub(crate) fn format_cross_reference_prompt(
     let mut text = String::new();
     for (i, p) in passages.iter().enumerate() {
         text.push_str(&format!(
-            "[Passage {}]\n{}\n\n",
+            "[Chunk group {chunk_id}, passage {}; source identity unavailable]\n{}\n\n",
             i + 1,
             crate::guard_content(p)
         ));
     }
     FormattedQaPrompt {
         text: format!(
-            "{CONTENT_GUARD_INSTRUCTION}You are synthesizing knowledge across {n} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections across sources.\n\nFor each QA, cite which passages support the answer (e.g., 'Per Passage 1, ... while Passage 2 notes ...').\n\nPassages (chunk group {chunk_id}):\n{text}\n\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\", \"sources\": [1, 3]}}]}}",
+            "{CONTENT_GUARD_INSTRUCTION}You are synthesizing knowledge across {n} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections.\n\nPassages (chunk group {chunk_id}):\n{text}\n\nSource identities were not supplied. Return evidence_quotes: []; do not turn passage numbers or the group name into invented sources.\n{QA_RESPONSE_CONTRACT}",
             n = passages.len(),
         ),
         template_source: "inline-cross-reference",
@@ -342,6 +347,7 @@ pub(crate) fn qa_result_envelope(
             "output": pair.answer,
             "type": pair.bloom_level,
             "concepts": prompt.concepts,
+            "evidence_quotes": pair.evidence_quotes,
         },
         "provenance": {
             "generator_model": model,
@@ -371,7 +377,7 @@ mod tests {
     }
 
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
-        Ok(QaCompletion { text: json!({"qa_pairs": [{"question":"Question?", "answer":"Answer.", "bloom_level":"factual"}]}).to_string(), tokens_used: 10 })
+        Ok(QaCompletion { text: json!({"qa_pairs": [{"question":"Question?", "answer":"Answer.", "bloom_level":"factual", "evidence_quotes":[]}]}).to_string(), tokens_used: 10 })
     }
 
     enum Failure {
@@ -520,21 +526,29 @@ mod tests {
     }
 
     #[test]
-    fn format_single_chunk_prompt_falls_back_inline() {
-        // The template registry is not available in tests (HKASK_TEMPLATE_ROOT
-        // unset), so the inline fallback fires.
+    fn single_text_without_source_requests_no_citations() {
         let result = format_single_chunk_prompt("factual", "chunk-1", "some text");
         assert!(result.text.contains("some text"));
         assert!(result.text.contains("chunk-1"));
         assert!(result.text.contains("factual"));
+        assert!(result.text.contains("evidence_quotes: []"));
     }
 
     #[test]
     fn format_cross_reference_prompt_includes_all_passages() {
         let passages = vec!["first".to_string(), "second".to_string()];
         let result = format_cross_reference_prompt("factual", "group-1", &passages);
-        assert!(result.text.contains("[Passage 1]"));
-        assert!(result.text.contains("[Passage 2]"));
+        assert!(
+            result
+                .text
+                .contains("[Chunk group group-1, passage 1; source identity unavailable]")
+        );
+        assert!(
+            result
+                .text
+                .contains("[Chunk group group-1, passage 2; source identity unavailable]")
+        );
+        assert!(result.text.contains("evidence_quotes: []"));
         assert!(result.text.contains("first"));
         assert!(result.text.contains("second"));
         assert_eq!(result.template_source, "inline-cross-reference");

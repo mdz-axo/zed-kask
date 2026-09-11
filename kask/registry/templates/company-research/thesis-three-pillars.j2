@@ -63,7 +63,7 @@ The Business Franchise pillar MUST reflect this rotated framing. A moat against 
 {{ gorilla_capability | tojson }}
 ```
 
-If the capability assessment has maturity_blocks, the GORILLA verdict's scores for those dimensions are not credible (nil'd by the lisp.eval scoring step). Note this: a GORILLA verdict based on fewer than 4 credible dimensions is weaker.
+If the capability assessment has maturity_blocks, the elicited scores for those dimensions are not credible. They contribute 0 to the fixed-weight lisp_eval score while the blocks remain explicit in the assessment; this is a maturity penalty, not a measured capability score. A verdict with fewer than 4 credible dimensions is weaker.
 {% endif %}
 
 ## Imagine Board (from IMAGINE agent — anchored on economic trajectory)

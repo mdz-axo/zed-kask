@@ -130,7 +130,7 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build canonical prepared QA prompts from tagged chunks with KNN context, ontology context, and h_mem knowledge graph. Uses the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under). Each JSONL record contains prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user, with complete response instructions. prompt_id is unique within the file; multiple prompts may share chunk_ref. max_prompts caps prompt records (0 means unlimited), not chunks. Output is consumed directly by corpus_generate_qa_batch; regenerate old prompt files."
+        description = "Build canonical prepared QA prompts from tagged chunks with KNN context, ontology context, and h_mem knowledge graph. Uses the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under). Each JSONL record contains prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user, with complete response instructions. prompt_id is deterministic from source, chunk, QA type and ordinal across partitioned builds; multiple prompts may share chunk_ref. max_prompts caps prompt records (0 means unlimited), not chunks. Output is consumed directly by corpus_generate_qa_batch; regenerate old prompt files."
     )]
     pub async fn corpus_build_prompts(
         &self,
@@ -267,6 +267,7 @@ impl CorpusServer {
                     "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
                     "source": qa.source, "chunk_ref": qa.chunk_ref,
                     "evidence_quotes": qa.evidence_quotes,
+                    "prompt_id": qa.prompt_id, "provenance": qa.provenance,
                     "difficulty": qa.difficulty, "concepts": qa.concepts,
                 });
                 train.push_str(
@@ -299,6 +300,8 @@ impl CorpusServer {
                     "concepts": qa.concepts,
                     "chunk_ref": qa.chunk_ref,
                     "evidence_quotes": qa.evidence_quotes,
+                    "prompt_id": qa.prompt_id,
+                    "provenance": qa.provenance,
                 });
                 // Dual-axis anchoring (P5.4) in the first-class `ontology`
                 // column rather than the value blob: a generated QA pair is
@@ -581,7 +584,7 @@ fn default_max_chunks_per_cluster() -> usize {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct BuildPromptsRequest {
-    /// Path to tagged chunks JSONL (from consolidate phase).
+    /// Classified tagged chunks JSONL. Failed, unverified or duplicate refs are rejected.
     pub tagged_jsonl: String,
     /// Output path for prompts JSONL (one JSON per line, consumed by generate_qa_batch).
     pub output: String,
@@ -591,11 +594,12 @@ pub(crate) struct BuildPromptsRequest {
     #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Entity-ref prefix for the KNN embedding lookup (default
-    /// "corpus:researcher:"). Pass the prefix you chunked under — any other
-    /// prefix silently yields no embedding context.
+    /// "corpus:researcher:"). All input references must be under this prefix.
+    /// KNN reads complete-source stored passages, not just the input partition.
     #[serde(default)]
     pub prefix: Option<String>,
-    /// Number of KNN context passages to retrieve per chunk (default 3).
+    /// Number of source-scoped KNN neighbors (default 3; 0 explicitly disables KNN).
+    /// Missing passage text/provenance or failed DB reads return an error.
     #[serde(default = "default_context_k")]
     pub context_k: usize,
     /// Positive number of Bloom-level QA prompts per chunk (default 5 — one per level).

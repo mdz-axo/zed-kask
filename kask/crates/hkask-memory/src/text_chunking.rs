@@ -1,8 +1,7 @@
 //! Pure text-chunking helpers — no database access, no store handle.
 //!
-//! `MemoryStore` exposes `chunk_text` / `strip_gutenberg_headers` as
-//! associated functions that delegate to these, so existing call sites
-//! keep their shape.
+//! Turn-memory ingestion uses the no-overlap `chunk_text` entry point;
+//! corpus processing supplies explicit overlap to the same window engine.
 
 /// Threshold: if control characters exceed 0.5% of total characters, the
 /// PDF font encoding is corrupted and the text should be re-extracted via
@@ -68,11 +67,14 @@ pub fn sanitize_text(text: &str) -> String {
 
 /// Chunk text into passages for embedding.
 ///
-/// Sanitizes control characters, then splits on structural boundaries
-/// (markdown headings, horizontal rules, then paragraph breaks), applies
-/// min/max word count constraints, and splits long paragraphs at the nearest
-/// sentence boundary. Short paragraphs are concatenated until min_words is
-/// reached.
+/// No-overlap entry point used by turn-memory ingestion. The shared window
+/// engine sanitizes control characters and prefers structural/sentence ends
+/// within the word budget. Short structural fragments are carried forward
+/// until min_words is reached; the final remainder is always retained.
+///
+/// # Panics
+/// Panics if max_words is zero (a programmer error in this infallible API).
+/// Caller-controlled budgets should use `chunk_text_with_overlap`.
 ///
 /// Returns (entity_ref, text) pairs with entity_ref formatted as
 /// `{entity_ref_prefix}:{chunk_index}`.
@@ -83,7 +85,7 @@ pub fn sanitize_text(text: &str) -> String {
 /// pre:  text is non-empty, entity_ref_prefix is non-empty
 /// pre:  min_words > 0, max_words >= min_words
 /// post: returns Vec of (entity_ref, text) chunks
-/// post: each chunk has word count between min_words and max_words (best-effort)
+/// post: every chunk has at most max_words; only the final chunk may be below min_words
 /// post: no chunk contains C0 control characters except \t \n \r
 pub fn chunk_text(
     text: &str,
@@ -92,118 +94,15 @@ pub fn chunk_text(
     max_words: usize,
     sentence_boundary: &str,
 ) -> Vec<(String, String)> {
-    let text = sanitize_text(text);
-    // Structural splitting: headings/rules become their own paragraph units so
-    // chunks don't straddle unrelated sections (improves concept coherence, which
-    // the salience graph depends on).
-    let paragraphs = split_structural(&text);
-
-    let mut passages = Vec::new();
-    let mut buffer = String::new();
-    let mut buffer_words = 0usize;
-    let mut chunk_index = 0usize;
-    let boundary_chars: Vec<char> = sentence_boundary
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-
-    for paragraph in &paragraphs {
-        let word_count = paragraph.split_whitespace().count();
-
-        if buffer_words + word_count > max_words && buffer_words >= min_words {
-            let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-            passages.push((entity_ref, buffer.trim().to_string()));
-            chunk_index += 1;
-            buffer.clear();
-            buffer_words = 0;
-        }
-
-        if word_count > max_words {
-            if !buffer.is_empty() && buffer_words >= min_words {
-                let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-                passages.push((entity_ref, buffer.trim().to_string()));
-                chunk_index += 1;
-                buffer.clear();
-                buffer_words = 0;
-            }
-            // Split a too-long paragraph at the nearest sentence boundary at or
-            // after max_words (look-ahead up to 25% of max_words), falling back
-            // to the last boundary before max_words, then a hard cut.
-            let words: Vec<&str> = paragraph.split_whitespace().collect();
-            let mut start = 0usize;
-            while start < words.len() {
-                let target = (start + max_words).min(words.len());
-                let look_ahead = (max_words / 4).max(1);
-                let mut split_at = target;
-                let mut found = false;
-                for (i, w) in words.iter().enumerate().skip(target).take(look_ahead) {
-                    if is_sentence_end(w, &boundary_chars) {
-                        split_at = i + 1;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    let back_floor = start + min_words.min(words.len());
-                    for i in (back_floor..target).rev() {
-                        if is_sentence_end(words[i], &boundary_chars) {
-                            split_at = i + 1;
-                            break;
-                        }
-                    }
-                }
-                let chunk_words = &words[start..split_at];
-                let text = chunk_words.join(" ");
-                let cw = chunk_words.len();
-                if cw >= min_words {
-                    // Fold any sub-floor buffer content into this passage —
-                    // clearing the buffer here would silently drop the
-                    // below-floor fragments merged forward (a pre-existing
-                    // loss path: the buffer could hold a sub-min remainder
-                    // from a previous paragraph when an oversized paragraph
-                    // entered the split loop).
-                    let passage = if buffer.is_empty() {
-                        text
-                    } else {
-                        buffer.push(' ');
-                        buffer.push_str(&text);
-                        std::mem::take(&mut buffer)
-                    };
-                    let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-                    passages.push((entity_ref, passage));
-                    chunk_index += 1;
-                    buffer_words = 0;
-                } else {
-                    // Fragment below the floor: hold it in the buffer to
-                    // merge with the next fragment or the final flush.
-                    // Emitting it standalone produced 1-word chunks that
-                    // pollute embeddings and QA generation (observed:
-                    // 1-char chunks in a 32K-chunk corpus run). The final
-                    // flush still emits whatever remains — content is
-                    // never dropped.
-                    if !buffer.is_empty() {
-                        buffer.push(' ');
-                    }
-                    buffer.push_str(&text);
-                    buffer_words += cw;
-                }
-                start = split_at;
-            }
-        } else {
-            if !buffer.is_empty() {
-                buffer.push(' ');
-            }
-            buffer.push_str(paragraph);
-            buffer_words += word_count;
-        }
-    }
-
-    if !buffer.is_empty() {
-        let entity_ref = format!("{}:{}", entity_ref_prefix, chunk_index);
-        passages.push((entity_ref, buffer.trim().to_string()));
-    }
-
-    passages
+    assert!(max_words > 0, "max_words must be positive");
+    chunk_windows(
+        text,
+        entity_ref_prefix,
+        min_words,
+        max_words,
+        sentence_boundary,
+        0,
+    )
 }
 
 /// Chunk with explicit repeated context, measured in whitespace-delimited words.
@@ -214,10 +113,10 @@ pub fn chunk_text(
 /// pre: max_words > 0, overlap_words < max_words
 /// post: positive overlap repeats exactly overlap_words from the previous suffix;
 ///       each passage contributes new words and contains at most max_words.
-/// post: zero overlap delegates unchanged to the legacy best-effort chunker.
+/// post: zero overlap uses the same window rule, without repeated words.
 ///
 /// Uses the canonical sanitizer, structural splitter and sentence-end detector.
-/// For positive overlap, structural/sentence ends are preferred within the word
+/// Structural/sentence ends are preferred within the word
 /// budget, but never at the expense of forward progress. Whitespace is normalized.
 /// This is not a tokenizer: words (especially non-English text or long identifiers)
 /// may consume many model tokens.
@@ -234,16 +133,24 @@ pub fn chunk_text_with_overlap(
         overlap_words < max_words,
         "overlap_words must be less than max_words"
     );
-    if overlap_words == 0 {
-        return Ok(chunk_text(
-            text,
-            entity_ref_prefix,
-            min_words,
-            max_words,
-            sentence_boundary,
-        ));
-    }
+    Ok(chunk_windows(
+        text,
+        entity_ref_prefix,
+        min_words,
+        max_words,
+        sentence_boundary,
+        overlap_words,
+    ))
+}
 
+fn chunk_windows(
+    text: &str,
+    entity_ref_prefix: &str,
+    min_words: usize,
+    max_words: usize,
+    sentence_boundary: &str,
+    overlap_words: usize,
+) -> Vec<(String, String)> {
     let sanitized = sanitize_text(text);
     let paragraphs = split_structural(&sanitized);
     let mut words = Vec::new();
@@ -287,7 +194,7 @@ pub fn chunk_text_with_overlap(
         }
         start = end - overlap_words;
     }
-    Ok(passages)
+    passages
 }
 
 /// True when `word` ends a sentence: its final non-quote char is a boundary
@@ -531,14 +438,28 @@ fn is_boilerplate_page(page: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// expect: [P3] Legacy callers keep identical non-overlap chunks; the explicit API rejects non-progress even for empty input.
+    /// expect: [P3] Zero overlap obeys the same word bound and preserves every source word through either public entry point.
     #[test]
-    fn overlap_zero_preserves_legacy_and_invalid_bounds_fail() -> anyhow::Result<()> {
-        let text = "First paragraph has words.\n\n# Heading\nNext paragraph with café and λ.";
-        assert_eq!(
-            chunk_text_with_overlap(text, "test", 3, 7, ".!?", 0)?,
-            chunk_text(text, "test", 3, 7, ".!?")
-        );
+    fn zero_overlap_obeys_current_bounds_and_rejects_invalid_budgets() -> anyhow::Result<()> {
+        let text = "one two three four five six. seven eight";
+        for chunks in [
+            chunk_text(text, "test", 1, 5, ".!?"),
+            chunk_text_with_overlap(text, "test", 1, 5, ".!?", 0)?,
+        ] {
+            assert!(
+                chunks
+                    .iter()
+                    .all(|(_, text)| text.split_whitespace().count() <= 5)
+            );
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|(_, text)| text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                text
+            );
+        }
         for (max, overlap) in [(0, 0), (2, 2), (2, 3)] {
             assert!(chunk_text_with_overlap("", "test", 1, max, ".!?", overlap).is_err());
         }
@@ -550,8 +471,8 @@ mod tests {
     fn overlapping_windows_reconstruct_across_structural_boundaries() -> anyhow::Result<()> {
         let text = "# Header\nλ1 λ2. λ3 \"λ4!\"\n\nλ5 λ6\n---\nλ7 λ8 λ9. λ10\tλ11 λ12 λ13 λ14 λ15";
         let expected: Vec<_> = text.split_whitespace().collect();
-        for max in 2..=20 {
-            for overlap in 1..max {
+        for max in 1..=20 {
+            for overlap in 0..max {
                 let chunks = chunk_text_with_overlap(text, "t", 1, max, ".!?", overlap)?;
                 let mut reconstructed: Vec<&str> = Vec::new();
                 for (index, (_, passage)) in chunks.iter().enumerate() {
@@ -642,9 +563,8 @@ mod tests {
     /// entered the loop.
     #[test]
     fn below_floor_fragments_merge_and_no_content_is_dropped() {
-        // 130-word paragraph then a 120-word paragraph, min 50 / max 100,
-        // no sentence boundaries: para 1 leaves a 30-word fragment, para 2
-        // splits into a 100-word chunk + 20-word tail.
+        // The structural boundary at word 130 must not force a 30-word
+        // mid-document chunk. The next window carries those words forward.
         let para1: Vec<String> = (0..130).map(|i| format!("alpha{i}")).collect();
         let para2: Vec<String> = (0..120).map(|i| format!("beta{i}")).collect();
         let text = format!("{}\n\n{}", para1.join(" "), para2.join(" "));
@@ -656,8 +576,8 @@ mod tests {
             .sum();
         assert_eq!(total, 250, "every input word must survive chunking");
 
-        // No mid-document passage below the floor — only the final tail
-        // flush may carry one.
+        // No mid-document passage below the floor — only the final remainder
+        // may carry one.
         for (index, (entity_ref, passage)) in passages.iter().enumerate() {
             let words = passage.split_whitespace().count();
             if index < passages.len() - 1 {

@@ -11,7 +11,7 @@ You are a training data generator. Given a primary passage, generate ONE questio
 
 {{ qa_instruction }}
 
-Ground the answer in the primary passage. Do not invent facts. Use the knowledge graph triples where relevant to enrich the answer. Cite specific facts, claims, or data from the passage.
+Ground the answer in the primary passage. Do not invent facts. Knowledge graph assertions are context, not verified evidence. For each exact quote, preserve the supplied chunk_ref and source in a structured evidence_quotes object. Retrieved passages retain their own identities; never attribute a neighbor's quotation to the primary chunk. Matching a quotation does not independently verify answer synthesis.
 </system>
 
 <task>
@@ -22,14 +22,14 @@ Generate a {{ qa_type }} QA pair from this passage.
 Dublin Core: dcterms:source={{ source }}, dcterms:type={{ dc_type }}, dcterms:subject={{ dc_subject }}
 PKO: prov:wasGeneratedBy=corpus QA generation pipeline
 {% if consolidated_from %}
-PKO: pko:wasExtractedFrom={{ consolidated_from }} original passages (consolidation preserved all unique information), prov:wasGeneratedBy=corpus QA generation pipeline
+PKO: pko:wasExtractedFrom={{ consolidated_from }} original passages (synthesis is not a completeness guarantee), prov:wasGeneratedBy=corpus QA generation pipeline
 {% endif %}
 Ontology tags: {{ ontology_tags }}
 
 ## Context Passages (retrieved via embedding similarity)
 {{ context_passages }}
 
-## Concept Graph (salience-weighted)
+## Primary Passage Concepts
 {{ concept_graph }}
 
 ## Knowledge Graph (h_mems)

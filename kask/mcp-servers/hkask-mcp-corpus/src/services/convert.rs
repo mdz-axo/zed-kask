@@ -36,10 +36,10 @@ use crate::ocr::llm_ocr::LlmOcrExecutor;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
 use crate::ocr::triage::parse_target_pages;
 use crate::path_safety::{contain_for_read, contain_for_write};
-use crate::text::{chunk_text_with_overlap, source_component, strip_gutenberg_headers};
+use crate::text::{source_component, strip_gutenberg_headers};
 use crate::{
-    OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds, default_embedding_model, max_concurrency,
-    sanitize_links,
+    OCR_FALLBACK_WORD_THRESHOLD, chunk_structure, chunk_word_bounds, default_embedding_model,
+    max_concurrency, sanitize_links,
 };
 use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
 
@@ -1038,7 +1038,7 @@ impl<'a> ConvertService<'a> {
             let processed = strip_html_comments(&processed);
             let processed = filter_boilerplate_pages(&processed);
 
-            let passages = chunk_text_with_overlap(
+            let passages = chunk_structure(
                 &processed,
                 &source_prefix,
                 bounds.min_words,
@@ -1104,7 +1104,7 @@ impl<'a> ConvertService<'a> {
             "total_documents": sources.len(),
             "total_chunks": total_chunks,
             "max_tokens": bounds.max_tokens,
-            "overlap_tokens": overlap_tokens.unwrap_or(0),
+            "overlap_tokens": bounds.overlap_tokens,
             "overlap_words": bounds.overlap_words,
             "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
             "source_id_encoding": "utf8-hex",

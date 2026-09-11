@@ -1,30 +1,24 @@
-//! Prompt builder service — KNN + concept graph + knowledge graph + QA prompts.
-//!
-//! Extracted from `CorpusServer::corpus_build_prompts` in `tools/corpus.rs`.
-//! Builds QA generation prompts with source-scoped KNN context, ontology context,
-//! and h_mem knowledge graph sections.
+//! Prepared QA prompts from complete-source stored passages, never from the
+//! current input partition's accidental subset of neighboring chunks.
+
+use std::collections::{HashMap, HashSet};
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::corpus::TaggedChunk;
+use hkask_types::corpus::{ClassificationOutcome, TaggedChunk, qa_prompt_id};
 use serde_json::json;
 
-use crate::services::qa_pipeline::PreparedQaPrompt;
+use crate::helpers::map_memory_store_error;
+use crate::services::qa_pipeline::{PreparedQaPrompt, QA_RESPONSE_CONTRACT};
 use crate::tools::corpus::{
     QaType, parse_type_distribution, qa_type_instruction, qa_type_str, read_tagged_chunks,
 };
 use crate::{normalize_in_place, render_docproc_template};
 
-/// Input for [`PromptBuilderService::build_prompts`].
 pub(crate) struct BuildPromptsRequest {
     pub tagged_jsonl: String,
     pub output: String,
     pub db_path: String,
     pub passphrase: String,
-    /// Entity-ref prefix for the KNN embedding lookup. Defaults to
-    /// "corpus:researcher:" (the pipeline default). Pre-fix this was
-    /// hardcoded — any corpus chunked under a different prefix silently got
-    /// "(none — no embedding context available)" with a normal
-    /// prompts_written count.
     pub prefix: Option<String>,
     pub context_k: usize,
     pub prompts_per_chunk: usize,
@@ -33,11 +27,15 @@ pub(crate) struct BuildPromptsRequest {
     pub ontology_bloom_overrides: Option<String>,
 }
 
-/// KNN context + concept graph + knowledge graph + QA prompt builder.
-///
-/// Each call to [`build_prompts`] reads tagged chunks, loads embeddings from
-/// the memory DB, and writes QA prompts JSONL. No inference router is needed —
-/// the method queries the DB for pre-computed embeddings, not the inference API.
+struct StoredPassage {
+    source: String,
+    text: String,
+    vector: Vec<f32>,
+    memories: Vec<hkask_storage::HMem>,
+}
+
+/// Canonical MemoryStore reads own provenance and passage text. No source DB,
+/// copied embedding store, partition fallback, or inference is introduced.
 pub(crate) struct PromptBuilderService;
 
 impl PromptBuilderService {
@@ -45,455 +43,310 @@ impl PromptBuilderService {
         Self
     }
 
-    /// Build QA generation prompts from tagged chunks.
-    ///
-    /// For each chunk, retrieves embedding-similar passages (KNN), formats
-    /// ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the
-    /// memory DB to build a knowledge graph section. Outputs prompts JSONL
-    /// consumed by `corpus_generate_qa_batch`.
-    #[must_use = "result must be used"]
     pub async fn build_prompts(
         &self,
         request: BuildPromptsRequest,
     ) -> Result<serde_json::Value, McpToolError> {
-        let BuildPromptsRequest {
-            tagged_jsonl,
-            output,
-            db_path,
-            passphrase,
-            prefix,
-            context_k,
-            prompts_per_chunk,
-            type_distribution,
-            max_prompts,
-            ontology_bloom_overrides,
-        } = request;
-
-        let chunks = read_tagged_chunks(&tagged_jsonl)?;
+        let chunks = read_tagged_chunks(&request.tagged_jsonl)?;
         if chunks.is_empty() {
             return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
         }
-        let total = chunks.len();
-        tracing::info!("  Build prompts: {} chunks", total);
-
-        // QA type rotation — default distribution
-        let default_rotation = parse_type_distribution(&type_distribution);
-
-        // Parse per-ontology Bloom overrides (if provided)
-        // Format: "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|sepio:1,1,2,1,0"
-        let bloom_overrides: std::collections::HashMap<String, Vec<QaType>> =
-            ontology_bloom_overrides
-                .as_deref()
-                .map(|s| {
-                    s.split('|')
-                        .filter_map(|entry| {
-                            let (ns, dist) = entry.split_once(':')?;
-                            let vals = parse_type_distribution(dist);
-                            if vals.is_empty() {
-                                None
-                            } else {
-                                Some((ns.to_string(), vals))
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-        if prompts_per_chunk == 0 {
+        let prefix = request.prefix.as_deref().unwrap_or("corpus:researcher:");
+        let mut references = HashSet::new();
+        for chunk in &chunks {
+            if chunk.classification != ClassificationOutcome::Classified {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Chunk '{}' is not classified: {:?}",
+                    chunk.entity_ref, chunk.classification
+                )));
+            }
+            if !references.insert(&chunk.entity_ref) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Duplicate chunk_ref '{}'",
+                    chunk.entity_ref
+                )));
+            }
+            if chunk.entity_ref.trim().is_empty()
+                || chunk.source.trim().is_empty()
+                || chunk.text.trim().is_empty()
+                || !chunk.salience.is_finite()
+                || !chunk.entity_ref.starts_with(prefix)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Chunk '{}' needs nonblank source/text, finite salience and a reference under prefix '{prefix}'",
+                    chunk.entity_ref
+                )));
+            }
+        }
+        if request.prompts_per_chunk == 0 {
             return Err(McpToolError::invalid_argument(
                 "prompts_per_chunk must be positive",
             ));
         }
-        let requested = total.checked_mul(prompts_per_chunk).ok_or_else(|| {
-            McpToolError::invalid_argument("Requested prompt count overflows usize")
-        })?;
-        let limit = if max_prompts > 0 {
-            max_prompts.min(requested)
-        } else {
+        let requested = chunks
+            .len()
+            .checked_mul(request.prompts_per_chunk)
+            .ok_or_else(|| {
+                McpToolError::invalid_argument("Requested prompt count overflows usize")
+            })?;
+        let limit = if request.max_prompts == 0 {
             requested
+        } else {
+            request.max_prompts.min(requested)
         };
-
-        // Sort by salience descending
+        let default_rotation = parse_type_distribution(&request.type_distribution);
+        let mut bloom_overrides: HashMap<&str, Vec<QaType>> = HashMap::new();
+        if let Some(overrides) = request.ontology_bloom_overrides.as_deref() {
+            for entry in overrides.split('|') {
+                let (namespace, distribution) = entry.split_once(':').ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "ontology_bloom_overrides must use namespace:distribution entries",
+                    )
+                })?;
+                if namespace.is_empty()
+                    || bloom_overrides
+                        .insert(namespace, parse_type_distribution(distribution))
+                        .is_some()
+                {
+                    return Err(McpToolError::invalid_argument(
+                        "Empty or duplicate Bloom override namespace",
+                    ));
+                }
+            }
+        }
+        let store = crate::helpers::open_memory_store(&request.db_path, &request.passphrase)?;
+        let mut passages = HashMap::new();
+        // context_k=0 is an explicit opt-out, not a fallback after failed reads.
+        if request.context_k > 0 {
+            let rows = store.all_embeddings_with_text().map_err(|error| {
+                map_memory_store_error(error, "Cannot load complete-source QA context")
+            })?;
+            for (reference, mut vector, text) in rows
+                .into_iter()
+                .filter(|(reference, _, _)| reference.starts_with(prefix))
+            {
+                let text = text.filter(|text| !text.trim().is_empty()).ok_or_else(|| {
+                    McpToolError::failed_precondition(format!(
+                        "QA context '{reference}' has no stored passage_text"
+                    ))
+                })?;
+                if vector.is_empty()
+                    || vector.iter().any(|value| !value.is_finite())
+                    || !vector.iter().any(|value| *value != 0.0)
+                {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "QA context '{reference}' has an invalid embedding"
+                    )));
+                }
+                normalize_in_place(&mut vector);
+                let memories = store.query_deduped_untouched(&reference).map_err(|error| {
+                    map_memory_store_error(error, "Cannot read QA source provenance")
+                })?;
+                let sources: HashSet<_> = memories
+                    .iter()
+                    .filter(|memory| memory.attribute == "text")
+                    .filter_map(|memory| memory.ontology.as_ref())
+                    .map(|ontology| ontology.dc_source.as_str())
+                    .filter(|source| !source.trim().is_empty() && *source != reference)
+                    .collect();
+                if sources.len() != 1 {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "QA context '{reference}' needs one original source in text h_mem ontology.dc_source; found {}",
+                        sources.len()
+                    )));
+                }
+                let source = sources
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| McpToolError::internal("Source count invariant failed"))?
+                    .to_string();
+                if passages
+                    .insert(
+                        reference.clone(),
+                        StoredPassage {
+                            source,
+                            text,
+                            vector,
+                            memories,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "Duplicate stored passage reference '{reference}'"
+                    )));
+                }
+            }
+        }
+        let mut by_source: HashMap<&str, Vec<(&str, &StoredPassage)>> = HashMap::new();
+        for (reference, passage) in &passages {
+            by_source
+                .entry(&passage.source)
+                .or_default()
+                .push((reference, passage));
+        }
         let mut sorted: Vec<&TaggedChunk> = chunks.iter().collect();
         sorted.sort_by(|a, b| {
             b.salience
-                .partial_cmp(&a.salience)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(&a.salience)
+                .then_with(|| a.entity_ref.cmp(&b.entity_ref))
         });
-
-        // Bulk-load embeddings for in-memory KNN
-        let store = crate::helpers::open_memory_store(&db_path, &passphrase)?;
-
-        let text_map: std::collections::HashMap<&str, &str> = chunks
-            .iter()
-            .map(|c| (c.entity_ref.as_str(), c.text.as_str()))
-            .collect();
-        let source_map: std::collections::HashMap<&str, &str> = chunks
-            .iter()
-            .map(|c| (c.entity_ref.as_str(), c.source.as_str()))
-            .collect();
-
-        let emb_map: std::collections::HashMap<String, Vec<f32>> =
-            match store.embeddings_by_prefix(prefix.as_deref().unwrap_or("corpus:researcher:")) {
-                Ok(embs) => {
-                    let map: std::collections::HashMap<String, Vec<f32>> = embs
-                        .into_iter()
-                        .map(|(er, mut v)| {
-                            normalize_in_place(&mut v);
-                            (er, v)
-                        })
-                        .collect();
-                    tracing::info!("  Bulk-loaded {} normalized embeddings", map.len());
-                    map
+        let mut output = String::new();
+        let mut written = 0;
+        let mut context_links = 0;
+        'chunks: for chunk in sorted {
+            let (context, memories) = if request.context_k == 0 {
+                (
+                    Vec::new(),
+                    store
+                        .query_deduped_untouched(&chunk.entity_ref)
+                        .map_err(|error| {
+                            map_memory_store_error(error, "Cannot read QA knowledge graph")
+                        })?,
+                )
+            } else {
+                let primary = passages.get(&chunk.entity_ref).ok_or_else(|| {
+                    McpToolError::failed_precondition(format!(
+                        "No stored passage for primary '{}'",
+                        chunk.entity_ref
+                    ))
+                })?;
+                if primary.source != chunk.source || primary.text != chunk.text {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "Primary '{}' disagrees with stored source or passage_text",
+                        chunk.entity_ref
+                    )));
                 }
-                Err(e) => {
-                    tracing::info!("  Warning: embedding query failed — scaffold disabled: {e}");
-                    std::collections::HashMap::new()
-                }
-            };
-
-        // Group embeddings by source for scoped KNN
-        let mut emb_by_source: std::collections::HashMap<&str, Vec<(&String, &Vec<f32>)>> =
-            std::collections::HashMap::new();
-        for chunk in &chunks {
-            if let Some(v) = emb_map.get(&chunk.entity_ref) {
-                emb_by_source
-                    .entry(chunk.source.as_str())
-                    .or_default()
-                    .push((&chunk.entity_ref, v));
-            }
-        }
-
-        // Build concept graph (concept -> chunk_count)
-        let mut concept_connections: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        for chunk in &chunks {
-            for concept in &chunk.concepts {
-                *concept_connections.entry(concept.as_str()).or_default() += 1;
-            }
-        }
-
-        let mut out = String::new();
-        let mut ti = 0usize;
-
-        'chunks: for tc in sorted.iter().take(limit) {
-            // KNN scaffold: source-scoped search
-            let context_passages: Vec<serde_json::Value> = {
-                let query_vec = match emb_map.get(&tc.entity_ref) {
-                    Some(v) => v.as_slice(),
-                    None => &[],
-                };
-                if query_vec.is_empty() {
-                    Vec::new()
-                } else {
-                    let k = context_k;
-                    let candidates = emb_by_source
-                        .get(tc.source.as_str())
-                        .map(|v| v.as_slice())
-                        .unwrap_or(&[]);
-                    let mut scored: Vec<(&String, f32)> = candidates
+                let mut scored = Vec::new();
+                for (reference, candidate) in
+                    by_source.get(chunk.source.as_str()).into_iter().flatten()
+                {
+                    if *reference == chunk.entity_ref {
+                        continue;
+                    }
+                    if candidate.vector.len() != primary.vector.len() {
+                        return Err(McpToolError::failed_precondition(format!(
+                            "Embedding dimensions differ for '{reference}'"
+                        )));
+                    }
+                    let similarity: f32 = primary
+                        .vector
                         .iter()
-                        .filter(|(er, _)| er.as_str() != tc.entity_ref)
-                        .map(|(er, v)| {
-                            // Vectors are pre-normalized, so dot product = cosine similarity.
-                            let cosine_sim: f32 =
-                                query_vec.iter().zip(v.iter()).map(|(a, b)| a * b).sum();
-                            (*er, cosine_sim)
-                        })
-                        .collect();
-                    let top_k: Vec<(&String, f32)> = if scored.len() > k {
-                        // Partition around index k-1 so that elements 0..k are
-                        // the top-k by score (descending). The return value
-                        // (pivot, left, right) is discarded — only the
-                        // partitioning side effect matters. After partitioning,
-                        // scored[..k] contains the top-k but unsorted, so we
-                        // sort that slice in place. This avoids sorting the
-                        // entire scored vec (O(n log n)) in favor of
-                        // partition + partial sort (O(n + k log k)).
-                        scored.select_nth_unstable_by(k.saturating_sub(1), |a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        scored[..k].sort_by(|a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        scored.into_iter().take(k).collect()
-                    } else {
-                        scored.sort_by(|a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        scored.into_iter().collect()
-                    };
-                    top_k
-                        .into_iter()
-                        .map(|(er, sim)| {
-                            let text = text_map.get(er.as_str()).copied().unwrap_or("");
-                            let source = source_map.get(er.as_str()).copied().unwrap_or(er);
-                            serde_json::json!({
-                                "source": source,
-                                "similarity": sim,
-                                "text": text,
-                            })
-                        })
-                        .collect()
+                        .zip(&candidate.vector)
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    scored.push((*reference, *candidate, similarity));
                 }
+                scored.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(b.0)));
+                scored.truncate(request.context_k);
+                let context = scored.into_iter().map(|(reference, passage, similarity)| json!({
+                    "chunk_ref":reference, "source":passage.source, "text":passage.text, "similarity":similarity
+                })).collect::<Vec<_>>();
+                (context, primary.memories.clone())
             };
-
-            // Format context text
-            let context_text = if context_passages.is_empty() {
-                "(none — no embedding context available)".to_string()
-            } else {
-                context_passages
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let source = p["source"].as_str().unwrap_or("?");
-                        let sim = p["similarity"].as_f64().unwrap_or(0.0);
-                        let text = p["text"].as_str().unwrap_or("");
-                        let truncated = if text.len() > 2000 {
-                            let mut end = 2000;
-                            while end > 0 && !text.is_char_boundary(end) {
-                                end -= 1;
-                            }
-                            &text[..end]
-                        } else {
-                            text
-                        };
-                        format!(
-                            "[{}] Source: {}, Similarity: {:.2}\n    {}",
-                            i + 1,
-                            source,
-                            sim,
-                            truncated
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            };
-
-            // Issue 7: Diagnostic — log KNN neighbor sources to verify
-            // ontology-anchored embeddings produce same-domain retrieval.
-            if !context_passages.is_empty() {
-                let neighbor_sources: Vec<&str> = context_passages
-                    .iter()
-                    .filter_map(|p| p["source"].as_str())
-                    .collect();
-                tracing::info!(
-                    target: "hkask.mcp.docproc.build_prompts",
-                    chunk_ref = %tc.entity_ref,
-                    chunk_source = %tc.source,
-                    neighbor_sources = ?neighbor_sources,
-                    "KNN context retrieved — verify neighbors share ontology with chunk"
-                );
-            }
-
-            // Concept graph
-            let concept_graph_text = tc
-                .concepts
+            context_links += context.len();
+            let context_text = serde_json::to_string(&context).map_err(|error| {
+                McpToolError::internal(format!("Cannot serialize QA context: {error}"))
+            })?;
+            // Assertion values are context, never independently verified facts.
+            let mut assertions: Vec<_> = memories
                 .iter()
-                .map(|concept| {
-                    let connected = concept_connections
-                        .get(concept.as_str())
-                        .copied()
-                        .unwrap_or(1);
-                    format!("- {} (connected to {} chunks)", concept, connected)
+                .filter(|memory| {
+                    !matches!(
+                        memory.attribute.as_str(),
+                        "text" | "method_signals" | "ontology_tags"
+                    )
                 })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let concept_graph_text = if concept_graph_text.is_empty() {
-                "(none)".to_string()
-            } else {
-                concept_graph_text
-            };
-
-            // h_mem knowledge graph — query all h_mems for this chunk
-            let kg_text = match store.query_deduped(&tc.entity_ref) {
-                Ok(h_mems) if !h_mems.is_empty() => {
-                    let mut lines: Vec<String> = Vec::new();
-                    for h_mem in &h_mems {
-                        if h_mem.attribute == "text"
-                            || h_mem.attribute == "corpus_provenance"
-                            || h_mem.attribute == "ontology_tags"
-                        {
-                            continue; // skip non-assertion h_mems
-                        }
-                        let dim = h_mem
-                            .ontology
-                            .as_ref()
-                            .and_then(|ont| ont.dimensions.first().map(|s| s.as_str()))
-                            .unwrap_or("what");
-                        let conf = format!("{:.2}", h_mem.confidence.value());
-                        // v2: value is {"subject": "...", "object": "..."}
-                        let (subj, obj) = match &h_mem.value {
-                            serde_json::Value::Object(map) => {
-                                let s = map.get("subject").and_then(|v| v.as_str()).unwrap_or("");
-                                let o = map
-                                    .get("object")
-                                    .map(|v| match v {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        v => v.to_string(),
-                                    })
-                                    .unwrap_or_default();
-                                (s.to_string(), o)
-                            }
-                            // Legacy: value is the object directly
-                            serde_json::Value::String(s) => (String::new(), s.clone()),
-                            v => (String::new(), v.to_string()),
-                        };
-                        let entity_label = if subj.is_empty() {
-                            tc.entity_ref.as_str()
-                        } else {
-                            &subj
-                        };
-                        lines.push(format!(
-                            "  - [{}] (conf={}) {} --{}--> {}",
-                            dim, conf, entity_label, h_mem.attribute, obj
-                        ));
-                    }
-                    if lines.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        lines.join("\n")
-                    }
-                }
-                _ => "(none)".to_string(),
-            };
-
-            // Generate prompts_per_chunk QAs per chunk at consecutive Bloom levels
-            // Select Bloom distribution: check ontologies in priority order
-            // (narrative > financial > epistemic > process > default).
-            // This ensures narrative chunks always get golem distribution
-            // even if they also have epistemic or pko tags.
-            let type_rotation: &[QaType] = {
-                const PRIORITY: &[&str] = &["pko", "golem", "fibo", "sepio", "epistemic"];
-                let mut selected: Option<&[QaType]> = None;
-                for ns in PRIORITY {
-                    if tc.ontology_tags.contains_key(*ns) && bloom_overrides.contains_key(*ns) {
-                        selected = Some(&bloom_overrides[*ns]);
-                        break;
-                    }
-                }
-                selected.unwrap_or(&default_rotation)
-            };
-
-            for _ in 0..prompts_per_chunk {
-                if ti == limit {
+                .map(|memory| format!("{}: {}", memory.attribute, memory.value))
+                .collect();
+            assertions.sort();
+            let rotation = ["pko", "golem", "fibo", "sepio", "epistemic"]
+                .into_iter()
+                .find_map(|namespace| {
+                    chunk
+                        .ontology_tags
+                        .contains_key(namespace)
+                        .then(|| bloom_overrides.get(namespace))
+                        .flatten()
+                })
+                .unwrap_or(&default_rotation);
+            let mut type_ordinals: HashMap<&str, usize> = HashMap::new();
+            for ordinal in 0..request.prompts_per_chunk {
+                if written == limit {
                     break 'chunks;
                 }
-                let qt = type_rotation[ti % type_rotation.len()];
-                let qt_str = qa_type_str(qt);
-
-                let dimensions_str = if tc.dimensions.is_empty() {
-                    "what".to_string()
-                } else {
-                    tc.dimensions.join(", ")
-                };
-                // ExpertiseLevel is always valid (deserializer maps unknown
-                // strings to Analyst), so no empty-check needed.
-                let expertise = tc.expertise_level.as_str();
-                let dc_type = if tc.dc_type.is_empty() {
-                    hkask_bridge_ontology::dc_bibo::DOCUMENT
-                } else {
-                    tc.dc_type.as_str()
-                };
-                let dc_subject = if tc.dc_subject.is_empty() {
-                    tc.concepts.join(", ")
-                } else {
-                    tc.dc_subject.join(", ")
-                };
-                let tags_str: String = tc
-                    .ontology_tags
-                    .iter()
-                    .map(|(ns, concepts)| format!("{}: {}", ns, concepts.join(", ")))
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                let consolidated_from = if tc.consolidated_from.is_empty() {
-                    String::new()
-                } else {
-                    tc.consolidated_from.len().to_string()
-                };
-
-                // Render system prompt from Jinja2 template
-                let mut vars: std::collections::HashMap<&str, String> =
-                    std::collections::HashMap::new();
-                vars.insert("qa_instruction", qa_type_instruction(qt).to_string());
-                vars.insert("dimensions", dimensions_str.clone());
-                vars.insert("qa_type", qt_str.to_string());
-                vars.insert("expertise", expertise.to_string());
-                vars.insert("source", tc.source.clone());
-                vars.insert("dc_type", dc_type.to_string());
-                vars.insert("dc_subject", dc_subject.clone());
-                vars.insert("consolidated_from", consolidated_from);
+                let qa_type = *rotation
+                    .get(ordinal % rotation.len())
+                    .ok_or_else(|| McpToolError::invalid_argument("Empty QA type rotation"))?;
+                let kind = qa_type_str(qa_type);
+                let type_ordinal = type_ordinals.entry(kind).or_default();
+                let prompt_id = qa_prompt_id(&chunk.source, &chunk.entity_ref, kind, *type_ordinal);
+                *type_ordinal += 1;
+                let mut tags: Vec<_> = chunk.ontology_tags.iter().collect();
+                tags.sort_by(|a, b| a.0.cmp(b.0));
+                let mut vars = HashMap::new();
+                vars.insert("qa_instruction", qa_type_instruction(qa_type).to_string());
+                vars.insert("dimensions", chunk.dimensions.join(", "));
+                vars.insert("qa_type", kind.to_string());
+                vars.insert("expertise", chunk.expertise_level.as_str().to_string());
+                vars.insert("source", chunk.source.clone());
+                vars.insert("dc_type", chunk.dc_type.clone());
+                vars.insert("dc_subject", chunk.dc_subject.join(", "));
+                vars.insert("consolidated_from", chunk.consolidated_from.join(", "));
                 vars.insert(
                     "ontology_tags",
-                    if tags_str.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        tags_str.clone()
-                    },
+                    tags.into_iter()
+                        .map(|(namespace, concepts)| {
+                            format!("{namespace}: {}", concepts.join(", "))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | "),
                 );
                 vars.insert("context_passages", context_text.clone());
-                vars.insert("concept_graph", concept_graph_text.clone());
-                vars.insert("knowledge_graph", kg_text.clone());
+                vars.insert("concept_graph", chunk.concepts.join(", "));
+                vars.insert("knowledge_graph", assertions.join("\n"));
                 let system = render_docproc_template("build-prompts", &vars);
-                let system = if system.is_empty() {
-                    // Fallback if template not found
-                    format!(
-                        "You are a training data generator. Given a primary passage, generate ONE question-answer pair grounded in the passage's actual content. Calibrate question depth to the expertise level indicated below.\n\n{}\n\n## Ontological Context\n5W1H: [{}]. QA at {} for {} expertise.\nSource: {}. Tags: {}\n\n## Context Passages\n{}\n\n## Knowledge Graph\n{}",
-                        qa_type_instruction(qt),
-                        dimensions_str,
-                        qt_str,
-                        expertise,
-                        tc.source,
-                        if tags_str.is_empty() {
-                            "(none)"
-                        } else {
-                            &tags_str
-                        },
-                        context_text,
-                        kg_text
-                    )
-                } else {
-                    system
-                };
-
-                // The prepared record owns the complete instructions, including
-                // the response contract; transports must never wrap it again.
+                if system.is_empty() {
+                    return Err(McpToolError::failed_precondition(
+                        "Required docproc/build-prompts template is unavailable",
+                    ));
+                }
+                let primary =
+                    json!({"chunk_ref":chunk.entity_ref,"source":chunk.source,"text":chunk.text});
                 let prompt = PreparedQaPrompt {
-                    prompt_id: format!("qa-{}", ti + 1),
-                    chunk_ref: tc.entity_ref.clone(),
-                    source: tc.source.clone(),
-                    concepts: tc.concepts.clone(),
-                    salience: f64::from(tc.salience),
-                    qa_type: qt_str.to_string(),
+                    prompt_id,
+                    chunk_ref: chunk.entity_ref.clone(),
+                    source: chunk.source.clone(),
+                    concepts: chunk.concepts.clone(),
+                    salience: f64::from(chunk.salience),
+                    qa_type: kind.to_string(),
                     system: format!(
-                        "{system}\n\nRespond only in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"{qt_str}\"}}]}}. Question and answer must be non-empty; bloom_level must be {qt_str}."
+                        "{system}\n\n{QA_RESPONSE_CONTRACT}\nRequested bloom_level: {kind}."
                     ),
                     user: format!(
-                        "Generate a {} QA pair from this passage:\n\n---\n{}\n---\n\nConcepts: {}\n\nSource chunk_ref: {}",
-                        qt_str,
-                        tc.text,
-                        tc.concepts.join(", "),
-                        tc.entity_ref
+                        "Generate a {kind} QA pair from this primary passage (explicit source and chunk identities):\n{primary}"
                     ),
                 };
                 prompt.validate()?;
-                out.push_str(&serde_json::to_string(&prompt).map_err(|error| {
-                    McpToolError::internal(format!("Cannot serialize prepared QA prompt: {error}"))
+                output.push_str(&serde_json::to_string(&prompt).map_err(|error| {
+                    McpToolError::internal(format!("Cannot serialize prepared QA: {error}"))
                 })?);
-                out.push('\n');
-                ti += 1;
+                output.push('\n');
+                written += 1;
             }
         }
-
-        crate::helpers::write_contained(&output, &out)?;
-
-        let result = json!({
-            "total_chunks": total,
-            "prompts_written": ti,
-            "output": output,
-        });
-        Ok(result)
+        crate::helpers::write_contained(&request.output, &output)?;
+        Ok(
+            json!({"total_chunks":chunks.len(), "prompts_written":written, "output":request.output,
+            "context_enabled":request.context_k > 0, "context_links":context_links,
+            "context_scope":"complete_source", "stored_passages":passages.len()}),
+        )
     }
 }
+
+#[cfg(test)]
+#[path = "prompt_builder_tests.rs"]
+mod tests;
 
 impl Default for PromptBuilderService {
     fn default() -> Self {

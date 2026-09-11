@@ -14,9 +14,10 @@ use crate::{
     render_docproc_template, tool, tool_router,
 };
 use hkask_inference::model_constants::classifier_model;
-use hkask_types::corpus::TaggedChunk;
+use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Maximum length of a single concept string after normalization.
 /// Guards against LLM-produced or injected oversized concept strings that
@@ -37,57 +38,88 @@ struct InputChunk {
     word_count: usize,
 }
 
-/// Coerce JSON values that may be strings or arrays of strings into
-/// `Vec<String>` values within a `HashMap<String, Vec<String>>`. Models
-/// sometimes return `{"fibo": "concept"}` instead of `{"fibo": ["concept"]}`
-/// — this deserializer handles both forms uniformly at the field level.
-fn coerce_string_or_array<'de, D>(
-    deserializer: D,
-) -> Result<std::collections::HashMap<String, Vec<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
-    let map: std::collections::HashMap<String, serde_json::Value> =
-        std::collections::HashMap::deserialize(deserializer)?;
-    let mut result: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for (ns, val) in map {
-        let concepts: Vec<String> = match val {
-            serde_json::Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect(),
-            serde_json::Value::String(s) => vec![s],
-            _ => Vec::new(),
-        };
-        if !concepts.is_empty() {
-            result.insert(ns, concepts);
-        }
-    }
-    Ok(result)
-}
-
 /// Ontology tags extracted by the LLM from a passage.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 struct OntologyTags {
     /// 5W1H interrogatory dimensions (at least one required).
-    #[serde(default)]
     dimensions: Vec<String>,
     /// Dublin Core BIBO type (e.g., "bibo:Book").
-    #[serde(default)]
     dc_type: String,
     /// Dublin Core subject keywords.
-    #[serde(default)]
     dc_subject: Vec<String>,
     /// Flexible ontology tags keyed by namespace (e.g., "fibo", "golem", "pko", "other").
-    /// Values may be strings or arrays — `coerce_string_or_array` handles both.
-    #[serde(default, deserialize_with = "coerce_string_or_array")]
     ontology_tags: std::collections::HashMap<String, Vec<String>>,
     /// Expertise level — deserialized via `ExpertiseLevel`'s custom serde,
     /// which maps invalid strings to `Analyst`.
-    #[serde(default)]
     expertise_level: hkask_types::corpus::ExpertiseLevel,
+}
+
+/// Both array entries and singleton responses use this same required identity.
+#[derive(Deserialize)]
+struct TagResponse {
+    chunk_ref: String,
+    #[serde(flatten)]
+    tags: OntologyTags,
+}
+
+/// Accept a response only when it covers exactly this batch's identity set.
+/// Validate before publishing anything: a malformed batch cannot spill into its neighbor.
+fn correlate_tags(
+    text: &str,
+    chunks: &[InputChunk],
+) -> Result<HashMap<String, OntologyTags>, String> {
+    let cleaned = extract_json_from_response(text);
+    let value: serde_json::Value =
+        serde_json::from_str(&cleaned).map_err(|error| format!("invalid tagging JSON: {error}"))?;
+    let entries = match value {
+        serde_json::Value::Array(entries) => entries,
+        serde_json::Value::Object(_) if chunks.len() == 1 => vec![value],
+        _ => {
+            return Err("expected tagging JSON array (singleton object only for one input)".into());
+        }
+    };
+    let expected: HashSet<&str> = chunks
+        .iter()
+        .map(|chunk| chunk.entity_ref.as_str())
+        .collect();
+    let mut correlated = HashMap::new();
+    for entry in entries {
+        let response: TagResponse = serde_json::from_value(entry)
+            .map_err(|error| format!("invalid tagging JSON entry: {error}"))?;
+        if !expected.contains(response.chunk_ref.as_str()) {
+            return Err(format!("unknown chunk_ref: {}", response.chunk_ref));
+        }
+        if correlated.contains_key(&response.chunk_ref) {
+            return Err(format!("duplicate chunk_ref: {}", response.chunk_ref));
+        }
+        correlated.insert(response.chunk_ref, validate_ontology_tags(response.tags));
+    }
+    let omitted: Vec<&str> = chunks
+        .iter()
+        .map(|chunk| chunk.entity_ref.as_str())
+        .filter(|id| !correlated.contains_key(*id))
+        .collect();
+    if !omitted.is_empty() {
+        return Err(format!("omitted chunk_ref(s): {}", omitted.join(", ")));
+    }
+    Ok(correlated)
+}
+
+fn fallback_tags() -> OntologyTags {
+    OntologyTags {
+        dimensions: vec!["what".into()],
+        dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.into(),
+        ..Default::default()
+    }
+}
+
+/// A byte budget, rounded down to a UTF-8 character boundary.
+fn utf8_prefix(text: &str, max_bytes: usize) -> &str {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
@@ -96,6 +128,20 @@ fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
     let mut chunks = read_jsonl_stream::<InputChunk>(path, "chunks_jsonl")?;
     if chunks.is_empty() {
         return Err(McpToolError::invalid_argument("chunks_jsonl is empty"));
+    }
+    let mut refs = HashSet::new();
+    for chunk in &chunks {
+        if chunk.entity_ref.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "entity_ref must be nonblank",
+            ));
+        }
+        if !refs.insert(&chunk.entity_ref) {
+            return Err(McpToolError::invalid_argument(format!(
+                "duplicate entity_ref: {}",
+                chunk.entity_ref
+            )));
+        }
     }
     // Sanitize control characters from PDF extraction. pdftotext maps
     // mathematical symbols to raw C0 control bytes when PDFs use custom
@@ -199,11 +245,9 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
         let mut norm = normalize_concept(c);
         if norm.len() > MAX_CONCEPT_LEN {
             // Truncate at a word boundary if possible, else hard truncate.
-            if let Some(last_space) = norm[..MAX_CONCEPT_LEN].rfind(' ') {
-                norm.truncate(last_space);
-            } else {
-                norm.truncate(MAX_CONCEPT_LEN);
-            }
+            let prefix = utf8_prefix(&norm, MAX_CONCEPT_LEN);
+            let end = prefix.rfind(' ').unwrap_or(prefix.len());
+            norm.truncate(end);
         }
         if !norm.is_empty() && seen.insert(norm.clone()) && out.len() < MAX_CONCEPTS_PER_NS {
             out.push(norm);
@@ -223,9 +267,6 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_tag_chunks", async {
             let chunks = read_input_chunks(&req.chunks_jsonl)?;
-            if chunks.is_empty() {
-                return Err(McpToolError::invalid_argument("chunks_jsonl is empty"));
-            }
             let total = chunks.len();
             tracing::info!("  Tagging {} chunks with ontology dimensions...", total);
 
@@ -251,15 +292,7 @@ impl CorpusServer {
             })?;
             let batch_size = req.tag_batch_size.max(1);
 
-            // Results: index → OntologyTags
-            let results: Arc<std::sync::Mutex<Vec<Option<OntologyTags>>>> =
-                Arc::new(std::sync::Mutex::new(
-                    (0..total).map(|_| None).collect(),
-                ));
-
             let start_time = std::time::Instant::now();
-            let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
             // Group chunks into batches of `batch_size` for batched LLM calls.
             // Each batch sends N chunks in a single prompt and expects a JSON
@@ -291,9 +324,7 @@ impl CorpusServer {
             for (batch_idx, (start_idx, batch_chunks)) in batches.into_iter().enumerate() {
                 let router = Arc::clone(&router);
                 let limiter = limiter.clone();
-                let results = Arc::clone(&results);
-                let completed = Arc::clone(&completed);
-                let failed = Arc::clone(&failed);
+
                 let model_override = model_override.clone();
                 let batch_len = batch_chunks.len();
 
@@ -314,7 +345,7 @@ impl CorpusServer {
                         .enumerate()
                         .map(|(i, chunk)| {
                             format!(
-                                "--- Passage {} (chunk {}, source: {}) ---\n{}\n",
+                                "--- Passage {} (chunk_ref: {}, source: {}) ---\n{}\n",
                                 i + 1,
                                 chunk.entity_ref,
                                 chunk.source,
@@ -328,20 +359,9 @@ impl CorpusServer {
                     template_vars.insert("passages_block", passages_block);
                     template_vars.insert("batch_count", batch_len.to_string());
                     let prompt = render_docproc_template("tag-chunks-batch", &template_vars);
-                    let prompt = if prompt.is_empty() {
-                        // Fallback if template not found — compact inline prompt.
-                        let mut p = format!("Tag each passage below. Respond with a JSON array of {batch_len} objects.\n\n");
-                        for (i, chunk) in batch_chunks.iter().enumerate() {
-                            p.push_str(&format!("--- Passage {} ---\n{}\n\n", i + 1, chunk.text));
-                        }
-                        p.push_str(&format!(
-                            "Return a JSON array now. Schema: {{\"dimensions\":[\"what\"],\"dc_type\":\"{}\",\"dc_subject\":[],\"ontology_tags\":{{}},\"expertise_level\":\"analyst\"}}",
-                            hkask_bridge_ontology::dc_bibo::DOCUMENT
-                        ));
-                        p
-                    } else {
-                        prompt
-                    };
+                    if prompt.is_empty() {
+                        return Err("tag-chunks-batch template missing or failed to render".to_string());
+                    }
 
                     let params = LLMParameters {
                         temperature: 0.1,
@@ -355,7 +375,7 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    let response: Option<_> = match retry_with_backoff(
+                    let response = match retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
                         &format!("batch {batch_idx} of {batch_len}"),
@@ -365,7 +385,7 @@ impl CorpusServer {
                     {
                         Ok(resp) => {
                             slot.report_success();
-                            Some(resp)
+                            resp
                         }
                         Err(e) => {
                             slot.report_failure();
@@ -379,109 +399,68 @@ impl CorpusServer {
                                 error = %e,
                                 "LLM call failed after retries — chunks will get fallback tags"
                             );
-                            None
+                            return Err(format!("inference failed after retries: {e}"));
                         }
                     };
 
-                    // Parse the JSON array response.
-                    let parsed_tags: Vec<OntologyTags> = response
-                        .as_ref()
-                        .and_then(|resp| {
-                            let cleaned = extract_json_from_response(&resp.text);
-                            // Try array first, then single object (model may return
-                            // a single object for a 1-chunk batch).
-                            // The `coerce_string_or_array` deserializer on
-                            // `ontology_tags` handles string-or-array values.
-                            let result = serde_json::from_str::<Vec<OntologyTags>>(&cleaned)
-                                .ok()
-                                .or_else(|| {
-                                    serde_json::from_str::<OntologyTags>(&cleaned)
-                                        .ok()
-                                        .map(|t| vec![t])
-                                });
-                            if result.is_none() {
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.tag_chunks",
-                                    batch = batch_idx,
-                                    chunks = batch_len,
-                                    response_len = resp.text.len(),
-                                    response_preview = %&resp.text[..resp.text.len().min(500)],
-                                    "JSON parse failed — chunks will get fallback tags",
-                                );
-                            } else if let Some(ref tags) = result {
-                                if tags.len() < batch_len {
-                                    tracing::warn!(
-                                        target: "hkask.mcp.docproc.tag_chunks",
-                                        batch = batch_idx,
-                                        expected = batch_len,
-                                        parsed = tags.len(),
-                                        "Partial parse — {} of {} chunks tagged, rest get fallback",
-                                        tags.len(),
-                                        batch_len,
-                                    );
-                                }
-                            }
-                            result
-                        })
-                        .unwrap_or_default();
-
-                    // Map parsed tags back to individual chunk indices.
-                    {
-                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
-                        for (i, tags) in parsed_tags.into_iter().enumerate() {
-                            if start_idx + i < results.len() {
-                                let validated = validate_ontology_tags(tags);
-                                results[start_idx + i] = Some(validated);
-                                completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                        // Fallback for chunks that didn't get tags
-                        for i in 0..batch_len {
-                            if results[start_idx + i].is_none() {
-                                results[start_idx + i] = Some(OntologyTags {
-                                    dimensions: vec!["what".to_string()],
-                                    dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
-                                    dc_subject: Vec::new(),
-                                    ontology_tags: std::collections::HashMap::new(),
-                                    expertise_level: hkask_types::corpus::ExpertiseLevel::default(),
-                                });
-                                failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
+                    let result = correlate_tags(&response.text, &batch_chunks);
+                    if let Err(error) = &result {
+                        tracing::warn!(
+                            target: "hkask.mcp.docproc.tag_chunks",
+                            batch = batch_idx,
+                            error = %error,
+                            response_preview = %utf8_prefix(&response.text, 500),
+                            "Tag response rejected — batch will get visible fallback outcomes"
+                        );
                     }
+                    result
 
                 });
-                handles.push(handle);
+                handles.push((start_idx, batch_len, handle));
             }
 
-            for handle in handles {
-                if let Err(join_err) = handle.await {
-                    tracing::warn!(
-                        target: "hkask.mcp.docproc.tagging",
-                        error = %join_err,
-                        "tagging batch task join failed"
-                    );
+            // Only the owner records terminal outcomes. Batch identities survive
+            // a panic because they are retained outside the spawned task.
+            let mut results = Vec::with_capacity(total);
+            for (start_idx, batch_len, handle) in handles {
+                let outcome = match handle.await {
+                    Ok(result) => result,
+                    Err(error) => Err(format!("tagging batch task join failed: {error}")),
+                };
+                match outcome {
+                    Ok(mut tags) => {
+                        for chunk in &chunks[start_idx..start_idx + batch_len] {
+                            let tags = tags.remove(&chunk.entity_ref).ok_or_else(|| {
+                                McpToolError::internal("validated tagging response lost chunk_ref")
+                            })?;
+                            results.push((tags, ClassificationOutcome::Classified));
+                        }
+                    }
+                    Err(reason) => {
+                        tracing::warn!(start_idx, batch_len, %reason, "Tagging batch failed");
+                        for _ in 0..batch_len {
+                            results.push((
+                                fallback_tags(),
+                                ClassificationOutcome::Failed { reason: reason.clone() },
+                            ));
+                        }
+                    }
                 }
             }
 
-            let c = completed.load(std::sync::atomic::Ordering::Relaxed);
-            let f = failed.load(std::sync::atomic::Ordering::Relaxed);
+            let c = results.iter().filter(|(_, outcome)| matches!(outcome, ClassificationOutcome::Classified)).count();
+            let f = results.iter().filter(|(_, outcome)| matches!(outcome, ClassificationOutcome::Failed { .. })).count();
+            if c + f != total {
+                return Err(McpToolError::internal("tagging outcome count does not match input count"));
+            }
             let elapsed = start_time.elapsed().as_secs_f64();
             tracing::info!("  Tagged: {} ok, {} failed, {:.1}s", c, f, elapsed);
 
             // Build tagged chunk outputs with salience
-            let tags_guard = results.lock().unwrap_or_else(|e| e.into_inner());
             let mut tagged: Vec<TaggedChunk> = chunks
                 .iter()
-                .enumerate()
-                .map(|(i, chunk)| {
-                    let tags = tags_guard[i].clone().unwrap_or_else(|| OntologyTags {
-                        dimensions: vec!["what".to_string()],
-                        dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
-                        dc_subject: Vec::new(),
-                        ontology_tags: std::collections::HashMap::new(),
-                        expertise_level: hkask_types::corpus::ExpertiseLevel::default(),
-                    });
+                .zip(results)
+                .map(|(chunk, (tags, classification))| {
 
                     // Union all ontology_tags values, normalized for graph consistency.
                     // The salience graph keys on exact strings, so case/whitespace
@@ -511,6 +490,7 @@ impl CorpusServer {
                     }
                     TaggedChunk {
                         entity_ref: chunk.entity_ref.clone(),
+                        classification,
                         source: chunk.source.clone(),
                         text: chunk.text.clone(),
                         word_count: chunk.word_count,
@@ -526,12 +506,12 @@ impl CorpusServer {
                     }
                 })
                 .collect();
-            drop(tags_guard);
+
 
             // Compute salience
             let salience_scores = compute_salience(&tagged);
-            for (i, s) in salience_scores.iter().enumerate() {
-                tagged[i].salience = *s;
+            for (chunk, score) in tagged.iter_mut().zip(salience_scores) {
+                chunk.salience = score;
             }
 
             // Write output JSONL
@@ -610,3 +590,7 @@ pub(crate) struct TagChunksRequest {
 fn default_tag_concurrency() -> usize {
     crate::max_concurrency()
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

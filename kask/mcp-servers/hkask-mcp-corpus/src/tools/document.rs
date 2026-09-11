@@ -276,7 +276,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Chunk text using approximate token targets converted to whitespace-word budgets (not tokenizer counts). Explicit overlap_tokens repeats context; omitted overlap preserves legacy non-overlap behavior. Accepts text, document path, or directory of extracted TXT files. Supports single-tier or per-file multi-tier output."
+        description = "Chunk text using approximate token targets converted to whitespace-word budgets (not tokenizer counts). overlap_tokens repeats source context, using the schema default when omitted; zero disables repetition. All modes use the same bounded structural/sentence window engine. Accepts text, document path, or directory of extracted TXT files; supports single-tier or per-file multi-tier output."
     )]
     pub async fn corpus_chunk(
         &self,
@@ -381,8 +381,7 @@ impl CorpusServer {
             // Resolve the source text
             let mut source_text: String;
             let source_label: String;
-            // Structure from office-format backends — enables section-aware chunking.
-            let mut source_structure: Option<hkask_types::document::DocStructure> = None;
+
 
             if let Some(ref raw_text) = text
                 && !raw_text.is_empty()
@@ -408,7 +407,7 @@ impl CorpusServer {
                         structure: Some(doc_structure),
                         ..
                     } => {
-                        // Preserve structure for section-aware chunking later.
+                        // Preserve rendered heading markers for shared structural splitting.
                         let structure_text = doc_structure.text();
                         source_text = if structure_text.split_whitespace().count()
                             >= extracted.split_whitespace().count()
@@ -417,7 +416,7 @@ impl CorpusServer {
                         } else {
                             extracted
                         };
-                        source_structure = Some(doc_structure);
+
                     }
                     ExtractOutcome::Success {
                         text: extracted, ..
@@ -448,10 +447,6 @@ impl CorpusServer {
                                 .await
                             {
                                 Ok(outcome) => {
-                                    source_structure = Some(crate::backend::markdown_to_structure(
-                                        &outcome.text,
-                                        "pdf",
-                                    ));
                                     source_text = outcome.text;
                                 }
                                 Err(error) => {
@@ -495,10 +490,6 @@ impl CorpusServer {
                                 .await
                             {
                                 Ok(outcome) => {
-                                    source_structure = Some(crate::backend::markdown_to_structure(
-                                        &outcome.text,
-                                        "pdf",
-                                    ));
                                     source_text = outcome.text;
                                 }
                                 Err(error) => {
@@ -536,10 +527,10 @@ impl CorpusServer {
 
             if let Some([coarse_bounds, medium_bounds, fine_bounds]) = tier_bounds {
                 let chunk_tier = |tier: &str, bounds: &crate::helpers::ChunkWordBounds| {
-                    crate::text::chunk_text_with_overlap(
+                    chunk_structure(
                         &processed,
                         &format!("{source_ref}:{tier}"),
-                        (bounds.max_words / 4).max(1),
+                        bounds.min_words,
                         bounds.max_words,
                         boundary,
                         bounds.overlap_words,
@@ -553,7 +544,7 @@ impl CorpusServer {
                 let result = json!({
                     "source": source_label,
                     "multi_tier": true,
-                    "overlap_tokens": overlap_tokens.unwrap_or(0),
+                    "overlap_tokens": coarse_bounds.overlap_tokens,
                     "overlap_words": coarse_bounds.overlap_words,
                     "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
                     "coarse_max_tokens": coarse_max_tokens.unwrap_or(2048),
@@ -586,29 +577,9 @@ impl CorpusServer {
                 let max_words = bounds.max_words;
                 let min_words = bounds.min_words;
 
-                // Explicit overlap crosses section boundaries over the cleaned source.
-                // Without overlap, retain legacy office-format section grouping.
-                let passages = if bounds.overlap_words > 0 {
-                    crate::text::chunk_text_with_overlap(
-                        &processed, &source_ref, min_words, max_words, boundary, bounds.overlap_words,
-                    )?
-                } else if let Some(ref structure) = source_structure {
-                    chunk_structure(
-                        structure,
-                        &source_ref,
-                        min_words,
-                        max_words,
-                        boundary,
-                    )
-                } else {
-                    crate::text::chunk_text(
-                        &processed,
-                        &source_ref,
-                        min_words,
-                        max_words,
-                        boundary,
-                    )
-                };
+                let passages = chunk_structure(
+                    &processed, &source_ref, min_words, max_words, boundary, bounds.overlap_words,
+                )?;
 
                 let total_passages = passages.len();
                 let serialized = serialize_passages(&passages);
@@ -629,7 +600,7 @@ impl CorpusServer {
                     "total_passages": total_passages,
                     "passages": serialized,
                     "max_tokens": bounds.max_tokens,
-                    "overlap_tokens": overlap_tokens.unwrap_or(0),
+                    "overlap_tokens": bounds.overlap_tokens,
                     "overlap_words": bounds.overlap_words,
                     "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
                     "max_words": max_words,
@@ -933,14 +904,15 @@ pub(crate) struct ChunkRequest {
     /// Prefix for entity references in chunk output.
     pub entity_ref_prefix: String,
     /// Approximate token target (single-tier). floor(tokens / 1.33) words, not a
-    /// tokenizer limit. Must be >= 2. Default from HkaskSettings. Without explicit
-    /// overlap, legacy sentence-boundary splitting can exceed the word target.
+    /// tokenizer limit. Must be >= 2 and exceed overlap. Default from HkaskSettings.
+    /// Structural/sentence boundaries are preferred within the word budget.
     #[serde(default)]
     pub max_tokens: Option<usize>,
-    /// Explicit repeated context in all modes: floor(tokens / 1.33) words.
-    /// Must be 0 or >= 2 and smaller than every active chunk budget. Omitted:
-    /// no repetition, preserving legacy behavior (the old 64 was a size floor).
+    /// Repeated context in all modes: floor(tokens / 1.33) words.
+    /// Omitted uses the schema default. Zero disables repetition; positive values
+    /// must yield a word and be smaller than every active chunk budget.
     #[serde(default)]
+    #[schemars(default = "chunk_overlap_default")]
     pub overlap_tokens: Option<usize>,
     /// Strip Project Gutenberg headers from text before chunking.
     #[serde(default)]
@@ -964,6 +936,10 @@ pub(crate) struct ChunkRequest {
     /// Pages outside the set are skipped before chunking. Mirrors `corpus_convert`.
     #[serde(default)]
     pub target_pages: Option<String>,
+}
+
+fn chunk_overlap_default() -> Option<usize> {
+    Some(crate::helpers::ChunkWordBounds::default().overlap_tokens)
 }
 
 pub(crate) fn default_true() -> bool {

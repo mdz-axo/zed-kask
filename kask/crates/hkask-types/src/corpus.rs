@@ -7,6 +7,40 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// A source-attributed, exact quotation. This records a citation, not a verdict
+/// about the semantic support of the generated answer (PROV-O / Dublin Core).
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct QaEvidence {
+    pub chunk_ref: String,
+    pub source: String,
+    pub quote: String,
+}
+
+impl QaEvidence {
+    pub fn is_complete(&self) -> bool {
+        [&self.chunk_ref, &self.source, &self.quote]
+            .iter()
+            .all(|value| !value.trim().is_empty())
+    }
+}
+
+/// Portable, deterministic prompt identity, independent of input partition and
+/// iteration order. Length framing prevents delimiter collisions; UUIDv5 is
+/// already the shared types crate's deterministic identity primitive.
+pub fn qa_prompt_id(source: &str, chunk_ref: &str, qa_type: &str, ordinal: usize) -> String {
+    let name = format!(
+        "corpus-qa:{}:{source}{}:{chunk_ref}{}:{qa_type}:{ordinal}",
+        source.len(),
+        chunk_ref.len(),
+        qa_type.len()
+    );
+    format!(
+        "qa-{}",
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, name.as_bytes())
+    )
+}
+
 /// Expertise level supported by the corpus pipeline.
 ///
 /// Closed enum — the LLM may produce arbitrary strings, but the tagging
@@ -179,6 +213,20 @@ pub struct ChunkOntology {
     pub method_signals: Option<MethodSignals>,
 }
 
+/// Evidence that a chunk's tags came from a validated, identity-correlated response.
+/// This field is required on disk: records without status must be retagged, not
+/// silently promoted to classified. Synthesized text has not itself been tagged.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ClassificationOutcome {
+    Classified,
+    Failed {
+        reason: String,
+    },
+    #[default]
+    Unverified,
+}
+
 /// A chunk annotated with multi-dimensional ontology tags.
 ///
 /// This is the canonical type that flows through the entire corpus pipeline.
@@ -201,6 +249,8 @@ pub struct ChunkOntology {
 pub struct TaggedChunk {
     /// Unique entity reference (e.g., "corpus:researcher:Damodaran-ROIC_pdf_txt:119").
     pub entity_ref: String,
+    /// Required terminal tagging outcome; fallback annotations are never classified.
+    pub classification: ClassificationOutcome,
     /// Source file name (e.g., "Damodaran-ROIC.pdf.txt").
     pub source: String,
     /// The chunk text content.

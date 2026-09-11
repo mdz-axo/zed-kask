@@ -133,6 +133,10 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
             ])
             .env("KASK_T18_TAG_FIXTURE", "1")
             .env("HKASK_CLASSIFIER_MODEL", "offline")
+            .env(
+                "HKASK_TEMPLATE_ROOT",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry"),
+            )
             .output()
             .await
             .expect("run isolated tagging test");
@@ -145,13 +149,13 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         return;
     }
     for response in [
-        json!([{"dimensions":["what"], "ontology_tags":{}, "method_signals":{"word_count":999}}])
+        json!([{"chunk_ref":"style:test:1", "dimensions":["what"], "dc_type":"bibo:Document", "dc_subject":[], "ontology_tags":{}, "expertise_level":"analyst", "method_signals":{"word_count":999}}])
             .to_string(),
         "not JSON".to_string(),
     ] {
         let directory = fixture();
         let port = Arc::new(RecordingPort {
-            response: Some(response),
+            response: Some(response.clone()),
             ..Default::default()
         });
         let server = server(Arc::clone(&port));
@@ -177,6 +181,7 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         let row: Value =
             serde_json::from_str(&std::fs::read_to_string(output).expect("tagged output"))
                 .expect("tagged row");
+        assert_eq!(row["classification"]["status"], if response.starts_with('[') { "classified" } else { "failed" });
         let expected = hkask_memory::salience::compute_method_signals(text);
         assert_eq!(
             row["ontology"]["method_signals"],
@@ -872,7 +877,7 @@ async fn retrieval_consolidation_survives_restart() {
     let port = Arc::new(RecordingPort::default());
     let server = server(Arc::clone(&port));
     let mut request = embed_request(directory.path(), "memory.db", ORIGINAL);
-    let chunks = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| json!({"entity_ref":entity_ref, "source":"river.txt", "text":ORIGINAL, "word_count":10, "concepts":[], "salience":0.5}));
+    let chunks = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| json!({"entity_ref":entity_ref, "classification":{"status":"classified"}, "source":"river.txt", "text":ORIGINAL, "word_count":10, "concepts":[], "salience":0.5}));
     let path = directory.path().join("tagged.jsonl");
     std::fs::write(
         &path,
@@ -911,6 +916,10 @@ async fn retrieval_consolidation_survives_restart() {
             .expect("consolidated output");
         for row in consolidated.lines() {
             let chunk: hkask_types::corpus::TaggedChunk = serde_json::from_str(row).expect("chunk");
+            assert_eq!(
+                chunk.classification,
+                hkask_types::corpus::ClassificationOutcome::Unverified
+            );
             assert_eq!(
                 chunk
                     .ontology
@@ -1282,7 +1291,7 @@ async fn consolidation_fixture(
     let mut request = embed_request(directory, "memory.db", ORIGINAL);
     let tagged = directory.join("tagged.jsonl");
     let rows = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| {
-        json!({"entity_ref":entity_ref,"source":"river.txt","text":ORIGINAL,"word_count":10,"concepts":[],"salience":0.5}).to_string()
+        json!({"entity_ref":entity_ref,"classification":{"status":"classified"},"source":"river.txt","text":ORIGINAL,"word_count":10,"concepts":[],"salience":0.5}).to_string()
     });
     std::fs::write(&tagged, rows.join("\n")).expect("tagged chunks");
     request.chunks_jsonl = tagged.to_string_lossy().into();

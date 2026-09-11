@@ -1,48 +1,6 @@
-//! Text processing utilities — pure string functions for chunking and cleaning.
-//!
-//! These functions have zero DB dependency. They delegate to the pure free
-//! functions in `hkask_memory::text_chunking` (re-exported at the crate root as
-//! `hkask_memory::chunk_text` / `hkask_memory::strip_gutenberg_headers`). This
-//! module localizes the text-processing dependency so callers don't reach
-//! through a storage type to get string utilities.
-
-/// Chunk text into passages with word-count targets and sentence-boundary splitting.
-/// Delegates to the pure free function in `hkask_memory::text_chunking`.
-pub(crate) fn chunk_text(
-    text: &str,
-    entity_ref_prefix: &str,
-    min_words: usize,
-    max_words: usize,
-    sentence_boundary: &str,
-) -> Vec<(String, String)> {
-    hkask_memory::chunk_text(
-        text,
-        entity_ref_prefix,
-        min_words,
-        max_words,
-        sentence_boundary,
-    )
-}
-
-/// Explicit repeated word context through the same canonical text chunker.
-pub(crate) fn chunk_text_with_overlap(
-    text: &str,
-    entity_ref_prefix: &str,
-    min_words: usize,
-    max_words: usize,
-    sentence_boundary: &str,
-    overlap_words: usize,
-) -> Result<Vec<(String, String)>, hkask_mcp_server::server::McpToolError> {
-    hkask_memory::text_chunking::chunk_text_with_overlap(
-        text,
-        entity_ref_prefix,
-        min_words,
-        max_words,
-        sentence_boundary,
-        overlap_words,
-    )
-    .map_err(|error| hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string()))
-}
+//! Source identity and cleaning utilities with no database dependency.
+//! Corpus chunking is adapted in `helpers::chunk_structure` and implemented
+//! by the shared word-window engine in `hkask_memory::text_chunking`.
 
 /// Reversible source component: fixed-width hex of UTF-8 bytes. Unlike replacing
 /// punctuation, this cannot alias `a.b.txt`, `a_b.txt`, or literal escape strings.

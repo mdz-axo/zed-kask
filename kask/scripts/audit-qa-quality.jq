@@ -12,6 +12,15 @@ def finding($code; $detail):
    disposition:"Re-examine the answer and its citation; do not release on this audit."};
 def source_ok: type == "object" and (.entity_ref | nonblank)
   and (.source | nonblank) and (.text | nonblank);
+def citation_ok: type == "object" and (keys | sort) == ["chunk_ref","quote","source"]
+  and (.chunk_ref | nonblank) and (.source | nonblank) and (.quote | nonblank);
+def identify($index; $ref):
+  (if $ref.chunk_ref | nonblank then ($index[$ref.chunk_ref] // []) else [] end) as $matches
+  | if ($ref.chunk_ref | nonblank | not) or ($ref.source | nonblank | not) then "missing_source_metadata"
+    elif ($matches|length) == 0 then "missing_source_chunk"
+    elif ($matches|length) > 1 then "ambiguous_source_chunk"
+    elif $matches[0].source != $ref.source then "wrong_source"
+    else "identified" end;
 def registry($id; $text; $role; $ref; $tier; $why; $check):
   {claim_id:$id, text:$text, role:$role, source_reference:$ref,
    provenance:$tier,
@@ -27,39 +36,36 @@ def audit_row($index):
   | (if $out | type == "string" then $out else "" end) as $answer
   | (if $b.evidence_quotes | type == "array" then $b.evidence_quotes else [] end) as $quotes
   | {chunk_ref:($r.chunk_ref // null), source:($r.source // null)} as $ref
-  | (if $r.chunk_ref | nonblank then ($index[$r.chunk_ref] // []) else [] end) as $matches
-  | (if ($matches|length) == 1 then $matches[0] else null end) as $chunk
-  | (if ($ref.chunk_ref | nonblank | not) or ($ref.source | nonblank | not) then "missing_source_metadata"
-     elif ($matches|length) == 0 then "missing_source_chunk"
-     elif ($matches|length) > 1 then "ambiguous_source_chunk"
-     elif $chunk.source != $ref.source then "wrong_source"
-     else "identified" end) as $source_state
+  | identify($index; $ref) as $source_state
   | ($raw.parse_error != null) as $parse_error
   | (($r.error? != null) or ($b.error? != null)) as $generation_error
   | (($b.instruction | nonblank) and ($out | nonblank)) as $shape_ok
   | ("row-\($raw.line)") as $id
-  | [$quotes | to_entries[] | . as $q
-      | (if (.value | nonblank | not) then "pending_check"
-         elif $source_state == "wrong_source" then "rejected"
-         elif $source_state != "identified" then "unavailable"
-         elif ($chunk.text | contains($q.value)) then "tool_verified"
+  | [$quotes | to_entries[] | . as $entry
+      | (if .value | type == "object" then .value else {} end) as $q
+      | {chunk_ref:($q.chunk_ref // null),source:($q.source // null)} as $citation_ref
+      | identify($index; $citation_ref) as $citation_source_state
+      | (if ($entry.value | citation_ok | not) then "pending_check"
+         elif $citation_source_state == "wrong_source" then "rejected"
+         elif $citation_source_state != "identified" then "unavailable"
+         elif ($index[$q.chunk_ref][0].text | contains($q.quote)) then "tool_verified"
          else "rejected" end) as $tier
-      | registry("\($id):citation-\(.key+1)"; .value; "cited_substring"; $ref; $tier;
-          (if $tier == "pending_check" then "The cited substring is empty or not a string; no valid citation check can run."
-           elif $source_state == "wrong_source" then "The identified chunk belongs to a different source; the supplied citation attribution is rejected."
+      | registry("\($id):citation-\($entry.key+1)"; ($q.quote // null); "cited_substring"; $citation_ref; $tier;
+          (if $tier == "pending_check" then "The citation must contain only nonblank chunk_ref, source and quote strings; no valid citation check can run."
+           elif $citation_source_state == "wrong_source" then "The identified chunk belongs to a different source; the supplied citation attribution is rejected."
            elif $tier == "unavailable" then "The named source was not consulted: its metadata or unique chunk text is unavailable in this audit."
            elif $tier == "tool_verified" then "This nonempty cited substring occurs exactly in the uniquely identified chunk with matching source metadata."
            else "The identified source was consulted and this exact cited substring was absent; the citation is rejected." end);
-          {method:"exact_nonempty_substring_and_source_identity", source_state:$source_state,
+          {method:"exact_nonempty_substring_and_source_identity", source_state:$citation_source_state,
            performed:($tier == "tool_verified" or $tier == "rejected"),
            matched:(if $tier == "tool_verified" then true elif $tier == "rejected" then false else null end)})
       + {provisional_provenance:"tool_verified"}] as $citations
-  # Only a literal JSON array of nonblank cited strings is citation-only.
+  # Only a literal JSON array of canonical citation objects is citation-only.
   # Matching ordinary prose does NOT erase its narrative field. This is a
   # deliberately narrow format, not a heuristic about a sentence's meaning.
   | (try ($answer | fromjson) catch null) as $literal
   | (if ($literal | type) == "array" and ($literal|length) > 0
-     then all($literal[]; nonblank and (. as $cell | $quotes | index($cell) != null))
+     then all($literal[]; citation_ok and (. as $cell | $quotes | index($cell) != null))
      else false end) as $citation_only
   | ($citations + (if ($answer | nonblank) and ($citation_only | not) then
       [registry("\($id):answer"; $answer; "unclassified_answer_candidate"; $ref;
@@ -71,10 +77,11 @@ def audit_row($index):
   | [if $parse_error then "invalid_json" else empty end,
      if $generation_error then "generation_error" else empty end,
      if ($shape_ok|not) then "invalid_qa_shape" else empty end,
-     if ($generated|not) then "flat_training_metadata_unavailable" else empty end,
+     if ($b.evidence_quotes | type) != "array" then "missing_or_invalid_evidence_metadata" else empty end,
      if $source_state != "identified" then $source_state else empty end,
      if ($quotes|length) == 0 then "zero_citations" else empty end,
-     if any($quotes[]; nonblank|not) then "invalid_citation" else empty end,
+     if any($quotes[]; citation_ok|not) then "invalid_citation" else empty end,
+     ($citations[] | select(.cross_check.source_state != "identified") | .cross_check.source_state),
      if ($claims|length) == 0 then "zero_claims" else empty end,
      if ($r.qa_type | nonblank | not) then "missing_qa_type"
      elif ($r.qa_type as $type | expected_types | index($type)) == null then "unknown_qa_type" else empty end,
@@ -85,9 +92,7 @@ def audit_row($index):
   | ($citation_only and ($claims|length) > 0 and $source_state == "identified"
      and all($citations[]; .cross_check.performed)) as $measurable
   | {sar:(if $measurable then ratio(([$claims[]|select(.strength>=1)]|length); ($claims|length)) else null end),
-     cvr:(if $source_state == "identified" or $source_state == "wrong_source" then
-           if all($citations[]; .cross_check.performed) then ratio(([$citations[]|select(.provenance=="tool_verified")]|length); ($citations|length)) else null end
-           else null end),
+     cvr:(if all($citations[]; .cross_check.performed) then ratio(([$citations[]|select(.provenance=="tool_verified")]|length); ($citations|length)) else null end),
      hfr:(if $measurable then ratio(([$claims[]|select(.provenance!="rejected")]|length); ($claims|length)) else null end),
      nlr:(if $citation_only then 1 else null end),
      claims_checked:([$citations[]|select(.cross_check.performed)]|length)} as $metrics
@@ -107,7 +112,7 @@ def audit_row($index):
      verification_scope_limitations:[
        "No semantic IS/OUGHT classification, entailment, completeness, reasoning quality, plausible fabrication or subject-lens check is performed.",
        "No numeric derivations are verified; platform_derived is never assigned. No cross-source congruence rules were supplied.",
-       (if $citation_only then "no narrative fields — NLR vacuous; only an explicit literal array of cited strings is covered, not a semantic claim inventory."
+       (if $citation_only then "no narrative fields — NLR vacuous; only an explicit literal array of structured citations is covered, not a semantic claim inventory."
         else "Ordinary output prose remains narrative even when it equals a source quote; extraction and narrative leak checks require semantic review." end)]};
 
 ([$chunks[] | select(.parse_error == null and (.value | source_ok)) | .value]) as $valid_sources
@@ -132,7 +137,7 @@ def audit_row($index):
 | {
   audit_kind:"mechanical_grounding_verify_subset", decoupling:"in_thread",
   inputs:{qa:$qa_path,chunks:$chunks_path},
-  target_fields:["response.output", "response.evidence_quotes"],
+  target_fields:["output", "evidence_quotes", "response.output", "response.evidence_quotes"],
   instruction_scope:"Instruction text is checked structurally only; factual premises in questions are not semantically verified.",
   status:(if ($findings|length)>0 then "findings" elif ($gaps|length)>0 then "incomplete" else "mechanical_checks_completed" end),
   launch_authorized:false,
