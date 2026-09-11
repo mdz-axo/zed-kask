@@ -2593,39 +2593,11 @@ impl Thread {
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
-        let previous_accounted_usage = self.current_request_token_usage;
-        let current_accounted_usage = TokenUsage {
-            input_tokens: previous_accounted_usage
-                .input_tokens
-                .max(update.input_tokens),
-            output_tokens: previous_accounted_usage
-                .output_tokens
-                .max(update.output_tokens),
-            cache_creation_input_tokens: previous_accounted_usage
-                .cache_creation_input_tokens
-                .max(update.cache_creation_input_tokens),
-            cache_read_input_tokens: previous_accounted_usage
-                .cache_read_input_tokens
-                .max(update.cache_read_input_tokens),
-            cost: None,
-        };
-        self.current_request_token_usage = current_accounted_usage;
-        self.cumulative_token_usage = self.cumulative_token_usage
-            + TokenUsage {
-                input_tokens: current_accounted_usage
-                    .input_tokens
-                    .saturating_sub(previous_accounted_usage.input_tokens),
-                output_tokens: current_accounted_usage
-                    .output_tokens
-                    .saturating_sub(previous_accounted_usage.output_tokens),
-                cache_creation_input_tokens: current_accounted_usage
-                    .cache_creation_input_tokens
-                    .saturating_sub(previous_accounted_usage.cache_creation_input_tokens),
-                cache_read_input_tokens: current_accounted_usage
-                    .cache_read_input_tokens
-                    .saturating_sub(previous_accounted_usage.cache_read_input_tokens),
-                cost: None,
-            };
+        accumulate_request_usage(
+            &mut self.current_request_token_usage,
+            &mut self.cumulative_token_usage,
+            update,
+        );
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -3645,20 +3617,48 @@ impl Thread {
         } else {
             None
         };
-        let stream = futures::select! {
+        let summary = futures::select! {
             result = async {
-                let request = if let Some(condenser) = condenser {
-                    cx.background_spawn(async move {
-                        let mut request = request;
-                        // The last message is the summarization instruction, not history.
+                let (mut request, split) = cx.background_spawn(async move {
+                    let mut request = request;
+                    if let Some(condenser) = condenser {
                         let end = request.messages.len().saturating_sub(1);
                         condenser.precompress_history(&mut request.messages[..end], NO_COMPRESS_TOOLS)?;
-                        anyhow::Ok(request)
-                    }).await?
-                } else {
-                    request
-                };
-                anyhow::Ok(model.stream_completion(request, cx).await?)
+                    }
+                    let split = compaction_split_point(&request.messages)?;
+                    anyhow::Ok((request, split))
+                }).await?;
+                if let Some(split) = split {
+                    let mut history = std::mem::take(&mut request.messages);
+                    let instruction = history.pop().context("Missing compaction instruction")?;
+                    let prefix_len = history.iter().take_while(|message| message.role == Role::System).count();
+                    let prefix: Vec<_> = history.drain(..prefix_len).collect();
+                    let later_history = history.split_off(split - prefix_len);
+                    let context = |text: String| LanguageModelRequestMessage {
+                        role: Role::User, content: vec![text.into()], cache: false, reasoning_details: None,
+                    };
+                    let mut earlier = request.clone();
+                    earlier.messages = prefix.clone();
+                    earlier.messages.push(context("Summarize the earlier half below. Do not infer missing context.".into()));
+                    earlier.messages.extend(history);
+                    earlier.messages.push(instruction.clone());
+                    let mut later = request.clone();
+                    later.messages = prefix.clone();
+                    later.messages.push(context("Summarize the later half below. Do not infer missing context.".into()));
+                    later.messages.extend(later_history);
+                    later.messages.push(instruction);
+                    log::info!("Compacting two chronological halves concurrently, then merging");
+                    let (earlier, later) = futures::try_join!(
+                        Self::collect_compaction_summary(this, &model, earlier, None, cx.clone()),
+                        Self::collect_compaction_summary(this, &model, later, None, cx.clone()),
+                    )?;
+                    request.messages = prefix;
+                    request.messages.push(context(format!(
+                        "Merge these chronological summaries. Preserve later corrections and unresolved conflicts.\n\nEarlier half:\n{earlier}\n\nLater half:\n{later}"
+                    )));
+                    request.messages.push(context(COMPACTION_PROMPT.into()));
+                }
+                Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
             }.fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
                 if *cancellation_rx.borrow() {
@@ -3668,64 +3668,14 @@ impl Thread {
                 return Ok(ControlFlow::Continue(()));
             }
         };
-        let mut stream = stream?;
-
-        let mut summary = String::new();
-        loop {
-            let event = futures::select! {
-                event = stream.next().fuse() => event,
-                _ = cancellation_rx.changed().fuse() => {
-                    if *cancellation_rx.borrow() {
-                        log::debug!("Compaction cancelled while summarizing");
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    continue;
-                }
-            };
-
-            let Some(event) = event else {
-                break;
-            };
-
-            match event? {
-                LanguageModelCompletionEvent::Text(text) => {
-                    summary.push_str(&text);
-                    event_stream.send_context_compaction_update(compaction_id.clone(), &text);
-                }
-                LanguageModelCompletionEvent::UsageUpdate(usage) => {
-                    this.update(cx, |this, _cx| {
-                        this.accumulate_token_usage(usage);
-                    })?;
-                }
-                LanguageModelCompletionEvent::Stop(_)
-                | LanguageModelCompletionEvent::Started
-                | LanguageModelCompletionEvent::Queued { .. }
-                | LanguageModelCompletionEvent::Thinking { .. }
-                | LanguageModelCompletionEvent::RedactedThinking { .. }
-                | LanguageModelCompletionEvent::ReasoningDetails(_)
-                | LanguageModelCompletionEvent::ToolUse(_)
-                | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::Compaction(_) => {}
-            }
-        }
+        let summary = summary?;
 
         if *cancellation_rx.borrow() {
             log::debug!("Compaction cancelled after summarizing");
             return Ok(ControlFlow::Break(()));
         }
 
-        let summary = summary.trim().to_string();
-        if summary.is_empty() {
-            log::warn!("Compaction produced an empty summary");
-            return Err(anyhow::anyhow!("Compaction produced an empty summary"));
-        }
-
         log::debug!("Compaction succeeded:\n{summary}");
-        event_stream.update_context_compaction_status(
-            compaction_id,
-            acp_thread::ContextCompactionStatus::Completed,
-        );
 
         this.update(cx, |this, cx| {
             let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
@@ -3748,7 +3698,54 @@ impl Thread {
             cx.notify();
         })?;
 
+        event_stream.update_context_compaction_status(
+            compaction_id,
+            acp_thread::ContextCompactionStatus::Completed,
+        );
         Ok(ControlFlow::Continue(()))
+    }
+
+    async fn collect_compaction_summary(
+        this: &WeakEntity<Self>,
+        model: &Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        progress: Option<(&ThreadEventStream, &acp_thread::ContextCompactionId)>,
+        mut cx: AsyncApp,
+    ) -> Result<String> {
+        let mut stream = model.stream_completion(request, &cx).await?;
+        let mut summary = String::new();
+        let mut usage = TokenUsage::default();
+        while let Some(event) = stream.next().await {
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => {
+                    summary.push_str(&text);
+                    if let Some((events, id)) = progress {
+                        events.send_context_compaction_update(id.clone(), &text);
+                    }
+                }
+                LanguageModelCompletionEvent::UsageUpdate(update) => {
+                    this.update(&mut cx, |this, _| {
+                        accumulate_request_usage(
+                            &mut usage,
+                            &mut this.cumulative_token_usage,
+                            update,
+                        );
+                        if progress.is_some() {
+                            this.current_request_token_usage = usage;
+                        }
+                    })?;
+                }
+                LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
+                    anyhow::bail!(
+                        "Compaction reached the model's output limit; no summary was saved"
+                    );
+                }
+                _ => {}
+            }
+        }
+        let summary = summary.trim().to_string();
+        anyhow::ensure!(!summary.is_empty(), "Compaction produced an empty summary");
+        Ok(summary)
     }
 
     /// Enqueue a tool result that will be delivered asynchronously. The task
@@ -5500,6 +5497,8 @@ impl Thread {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
+            // D38: helper requests must not implicitly disable a reasoning model.
+            thinking_allowed: model.supports_thinking(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
             ..Default::default()
@@ -5610,6 +5609,36 @@ impl Thread {
             }),
         }
     }
+}
+
+// Per-request high-water marks must stay separate for concurrent half-summaries.
+fn accumulate_request_usage(
+    current: &mut TokenUsage,
+    cumulative: &mut TokenUsage,
+    update: TokenUsage,
+) {
+    let previous = *current;
+    current.input_tokens = previous.input_tokens.max(update.input_tokens);
+    current.output_tokens = previous.output_tokens.max(update.output_tokens);
+    current.cache_creation_input_tokens = previous
+        .cache_creation_input_tokens
+        .max(update.cache_creation_input_tokens);
+    current.cache_read_input_tokens = previous
+        .cache_read_input_tokens
+        .max(update.cache_read_input_tokens);
+    current.cost = None;
+    *cumulative = *cumulative
+        + TokenUsage {
+            input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
+            output_tokens: current.output_tokens.saturating_sub(previous.output_tokens),
+            cache_creation_input_tokens: current
+                .cache_creation_input_tokens
+                .saturating_sub(previous.cache_creation_input_tokens),
+            cache_read_input_tokens: current
+                .cache_read_input_tokens
+                .saturating_sub(previous.cache_read_input_tokens),
+            cost: None,
+        };
 }
 
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
@@ -6040,6 +6069,58 @@ pub(crate) fn drain_completed_deferred_results(
     }
     *deferred_results = remaining;
     completed
+}
+
+/// Choose a roughly byte-balanced boundary after a complete assistant response
+/// or tool exchange. Bytes balance the halves; they do not certify token fit.
+fn compaction_split_point(messages: &[LanguageModelRequestMessage]) -> Result<Option<usize>> {
+    let start = messages
+        .iter()
+        .take_while(|message| message.role == Role::System)
+        .count();
+    let end = messages.len().saturating_sub(1); // final summarization instruction
+    if start >= end {
+        return Ok(None);
+    }
+    let history = &messages[start..end];
+    let sizes = history
+        .iter()
+        .map(|message| serde_json::to_vec(message).map(|bytes| bytes.len()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let target = sizes.iter().sum::<usize>() / 2;
+    let mut outstanding = HashSet::default();
+    let mut bytes = 0usize;
+    let mut best: Option<(usize, usize)> = None;
+    for (index, (message, size)) in history.iter().zip(sizes).enumerate() {
+        let mut has_result = false;
+        for part in &message.content {
+            match part {
+                MessageContent::ToolUse(call) => {
+                    outstanding.insert(&call.id);
+                }
+                MessageContent::ToolResult(result) => {
+                    has_result = true;
+                    if !outstanding.remove(&result.tool_use_id) {
+                        return Ok(None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        bytes += size;
+        let cut = start + index + 1;
+        if cut < end && outstanding.is_empty() && (message.role == Role::Assistant || has_result) {
+            let distance = bytes.abs_diff(target);
+            if best.is_none_or(|(_, previous)| distance < previous) {
+                best = Some((cut, distance));
+            }
+        }
+    }
+    Ok(if outstanding.is_empty() {
+        best.map(|(cut, _)| cut)
+    } else {
+        None
+    })
 }
 
 /// Describes where a streamed compaction summary should land in the thread
@@ -9248,6 +9329,7 @@ mod tests {
         // A context window below the minimum and no recorded token usage would
         // both disable *automatic* compaction. Manual compaction forces it anyway.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        model.set_supports_thinking(true);
         let user_message_id = ClientUserMessageId::new();
         let compact_message_id = ClientUserMessageId::new();
 
@@ -9279,6 +9361,10 @@ mod tests {
             Some(CompletionIntent::ThreadContextSummarization)
         );
         crate::set_thread_condenser(None);
+        assert!(
+            compaction_request.thinking_allowed,
+            "reasoning-capable compaction model must not receive an implicit disable"
+        );
         let compaction_texts = request_texts_after_system(&compaction_request.messages);
         assert_eq!(compaction_texts.len(), 3);
         assert_eq!(compaction_texts[0], "old user");
@@ -9322,6 +9408,151 @@ mod tests {
                 assert!(matches!(&*thread.messages[0], Message::User(_)));
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
             });
+        });
+    }
+
+    fn two_half_compaction_history() -> Vec<Arc<Message>> {
+        let evidence = |id: &str, text: &str| {
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![tool_use(id, "terminal")],
+                tool_results: IndexMap::from_iter([(
+                    id.into(),
+                    LanguageModelToolResult {
+                        tool_use_id: id.into(),
+                        tool_name: "terminal".into(),
+                        is_error: false,
+                        content: vec![text.to_string().into()],
+                        output: None,
+                    },
+                )]),
+                reasoning_details: None,
+            }))
+        };
+        vec![
+            user_text_message(ClientUserMessageId::new(), "Keep authentication."),
+            evidence("earlier", "Earlier evidence."),
+            user_text_message(
+                ClientUserMessageId::new(),
+                "Correction: preserve the error type too.",
+            ),
+            evidence("later", "Later evidence."),
+        ]
+    }
+
+    #[gpui::test]
+    async fn test_two_half_compaction_runs_concurrently_then_merges_in_order(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_supports_thinking(true);
+        let original = two_half_compaction_history();
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = model.pending_completions();
+        assert_eq!(
+            requests.len(),
+            2,
+            "both halves must be dispatched before either completes"
+        );
+        let earlier = requests
+            .iter()
+            .find(|r| {
+                r.messages
+                    .iter()
+                    .any(|m| m.string_contents() == "Keep authentication.")
+            })
+            .expect("earlier half");
+        let later = requests
+            .iter()
+            .find(|r| {
+                r.messages
+                    .iter()
+                    .any(|m| m.string_contents() == "Correction: preserve the error type too.")
+            })
+            .expect("later half");
+        for (request, id) in [(earlier, "earlier"), (later, "later")] {
+            assert!(request.thinking_allowed);
+            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+            assert!(
+                parts.iter().any(
+                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id)
+                )
+            );
+            assert!(parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id)));
+        }
+        // Complete the later half first; chronology must not follow completion order.
+        model.send_completion_stream_text_chunk(later, "Later summary: preserve the error type.");
+        model.send_completion_stream_event(
+            later,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 31,
+                output_tokens: 8,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(later);
+        cx.run_until_parked();
+        assert_eq!(model.pending_completions().len(), 1);
+        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
+        model.send_completion_stream_text_chunk(earlier, "Earlier summary: keep authentication.");
+        model.send_completion_stream_event(
+            earlier,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 17,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        model.send_completion_stream_event(
+            earlier,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                output_tokens: 4,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(earlier);
+        cx.run_until_parked();
+        let merge = model.pending_completions().pop().expect("merge request");
+        assert!(merge.thinking_allowed);
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.find("Earlier summary:").expect("earlier summary")
+                < text.find("Later summary:").expect("later summary")
+        );
+        assert!(text.contains("later corrections"));
+        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
+        model.send_completion_stream_text_chunk(&merge, "Keep authentication and the error type.");
+        model.send_completion_stream_event(
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(&merge);
+        cx.run_until_parked();
+        assert!(model.pending_completions().is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert_eq!(thread.messages.len(), original.len() + 2);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "Keep authentication and the error type."));
+            assert_eq!(thread.cumulative_token_usage().input_tokens, 57);
+            assert_eq!(thread.cumulative_token_usage().output_tokens, 14);
         });
     }
 

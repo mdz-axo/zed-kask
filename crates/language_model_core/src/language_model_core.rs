@@ -912,6 +912,22 @@ mod tests {
     }
 
     #[test]
+    fn plain_provider_context_overflow_is_not_a_generic_invalid_request() {
+        let message = "This model's maximum context length is 1048576 tokens, but the request requires 1142292 tokens (530169 input including image/vision expansion + 612123 for the completion). Reduce the input length or max_tokens.";
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(
+                StatusCode::BAD_REQUEST,
+                "Invalid max_tokens parameter"
+            ),
+            ProviderErrorCategory::InvalidRequest
+        );
+    }
+
+    #[test]
     fn test_from_http_status_maps_context_length_exceeded_to_prompt_too_large() {
         let error = LanguageModelCompletionError::from_http_status(
             String::from("OpenAI").into(),

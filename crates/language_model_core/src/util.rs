@@ -52,7 +52,11 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
 /// with the `context_length_exceeded` error code or a "Your input exceeds the
 /// context window of this model" message.
 pub fn is_context_window_exceeded_message(message: &str) -> bool {
-    message.contains("context_length_exceeded") || message.contains("exceeds the context window")
+    message.contains("context_length_exceeded")
+        || message.contains("exceeds the context window")
+        // OpenRouter may forward only the upstream message, without its code.
+        || (message.contains("maximum context length")
+            && message.contains("but the request requires"))
 }
 
 #[cfg(test)]

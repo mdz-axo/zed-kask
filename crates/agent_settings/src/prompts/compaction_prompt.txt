@@ -31,6 +31,8 @@ Output exactly the Markdown structure shown inside <template> and keep the secti
 
 Rules:
 - Keep every section, even when empty.
-- Use terse bullets, not prose paragraphs.
+- Use terse bullets, not prose paragraphs. Remove filler, articles, and redundant phrasing only where meaning remains unambiguous.
+- Preserve negations, conditions, genuine uncertainty, and decision rationale. Prefer clarity over brevity.
+- When merging chronological summaries, later corrections override earlier claims. Retain unresolved conflicts rather than guessing.
 - Preserve exact file paths, commands, error strings, and identifiers when known.
 - Do not mention the summary process or that context was compacted.
