@@ -9557,6 +9557,155 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_two_half_compaction_failure_or_cancellation_saves_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        for outcome in [
+            "earlier",
+            "later",
+            "merge",
+            "cancel-halves",
+            "cancel-merge",
+            "truncated",
+        ] {
+            let (thread, _event_stream) = setup_thread_for_test(cx).await;
+            let model = Arc::new(FakeLanguageModel::default());
+            let original = two_half_compaction_history();
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.messages = original.clone();
+            });
+            let mut events = thread
+                .update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+                .expect("compact");
+            cx.run_until_parked();
+            let mut requests = model.pending_completions();
+            assert_eq!(requests.len(), 2, "{outcome}");
+            if matches!(outcome, "merge" | "cancel-merge") {
+                for request in &requests {
+                    model.send_completion_stream_text_chunk(request, "Half summary.");
+                    model.end_completion_stream(request);
+                }
+                cx.run_until_parked();
+                requests = model.pending_completions();
+                assert_eq!(requests.len(), 1);
+            }
+            if outcome.starts_with("cancel") {
+                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+            } else {
+                let request = if outcome == "later" {
+                    requests.last()
+                } else {
+                    requests.first()
+                }
+                .expect("request to fail");
+                for other in &requests {
+                    if other != request {
+                        model.send_completion_stream_text_chunk(other, "Successful peer summary.");
+                    }
+                }
+                if outcome == "truncated" {
+                    model.send_completion_stream_text_chunk(request, "Incomplete summary");
+                    model.send_completion_stream_event(
+                        request,
+                        LanguageModelCompletionEvent::Stop(StopReason::MaxTokens),
+                    );
+                } else {
+                    model.send_completion_stream_error(
+                        request,
+                        LanguageModelCompletionError::ProviderRejection {
+                            provider: "OpenRouter".to_string().into(),
+                            status: None,
+                            code: Some("400".into()),
+                            message: "Context too large for this compaction phase".into(),
+                            retry_after: None,
+                            category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                        },
+                    );
+                }
+            }
+            for request in &requests {
+                model.end_completion_stream(request);
+            }
+            cx.run_until_parked();
+            assert!(
+                model.pending_completions().is_empty(),
+                "no retries or merge after {outcome}"
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.messages, original, "{outcome}")
+            });
+            if !outcome.starts_with("cancel") {
+                let mut saw_error = false;
+                while let Some(event) = events.next().await {
+                    if let Err(error) = event {
+                        assert!(error.to_string().contains(if outcome == "truncated" {
+                            "output limit"
+                        } else {
+                            "Context too large for this compaction phase"
+                        }));
+                        saw_error = true;
+                    }
+                }
+                assert!(saw_error, "failure must be surfaced: {outcome}");
+            }
+        }
+    }
+
+    #[test]
+    fn compaction_split_balances_bytes_and_keeps_indivisible_history_single_pass() -> Result<()> {
+        let mut messages = vec![LanguageModelRequestMessage {
+            role: Role::System,
+            content: vec!["system".into()],
+            cache: false,
+            reasoning_details: None,
+        }];
+        for (index, size) in [2000, 20, 20].into_iter().enumerate() {
+            messages.extend(
+                user_text_message(ClientUserMessageId::new(), &format!("request {index}"))
+                    .to_request(),
+            );
+            messages.extend(agent_text_message(&"x".repeat(size)).to_request());
+        }
+        messages
+            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
+        assert_eq!(compaction_split_point(&messages)?, Some(3));
+        messages.truncate(3);
+        messages
+            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
+        assert_eq!(compaction_split_point(&messages)?, None);
+        let history = two_half_compaction_history();
+        let mut messages: Vec<_> = history
+            .iter()
+            .take(2)
+            .flat_map(|message| message.to_request())
+            .collect();
+        messages
+            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
+        assert_eq!(
+            compaction_split_point(&messages)?,
+            None,
+            "cannot split one tool exchange"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compaction_template_preserves_meaning_while_requesting_brevity() {
+        assert!(COMPACTION_PROMPT.contains(
+            "Preserve negations, conditions, genuine uncertainty, and decision rationale"
+        ));
+        assert!(COMPACTION_PROMPT.contains("Prefer clarity over brevity"));
+        assert!(COMPACTION_PROMPT.contains("later corrections override earlier claims"));
+        assert!(
+            COMPACTION_PROMPT
+                .contains("Preserve exact file paths, commands, error strings, and identifiers")
+        );
+    }
+
+    #[gpui::test]
     async fn test_manual_compact_precompression_failure_leaves_history_unchanged(
         cx: &mut TestAppContext,
     ) {
