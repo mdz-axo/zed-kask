@@ -4497,7 +4497,8 @@ impl ThreadView {
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .children(self.render_thinking_control(cx))
+                                    .children(self.render_compact_control(cx)),
                             )
                             .child(
                                 h_flex()
@@ -5185,6 +5186,49 @@ impl ThreadView {
             return None;
         }
         Some((provider_id, model_id, confirmation))
+    }
+
+    fn compact_control_enabled(&self, cx: &App) -> Option<bool> {
+        self.as_native_thread(cx)?;
+        leading_native_command(
+            &format!("/{}", agent::COMPACT_COMMAND_NAME),
+            self.session_capabilities.read().available_commands(),
+        )?;
+        let thread = self.thread.read(cx);
+        Some(
+            !self.is_loading_contents
+                && thread.status() == ThreadStatus::Idle
+                && !thread.entries().is_empty(),
+        )
+    }
+
+    fn render_compact_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let enabled = self.compact_control_enabled(cx)?;
+        Some(
+            IconButton::new("compact-context", IconName::Compact)
+                .icon_size(IconSize::Small)
+                .aria_label("Compact context")
+                .tooltip(Tooltip::text("Compact context"))
+                .disabled(!enabled)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.compact_control_enabled(cx) != Some(true) {
+                        return;
+                    }
+                    cx.emit(AcpThreadViewEvent::Interacted);
+                    this.thread_error.take();
+                    this.thread_feedback.clear();
+                    // Use the native command turn, preserving the unsent editor draft.
+                    let command =
+                        acp::ContentBlock::from(format!("/{}", agent::COMPACT_COMMAND_NAME));
+                    this.send_content(
+                        Task::ready(Ok(Some((vec![command], Vec::new())))),
+                        true,
+                        window,
+                        cx,
+                    );
+                }))
+                .into_any_element(),
+        )
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -12803,6 +12847,24 @@ mod tests {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
+    }
+
+    #[test]
+    fn test_compact_command_gate_requires_native_category() {
+        let name = agent::COMPACT_COMMAND_NAME;
+        let command = format!("/{name}");
+        assert_eq!(
+            leading_native_command(&command, &[native_command(name)]),
+            Some(name.to_string()),
+        );
+        for commands in [
+            vec![],
+            vec![mcp_command(name)],
+            vec![acp::AvailableCommand::new(name, "")],
+            vec![native_command("other")],
+        ] {
+            assert_eq!(leading_native_command(&command, &commands), None);
+        }
     }
 
     #[test]
