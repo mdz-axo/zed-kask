@@ -53,23 +53,23 @@ pub struct OntoAnchorToolInput {
 pub struct OntoAnchorToolOutput {
     /// The ladder rung that terminated the walk: "domain_supplement",
     /// "derived", "upper", or "core" (the 5W1H interrogative ground).
-    pub tier: &'static str,
+    pub tier: String,
     /// The term as given.
     pub term: String,
     /// The vocabulary that publishes the concept (FIBO, SUMO, derived, core).
-    pub namespace: &'static str,
+    pub namespace: String,
     /// The published concept URI — or the derived concept's canonical term.
     pub concept: String,
     /// The derived concept's recorded identity (derived rung only).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity: Option<&'static str>,
+    pub identity: Option<String>,
     /// The authority citation (derived rung only): an operator ruling with
     /// its date, or a published standard.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub authority: Option<&'static str>,
+    pub authority: Option<String>,
     /// The ruling path (core rung only): the anchor is real but coarse.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 impl From<OntoAnchorToolOutput> for LanguageModelToolResultContent {
@@ -118,9 +118,9 @@ pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
             let name = uri.rsplit(':').next().unwrap_or(uri);
             if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
                 return OntoAnchorToolOutput {
-                    tier: "domain_supplement",
+                    tier: "domain_supplement".to_string(),
                     term: trimmed.to_string(),
-                    namespace,
+                    namespace: (*namespace).to_string(),
                     concept: (*uri).to_string(),
                     identity: None,
                     authority: None,
@@ -133,12 +133,12 @@ pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
     // Rung 2 — derived concepts (recorded compositions, authority-cited).
     if let Some(concept) = derived::resolve_derived(trimmed) {
         return OntoAnchorToolOutput {
-            tier: "derived",
+            tier: "derived".to_string(),
             term: trimmed.to_string(),
-            namespace: "derived",
+            namespace: "derived".to_string(),
             concept: concept.term.to_string(),
-            identity: Some(concept.identity),
-            authority: Some(concept.authority),
+            identity: Some(concept.identity.to_string()),
+            authority: Some(concept.authority.to_string()),
             note: None,
         };
     }
@@ -148,9 +148,9 @@ pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
         let name = uri.rsplit(':').next().unwrap_or(uri);
         if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
             return OntoAnchorToolOutput {
-                tier: "upper",
+                tier: "upper".to_string(),
                 term: trimmed.to_string(),
-                namespace: "SUMO",
+                namespace: "SUMO".to_string(),
                 concept: (*uri).to_string(),
                 identity: None,
                 authority: None,
@@ -163,9 +163,9 @@ pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
     // coarse; the ruling path improves it (a ruling lands in the derived
     // registry and the term resolves there ever after).
     OntoAnchorToolOutput {
-        tier: "core",
+        tier: "core".to_string(),
         term: trimmed.to_string(),
-        namespace: "core",
+        namespace: "core".to_string(),
         concept: "5w1h_core".to_string(),
         identity: None,
         authority: None,
@@ -175,7 +175,8 @@ pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
              the operator to improve it: the ruling is recorded in the derived \
              registry (hkask-bridge-ontology/src/derived.rs) with its identity and \
              authority, and the term resolves there ever after. Never assign the \
-             term a private definition in the meantime.",
+             term a private definition in the meantime."
+                .to_string(),
         ),
     }
 }
@@ -214,13 +215,13 @@ impl AgentTool for OntoAnchorTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
             let input = input.recv().await.map_err(|e| OntoAnchorToolOutput {
-                tier: "core",
+                tier: "core".to_string(),
                 term: String::new(),
-                namespace: "core",
+                namespace: "core".to_string(),
                 concept: "5w1h_core".to_string(),
                 identity: None,
                 authority: None,
-                note: Some(&format!("failed to receive input: {e}")),
+                note: Some(format!("failed to receive input: {e}")),
             })?;
             Ok(resolve_term(&input.term))
         })
@@ -230,6 +231,41 @@ impl AgentTool for OntoAnchorTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_round_trips_through_owned_json() -> Result<()> {
+        for term in [
+            "corporation",
+            "net margin",
+            "quantity",
+            "zephyr coefficient",
+        ] {
+            let expected = serde_json::to_value(resolve_term(term))?;
+            let restored: OntoAnchorToolOutput = serde_json::from_value(expected.clone())?;
+            assert_eq!(serde_json::to_value(restored)?, expected, "{term}");
+        }
+        Ok(())
+    }
+
+    #[gpui::test]
+    async fn invalid_input_returns_an_owned_error(cx: &mut gpui::TestAppContext) {
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                Arc::new(OntoAnchorTool).run(
+                    ToolInput::invalid_json("invalid tool JSON".to_string()),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+        let error = result.expect_err("invalid JSON must be an error");
+        let json = serde_json::to_value(error).expect("serialize error");
+        let restored: OntoAnchorToolOutput =
+            serde_json::from_value(json).expect("deserialize owned error");
+        let note = restored.note.expect("input failure must be surfaced");
+        assert_eq!(note, "failed to receive input: invalid tool JSON");
+    }
 
     /// expect: [P5] Rung 1 — a published domain term resolves to its
     /// vocabulary and URI, across separator and case variants, exactly as
@@ -265,7 +301,7 @@ mod tests {
         let resolved = resolve_term("net margin");
         assert_eq!(resolved.tier, "derived", "{resolved:?}");
         assert_eq!(resolved.concept, "net_margin");
-        assert_eq!(resolved.identity, Some("net income / revenue"));
+        assert_eq!(resolved.identity.as_deref(), Some("net income / revenue"));
         let authority = resolved.authority.expect("authority cited");
         assert!(
             authority.contains("2026-09-10"),
@@ -320,7 +356,7 @@ mod tests {
             let resolved = resolve_term(term);
             assert!(
                 matches!(
-                    resolved.tier,
+                    resolved.tier.as_str(),
                     "domain_supplement" | "derived" | "upper" | "core"
                 ),
                 "{term}: unrecognized tier {resolved:?}"

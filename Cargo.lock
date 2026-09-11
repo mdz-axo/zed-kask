@@ -308,6 +308,7 @@ dependencies = [
  "gpui_tokio",
  "handlebars 4.5.0",
  "heck 0.5.0",
+ "hkask-bridge-ontology",
  "hkask-lisp",
  "hkask-types",
  "html_to_markdown",

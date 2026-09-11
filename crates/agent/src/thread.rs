@@ -3,9 +3,10 @@ use crate::{
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
-    ListMcpToolsTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool,
-    SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
