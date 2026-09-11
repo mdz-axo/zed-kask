@@ -958,7 +958,10 @@ mod tests {
         // our loopback listener, not an Ollama instance or a paid provider.
         // No test thread mutates the parent environment or ambient socket.
         if let Ok(case) = std::env::var("HKASK_INFERENCE_CHAT_TEST_CASE") {
-            let parameters = hkask_types::template::LLMParameters::default();
+            let parameters = hkask_types::template::LLMParameters {
+                thinking_allowed: false,
+                ..Default::default()
+            };
             let messages = prepared_chat_messages();
             let direct =
                 DirectEmbeddingPort::try_new("ollama/offline-test-model").expect("local port");
@@ -1087,6 +1090,7 @@ mod tests {
                 .expect("capture task");
             assert_eq!(requests.len(), if case == "missing" { 0 } else { 4 });
             for (index, request) in requests.iter().enumerate() {
+                assert_eq!(request["reasoning"], serde_json::json!({"effort": "none"}));
                 let expected_messages = if index % 2 == 0 {
                     prepared_chat_messages()
                 } else {

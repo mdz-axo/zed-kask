@@ -898,6 +898,7 @@ mod tests {
 
     #[test]
     fn qa_generation_setting_round_trips_and_reaches_only_its_consumer() {
+        use crate::KaskSettings;
         use hkask_inference::model_constants::QA_GENERATION_MODEL_ENV;
         let mut content = settings::KaskSettingsContent::default();
         let models = content.models.get_or_insert_default();

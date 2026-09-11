@@ -176,22 +176,113 @@ target (542/40,000 = 1.4% = failure).
 
 ### Semantic quality verification (not just structural)
 
-Structural checks (no duplicates, correct format, non-empty answers) are
-NECESSARY but NOT SUFFICIENT. After assembling the training dataset, run
-these semantic checks:
+Structural counts (JSON validity, non-empty answers, deduplication and
+stage reconciliation) are NECESSARY but NOT SUFFICIENT. Keep them separate
+from quality evidence. Audit the generated envelope BEFORE ingestion loses
+metadata, then reconcile generated, ingested and assembled rows. A positive
+row count is a structural precondition, never authorization for a pilot or
+full run and never a semantic acceptance verdict.
 
-1. **Boilerplate contamination**: grep for repeated analytical phrases
-   across answers. If >10% of answers contain the same multi-word phrase
-   not from the source text, the prompt template is leaking.
-2. **Grounding rate**: sample 10 random QA pairs, extract 4-word sequences
-   from answers, search for them in source chunks. Target: ≥60% of
-   sequences found in source text. Below 30% = answers are synthesized,
-   not grounded.
-3. **Bloom distribution**: verify even distribution across Bloom levels.
-   Heavy skew toward one level means the prompt cycling is broken.
-4. **Subject diversity**: verify QA pairs cover the corpus's actual subject
-   matter, not a single imposed frame. If 70%+ of answers mention the same
-   concept, the prompt template is forcing an external lens.
+1. **Grounding verification**: compose canonical `grounding-verify` against
+   the identified source chunks. Retain claim text, source reference,
+   provenance, cross-check and `why` (at least 40 characters). Use only its
+   closed vocabulary: `tool_verified`, `platform_derived`, `model_inference`,
+   `unavailable`, `tool_no_match`, `pending_check`, `rejected`. Verify each
+   nonempty cited substring exactly in the chunk identified by BOTH
+   `chunk_ref` and `source`; finding it elsewhere in the corpus is not a
+   match. A matching evidence quote does not elevate a paraphrased answer:
+   synthesis remains `model_inference`. Only actually verified derivations
+   from sourced inputs may be `platform_derived`.
+2. **Boilerplate contamination**: measure six-gram document frequency
+   (each phrase counts once per answer, never across answer boundaries).
+   The audit lists phrases in at least 5% of answers as review candidates.
+   Determine whether they come from the source or the prompt before judging
+   contamination; repetition alone is not semantic proof.
+3. **Bloom distribution**: measure envelope `qa_type` counts across
+   factual/conceptual/analyze/evaluate/create, including absent levels.
+   Missing or unknown labels are gaps. Check actual cognitive difficulty
+   separately: even metadata counts do not verify Bloom-level correctness.
+4. **Subject diversity**: measure identified source coverage, then review
+   whether answers cover the corpus's subject matter rather than an imposed
+   frame. Source diversity is not semantic subject diversity. Missing source
+   identity prevents coverage measurement; do not label unknown coverage zero.
+
+#### Read-only mechanical audit and its limits
+
+Run `bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>`.
+It emits a JSON report with separate `structural_counts`, `quality_evidence`,
+per-row `verified_claims`, findings and gaps. Input shapes are:
+
+- Generated: `response.{instruction,output,evidence_quotes:[strings]}` with
+  `chunk_ref`, `source`, `qa_type` on the envelope. `output` is a string.
+- Source chunks: `entity_ref`, `source`, `text`.
+- Flat training: `instruction`, `output`. Lost citations/source/qa_type are
+  explicit gaps, not inferred from word similarity or invented metadata.
+
+All physical JSONL rows reconcile, including malformed JSON, invalid shapes
+and generation-error rows. A source lookup must be unique; duplicate chunk
+identifiers, invalid source rows and missing source text surface as gaps.
+Exit 0 means the narrow mechanical checks completed; 1 means high citation
+findings; 2 means missing checks/data; 64 means usage error. None authorizes
+an ingestion, pilot or full run. The withdrawn overlap threshold argument
+is no longer accepted. The script loads inputs in memory; use bounded
+controls before invoking it on a full artifact and report actual coverage.
+
+This is a **mechanical subset**, not a replacement for `grounding-verify`.
+It verifies citation bytes and identity, records the whole prose answer as
+an unclassified candidate, and does not extract/classify every IS/OUGHT
+claim, verify paraphrase entailment, compute sourced derivations, assess
+reasoning or completeness, scan semantic narrative leaks, or judge an
+imposed subject frame. Ordinary prose has an unperformed narrative check,
+even when it is copied verbatim. No empty caller-supplied narrative list can
+waive that check. A narrow explicit citation-only fixture is supported:
+`output` encodes a JSON array of nonempty strings, each an evidence quote.
+Only this non-prose representation has no narrative fields; disclose
+`no narrative fields — NLR vacuous`. Do not reformat ordinary QA prose to
+this fixture shape to manufacture an acceptance score.
+
+The canonical sub-metrics are SAR (source-anchored claims / factual claims),
+CVR (verified citations / provisional tool-verified citations), HFR
+(surviving non-rejected claims / factual claims), and NLR (clean narrative
+fields / narrative fields). Use weights **0.30 / 0.25 / 0.20 / 0.25**.
+Zero claims, zero citations, missing sources and unperformed applicable
+checks produce gaps/null, never zero or success. NLR is 1 only for the
+explicit no-narrative case. If any sub-metric is null or `claims_checked`
+is zero, `fact_score` is null. The subset also leaves SAR/HFR null when
+factual-claim extraction was not performed. It never averages just the
+measurable/passing rows: one incomplete row keeps the aggregate null.
+A fully covered verbatim citation-only control scores 1 within numerical
+tolerance; that validates the checker, not generated QA quality.
+
+Run the bounded controls with
+`bash kask/scripts/test-audit-qa-quality.sh`; use `shellcheck` when installed.
+Preserve any real verbatim control read-only and rerun it with its sources
+when available. Flat controls without metadata must still report gaps.
+Keep synthetic fixtures/reports in scratch space outside production inputs.
+
+#### Pilot/full-run quality gate
+
+Before authorizing a pilot expansion or full run, and again before declaring
+the pipeline complete, require **all** of:
+
+- Structural counts reconcile with the agreed target, including errors,
+  filtered rows and source coverage; training size reaches
+  `target_condition.min_qa_pairs` rather than merely exceeding zero.
+- Every applicable canonical `grounding-verify` report has a non-null
+  `fact_score >= 0.80`; no high/critical findings remain unresolved. A high
+  aggregate cannot hide a failed report or a load-bearing false citation.
+- All missing applicable checks are resolved with retained evidence.
+  Record genuinely inapplicable checks with their scope justification;
+  unperformed is not inapplicable. Never substitute a partial mechanical
+  audit aggregate for this requirement.
+- Boilerplate, actual Bloom difficulty and subject diversity receive semantic
+  review. Operator semantic judgment remains required when automated checks
+  are unperformed; if that review does not perform/resolve the missing
+  checks, the gate stays blocked. Structural success is not a waiver.
+
+The coordinator owns ingestion, model choices, centroid work and live runs.
+This audit reports evidence and blockers; it does not execute or authorize
+those operations.
 
 ### Stage 4 tagging constraint
 

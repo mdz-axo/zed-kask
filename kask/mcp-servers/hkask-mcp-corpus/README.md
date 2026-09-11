@@ -65,6 +65,20 @@ corpus/
 runtime/              — Section classifier + provider intelligence + adaptive monitor
 ```
 
+## QA model routing
+
+`corpus_generate_qa` and `corpus_generate_qa_batch` require a dedicated non-thinking
+generator: explicit tool `model` > Settings → Kask → Models → QA Generation Model
+(`kask.models.qa_generation_model`, injected as `HKASK_QA_GENERATION_MODEL`).
+The setting defaults empty. Missing or malformed configuration fails visibly before
+inference (and before batch output creation); unresolvable models fail at the bridge
+or provider, never by substituting chat, classifier, or training base models.
+Synchronous and provider-batch QA both disable reasoning with effort `none` on the
+OpenRouter wire. A `:batch` suffix retains the existing provider-batch transport.
+`HKASK_QA_MODEL` is retained only for consolidation; it is not a QA-generation alias.
+Offline coverage: `tools::semantic::qa_model_tests` drives both public tools; the
+batch service tests cover provider-batch selection and role-aware synchronous calls.
+
 ## Concurrency
 
 Remote LLM work **ramps; it never launches at the ceiling.** The motivating

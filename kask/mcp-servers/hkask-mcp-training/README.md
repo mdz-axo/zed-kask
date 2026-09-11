@@ -2,6 +2,12 @@
 
 Model training MCP server — ingests QA pairs and training data for fine-tuning pipelines.
 
+QA generation belongs to the corpus tools in this tree; this server has no
+QA-generation caller. Configure `kask.models.qa_generation_model` for corpus's
+non-thinking generator (empty by default, explicit tool model takes precedence).
+That setting does not replace `training_submit.base_model` or `training_evaluate.model`,
+and `HKASK_QA_GENERATION_MODEL` is not injected into this server without a consumer.
+
 Uses internal tool dispatch pattern (not individual `pub async fn` per tool).
 
 ## Tools (8)
