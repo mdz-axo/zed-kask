@@ -780,6 +780,21 @@ calls per chunk and will time out on large inputs (observed: timeout on
    thresholds" but continue — QA generation can proceed without the
    style exemplar.
 
+   **Calibrate `centroid_distance_max` per corpus before trusting the
+   gate.** The threshold must be satisfiable by the corpus's own text:
+   run one `corpus_compose` call whose prompt asks for verbatim
+   reproduction of a corpus passage — the measured distance of corpus
+   text to the centroid is the floor. A threshold below that floor is
+   unsatisfiable by construction (observed 2026-09-11 on the 125-book
+   John Brooks corpus: verbatim corpus passage 0.485, generated
+   in-style prose 0.474–0.495, inherited threshold 0.40 — the corpus
+   itself failed it). Heterogeneous multi-book corpora have wide
+   centroid clouds; set the threshold above the verbatim anchor with
+   margin for generation variance. Also: the cognition config schema
+   requires `centroid_entity_ref` INSIDE the `embedding:` section — a
+   top-level placement fails config parsing with `missing field
+   centroid_entity_ref`.
+
 5. If `corpus_centroid` or `corpus_compose` fails, log the error and
    continue without the style exemplar. Do not halt — the QA pipeline
    does not depend on it.
