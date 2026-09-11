@@ -148,18 +148,20 @@ condenser never blocks the agent turn on a compression anomaly — it logs
 the signal and moves on, so a misbehaving algorithm cannot stall the
 conversation.
 
-## Wiring: deferred post-login task
+## Wiring: deferred startup task
 
-The `set_thread_condenser` hook (`crates/agent/src/agent.rs:3136`) is a
-`Mutex`-based process-global (re-settable). It is wired from the
-deferred post-login task in `crates/zed/src/main.rs:2056-2060`, which
-constructs a `BridgeThreadCondenser`
-(`kask/crates/kask_bridge/src/condenser_bridge.rs:22`) wrapping a
-`CondenserEngine`. The wiring is conditional on
-`KaskCondenserSettings.auto_compress_tool_results`
-(`kask/crates/kask_bridge/src/settings.rs:263`), which defaults to `false`
-(`settings.rs:279`); when disabled, the hook is left `None` and tool
-results pass through uncompressed.
+The re-settable `set_thread_condenser` hook is installed by
+`crates/zed/src/main.rs` regardless of `auto_compress_tool_results`.
+That flag, which defaults to false, controls ingestion compression only.
+
+Manual native compaction uses `ThreadCondenser::precompress_history` in
+`crates/agent/src/thread.rs::stream_compaction` before requesting the LLM
+summary. `BridgeThreadCondenser` processes a background request copy, not
+stored messages: eligible older tool text is compressed by category while
+prose, the latest exchange, protected tools, failed results, JSON and
+non-text content are preserved. Excerpts are labelled and used only when
+smaller. Automatic compaction and native summary storage/replay are unchanged.
+This is input reduction, not semantic summarization or a token-fit guarantee.
 
 Code-reading tools (`read_file`, `grep`, `list_directory`, etc.) bypass
 the condenser via `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:185`).

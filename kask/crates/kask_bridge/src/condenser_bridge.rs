@@ -1,17 +1,11 @@
 //! Thread condenser — ingestion compression and manual-compaction precompression
 //! over the existing local algorithms (D8).
 //!
-//! The `BridgeThreadCondenser` implements the `agent::ThreadCondenser` trait
-//! by delegating to a `hkask_condenser::CondenserEngine`. It:
-//!
-//! 1. Checks if auto-compression is enabled (`KaskCondenserSettings.auto_compress_tool_results`).
-//! 2. Calls `CondenserEngine::compress(tool_name, output, None)` to compress
-//!    the tool output using the configured profile and algorithm selection.
-//! 3. Returns the compressed text (or the original if compression is disabled
-//!    or the output is already within budget).
-//!
-//! The condenser is wired in the composition root via `agent::set_thread_condenser`.
-//! It is called from the tool-result handling path in `run_turn_internal`.
+//! `BridgeThreadCondenser` delegates to `CondenserEngine`. Ingestion compression
+//! honors `auto_compress_tool_results`; explicit manual precompression does not.
+//! Manual precompression changes only eligible older tool-result text in the
+//! summarizer's request copy. The existing native LLM still produces the summary.
+//! The composition root installs the hook via `agent::set_thread_condenser`.
 
 use agent::ThreadCondenser;
 use anyhow::{Result, anyhow};

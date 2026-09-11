@@ -139,14 +139,21 @@ as `HKASK_CONDENSER_PERSONA_KEYWORDS`
 
 ### Step 5: Wire the condenser
 
-The runtime path is `BridgeThreadCondenser`
-(`kask/crates/kask_bridge/src/condenser_bridge.rs:22`), which wraps a
-`CondenserEngine` in a `Mutex` and gates compression on
-`auto_compress_tool_results`. It is wired via the process-global
-`set_thread_condenser` hook (`crates/agent/src/agent.rs:3136`) from the
-deferred post-login task in `crates/zed/src/main.rs:2056-2060`,
-conditional on `KaskCondenserSettings.auto_compress_tool_results`
-(`settings.rs:263`), which defaults to `false` (`settings.rs:279`).
+The startup task in `crates/zed/src/main.rs` installs `BridgeThreadCondenser`
+via `agent::set_thread_condenser`. Its `CondenserEngine` is local;
+`auto_compress_tool_results` (default false) gates ingestion compression,
+not installation or explicit manual precompression.
+
+To compact a native thread, click **Compact context** to the right of the
+thinking control, or send `/compact`. Kask first reduces eligible older
+tool output in the summarizer's request copy. The existing native LLM then
+writes and stores the summary; the original history stays stored. The most
+recent exchange, user/assistant prose, protected tool results, errors, JSON
+and non-text content are not reduced by this preprocessing step.
+
+This still requires a configured inference provider and can incur inference
+charges. If protected content dominates, the summarization request can still
+exceed context limits; an informative provider error is not a promise of fit.
 
 Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS`
 (`crates/agent/src/thread.rs:185`): `read_file`, `grep`, `find_path`,

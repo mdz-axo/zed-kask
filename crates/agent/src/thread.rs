@@ -9187,6 +9187,7 @@ mod tests {
             });
         });
 
+        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -9195,6 +9196,7 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
+        crate::set_thread_condenser(None);
 
         let compaction_request = model.pending_completions().pop().unwrap();
         assert_eq!(
@@ -9321,6 +9323,40 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_manual_compact_precompression_failure_leaves_history_unchanged(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let original = vec![user_text_message(
+            ClientUserMessageId::new(),
+            "reject precompression",
+        )];
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("manual compaction");
+        cx.run_until_parked();
+        crate::set_thread_condenser(None);
+        assert!(model.pending_completions().is_empty());
+        let mut saw_error = false;
+        while let Some(event) = events.next().await {
+            if let Err(error) = event {
+                assert!(error.to_string().contains("precompression fixture failed"));
+                saw_error = true;
+            }
+        }
+        assert!(saw_error);
+        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
     }
 
     #[gpui::test]
@@ -11392,6 +11428,12 @@ mod tests {
             messages: &mut [LanguageModelRequestMessage],
             protected_tools: &[&str],
         ) -> Result<()> {
+            if messages
+                .iter()
+                .any(|message| message.string_contents() == "reject precompression")
+            {
+                anyhow::bail!("precompression fixture failed");
+            }
             assert_eq!(protected_tools, NO_COMPRESS_TOOLS);
             assert!(
                 !messages

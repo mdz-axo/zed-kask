@@ -79,7 +79,7 @@ The `hkask.condenser` tracing spans are **diagnostic logging** for human inspect
 
 ## Consumers
 
-- `kask_bridge` — `BridgeThreadCondenser`: the runtime tool-result compression path wired into the agent turn loop via `agent::set_thread_condenser` (gated on `kask.condenser.auto_compress_tool_results`, default off)
+- `kask_bridge` — `BridgeThreadCondenser`, installed through `agent::set_thread_condenser`. Incoming tool-result compression honors `kask.condenser.auto_compress_tool_results` (default off). Manual native compaction (`/compact` or the composer icon) independently precompresses eligible older tool output in a request copy before the native LLM writes its summary. Prose, the latest exchange, protected tools, failed results, JSON, and non-text content remain unchanged. Stored originals are not modified. The existing algorithms operate on lines; reduction does not guarantee that the provider's token limit is met.
 
 The `hkask-mcp-condenser` MCP server was removed during the skill-system migration cleanup (2026-08). The condenser is now a pure domain library consumed only by `kask_bridge`.
 

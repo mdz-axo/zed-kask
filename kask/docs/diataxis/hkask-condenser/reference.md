@@ -273,12 +273,13 @@ today (`types.rs:170-175`).
 
 ## Consumers
 
-- `kask_bridge` — `BridgeThreadCondenser`
-  (`kask/crates/kask_bridge/src/condenser_bridge.rs:22`): the runtime
-  tool-result compression path wired into the agent turn loop via
-  `agent::set_thread_condenser` (`crates/agent/src/agent.rs:3136`),
-  gated on `kask.condenser.auto_compress_tool_results` (default off,
-  `kask/crates/kask_bridge/src/settings.rs:279`).
+- `kask_bridge` — `BridgeThreadCondenser` in
+  `kask/crates/kask_bridge/src/condenser_bridge.rs`, installed through
+  `agent::set_thread_condenser`. `compress_tool_result` honors
+  `kask.condenser.auto_compress_tool_results` (default off);
+  `precompress_history` independently reduces eligible older tool text for
+  manual native summarization. The latter preserves the latest exchange,
+  prose, protected tools, failed results, JSON, and non-text content.
 
 ## See also
 
