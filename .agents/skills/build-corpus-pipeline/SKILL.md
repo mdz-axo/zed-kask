@@ -321,8 +321,10 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
    - If complex and OCR is available, call `corpus_convert` with
      `force_ocr: true` for that file (the page-by-page OCR pipeline —
      `corpus_ocr` is the single-image tool; on PDFs it routes through the
-     same pipeline and errors on zero text). OCR concurrency is bounded by
-     `ocr_concurrency` (default 4, overridable via `HKASK_OCR_CONCURRENCY`).
+     same pipeline and errors on zero text). OCR page concurrency is
+     bounded by the process-wide `max_concurrency` setting; the remote
+     vision calls are additionally gated by an adaptive AIMD limiter
+     inside the executor (ramps up on success, halves on failure).
      For multiple complex PDFs, spawn subagents per PDF up to
      `ocr_concurrency` concurrent agents.
    - If complex and OCR unavailable, HALT with a failure report naming
@@ -330,28 +332,26 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
      Never skip the file and continue — a silently skipped source is data
      loss presented as progress.
 
-   **Pre-flight the OCR backends before any bulk run.** A 400-page book
-   burns ~50s per LLM-routed page against a dead endpoint before falling
-   back — probe first with a 2-3 page slice (the result returns in-tool;
-   nothing is written to disk):
+   **Pre-flight the OCR backend before any bulk run.** A 400-page book
+   burns endpoint budget against a dead backend — probe first with a
+   2-3 page slice (the result returns in-tool; nothing is written to
+   disk):
    ```
    corpus_convert: path=<pdf>, force_ocr=true, target_pages="30-32"
    ```
    Read the report fields:
-   - `backends` shows the final backend per page. `llm-ocr` present →
-     the LLM endpoint is healthy; proceed with the bulk run.
-   - All `tesseract` AND `degraded_pages` covering the LLM-routed pages
-     AND `llm_breaker_open: true` → the LLM endpoint is DOWN. HALT the
-     bulk run and report to the operator: fix the endpoint (RunPod
-     console: worker health, GPU, credits) or explicitly accept
-     tesseract-only quality for this corpus. Accepting degraded quality
-     is an operator decision — never a silent one.
-   - All `tesseract` with `degraded_pages: []` → by-design Simple-tier
-     routing (text-only pages go to tesseract because it is faster and
-     equally accurate). The LLM path is unverified by this slice — if
-     the book has Complex pages (figures, dense scans), probe one of
-     those to exercise the LLM path before concluding the endpoint is
-     healthy.
+   - `verification_passed: true` with real text → the endpoint is healthy;
+     proceed with the bulk run.
+   - `error_count > 0` with `llm_breaker_open: true` → the endpoint is DOWN
+     or quarantined. HALT the bulk run and report to the operator: fix the
+     endpoint (RunPod console: worker health, GPU, credits) or switch the
+     model (`kask.models.ocr_model`). There is NO fallback backend — a
+     dead endpoint is a hard stop, never a silent degradation.
+   - `quality_failed_pages` non-empty → the endpoint responds but produces
+     degenerate output (CJK hallucination, repetition loops, garbled
+     tokens — see `quality_failures` for the per-page evidence). Do not
+     bulk-run against a model that fails quality gates on the probe; report
+     to the operator with the measured ratios.
 
    **Interpret every OCR verification report** (bulk runs included):
    - `passed=false` with a handful of `empty_pages` → spot-check those
@@ -359,16 +359,16 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
      pages; if the source page is genuinely blank, the failure is benign —
      record it and proceed. Many empty pages is a real failure — HALT.
      Do NOT re-run the book or probe the endpoint over a few empty pages.
-   - `degraded_pages` non-empty → the routed primary backend failed on
-     those pages and a fallback produced the text. A small fraction is
-     sensed, by-design degradation — the text stands. If `degraded_pages`
-     covers EVERY LLM-routed page, treat it as endpoint-down (see the
-     pre-flight rules above).
-   - `backends` is the final-backend distribution. An all-tesseract map
-     with empty `degraded_pages` is healthy Simple-tier routing; an
-     all-tesseract map with the LLM-routed pages inside `degraded_pages`
-     is a dead endpoint wearing a passing verdict — the report fields
-     exist precisely so these two states are never confused.
+   - `quality_failed_pages` non-empty → pages whose output failed a
+     deterministic quality gate. The text is retained but the verdict is
+     FAILED — never merge a run with quality failures into the corpus
+     without the operator explicitly accepting them. `quality_failures`
+     carries the per-page gate names and measured ratios (the evidence
+     behind the verdict).
+   - `error_count > 0` → pages that got no text at all (endpoint errors,
+     breaker-open, empty output). Each error carries the model and the
+     failure reason. A run with errors is incomplete input for every
+     downstream stage — re-run after fixing the endpoint.
 
    **Probe hygiene**: never write probe or diagnostic artifacts into
    corpus directories (`extracted/`, the corpus root, chunk input dirs).
@@ -448,17 +448,19 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
       OPERATOR decides the fallback: fix the endpoint, or set a cloud
       fallback model via the `kask.models.ocr_model` setting (the
       designed surface). An agent never pins a model per-run.
-   b. **Move the outputs to re-extract** into a sibling backup dir
-      (e.g. `extracted/{{ entity_ref_prefix }}-ocr-prev/`) — the
-      word-count-aware skip keeps passing outputs, so re-OCR requires
-      the move. Never delete: the backup is the rollback.
+   b. **No move-aside is needed for quality-failed outputs**: the
+      resume skip honors the deterministic quality gates, so a re-run
+      automatically re-extracts any output that fails them (garbage
+      never persists as idempotency). Only outputs that PASS the gates
+      are skipped. For a deliberate full re-OCR of passing outputs
+      (model upgrade), move them to a sibling backup dir first — never
+      delete: the backup is the rollback.
    c. **Run `corpus_convert` directory mode** (`force_ocr: true`) —
-      the machinery re-extracts exactly the moved-aside sources and
-      skips the rest. The run is interruptible and resumable: the
-      self-healing skip means a re-launch continues where it stopped.
-      Do not restart the OCR backend mid-run — in-flight pages degrade
-      to the fallback backend and the skip keeps the lower-quality
-      text.
+      the machinery re-extracts exactly the failing/moved-aside sources
+      and skips the rest. The run is interruptible and resumable: the
+      quality-gated skip means a re-launch continues where it stopped.
+      Do not restart the OCR backend mid-run — in-flight pages fail
+      with typed errors and the skip keeps the previously passing text.
    d. **Audit the new outputs** (the step-5 word-count audit) and
       spot-check quality against the backup — word count is a floor,
       not a quality signal.
@@ -892,7 +894,7 @@ step-up ramp.
      query hydrates from the DB, and without `db_path` it returns zero
      results with a note, which reads like an empty corpus.
 
-   OCR quality knob (apply at Stage 1 when Tesseract output on scanned
+   OCR quality knob (apply at Stage 1 when vision-model output on scanned
    books is too noisy): `HKASK_OCR_RENDER_DPI` (default 72, chosen so the
    JPEG payload fits the vision model's 128K-token context). Raising it
    to ~150 improves Tesseract accuracy on scanned books at the cost of
@@ -938,7 +940,7 @@ step-up ramp.
 | Empty corpus source folder | `find` returns 0 files | Error: "corpus_source is empty or does not exist" — HALT |
 | No text-extractable files | All files are binary/corrupt | Error: "no readable text files in corpus_source" — HALT |
 | OCR needed but unavailable | `corpus_is_complex` returns true, OCR fails | HALT with a failure report naming the file — never skip silently |
-| LLM OCR endpoint down | Pre-flight slice: all-tesseract `backends`, LLM-routed pages in `degraded_pages`, `llm_breaker_open: true` | HALT bulk OCR; report to operator (fix endpoint or explicitly accept tesseract-only quality). Never let a dead endpoint silently degrade a whole book |
+| LLM OCR endpoint down | Pre-flight slice: `error_count > 0`, `llm_breaker_open: true`, per-page errors naming the model and reason (empty output / inference failure / breaker open) | HALT bulk OCR; report to operator (fix endpoint or switch `kask.models.ocr_model`). No fallback backend exists — a dead endpoint is a hard stop, never a silent degradation |
 | OCR `passed=false` with few `empty_pages` | Verification report lists a handful of empty pages | Spot-check those pages in the source PDF — blank divider pages are benign (record and proceed); many empty pages is a real failure (HALT). Do NOT re-run or endpoint-probe over a few blank dividers |
 | Probe artifacts in corpus dirs | Stray `probe`/`ocr-probe` files in `extracted/` or the corpus root | Delete before Stage 2 — they chunk as duplicate sources. Probes belong in-tool (`target_pages` slices) or a scratch dir outside the corpus tree |
 | Empty conversion output | `corpus_convert` produces 0 text files | Error: "no text extracted from any file" — HALT |

@@ -34,10 +34,6 @@ pub(crate) struct OcrResult {
     pub model: String,
     /// Extracted text content.
     pub text: String,
-    /// Backend-reported confidence [0.0, 1.0].
-    pub confidence: f32,
-    /// Wall-clock duration of the OCR invocation in milliseconds.
-    pub duration_ms: u64,
     /// Deterministic quality assessment of `text` (see `ocr::quality`).
     pub quality: PageQuality,
 }
@@ -46,20 +42,12 @@ impl OcrResult {
     /// Construct a result, assessing the text against the quality gates at
     /// construction time — the single place quality is computed, so no
     /// result can exist with an unassessed or stale quality record.
-    pub fn new(
-        page_index: usize,
-        model: impl Into<String>,
-        text: String,
-        confidence: f32,
-        duration_ms: u64,
-    ) -> Self {
+    pub fn new(page_index: usize, model: impl Into<String>, text: String) -> Self {
         let quality = quality::assess(&text);
         Self {
             page_index,
             model: model.into(),
             text,
-            confidence,
-            duration_ms,
             quality,
         }
     }
@@ -166,11 +154,6 @@ pub(crate) struct PipelineOutcome {
     pub results: Vec<OcrResult>,
     /// Verification report computed after assembly.
     pub report: VerificationReport,
-    /// Model distribution across pages (e.g. `{"runpod/kask-ocr": 85}`).
-    /// Surfaced to tool results so consumers can see which model produced
-    /// the text.
-    #[serde(default)]
-    pub models: std::collections::HashMap<String, usize>,
     /// Pipeline errors collected across all pages.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<PipelineError>,

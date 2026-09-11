@@ -4,8 +4,9 @@
 //! PDF → [Decimate] → PageQueue → [OCR (single LLM backend)] → ResultBuffer → [Assembly] → VerifiedDocument
 //! ```
 //!
-//! There is exactly one OCR backend: the configured vision model, invoked
-//! per page. The former Tesseract backend and its complexity-tier routing
+//! There is exactly one OCR backend: the configured OCR model (a dedicated
+//! OCR endpoint such as `runpod/kask-ocr` — OLMOCR-2), invoked per page via
+//! the vision transport (image in, text out). The former Tesseract backend and its complexity-tier routing
 //! were removed (2026-09-10) — tier routing silently sent book pages to a
 //! garbage-quality engine, and the fallback ladder silently substituted
 //! degraded text on LLM failure. A page now either gets text from the
@@ -81,7 +82,7 @@ pub(crate) trait OcrExecutor: Send + Sync {
 /// * `pages` — Decimated page images in document order.
 /// * `expected_pages` — Total number of pages (for verification).
 /// * `executor` — Pluggable OCR executor (`Arc` for parallel task spawning).
-/// * `model` — The vision model ID (resolved by the caller; never defaulted).
+/// * `model` — The OCR model ID (resolved by the caller; never defaulted).
 /// * `max_concurrency` — `Some(n)` for parallel, `None` for sequential.
 ///
 /// # Returns
@@ -254,7 +255,7 @@ async fn process_single_page(
     }
 }
 
-/// Shared outcome finalization: verification + model distribution.
+/// Shared outcome finalization: verification + Regulation tracing.
 fn finalize_outcome_inner(
     results: Vec<OcrResult>,
     errors: Vec<PipelineError>,
@@ -264,14 +265,6 @@ fn finalize_outcome_inner(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let report = verify_output(expected_pages, &results, &errors);
-
-    let models: std::collections::HashMap<String, usize> =
-        results
-            .iter()
-            .fold(std::collections::HashMap::new(), |mut acc, r| {
-                *acc.entry(r.model.clone()).or_insert(0) += 1;
-                acc
-            });
 
     tracing::info!(
         target: "reg.pipeline.ocr",
@@ -287,7 +280,6 @@ fn finalize_outcome_inner(
     PipelineOutcome {
         results,
         report,
-        models,
         errors,
     }
 }
@@ -310,13 +302,7 @@ mod tests {
             _image: &DynamicImage,
         ) -> Result<OcrResult, OcrError> {
             match self.results.get(page_index) {
-                Some(Ok(text)) => Ok(OcrResult::new(
-                    page_index,
-                    "mock-model",
-                    text.clone(),
-                    0.8,
-                    10,
-                )),
+                Some(Ok(text)) => Ok(OcrResult::new(page_index, "mock-model", text.clone())),
                 Some(Err(e)) => Err(e.clone()),
                 None => Err(OcrError::BackendFailed {
                     model: "mock-model".into(),
@@ -353,7 +339,6 @@ mod tests {
         .await;
         assert!(outcome.report.passed);
         assert!(outcome.report.quality_failed_pages.is_empty());
-        assert_eq!(outcome.models.get("mock-model"), Some(&2));
         assert!(outcome.errors.is_empty());
     }
 
@@ -439,6 +424,5 @@ mod tests {
         let outcome = run_pipeline(pages, 10, executor, "mock-model", Some(4)).await;
         assert!(outcome.report.passed);
         assert_eq!(outcome.results.len(), 10);
-        assert_eq!(outcome.models.get("mock-model"), Some(&10));
     }
 }

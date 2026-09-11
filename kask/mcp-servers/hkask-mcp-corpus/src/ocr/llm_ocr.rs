@@ -14,7 +14,6 @@ use hkask_types::{InferencePort, template::LLMParameters};
 use image::DynamicImage;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::time::Instant;
 
 use crate::ocr::pipeline::{OcrError, OcrExecutor};
 
@@ -331,7 +330,6 @@ impl OcrExecutor for LlmOcrExecutor {
         }
 
         let model = model.to_string();
-        let start = Instant::now();
 
         // Encode as PNG: `LanguageModelImage`'s contract is base64 PNG and
         // `to_base64_url` hardcodes the `data:image/png` MIME. JPEG bytes under
@@ -448,12 +446,6 @@ impl OcrExecutor for LlmOcrExecutor {
         }
 
         let text = result?;
-        let duration_ms = start.elapsed().as_millis() as u64;
-
-        // Vision OCR models don't expose real per-token confidence via chat
-        // completions, so any number here is a placeholder. Use a fixed nominal
-        // rather than an invented 3-factor heuristic (hkask P5: simplicity).
-        let confidence = 0.8;
         let word_count = text.split_whitespace().count();
 
         // Direct plausibility check for the Regulation low-confidence alert: non-empty
@@ -469,13 +461,7 @@ impl OcrExecutor for LlmOcrExecutor {
             );
         }
 
-        Ok(OcrResult::new(
-            page_index,
-            model,
-            text,
-            confidence,
-            duration_ms,
-        ))
+        Ok(OcrResult::new(page_index, model, text))
     }
 }
 

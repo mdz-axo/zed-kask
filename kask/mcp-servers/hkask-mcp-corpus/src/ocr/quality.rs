@@ -22,8 +22,6 @@
 /// Per-page (or per-file) quality assessment of OCR output text.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PageQuality {
-    /// Whitespace-separated word count.
-    pub word_count: usize,
     /// CJK characters / non-whitespace characters. Hallucinated CJK on a
     /// Latin-script page is the dominant degeneration mode; clean English
     /// book text measures 0.0.
@@ -83,7 +81,6 @@ pub(crate) fn assess(text: &str) -> PageQuality {
     }
 
     PageQuality {
-        word_count: words.len(),
         cjk_ratio,
         repetition_ratio,
         garble_ratio,
@@ -208,7 +205,6 @@ mod tests {
     fn short_text_cannot_trip_repetition() {
         let q = assess("BLANK");
         assert!(q.failed_gates.is_empty());
-        assert_eq!(q.word_count, 1);
     }
 
     #[test]
@@ -217,6 +213,5 @@ mod tests {
         // quality gates' — ratios are defined as 0.0 for empty input.
         let q = assess("");
         assert!(q.failed_gates.is_empty());
-        assert_eq!(q.word_count, 0);
     }
 }

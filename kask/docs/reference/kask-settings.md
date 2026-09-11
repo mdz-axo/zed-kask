@@ -530,11 +530,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_TRANSACTIONS_DIR` | portfolio | derived from the artifacts dir as `portfolio-mcp/transactions/` |
 | `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
 | `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
-| `HKASK_OCR_CONCURRENCY` | corpus | `corpus.ocr_concurrency` |
-| `HKASK_OCR_SIMPLE_MAX` | corpus | `corpus.ocr_simple_max` |
-| `HKASK_OCR_MODERATE_MAX` | corpus | `corpus.ocr_moderate_max` |
-| `HKASK_OCR_SAMPLE_RATE` | corpus | `corpus.ocr_sample_rate` |
-| `HKASK_OCR_TUNEABLE` | corpus | `corpus.ocr_tuneable` |
 | `HKASK_TEMPLATE_ROOT` | corpus | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |

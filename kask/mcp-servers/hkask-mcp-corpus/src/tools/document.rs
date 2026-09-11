@@ -101,7 +101,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "OCR a PDF or image through the page pipeline (per-page vision OCR with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var or the kask.models.ocr_model setting); there is no built-in default — unset fails with visible guidance. The resolved model must be vision-capable."
+        description = "OCR a PDF or image through the page pipeline (per-page OCR via the configured dedicated OCR model, with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var or the kask.models.ocr_model setting); there is no built-in default — unset fails with visible guidance. The resolved model must accept image input (the call goes through the vision transport)."
     )]
     pub async fn corpus_ocr(
         &self,
@@ -158,7 +158,6 @@ impl CorpusServer {
                 "page_count_match": outcome.page_count_match,
                 "empty_pages": outcome.empty_pages,
                 "quality_failed_pages": outcome.quality_failed_pages,
-                "models": outcome.models,
                 "llm_breaker_open": outcome.llm_breaker_open,
                 "error_count": outcome.error_count,
             });

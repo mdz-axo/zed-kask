@@ -30,10 +30,11 @@ use serde_json::{Value, json};
 use crate::backend::markdown_pages_to_structure;
 use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
 use crate::helpers::map_corpus_io_error;
+use crate::ocr::PipelineOutcome;
 use crate::ocr::decimation;
+use crate::ocr::llm_ocr::LlmOcrExecutor;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
 use crate::ocr::triage::parse_target_pages;
-use crate::ocr::{PipelineExecutor, PipelineOutcome};
 use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
@@ -68,7 +69,7 @@ pub enum PassageIndexError {
 pub(crate) struct ConvertService<'a> {
     inference_router: Arc<dyn InferencePort>,
     ocr_model: Option<String>,
-    pipeline_executor: Arc<PipelineExecutor>,
+    llm_ocr: Arc<LlmOcrExecutor>,
     index: &'a crate::index::PassageIndex,
 }
 
@@ -86,11 +87,29 @@ pub(crate) struct PipelineOcrOutcome {
     /// the page indices are surfaced so garbage can never merge silently.
     pub(crate) quality_failed_pages: Vec<usize>,
     pub(crate) error_count: usize,
-    /// Model distribution across pages (e.g. `{"runpod/kask-ocr": 85}`).
-    pub(crate) models: std::collections::HashMap<String, usize>,
     /// Whether the LLM OCR circuit breaker was open when the outcome was
     /// assembled — LLM attempts paused, so pages failed without an attempt.
     pub(crate) llm_breaker_open: bool,
+}
+
+/// Per-failed-page quality evidence: the gate names plus the measured
+/// ratios behind the verdict. A bare page index says *that* a page failed;
+/// this says *why* and *how badly* — the operator-facing half of the
+/// quality-gate contract (`quality_failed_pages` is the compact form).
+fn quality_failure_detail(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter(|r| !r.quality.failed_gates.is_empty())
+        .map(|r| {
+            serde_json::json!({
+                "page": r.page_index,
+                "gates": r.quality.failed_gates,
+                "cjk_ratio": r.quality.cjk_ratio,
+                "repetition_ratio": r.quality.repetition_ratio,
+                "garble_ratio": r.quality.garble_ratio,
+            })
+        })
+        .collect()
 }
 
 /// Assemble pipeline results into an outcome, erroring when the assembled
@@ -122,7 +141,6 @@ fn assemble_pipeline_outcome(
         empty_pages: outcome.report.empty_pages,
         quality_failed_pages: outcome.report.quality_failed_pages,
         error_count: outcome.errors.len(),
-        models: outcome.models,
         llm_breaker_open,
     })
 }
@@ -140,13 +158,13 @@ impl<'a> ConvertService<'a> {
     pub fn new(
         inference_router: Arc<dyn InferencePort>,
         ocr_model: Option<String>,
-        pipeline_executor: Arc<PipelineExecutor>,
+        llm_ocr: Arc<LlmOcrExecutor>,
         index: &'a crate::index::PassageIndex,
     ) -> Self {
         Self {
             inference_router,
             ocr_model,
-            pipeline_executor,
+            llm_ocr,
             index,
         }
     }
@@ -160,7 +178,7 @@ impl<'a> ConvertService<'a> {
         Self::new(
             Arc::clone(&server.inference_router),
             server.ocr_model.clone(),
-            Arc::clone(&server.pipeline_executor),
+            Arc::clone(&server.llm_ocr),
             &server.index,
         )
     }
@@ -249,13 +267,29 @@ impl<'a> ConvertService<'a> {
             )));
         }
 
+        // OCR-class guardrail: the OCR path is built for dedicated OCR
+        // models (cheaper, faster, and better at text extraction than
+        // general vision LLMs, which can hallucinate on hard scans). The
+        // registry has no OCR-class field, so the name heuristic is the
+        // available signal — warn (do not block) when a general vision
+        // model is resolved here, so the choice is visible, never silent.
+        if !model.to_ascii_lowercase().contains("ocr") {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.model_class",
+                model = %model,
+                "OCR path resolved a general vision model — dedicated OCR models \
+                 (e.g. runpod/kask-ocr) are cheaper, faster, and produce fewer \
+                 hallucinations; this is an explicit override, not the designed default"
+            );
+        }
+
         Ok(model)
     }
 
     /// The server's page-pipeline OCR executor as the trait object the
     /// pipeline functions consume.
     pub(crate) fn pipeline_executor(&self) -> std::sync::Arc<dyn OcrExecutor> {
-        std::sync::Arc::clone(&self.pipeline_executor) as std::sync::Arc<dyn OcrExecutor>
+        std::sync::Arc::clone(&self.llm_ocr) as std::sync::Arc<dyn OcrExecutor>
     }
 
     /// Run the page pipeline with the service's standard parameters — the
@@ -301,9 +335,9 @@ impl<'a> ConvertService<'a> {
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
             "quality_failed_pages": &outcome.report.quality_failed_pages,
-            "models": &outcome.models,
-            "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
-            "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
+            "quality_failures": quality_failure_detail(&outcome.results),
+            "llm_breaker_open": self.llm_ocr.breaker_open(),
+            "llm_concurrency": self.llm_ocr.adaptive_concurrency(),
             "error_count": outcome.errors.len(),
         });
         if let (Some(result_map), Some(common_map)) = (result.as_object_mut(), common.as_object()) {
@@ -361,7 +395,7 @@ impl<'a> ConvertService<'a> {
         )
         .await;
         self.persist_pipeline_outcome(&outcome).await;
-        let llm_breaker_open = self.pipeline_executor.llm_breaker_open();
+        let llm_breaker_open = self.llm_ocr.breaker_open();
         assemble_pipeline_outcome(outcome, llm_breaker_open)
     }
 
@@ -374,7 +408,6 @@ impl<'a> ConvertService<'a> {
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
             "quality_failed_pages": outcome.report.quality_failed_pages,
-            "model_distribution": &outcome.models,
         });
         tracing::debug!(
             target: "hkask.mcp.docproc.reg",
@@ -1543,13 +1576,7 @@ mod ocr_guards {
             _model: &str,
             _image: &image::DynamicImage,
         ) -> Result<OcrResult, OcrError> {
-            Ok(OcrResult::new(
-                page_index,
-                "mock-model",
-                self.text.clone(),
-                0.9,
-                1,
-            ))
+            Ok(OcrResult::new(page_index, "mock-model", self.text.clone()))
         }
     }
 
@@ -1559,13 +1586,12 @@ mod ocr_guards {
     fn test_service(port: Arc<dyn InferencePort>) -> ConvertService<'static> {
         let index: &'static crate::index::PassageIndex = Box::leak(Box::default());
         let llm_executor = Arc::new(LlmOcrExecutor::new(Arc::clone(&port)));
-        let pipeline_executor = Arc::new(PipelineExecutor::new(llm_executor));
-        ConvertService::new(port, None, pipeline_executor, index)
+        ConvertService::new(port, None, llm_executor, index)
     }
 
     fn outcome_with_text(text: &str) -> PipelineOutcome {
         PipelineOutcome {
-            results: vec![OcrResult::new(0, "mock-model", text.to_string(), 0.9, 1)],
+            results: vec![OcrResult::new(0, "mock-model", text.to_string())],
             report: VerificationReport {
                 page_count_match: true,
                 empty_pages: if text.trim().is_empty() {
@@ -1577,7 +1603,6 @@ mod ocr_guards {
                 error_count: 0,
                 passed: !text.trim().is_empty(),
             },
-            models: std::collections::HashMap::new(),
             errors: vec![],
         }
     }

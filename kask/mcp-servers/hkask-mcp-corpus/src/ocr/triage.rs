@@ -18,8 +18,9 @@
 //! Not yet detectable (require a PDFium text-object layer — Tier 2):
 //! - `Garbled` (broken cmap / Type3 fallback), `VectorText` (filled vector outlines).
 //!
-//! P4 calibration: triage thresholds live in `TriageConfig` and follow the same
-//! affirmative-consent discipline as `ThresholdConfig` — never auto-adjusted.
+//! P4 calibration: triage thresholds live in `TriageConfig` and follow the
+//! affirmative-consent discipline — suggested by Regulation, never
+//! auto-adjusted.
 
 use std::path::Path;
 

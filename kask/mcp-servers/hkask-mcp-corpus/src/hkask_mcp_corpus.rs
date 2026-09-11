@@ -232,8 +232,8 @@ pub(crate) fn default_embedding_model() -> Option<String> {
 // The `mcp_server!` macro generates the constructor, so the field set is
 // structurally fixed — there is no way to construct a partial server for a
 // single tool group. A test for `corpus_query` (needs only `index` +
-// `inference_router`) must construct `llm_ocr` and `pipeline_executor`.
-// Similarly, a test for `corpus_convert` (needs only OCR fields) gets a
+// `inference_router`) must construct `llm_ocr`. Similarly, a test for
+// `corpus_convert` (needs only OCR fields) gets a
 // useless `index` mutex. Changing this requires modifying the macro, which
 // is a high-risk structural change deferred to a future refactor.
 
@@ -243,7 +243,6 @@ hkask_mcp_server::mcp_server!(
         pub inference_router: Arc<dyn InferencePort>,
         pub index: Arc<crate::index::PassageIndex>,
         pub llm_ocr: Arc<crate::ocr::llm_ocr::LlmOcrExecutor>,
-        pub pipeline_executor: Arc<crate::ocr::PipelineExecutor>,
     }
 );
 
@@ -349,8 +348,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         hkask_types::ocr_health::ocr_health_path(),
                     ))),
             );
-            let pipeline_executor =
-                Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 
             Ok(CorpusServer::new(
                 ctx.webid,
@@ -358,7 +355,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 inference_port,
                 Arc::default(),
                 llm_ocr,
-                pipeline_executor,
             ))
         },
         vec![],
@@ -408,15 +404,7 @@ mod smoke {
         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
             &inference_port,
         )));
-        let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
-        CorpusServer::new(
-            WebID::new(),
-            None,
-            inference_port,
-            Arc::default(),
-            llm_ocr,
-            pipeline_executor,
-        )
+        CorpusServer::new(WebID::new(), None, inference_port, Arc::default(), llm_ocr)
     }
 
     /// Extract the MCP tool-result envelope: `{"content": <value>}`.

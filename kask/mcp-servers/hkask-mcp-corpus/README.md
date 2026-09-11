@@ -110,7 +110,7 @@ and the whole book silently degraded to Tesseract.
 | Tool | Description |
 |------|-------------|
 | `corpus_convert` | Extract text from a document. For PDFs: tries fast text extraction first (~50ms for text-native), falls back to typed OCR pipeline (decimate→score→route→OCR→verify) if near-empty. Supports `force_ocr` mode. Formats: PDF, MD, HTML, TXT. |
-| `corpus_ocr` | OCR a document using a local vision model. Requires `HKASK_OCR_MODEL` or explicit `model` parameter. |
+| `corpus_ocr` | OCR a document using the configured OCR model (a dedicated OCR endpoint). Requires `HKASK_OCR_MODEL` or explicit `model` parameter. |
 | `corpus_chunk` | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store. |
 | `corpus_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
 | `corpus_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
@@ -315,7 +315,6 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HKASK_OCR_CONCURRENCY` | 4 | Number of pages sent to the vision model in parallel |
 | `HKASK_OCR_RENDER_DPI` | 72 | Page-render resolution for the OCR pipeline. Default 72 keeps the image payload inside the vision model's 128K-token context; raise to ~150 for better accuracy on scanned books at the cost of render memory and LLM payload size. Malformed values warn and fall back to 72. |
 
 The former complexity-tier thresholds (`HKASK_OCR_SIMPLE_MAX`,
