@@ -65,7 +65,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | Tool | Description |
 |---|---|
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade. |
-| `expectations_gap` | Compare market-implied growth with management guidance and a supplied estimate. |
+| `expectations_gap` | Compare price-implied expectations with demonstrated DuPont capability (net margin, asset turnover, equity multiplier, ROE, sustainable self-funding growth rate); management guidance is context only. |
 
 ### Portfolio ledger, notes, and files
 
@@ -149,6 +149,16 @@ Review hardening of this same slice:
 - History and DCF preparation share one optional numeric share resolver: income diluted/basic → metrics diluted/basic → profile. Null/missing/nonnumeric candidates do not resolve; explicit numeric zero/negative values are not bypassed and DCF rejects nonpositive/nonfinite values. Other models retain their existing nominal fallback when no numeric source resolves.
 - `PreparedDcf` computes the existing `ModelInputQuality` once. Standalone and overlay serialize that same type under `data_quality`, including `quality_warning`; model-quality rules and projection math are unchanged.
 - One comparison-row builder validates both target and peer results. Empty/nonarray metrics produce an endpoint-specific error without hiding an available profile, comparison table or overlay.
+
+## Expectations-gap definition — 2026-09-10
+
+Operator ruling, superseding the guidance-gap definition that arrived with the hkask migration (`af7613e11a`) without ratification:
+
+- The gap is between what the price implies and what the company has demonstrated it can do — never between price and management guidance. Guidance is a context annotation only.
+- Demonstrated capability is the DuPont decomposition: ROE = net profit margin × asset turnover × equity multiplier, plus the Higgins sustainable growth rate SGR = ROE × retention (self-funding growth without external financing).
+- Industry-aware profitability headline: ROE for financial-sector companies (price-implied ROE from the justified P/B identity, P/B = (ROE − g)/(COE − g), COE default 10%); net margin for everyone else — net income / revenue, interest at demonstrated leverage and tax included, because net income is what flows to equity holders (operator ruling 2026-09-10).
+- The gap vector: growth gap (implied growth − SGR, with SGR surfaced beside it as the anchor) and profitability gap (implied net margin − demonstrated net margin — the DuPont median of actual net income / revenue — or implied ROE − demonstrated ROE for financials).
+- Net margin is net income / revenue. It is never approximated by a pre-interest operating formula — the solve runs exactly through the income-statement identity GM = NM/(1−tax) + interest% + D&A% with interest at the demonstrated interest-expense-to-revenue level, so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by construction. Gross margin is the internal projection parameter only, never a reported expectations quantity — it is safe only for enterprise-value calculations in acquisition scenarios where fixed costs will be restructured.
 
 ## Validation
 

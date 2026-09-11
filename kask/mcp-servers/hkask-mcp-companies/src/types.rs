@@ -112,8 +112,9 @@ pub(crate) struct CharacteristicsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
-    /// Your estimate of sustainable revenue growth (0.0–1.0).
-    /// Compared against market-implied growth and management guidance.
+    /// Your estimate of sustainable revenue growth (0.0–1.0). Context
+    /// annotation only — the gap axis is price-implied expectations vs
+    /// demonstrated DuPont capability (operator ruling 2026-09-10).
     pub growth_estimate: Option<f64>,
 }
 

@@ -241,7 +241,7 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 | Tool | Description |
 |------|-------------|
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade |
-| `expectations_gap` | Compare market-implied growth with management guidance and a supplied estimate |
+| `expectations_gap` | Compare price-implied expectations with demonstrated DuPont capability (net margin, asset turnover, equity multiplier, ROE, sustainable self-funding growth rate); management guidance is context only |
 
 ### Research notes and files (6)
 

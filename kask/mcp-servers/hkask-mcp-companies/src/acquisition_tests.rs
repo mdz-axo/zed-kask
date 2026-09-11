@@ -2516,3 +2516,299 @@ async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
         })
         .await;
 }
+
+// ── Expectations gap: DuPont capability axis (operator ruling 2026-09-10) ──
+
+/// DuPont fixture: three years (provider order, newest first) with constant
+/// ratios (NPM 0.10, AT 0.5, EM 2.5, ROE 0.125) and dividends proportional
+/// to net income (retention constant), so per-year medians preserve the
+/// identity exactly. `dividend_ratio` varies to exercise the retention
+/// clamp.
+fn dupont_fixture(dividend_ratio: f64) -> Value {
+    json!({
+        "income": [
+            {"calendarYear": "2025", "revenue": 1210.0, "netIncome": 121.0, "interestExpense": 60.5, "incomeTaxExpense": 24.2, "incomeBeforeTax": 121.0, "weightedAverageShsOut": 100.0},
+            {"calendarYear": "2024", "revenue": 1100.0, "netIncome": 110.0, "interestExpense": 55.0},
+            {"calendarYear": "2023", "revenue": 1000.0, "netIncome": 100.0, "interestExpense": 50.0},
+        ],
+        "balance": [
+            {"calendarYear": "2025", "totalAssets": 2420.0, "totalStockholdersEquity": 968.0},
+            {"calendarYear": "2024", "totalAssets": 2200.0, "totalStockholdersEquity": 880.0},
+            {"calendarYear": "2023", "totalAssets": 2000.0, "totalStockholdersEquity": 800.0},
+        ],
+        "cash_flow": [
+            {"calendarYear": "2025", "dividendsPaid": 121.0 * dividend_ratio},
+            {"calendarYear": "2024", "dividendsPaid": 110.0 * dividend_ratio},
+            {"calendarYear": "2023", "dividendsPaid": 100.0 * dividend_ratio},
+        ],
+    })
+}
+
+fn dupont_snapshot(fixture: &Value) -> financial_model::HistoricalSnapshot {
+    financial_model::HistoricalSnapshot::from_api_json(
+        fixture["income"].as_array().expect("income"),
+        fixture["balance"].as_array().expect("balance"),
+        fixture["cash_flow"].as_array().expect("cash flow"),
+        &[],
+        &json!({}),
+    )
+}
+
+/// expect: [P5] DuPont capability: the identity NPM × AT × EM = ROE holds on
+/// medians, retention derives from dividends, and SGR = ROE × retention.
+#[test]
+fn dupont_identity_and_sustainable_growth() {
+    // dividends 40% of net income → retention 0.6; SGR = 0.125 × 0.6.
+    let snapshot = dupont_snapshot(&dupont_fixture(0.4));
+    let dupont = snapshot.dupont().expect("dupont");
+    assert_eq!(dupont.years, 3);
+    assert!((dupont.net_profit_margin - 0.10).abs() < 1e-12);
+    assert!((dupont.asset_turnover - 0.50).abs() < 1e-12);
+    assert!((dupont.equity_multiplier - 2.50).abs() < 1e-12);
+    assert!((dupont.roe - 0.125).abs() < 1e-12);
+    let product = dupont.net_profit_margin * dupont.asset_turnover * dupont.equity_multiplier;
+    assert!((product - dupont.roe).abs() < 1e-12, "identity: {product}");
+    assert!(
+        (dupont.retention - 0.60).abs() < 1e-12,
+        "retention {}",
+        dupont.retention
+    );
+    assert!((dupont.sustainable_growth_rate - 0.075).abs() < 1e-12);
+}
+
+/// expect: [P5] Dividends above earnings demonstrate zero retained funding,
+/// never negative — the self-funding growth rate floors at zero.
+#[test]
+fn dupont_retention_clamps_when_dividends_exceed_earnings() {
+    // dividends 200% of net income → retention 0 for every year.
+    let snapshot = dupont_snapshot(&dupont_fixture(2.0));
+    let dupont = snapshot.dupont().expect("dupont");
+    assert_eq!(dupont.retention, 0.0);
+    assert_eq!(dupont.sustainable_growth_rate, 0.0);
+}
+
+/// expect: [P5] The justified-P/B implied-ROE solve round-trips the identity
+/// P/B = (ROE − g)/(COE − g), and refuses non-invertible regimes.
+#[test]
+fn implied_roe_round_trips_justified_price_to_book() {
+    // (0.15 − 0.05)/(0.10 − 0.05) = 2.0 → price 200, book 100.
+    let implied =
+        financial_model::implied_roe_from_price_to_book(200.0, 100.0, 0.10, 0.05).expect("solve");
+    assert!((implied - 0.15).abs() < 1e-12);
+    // COE ≤ g is not invertible; price and book must be positive.
+    assert!(financial_model::implied_roe_from_price_to_book(200.0, 100.0, 0.05, 0.05).is_none());
+    assert!(financial_model::implied_roe_from_price_to_book(200.0, 0.0, 0.10, 0.05).is_none());
+    assert!(financial_model::implied_roe_from_price_to_book(0.0, 100.0, 0.10, 0.05).is_none());
+}
+
+/// expect: [P5] The implied-NET-margin solve carries the interest burden: at
+/// a price generated from a known net margin, the solver recovers that net
+/// margin exactly — interest at the demonstrated interest-to-revenue level
+/// and tax at the demonstrated rate included. A pre-interest solve would
+/// return 0.04, not 0.08, so this test fails if interest or tax drops out
+/// of the NM ↔ GM conversion (operator ruling 2026-09-10). Unbracketed
+/// prices return None, never a fabricated margin.
+#[test]
+fn implied_net_margin_solve_carries_interest_burden() {
+    let snapshot = dupont_snapshot(&dupont_fixture(0.4));
+    // tax_rate = 24.2/121.0 = 0.2; latest interest/revenue = 60.5/1210 = 5%.
+    assert!((snapshot.tax_rate - 0.2).abs() < 1e-12);
+    let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot);
+    // Known net margin 8%: through the identity GM = NM/(1−tax) + interest%
+    // + D&A% (D&A 0 here) → GM = 0.08/0.8 + 0.05 = 0.15, and
+    // NI/revenue = (0.15 − 0.05) × 0.8 = 0.08 exactly.
+    let intrinsic = financial_model::project_model(
+        &snapshot,
+        &financial_model::ProjectionAssumptions {
+            revenue_growth: 0.05,
+            gross_margin: 0.15,
+            ..assumptions
+        },
+        100.0,
+    )
+    .intrinsic_per_share;
+    assert!(intrinsic.is_finite() && intrinsic > 0.0, "{intrinsic}");
+    let solved =
+        financial_model::implied_net_margin_at_growth(&snapshot, &assumptions, 0.05, intrinsic)
+            .expect("net margin solve");
+    assert!(
+        (solved - 0.08).abs() < 1e-3,
+        "solved {solved} — pre-interest would be 0.04"
+    );
+    assert!(
+        financial_model::implied_net_margin_at_growth(
+            &snapshot,
+            &assumptions,
+            0.05,
+            intrinsic * 100.0
+        )
+        .is_none()
+    );
+}
+
+fn hand_built_capability() -> financial_model::DuPontAnalysis {
+    financial_model::DuPontAnalysis {
+        net_profit_margin: 0.08,
+        asset_turnover: 0.60,
+        equity_multiplier: 2.20,
+        roe: 0.1056,
+        retention: 0.65,
+        sustainable_growth_rate: 0.06864,
+        years: 5,
+    }
+}
+
+/// expect: [P1] The gap axis is price-implied vs demonstrated DuPont
+/// capability — the guidance-gap fields never reappear; guidance is a
+/// context annotation (operator ruling 2026-09-10).
+#[test]
+fn expectations_gap_axis_is_capability_not_guidance() {
+    // Non-financial: both legs solved, both demanding more than demonstrated.
+    let non_financial = tools::expectations::ExpectationsSolve {
+        capability: hand_built_capability(),
+        headline: "net_margin",
+        implied_growth: Some(0.12),
+        implied_net_margin_at_sgr: Some(0.10),
+        implied_roe: None,
+        growth_gap_pp: Some((0.12 - 0.06864) * 100.0),
+        profitability_gap_pp: Some(1.5),
+        book_value_per_share: None,
+        sustainable_growth_rate: 0.06864,
+    };
+    let report = tools::expectations::build_gap_report(
+        "ACME",
+        &Some(non_financial),
+        &[0.03, 0.05, 0.07],
+        0.05,
+        &["guidance narrative".to_string()],
+        9,
+        "stock_quote",
+    );
+    assert_eq!(
+        report["capability"]["headline_measure"],
+        json!("net_margin")
+    );
+    assert_eq!(
+        report["capability"]["sustainable_growth_rate"],
+        json!(0.06864)
+    );
+    // SGR is the anchor of the growth leg — surfaced beside the gap.
+    assert_eq!(report["gaps"]["sustainable_growth_rate"], json!(0.06864));
+    assert!(report["gaps"]["growth_gap_pp"].as_f64().is_some());
+    assert_eq!(report["gaps"]["profitability_gap_pp"], json!(1.5));
+    assert!(
+        report["price_implied"]["implied_net_margin_at_sustainable_growth"]["value"]
+            .as_f64()
+            .is_some()
+    );
+    assert!(
+        !report["gaps"]
+            .as_object()
+            .expect("gaps")
+            .contains_key("market_vs_management_pct"),
+        "guidance must never be a gap axis"
+    );
+    assert!(
+        !report["gaps"]
+            .as_object()
+            .expect("gaps")
+            .contains_key("market_vs_user_pct")
+    );
+    // Guidance demoted to context.
+    assert!(
+        (report["context"]["management_guidance_median"]
+            .as_f64()
+            .expect("median")
+            - 0.05)
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(report["context"]["guidance_samples"], json!(3));
+    assert_eq!(
+        report["signal"],
+        json!("price_demands_more_than_demonstrated")
+    );
+
+    // Financial: the ROE headline path.
+    let financial = tools::expectations::ExpectationsSolve {
+        capability: hand_built_capability(),
+        headline: "roe",
+        implied_growth: None,
+        implied_net_margin_at_sgr: None,
+        implied_roe: Some(0.16),
+        growth_gap_pp: None,
+        profitability_gap_pp: Some((0.16 - 0.1056) * 100.0),
+        book_value_per_share: Some(242.0),
+        sustainable_growth_rate: 0.06864,
+    };
+    let report = tools::expectations::build_gap_report(
+        "BANK.OL",
+        &Some(financial),
+        &[],
+        0.05,
+        &[],
+        0,
+        "stock_quote",
+    );
+    assert_eq!(report["capability"]["headline_measure"], json!("roe"));
+    assert!(
+        report["price_implied"]["implied_roe"]["value"]
+            .as_f64()
+            .is_some()
+    );
+    assert!(report["price_implied"]["implied_growth"].is_null());
+    assert_eq!(
+        report["signal"],
+        json!("price_demands_more_than_demonstrated")
+    );
+
+    // No solve: honest unavailability, both legs reported missing.
+    let report =
+        tools::expectations::build_gap_report("BROKEN", &None, &[], 0.05, &[], 0, "unavailable");
+    assert_eq!(report["signal"], json!("insufficient_data"));
+    assert_eq!(report["data_quality"]["capability_available"], json!(false));
+    assert_eq!(report["data_quality"]["growth_leg_available"], json!(false));
+    assert_eq!(
+        report["data_quality"]["profitability_leg_available"],
+        json!(false)
+    );
+}
+
+/// expect: [P5] Financial-sector profiles route to the equity-based
+/// implied-ROE solve (justified P/B) — the FCF reverse DCF never runs for
+/// banks, and book value derives from equity over shares without the
+/// nominal share-count fallback.
+#[test]
+fn solve_expectations_financial_sector_uses_roe_path() {
+    let fixture = dupont_fixture(0.4);
+    let profile = providers::CompanyProfile::from_response(providers::ProviderResponse {
+        value: json!([{
+            "symbol": "BANK.OL",
+            "sector": "Financial Services",
+            "industry": "Banks - Regional",
+        }]),
+        provider: providers::Provider::Fmp,
+        warnings: Vec::new(),
+    });
+    let solve = tools::expectations::solve_expectations(
+        &fixture["income"],
+        &fixture["balance"],
+        &fixture["cash_flow"],
+        &json!([]),
+        &profile,
+        20.0,
+    )
+    .expect("financial solve");
+    assert_eq!(solve.headline, "roe");
+    assert!(solve.implied_roe.is_some());
+    assert!(solve.implied_growth.is_none());
+    assert!(solve.growth_gap_pp.is_none());
+    // equity 968 / shares 100 → BVPS 9.68; P/B = 20/9.68
+    let implied_roe = solve.implied_roe.expect("roe");
+    let expected = (20.0 / 9.68) * (0.10 - 0.075) + 0.075;
+    assert!(
+        (implied_roe - expected).abs() < 1e-12,
+        "{implied_roe} vs {expected}"
+    );
+    assert_eq!(solve.book_value_per_share, Some(9.68));
+}

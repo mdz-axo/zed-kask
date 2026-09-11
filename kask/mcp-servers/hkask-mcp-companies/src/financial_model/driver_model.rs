@@ -1100,6 +1100,16 @@ mod tests {
                 ("2021".into(), 0.0),
                 ("2022".into(), 0.0),
             ],
+            net_income: vec![
+                ("2020".into(), 100.0),
+                ("2021".into(), 110.0),
+                ("2022".into(), 120.0),
+            ],
+            total_assets: vec![
+                ("2020".into(), 2000.0),
+                ("2021".into(), 2100.0),
+                ("2022".into(), 2200.0),
+            ],
             shares_outstanding: 100.0,
             tax_rate: 0.21,
         }

@@ -175,9 +175,31 @@ pub(crate) struct HistoricalSnapshot {
     pub interest_expense: Vec<(String, f64)>,
     /// Dividends paid (dividendsPaid from FMP cash flow).
     pub dividends_paid: Vec<(String, f64)>,
+    /// Net income (netIncome from FMP/EODHD income statements) — the DuPont
+    /// profitability input.
+    pub net_income: Vec<(String, f64)>,
+    /// Total assets (totalAssets from balance sheets) — the DuPont
+    /// asset-turnover input.
+    pub total_assets: Vec<(String, f64)>,
 
     pub shares_outstanding: f64,
     pub tax_rate: f64,
+}
+
+/// DuPont decomposition of demonstrated capability (operator ruling
+/// 2026-09-10): ROE = net profit margin × asset turnover × equity
+/// multiplier, plus the Higgins sustainable growth rate
+/// SGR = ROE × retention — the growth a company can self-fund without
+/// external financing. Industry-aware headline: ROE for financial-sector
+/// companies, net margin for everyone else.
+pub(crate) struct DuPontAnalysis {
+    pub net_profit_margin: f64,
+    pub asset_turnover: f64,
+    pub equity_multiplier: f64,
+    pub roe: f64,
+    pub retention: f64,
+    pub sustainable_growth_rate: f64,
+    pub years: usize,
 }
 
 /// Resolve the first numeric share count in provider precedence order. Null,
@@ -218,6 +240,7 @@ impl HistoricalSnapshot {
         let mut da: Vec<(String, f64)> = Vec::new();
         let mut sga: Vec<(String, f64)> = Vec::new();
         let mut interest_expense: Vec<(String, f64)> = Vec::new();
+        let mut net_income: Vec<(String, f64)> = Vec::new();
         let mut tax_expense: Vec<f64> = Vec::new();
         let mut pre_tax_income: Vec<f64> = Vec::new();
 
@@ -235,6 +258,7 @@ impl HistoricalSnapshot {
             let ie = parse_financial_field(entry, "interestExpense");
             let te = parse_financial_field(entry, "incomeTaxExpense");
             let pi = parse_financial_field_or(entry, "incomeBeforeTax", 1.0);
+            let ni = parse_financial_field(entry, "netIncome");
 
             if year.is_empty() || rev == 0.0 {
                 continue;
@@ -244,6 +268,7 @@ impl HistoricalSnapshot {
             da.push((year.to_string(), d));
             sga.push((year.to_string(), s));
             interest_expense.push((year.to_string(), ie));
+            net_income.push((year.to_string(), ni));
             tax_expense.push(te);
             pre_tax_income.push(pi);
         }
@@ -258,6 +283,7 @@ impl HistoricalSnapshot {
         let mut inventory: Vec<(String, f64)> = Vec::new();
         let mut accounts_payable: Vec<(String, f64)> = Vec::new();
         let mut total_equity: Vec<(String, f64)> = Vec::new();
+        let mut total_assets: Vec<(String, f64)> = Vec::new();
         let mut ppe_net: Vec<(String, f64)> = Vec::new();
 
         for entry in balance_sheets.iter().rev() {
@@ -322,6 +348,10 @@ impl HistoricalSnapshot {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0),
             ));
+            total_assets.push((
+                year.to_string(),
+                parse_financial_field(entry, "totalAssets"),
+            ));
             ppe_net.push((
                 year.to_string(),
                 entry
@@ -381,9 +411,11 @@ impl HistoricalSnapshot {
             inventory,
             accounts_payable,
             total_equity,
+            total_assets,
             ppe_net,
             interest_expense,
             dividends_paid,
+            net_income,
 
             shares_outstanding,
             tax_rate,
@@ -485,6 +517,90 @@ impl HistoricalSnapshot {
     /// Net debt: long_term_debt - cash.
     pub fn net_debt(&self) -> f64 {
         self.latest_debt() - self.latest_cash()
+    }
+
+    /// DuPont decomposition over the years where revenue, net income, total
+    /// assets and equity all resolve positive. Components are per-year
+    /// medians, so the identity NPM × AT × EM = ROE holds exactly per year
+    /// and approximately across medians. Retention is 1 − dividends/net
+    /// income clamped to [0, 1] — a year paying dividends above earnings
+    /// demonstrates zero retained funding, not negative. SGR = ROE ×
+    /// retention; with no profitable year the self-funding rate is zero.
+    pub fn dupont(&self) -> Option<DuPontAnalysis> {
+        let net_by_year: std::collections::HashMap<&str, f64> = self
+            .net_income
+            .iter()
+            .map(|(year, value)| (year.as_str(), *value))
+            .collect();
+        let assets_by_year: std::collections::HashMap<&str, f64> = self
+            .total_assets
+            .iter()
+            .map(|(year, value)| (year.as_str(), *value))
+            .collect();
+        let equity_by_year: std::collections::HashMap<&str, f64> = self
+            .total_equity
+            .iter()
+            .map(|(year, value)| (year.as_str(), *value))
+            .collect();
+        let dividends_by_year: std::collections::HashMap<&str, f64> = self
+            .dividends_paid
+            .iter()
+            .map(|(year, value)| (year.as_str(), *value))
+            .collect();
+
+        let mut net_profit_margins = Vec::new();
+        let mut asset_turnovers = Vec::new();
+        let mut equity_multipliers = Vec::new();
+        let mut roes = Vec::new();
+        let mut retentions = Vec::new();
+        for (year, revenue) in &self.revenue {
+            let (Some(&net_income), Some(&assets), Some(&equity)) = (
+                net_by_year.get(year.as_str()),
+                assets_by_year.get(year.as_str()),
+                equity_by_year.get(year.as_str()),
+            ) else {
+                continue;
+            };
+            if *revenue <= 0.0 || assets <= 0.0 || equity <= 0.0 {
+                continue;
+            }
+            net_profit_margins.push(net_income / *revenue);
+            asset_turnovers.push(*revenue / assets);
+            equity_multipliers.push(assets / equity);
+            roes.push(net_income / equity);
+            if net_income > 0.0 {
+                let payout = dividends_by_year.get(year.as_str()).copied().unwrap_or(0.0);
+                retentions.push((1.0 - payout / net_income).clamp(0.0, 1.0));
+            }
+        }
+        if net_profit_margins.is_empty() {
+            return None;
+        }
+        let years = net_profit_margins.len();
+        let median = |mut values: Vec<f64>| {
+            values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let mid = values.len() / 2;
+            if values.len().is_multiple_of(2) {
+                (values[mid - 1] + values[mid]) / 2.0
+            } else {
+                values[mid]
+            }
+        };
+        let roe = median(roes);
+        let retention = if retentions.is_empty() {
+            0.0
+        } else {
+            median(retentions)
+        };
+        Some(DuPontAnalysis {
+            net_profit_margin: median(net_profit_margins),
+            asset_turnover: median(asset_turnovers),
+            equity_multiplier: median(equity_multipliers),
+            roe,
+            retention,
+            sustainable_growth_rate: roe * retention,
+            years,
+        })
     }
 
     // ── New accessors for the driver-based three-statement model ──────────
@@ -1081,6 +1197,120 @@ pub(crate) fn implied_growth(
         }
     }
     Some(implied)
+}
+
+/// Net-margin search bounds for the profitability leg of the expectations
+/// gap. Net margin is NET INCOME / revenue — the equity holder's margin,
+/// after interest at demonstrated leverage and tax (operator ruling
+/// 2026-09-10, stated three times: net income is what flows to equity
+/// holders). The floor allows loss-making margins; the ceiling bounds
+/// the bisection over economically meaningful profitability.
+pub(crate) const IMPLIED_NET_MARGIN_LO: f64 = -0.30;
+pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
+
+/// Solve for the NET margin (net income / revenue) at `growth` at which
+/// the projected equity value equals `current_price` — the profitability
+/// leg of the expectations gap: the net income margin the price demands
+/// when growth is held at the company's sustainable (self-funding) rate.
+///
+/// Net margin is the solve variable and the reported quantity. The
+/// enterprise model's gross margin is an internal projection parameter
+/// only, reached through the exact per-revenue income-statement identity
+/// `GM = NM/(1−tax) + interest% + D&A%` with interest at the demonstrated
+/// interest-expense-to-revenue level — so the solved NM satisfies
+/// `NI = (EBIT − interest) × (1 − tax)` by construction. Debt is carried at
+/// demonstrated net debt in the equity bridge, not through the margin.
+///
+/// Intrinsic value is increasing in net margin, so the same bisection
+/// direction discipline as `implied_growth` applies. Returns `None` when
+/// the price is not bracketed by `[IMPLIED_NET_MARGIN_LO,
+/// IMPLIED_NET_MARGIN_HI]` — never fabricate an in-range answer.
+pub(crate) fn implied_net_margin_at_growth(
+    hist: &HistoricalSnapshot,
+    assumptions: &ProjectionAssumptions,
+    growth: f64,
+    current_price: f64,
+) -> Option<f64> {
+    if current_price <= 0.0 {
+        return None;
+    }
+    let revenue = hist.latest_revenue();
+    if revenue <= 0.0 {
+        return None;
+    }
+    let interest_pct = hist
+        .interest_expense
+        .last()
+        .map(|(_, value)| *value)
+        .unwrap_or(0.0)
+        / revenue;
+    let tax_rate = hist.tax_rate;
+    if (1.0 - tax_rate) <= 0.01 {
+        return None;
+    }
+    // NM → the model's internal gross margin, exactly: the solved NM is
+    // net income / revenue at demonstrated interest and D&A shares of
+    // revenue.
+    let net_margin_to_gross =
+        |net_margin: f64| net_margin / (1.0 - tax_rate) + interest_pct + assumptions.da_to_revenue;
+
+    let at_margin = |net_margin: f64| {
+        project_model(
+            hist,
+            &ProjectionAssumptions {
+                revenue_growth: growth,
+                gross_margin: net_margin_to_gross(net_margin),
+                ..*assumptions
+            },
+            current_price,
+        )
+        .intrinsic_per_share
+    };
+
+    if at_margin(IMPLIED_NET_MARGIN_LO) > current_price
+        || at_margin(IMPLIED_NET_MARGIN_HI) < current_price
+    {
+        return None;
+    }
+
+    let mut lo = IMPLIED_NET_MARGIN_LO;
+    let mut hi = IMPLIED_NET_MARGIN_HI;
+    let mut implied = 0.0_f64;
+    for _ in 0..50 {
+        let mid = (lo + hi) / 2.0;
+        implied = mid;
+        let intrinsic = at_margin(mid);
+        if (intrinsic - current_price).abs() < 0.0001 {
+            break;
+        }
+        if intrinsic > current_price {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Some(implied)
+}
+
+/// Closed-form implied ROE from the justified price-to-book identity
+/// P/B = (ROE − g) / (COE − g) — residual income on equity, the standard
+/// reverse solve for financial-sector companies whose FCF is not
+/// meaningful (banks' deposits make NWC and invested capital
+/// incomputable). Solving for ROE: ROE = P/B × (COE − g) + g. Returns
+/// `None` when price or book value is not positive, or when COE ≤ g (the
+/// identity is not invertible in that regime — a price-to-book above the
+/// perpetuity bound).
+pub(crate) fn implied_roe_from_price_to_book(
+    price: f64,
+    book_value_per_share: f64,
+    cost_of_equity: f64,
+    growth: f64,
+) -> Option<f64> {
+    if price <= 0.0 || book_value_per_share <= 0.0 || cost_of_equity <= growth {
+        return None;
+    }
+    let price_to_book = price / book_value_per_share;
+    Some(price_to_book * (cost_of_equity - growth) + growth)
 }
 
 // ── Equity duration — extracted to `financial_model/equity_duration.rs`
