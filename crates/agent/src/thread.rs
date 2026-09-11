@@ -9417,19 +9417,26 @@ mod tests {
 
     fn two_half_compaction_history() -> Vec<Arc<Message>> {
         let evidence = |id: &str, text: &str| {
+            let mut call = tool_use(id, "terminal");
+            if let AgentMessageContent::ToolUse(call) = &mut call {
+                call.thought_signature = Some(id.to_string());
+            }
             Arc::new(Message::Agent(AgentMessage {
-                content: vec![tool_use(id, "terminal")],
+                content: vec![call],
                 tool_results: IndexMap::from_iter([(
                     id.into(),
                     LanguageModelToolResult {
                         tool_use_id: id.into(),
                         tool_name: "terminal".into(),
                         is_error: false,
-                        content: vec![text.to_string().into()],
+                        content: vec![
+                            text.to_string().into(),
+                            LanguageModelToolResultContent::Image(LanguageModelImage::empty()),
+                        ],
                         output: None,
                     },
                 )]),
-                reasoning_details: None,
+                reasoning_details: Some(Arc::new(json!({"signature": id}))),
             }))
         };
         vec![
@@ -9488,10 +9495,31 @@ mod tests {
             let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
             assert!(
                 parts.iter().any(
-                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id)
+                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id && call.thought_signature.as_deref() == Some(id))
                 )
             );
-            assert!(parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id)));
+            assert!(parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id && result.content.iter().any(|part| matches!(part, LanguageModelToolResultContent::Image(_))))));
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|message| message.reasoning_details.as_deref()
+                        == Some(&json!({"signature": id})))
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| matches!(part, MessageContent::ToolUse(_)))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| matches!(part, MessageContent::ToolResult(_)))
+                    .count(),
+                1
+            );
         }
         // Complete the later half first; chronology must not follow completion order.
         model.send_completion_stream_text_chunk(later, "Later summary: preserve the error type.");
@@ -9571,6 +9599,7 @@ mod tests {
             "cancel-halves",
             "cancel-merge",
             "truncated",
+            "truncated-merge",
         ] {
             let (thread, _event_stream) = setup_thread_for_test(cx).await;
             let model = Arc::new(FakeLanguageModel::default());
@@ -9587,7 +9616,7 @@ mod tests {
             cx.run_until_parked();
             let mut requests = model.pending_completions();
             assert_eq!(requests.len(), 2, "{outcome}");
-            if matches!(outcome, "merge" | "cancel-merge") {
+            if matches!(outcome, "merge" | "cancel-merge" | "truncated-merge") {
                 for request in &requests {
                     model.send_completion_stream_text_chunk(request, "Half summary.");
                     model.end_completion_stream(request);
@@ -9610,11 +9639,19 @@ mod tests {
                         model.send_completion_stream_text_chunk(other, "Successful peer summary.");
                     }
                 }
-                if outcome == "truncated" {
+                if outcome.starts_with("truncated") {
                     model.send_completion_stream_text_chunk(request, "Incomplete summary");
                     model.send_completion_stream_event(
                         request,
                         LanguageModelCompletionEvent::Stop(StopReason::MaxTokens),
+                    );
+                    model.send_completion_stream_event(
+                        request,
+                        LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                            input_tokens: 13,
+                            output_tokens: 7,
+                            ..Default::default()
+                        }),
                     );
                 } else {
                     model.send_completion_stream_error(
@@ -9639,17 +9676,25 @@ mod tests {
                 "no retries or merge after {outcome}"
             );
             thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.messages, original, "{outcome}")
+                assert_eq!(thread.messages, original, "{outcome}");
+                if outcome.starts_with("truncated") {
+                    assert_eq!(thread.cumulative_token_usage().input_tokens, 13);
+                    assert_eq!(thread.cumulative_token_usage().output_tokens, 7);
+                }
             });
             if !outcome.starts_with("cancel") {
                 let mut saw_error = false;
                 while let Some(event) = events.next().await {
                     if let Err(error) = event {
-                        assert!(error.to_string().contains(if outcome == "truncated" {
-                            "output limit"
-                        } else {
-                            "Context too large for this compaction phase"
-                        }));
+                        assert!(
+                            error
+                                .to_string()
+                                .contains(if outcome.starts_with("truncated") {
+                                    "output limit"
+                                } else {
+                                    "Context too large for this compaction phase"
+                                })
+                        );
                         saw_error = true;
                     }
                 }
