@@ -285,9 +285,9 @@ mod tool_surface_tests {
     /// way (attributed, implemented, unreachable) until this pin caught the
     /// class. Mirrors the media/scenarios pin tests.
     #[test]
-    fn tool_surface_is_exactly_23_registered_tools() {
+    fn tool_surface_is_exactly_24_registered_tools() {
         let n = CorpusServer::combined_router().list_all().len();
-        assert_eq!(n, 23, "corpus registered tool surface changed; got {n}");
+        assert_eq!(n, 24, "corpus registered tool surface changed; got {n}");
     }
 }
 

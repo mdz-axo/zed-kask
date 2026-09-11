@@ -66,7 +66,7 @@ All inputs are parameterized. None are hardcoded.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `corpus_source` | string | yes | — | Absolute path to a folder containing source documents |
-| `entity_ref_prefix` | string | yes | — | Prefix for entity references in chunk IDs (e.g. "john-brooks") |
+| `entity_ref_prefix` | string | yes | — | Prefix for entity references in chunk IDs. For a style corpus this MUST be `style:{author}` (e.g. "style:john-brooks"): `corpus_compose` retrieves exemplars by the `style:{author}:` entity-ref prefix, so any other prefix (e.g. "john-brooks") retrieves zero exemplars. |
 | `db_path` | string | yes | — | Path to the vector database file for embeddings and h_mems |
 | `passphrase` | string | yes | — | Passphrase for the encrypted vector DB. Resolve via `hkask_mcp_server::server::resolve_db_passphrase` helper if available, otherwise from credentials. |
 | `reference_author` | string | no | null | Author name for style exemplar construction (e.g. "John Brooks"). When provided, Stage 5 runs. |
@@ -95,8 +95,7 @@ subagents, bounded by the process-wide concurrency settings in
 
 | Setting | Default | Role |
 |---------|---------|------|
-| `max_concurrency` | 96 | Process-wide ceiling on concurrent cloud inference calls. Shared across skill execution, corpus OCR, and MCP tool calls. |
-| `ocr_concurrency` | 4 | Corpus-specific: pages sent to the vision model in parallel during OCR. Overridable via `HKASK_OCR_CONCURRENCY`. |
+| `max_concurrency` | 96 | Process-wide ceiling on concurrent cloud inference calls. Shared across skill execution, corpus OCR, and MCP tool calls. OCR page concurrency reads this same ceiling (with an adaptive AIMD limiter in the executor) — there is no separate OCR concurrency setting. |
 
 ### Concurrency dispatch pattern
 
@@ -134,7 +133,7 @@ provider throttles.
 | Stage | Parallelizable? | Work unit | Pattern |
 |-------|----------------|-----------|--------|
 | Stage 1 (Convert) | Yes — per file | Each source file | Spawn subagents per file (or per file group), step-up ramp |
-| Stage 1a (OCR) | Yes — per PDF | Each complex PDF | Spawn subagents per PDF, bounded by `ocr_concurrency` |
+| Stage 1a (OCR) | Yes — per PDF | Each complex PDF | Spawn subagents per PDF, bounded by the process-wide `max_concurrency` |
 | Stage 2 (Chunk) | Partial — per sub-directory | Groups of extracted text files | Split input dir, dispatch chunk calls to subagents, merge outputs |
 | Stage 3 (Embed) | No — single DB write | All chunks at once | Use tool's `batch_size` parameter for internal batching |
 | Stage 4 (Tag) | Yes — per batch | Chunks JSONL batch files | Spawn subagents per batch, step-up ramp, each with `concurrency` param |
@@ -323,10 +322,10 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
      `corpus_ocr` is the single-image tool; on PDFs it routes through the
      same pipeline and errors on zero text). OCR page concurrency is
      bounded by the process-wide `max_concurrency` setting; the remote
-     vision calls are additionally gated by an adaptive AIMD limiter
+     OCR calls are additionally gated by an adaptive AIMD limiter
      inside the executor (ramps up on success, halves on failure).
-     For multiple complex PDFs, spawn subagents per PDF up to
-     `ocr_concurrency` concurrent agents.
+     For multiple complex PDFs, spawn subagents per PDF, keeping the
+     fleet within the process-wide `max_concurrency` ceiling.
    - If complex and OCR unavailable, HALT with a failure report naming
      the file: "PDF {{ filename }} requires OCR but OCR is unavailable".
      Never skip the file and continue — a silently skipped source is data
@@ -425,16 +424,35 @@ corpus is small (≤ 20 files), call `corpus_convert` on the source folder:
      re-extracted on the next run instead of being honored as existing
      output.
 
-7. **Merge OCR outputs into the extraction set.** OCR'd texts land in the
-   OCR output directory (e.g. `corpus/extracted/{{ entity_ref_prefix }}-ocr/`);
-   the low-word garbage extractions they replace still sit in the main
-   extracted directory. Before Stage 2, assemble ONE input set: overwrite
-   each failed extraction with its OCR output (same base filename), so
-   the extracted directory holds exactly `source_count` files — every
-   source represented once, no duplicates, no garbage. Re-run the
-   word-count audit (step 5) over the merged set. A probe file or OCR
-   duplicate left in this directory is a corpus-quality bug — the chunk
-   stage would ingest it as a second source.
+7. **Merge staged OCR outputs into the extraction set (explicit,
+   audit-gated).** OCR'd texts land in the staging sibling directory
+   (`{output}-ocr-staging/`, e.g.
+   `corpus/extracted/{{ entity_ref_prefix }}-ocr-staging/`); the
+   low-word garbage extractions they replace still sit in the main
+   extracted directory. Model output never enters the extraction set
+   on its own — the merge is the caller's explicit step, and each
+   staged file must pass a file-level audit first:
+   - **Dictionary-miss rate** — `aspell list --lang=en` over the file,
+     miss-count / word-count. Clean book text measures ~1.5–6%
+     (proper nouns, technical terms); the degenerate OCR cases
+     measured 29–49% (Berlin 48.6%, Soft_Matter 41.1%,
+     InformationRules 32.0%, clark 28.9%) and a symbol-soup
+     extraction measured 13%.
+   - **CJK character count** — clean Latin-script text is 0;
+     hallucinated CJK measured 277K–746K chars per file.
+   - **8-word shingle repetition ratio** — clean prose ~0.0;
+     repetition loops ~0.9.
+   A staged file failing the audit STAYS staged — never merge it,
+   never delete it. The next directory-mode run re-extracts it
+   automatically (the resume skip honors the deterministic quality
+   gates, so quality-failed outputs never persist as idempotency).
+   Merge only audit-passing files: overwrite each failed extraction
+   with its staged OCR output (same base filename), so the extracted
+   directory holds exactly `source_count` files — every source
+   represented once, no duplicates, no garbage. Re-run the word-count
+   audit (step 5) over the merged set. A probe file or OCR duplicate
+   left in this directory is a corpus-quality bug — the chunk stage
+   would ingest it as a second source.
 
 8. **Re-OCR procedure (quality upgrade of passing outputs).** When
    existing extractions pass the word-count floor but must be re-OCR'd
@@ -726,8 +744,20 @@ calls per chunk and will time out on large inputs (observed: timeout on
 1. If `config_path` is provided, use it. Otherwise, note that a config
    YAML must exist or be generated for the style exemplar.
 
-2. Call `corpus_compose` with the author's style config to build the
-   style centroid and validate it against the corpus embeddings:
+2. Compute and store the style centroid with `corpus_centroid`:
+   - `author`: `{{ reference_author }}`
+   - `db_path`: `{{ db_path }}`
+   - `passphrase`: `{{ passphrase }}`
+
+   The tool averages every embedding under the `style:{author}:`
+   entity-ref prefix (excluding the centroid ref itself and `:rule:`
+   refs) and stores the mean at `style:{author}:centroid` — the entity
+   ref `corpus_compose` reads for centroid validation. Without a stored
+   centroid, `corpus_compose` runs unvalidated (validation silently
+   returns None) — the centroid MUST be computed and stored first.
+
+3. Call `corpus_compose` with the author's style config to generate a
+   style sample and validate it against the stored centroid:
    - `prompt`: a brief description of the desired style
    - `author`: `{{ reference_author }}`
    - `db_path`: `{{ db_path }}`
@@ -736,8 +766,8 @@ calls per chunk and will time out on large inputs (observed: timeout on
      cognition YAML with the Jinja2 system prompt template and
      validation thresholds; omit for the generic inline config)
 
-3. **Quality gate**: style centroid within validation thresholds.
-   Call `lisp_eval`:
+4. **Quality gate**: generated prose within centroid validation
+   thresholds. Call `lisp_eval`:
    ```
    form: "(let ((dist centroid_distance)
                  (ex exemplar_count))
@@ -746,11 +776,13 @@ calls per chunk and will time out on large inputs (observed: timeout on
                  (<= ex 10000)))"
    ```
    Substitute actual values as literals.
-   If false, log warning: "style centroid outside validation thresholds"
-   but continue — QA generation can proceed without the style exemplar.
+   If false, log warning: "generated prose outside style validation
+   thresholds" but continue — QA generation can proceed without the
+   style exemplar.
 
-4. If `corpus_compose` fails, log the error and continue without
-   the style exemplar. Do not halt — the QA pipeline does not depend on it.
+5. If `corpus_centroid` or `corpus_compose` fails, log the error and
+   continue without the style exemplar. Do not halt — the QA pipeline
+   does not depend on it.
 
 ### Stage 6 — Build QA prompts (optional)
 
@@ -894,12 +926,15 @@ step-up ramp.
      query hydrates from the DB, and without `db_path` it returns zero
      results with a note, which reads like an empty corpus.
 
-   OCR quality knob (apply at Stage 1 when vision-model output on scanned
-   books is too noisy): `HKASK_OCR_RENDER_DPI` (default 72, chosen so the
-   JPEG payload fits the vision model's 128K-token context). Raising it
-   to ~150 improves Tesseract accuracy on scanned books at the cost of
-   render memory and LLM payload size — set it in the server env and
-   restart before the OCR run. `corpus_convert` responses carry
+   OCR quality knob (apply at Stage 1 when the OCR model's output on
+   scanned books is too noisy): `HKASK_OCR_RENDER_DPI` (default 72,
+   chosen to keep the per-page JPEG payload small). Raising it to ~150
+   improves OCR accuracy on scanned books at the cost of render memory
+   and payload size — set it in the server env and restart before the
+   OCR run. The OCR model comes from the platform chain
+   (`kask.models.ocr_model` → `HKASK_OCR_MODEL` → `DEFAULT_OCR_MODEL`,
+   RunPod/kask-ocr) — a dedicated OCR endpoint, not a general vision
+   model. `corpus_convert` responses carry
    `structure: null` by default (the per-page block view duplicated the
    full text and doubled response size); pass `include_structure: true`
    only when the block layout is actually needed.
@@ -968,7 +1003,7 @@ The pipeline is complete when ALL of the following hold:
 2. `corpus_chunk` produced >0 chunks AND chunk count is in the expected range
 3. `corpus_embed` embedded 100% of chunks (embedding_count == chunk_count)
 4. (If QA enabled) `corpus_tag_chunks` tagged ≥90% of chunks
-5. (If style exemplar enabled) `corpus_compose` produced a style centroid within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
+5. (If style exemplar enabled) `corpus_centroid` stored a style centroid AND `corpus_compose` generated prose within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
 6. (If QA enabled) `corpus_ingest_qa` ingested >0 QA pairs
 7. (If QA enabled) `training_assemble_dataset` produced >0 training examples
 8. `corpus_query` returns relevant results for a test question
@@ -1025,9 +1060,11 @@ downstream stages with incomplete input. The only exceptions are:
   per chunk and times out on large inputs. Default batch size: 200
   chunks. If a batch times out, reduce concurrency first, then batch
   size. Never skip batches.
-- OCR concurrency is bounded by `ocr_concurrency` (default 4, overridable
-  via `HKASK_OCR_CONCURRENCY`). When spawning subagents for OCR, do not
-  exceed this limit — OCR runs in a subprocess with its own local
-  semaphore, separate from the process-wide limiter.
+- OCR page concurrency is bounded by the process-wide `max_concurrency`
+  setting (`HKASK_MAX_CONCURRENCY`, default 96) and gated by an
+  adaptive AIMD limiter inside the OCR executor (ramps up on success,
+  halves on failure). When spawning subagents for multiple OCR runs,
+  keep the fleet within `max_concurrency` — there is no separate
+  OCR-specific concurrency setting.
 - Do not fabricate corpus metadata. If a document's creator is unknown,
   tag the Dublin Core `creator` field as "unknown" rather than guessing.

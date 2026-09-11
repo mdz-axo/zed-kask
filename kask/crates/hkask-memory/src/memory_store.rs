@@ -38,6 +38,16 @@ pub enum MemoryStoreError {
     HMem(#[from] HMemError),
     #[error("Embedding error: {0}")]
     Embedding(#[from] EmbeddingError),
+    #[error("No embeddings found for centroid: {0}")]
+    NoEmbeddingsForCentroid(String),
+}
+
+/// Result of computing a style centroid over a prefix-scoped embedding set.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CentroidResult {
+    pub centroid: Vec<f32>,
+    pub passage_count: usize,
+    pub stored: bool,
 }
 
 /// Outcome of an age-based prune operation.
@@ -487,6 +497,75 @@ impl MemoryStore {
         &self,
     ) -> Result<Vec<(String, Vec<f32>, Option<String>)>, MemoryStoreError> {
         Ok(self.embedding.all_with_text()?)
+    }
+
+    /// Compute the centroid (mean embedding) over a prefix-scoped
+    /// embedding set.
+    ///
+    /// Mirrors the `corpus_compose` exemplar filter so the centroid is the
+    /// mean of exactly the embeddings compose retrieves: only refs under
+    /// `prefix` count; `exclude_ref` (the centroid's own entity ref, so
+    /// recomputation stays idempotent — a stored centroid is never folded
+    /// into its own successor) and `:rule:` refs are excluded. When
+    /// `store_as` is provided with a `model` name, the centroid is stored
+    /// as an embedding under that ref — e.g. `style:{author}:centroid`,
+    /// the entity ref `corpus_compose` reads for centroid validation.
+    /// `dim` must match the store's configured dimension (the store step
+    /// validates it).
+    pub fn compute_centroid(
+        &self,
+        prefix: &str,
+        exclude_ref: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        let matching: Vec<(String, Vec<f32>)> = self
+            .embedding
+            .get_all_by_prefix(prefix)?
+            .into_iter()
+            .filter(|(entity_ref, _)| entity_ref != exclude_ref && !entity_ref.contains(":rule:"))
+            .collect();
+
+        if matching.is_empty() {
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                prefix.to_string(),
+            ));
+        }
+
+        let mut centroid = vec![0.0f32; dim];
+        let mut count = 0usize;
+        for (_, vector) in &matching {
+            for (i, v) in vector.iter().enumerate() {
+                if i < dim {
+                    centroid[i] += v;
+                }
+            }
+            count += 1;
+        }
+
+        let n = count as f32;
+        for v in centroid.iter_mut() {
+            *v /= n;
+        }
+
+        let stored = if let Some(ref_to_store) = store_as {
+            match model {
+                Some(m) => {
+                    self.store_embedding(ref_to_store, &centroid, m, None)?;
+                    true
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
+
+        Ok(CentroidResult {
+            centroid,
+            passage_count: count,
+            stored,
+        })
     }
 
     pub fn purge_by_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
@@ -1635,6 +1714,126 @@ mod tests {
         assert_eq!(
             hits[0].embedding.passage_text, None,
             "the NULL-passage legacy row must survive"
+        );
+    }
+
+    // ── compute_centroid ─────────────────────────────────────────────
+
+    #[test]
+    fn compute_centroid_averages_prefix_embeddings_and_stores() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let flat = |x: f32| vec![x; dim];
+        store
+            .store_embedding("style:test:chunk:1", &flat(0.2), "m", None)
+            .expect("seed 1");
+        store
+            .store_embedding("style:test:chunk:2", &flat(0.4), "m", None)
+            .expect("seed 2");
+        store
+            .store_embedding("style:test:chunk:3", &flat(0.6), "m", None)
+            .expect("seed 3");
+        // Off-prefix embeddings must not count toward the mean.
+        store
+            .store_embedding("other:chunk:1", &flat(9.0), "m", None)
+            .expect("seed off-prefix");
+
+        let result = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect("centroid");
+
+        assert_eq!(result.passage_count, 3);
+        assert!(result.stored);
+        for value in &result.centroid {
+            assert!(
+                (value - 0.4).abs() < 1e-6,
+                "mean of 0.2/0.4/0.6 is 0.4, got {value}"
+            );
+        }
+
+        // Idempotency: the stored centroid is excluded from its own
+        // recomputation, so the passage count stays at the seeded set.
+        let again = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect("recompute");
+        assert_eq!(
+            again.passage_count, 3,
+            "a stored centroid must never fold into its own successor"
+        );
+        for value in &again.centroid {
+            assert!((value - 0.4).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn compute_centroid_excludes_rule_refs() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("style:test:chunk:1", &vec![0.5; dim], "m", None)
+            .expect("seed passage");
+        store
+            .store_embedding("style:test:rule:1", &vec![9.0; dim], "m", None)
+            .expect("seed rule");
+
+        let result = store
+            .compute_centroid("style:test:", "style:test:centroid", dim, None, None)
+            .expect("centroid");
+        assert_eq!(result.passage_count, 1, "rule refs must be excluded");
+        assert!(!result.stored, "no store_as → nothing stored");
+        for value in &result.centroid {
+            assert!(
+                (value - 0.5).abs() < 1e-6,
+                "rule ref must not skew the mean"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_centroid_store_as_without_model_does_not_store() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("style:test:chunk:1", &vec![0.5; dim], "m", None)
+            .expect("seed passage");
+        let result = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                None,
+            )
+            .expect("centroid");
+        assert_eq!(result.passage_count, 1);
+        assert!(
+            !result.stored,
+            "store_as without a model name must not store"
+        );
+    }
+
+    #[test]
+    fn compute_centroid_empty_prefix_set_errors() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let error = store
+            .compute_centroid("style:absent:", "style:absent:centroid", dim, None, None)
+            .expect_err("no embeddings under prefix");
+        assert!(
+            matches!(error, MemoryStoreError::NoEmbeddingsForCentroid(ref prefix) if prefix == "style:absent:"),
+            "wrong error: {error:?}"
         );
     }
 }

@@ -141,6 +141,13 @@ fn default_composite() -> String {
     "composite".to_string()
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CentroidRequest {
+    pub author: String,
+    pub db_path: String,
+    pub passphrase: String,
+}
+
 #[tool_router(router = compose_router, vis = "pub")]
 impl crate::CorpusServer {
     #[tool(
@@ -176,6 +183,45 @@ impl crate::CorpusServer {
                 "method_signals_missing": result.method_signals_missing,
                 "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                 "style_passed": result.validation.map(|v| v.passed),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Compute and store a style centroid for an author's corpus: the mean of every embedding under the style:{author}: entity-ref prefix (excluding the centroid ref itself and :rule: refs), stored at style:{author}:centroid — the entity ref corpus_compose reads for centroid validation. Call this BEFORE corpus_compose: without a stored centroid, compose runs unvalidated (validation silently returns None). Requires embeddings chunked under the style:{author}: prefix (corpus_chunk entity_ref_prefix). The embedding model comes from kask.models.embedding_model; the dimension from HKASK_EMBEDDING_DIM (default 1024)."
+    )]
+    pub async fn corpus_centroid(
+        &self,
+        Parameters(params): Parameters<CentroidRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_centroid", async {
+            let embed_model = embedding_model();
+            if embed_model.trim().is_empty() {
+                return Err(McpToolError::permission_denied(
+                    "no embedding model configured — set \
+                     kask.models.embedding_model (injected as \
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \
+                     hidden code constant",
+                ));
+            }
+
+            let result = crate::compose::ComposeService::style_centroid(
+                crate::compose::CentroidComputeRequest {
+                    db_path: PathBuf::from(&params.db_path),
+                    db_passphrase: params.passphrase,
+                    author: params.author.clone(),
+                    model: embed_model,
+                    dim: crate::embedding_dim(),
+                },
+            )
+            .map_err(|e| map_service_error(e, "Centroid computation failed"))?;
+
+            Ok(json!({
+                "author": params.author,
+                "centroid_entity_ref": result.centroid_entity_ref,
+                "passage_count": result.passage_count,
+                "stored": result.stored,
             }))
         })
         .await

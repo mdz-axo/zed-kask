@@ -362,6 +362,101 @@ async fn composition_filters_durable_passages_by_declared_method() {
     );
 }
 
+/// expect: "A stored style centroid makes corpus_compose's validation run
+/// for real — compose never silently runs unvalidated." [P3]
+#[tokio::test]
+async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
+    let directory = fixture();
+    let port = Arc::new(RecordingPort::default());
+    let server = server(Arc::clone(&port));
+    let input = directory.path().join("style.jsonl");
+    std::fs::write(
+        &input,
+        [
+            ("style:jb-test:1", "The water glittered."),
+            ("style:jb-test:2", "The boat drifted."),
+        ]
+        .into_iter()
+        .map(|(entity_ref, text)| {
+            json!({"entity_ref":entity_ref,"source":"style.txt","text":text}).to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )
+    .expect("style input");
+    let database = directory.path().join("style.db");
+    content(
+        server
+            .corpus_embed(Parameters(EmbedRequest {
+                chunks_jsonl: input.to_string_lossy().into(),
+                tagged_jsonl: None,
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                model: Some("offline".into()),
+                batch_size: 10,
+            }))
+            .await,
+    );
+
+    let centroid = content(
+        server
+            .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
+                author: "jb-test".into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+            }))
+            .await,
+    );
+    assert_eq!(centroid["centroid_entity_ref"], "style:jb-test:centroid");
+    assert_eq!(centroid["passage_count"], 2);
+    assert_eq!(centroid["stored"], true);
+
+    // Idempotency through the tool: the stored centroid is excluded on
+    // recompute, so the passage count stays at the seeded set.
+    let again = content(
+        server
+            .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
+                author: "jb-test".into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+            }))
+            .await,
+    );
+    assert_eq!(
+        again["passage_count"], 2,
+        "a stored centroid must never fold into its own successor"
+    );
+
+    // With the centroid stored, compose validates for real: the
+    // RecordingPort embeds everything as [1.0; dim], so the generated
+    // prose sits at cosine distance 0.0 from the all-ones centroid.
+    let config = serde_json::from_value(json!({
+        "author":"jb-test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+        "centroid_entity_ref":"style:jb-test:centroid", "retrieval":{"k_max":10}},
+        "validation":{"centroid_distance_max":1.0}
+    }))
+    .expect("cognition config");
+    let composed = crate::compose::ComposeService::compose(crate::compose::ComposeRequest {
+        prompt: "Write about a river.".into(),
+        db_path: database.clone(),
+        db_passphrase: PASSPHRASE.into(),
+        cognition: config,
+        inference_ctx: crate::inference_svc::InferenceContext::from_parts(Some(port), "offline"),
+        no_validate: false,
+    })
+    .await
+    .expect("compose");
+    let validation = composed
+        .validation
+        .expect("validation must run when a centroid is stored");
+    assert!(validation.passed);
+    assert!(
+        validation.distance.abs() < 1e-9,
+        "distance to the all-ones centroid is 0.0, got {}",
+        validation.distance
+    );
+}
+
 fn composition_request(
     database: &std::path::Path,
     port: Arc<RecordingPort>,

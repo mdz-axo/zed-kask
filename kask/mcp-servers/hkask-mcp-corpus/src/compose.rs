@@ -146,6 +146,31 @@ pub(crate) struct CentroidValidation {
     pub passed: bool,
 }
 
+/// Input for `ComposeService::style_centroid()`.
+pub(crate) struct CentroidComputeRequest {
+    /// Path to the corpus database.
+    pub db_path: PathBuf,
+    /// Passphrase for opening the database.
+    pub db_passphrase: String,
+    /// Author identifier — the centroid is computed over the
+    /// `style:{author}:` prefix and stored at `style:{author}:centroid`.
+    pub author: String,
+    /// Embedding model name recorded on the stored centroid.
+    pub model: String,
+    /// Embedding dimension — must match the stored vectors' dimension.
+    pub dim: usize,
+}
+
+/// Result of a style-centroid computation.
+pub(crate) struct CentroidComputeResult {
+    /// Number of passage embeddings averaged into the centroid.
+    pub passage_count: usize,
+    /// Whether the centroid was stored under `centroid_entity_ref`.
+    pub stored: bool,
+    /// The entity ref the centroid is stored under.
+    pub centroid_entity_ref: String,
+}
+
 // ── Service ──────────────────────────────────────────────────────────────
 
 /// Style composition service — exemplar retrieval, prose generation, centroid validation.
@@ -477,6 +502,72 @@ impl ComposeService {
             exemplar_count,
             method_signals_missing,
             validation,
+        })
+    }
+
+    /// Compute and store the style centroid for an author's corpus.
+    ///
+    /// The centroid is the mean of every embedding under the
+    /// `style:{author}:` prefix (excluding the centroid ref itself and
+    /// `:rule:` refs — the same filter `compose` applies to exemplar
+    /// retrieval) and is stored at `style:{author}:centroid`, the entity
+    /// ref `compose` reads for centroid validation. Without a stored
+    /// centroid, `compose` runs unvalidated (validation returns None).
+    ///
+    /// pre: db_path points to a corpus DB with embeddings under the
+    /// `style:{author}:` prefix; model is non-empty; dim matches the
+    /// stored vectors' dimension
+    /// post: returns the passage count and stored flag; Err on DB open
+    /// failure, an empty prefix set, or a store failure
+    pub(crate) fn style_centroid(
+        request: CentroidComputeRequest,
+    ) -> Result<CentroidComputeResult, ServiceError> {
+        let db = open_or_repair(&request.db_path.to_string_lossy(), &request.db_passphrase)
+            .map_err(|e| ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::Storage,
+                source: None,
+                message: e.to_string(),
+            })?;
+        let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
+            kind: ErrorKind::BadRequest,
+            domain: DomainKind::Storage,
+            source: None,
+            message: format!("SQLite pool creation failed: {e}"),
+        })?;
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new(pool));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))?;
+        let embedding_store = EmbeddingStore::from_driver(Arc::clone(&driver), request.dim)
+            .map_err(|e| ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::Storage,
+                source: None,
+                message: e.to_string(),
+            })?;
+        let store = MemoryStore::new(h_mem_store, embedding_store);
+
+        let prefix = format!("style:{}:", request.author);
+        let centroid_entity_ref = format!("style:{}:centroid", request.author);
+        let result = store
+            .compute_centroid(
+                &prefix,
+                &centroid_entity_ref,
+                request.dim,
+                Some(&centroid_entity_ref),
+                Some(&request.model),
+            )
+            .map_err(|e| ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::Memory,
+                source: None,
+                message: e.to_string(),
+            })?;
+
+        Ok(CentroidComputeResult {
+            passage_count: result.passage_count,
+            stored: result.stored,
+            centroid_entity_ref,
         })
     }
 }
