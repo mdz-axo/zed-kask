@@ -114,8 +114,8 @@ cannot honour[^parnas-1972].
 | `model_name` | `:221` | Drops `## Model Information` |
 | `has_skills` | `:227` | Drops `## Agent Skills` and the `<available_skills>` catalog |
 | `(or user_agents_md has_rules)` | `:255` | Drops `## User's Custom Instructions` |
-| `(contains available_tools 'kanban_goal_create')` | `:332` | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
-| `static_context` | `:352` | Drops `## Session Context` |
+| `(contains available_tools 'kanban_goal_create')` | `:337` | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
+| `static_context` | `:358` | Drops `## Session Context` |
 
 ## 4. Section inventory
 
@@ -145,11 +145,15 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 | Model Information | `:222` | Identical |
 | Agent Skills | `:228` | **Modified** — em-dash only (§5.5) |
 | User's Custom Instructions | `:256` | Identical |
-| → Personal `AGENTS.md` | `:261` | Identical |
-| → Project Rules | `:271` | Identical |
-| Tool failure-mode warnings (kask) | `:288` | **New section** (§5.1) |
-| Division of Responsibilities (kask) | `:296` | **New section** (§5.7, D40) |
-| Session Context | `:353` | **New section** (§5.1) |
+| → Personal `AGENTS.md` | `:263` | Identical |
+| → Project Rules | `:274` | Identical |
+| Opening identity + roles (kask) | `:1`–`:3` | **Amended upstream opening** (§5.7, D40 evolution — agent renamed Z-K; roles fixed at the top) |
+| Redeemable-claims bullet (kask) | `:10` | **Amended upstream section** (§5.9 — claims carry their ground) |
+| Feature-justification bullet (kask) | `:84` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
+| Tool failure-mode warnings (kask) | `:293` | **New section** (§5.1) |
+| Division of Responsibilities (kask) | `:301` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
+| Ontology anchoring bullet in Tool Use (kask) | `:47` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
+| Session Context | `:359` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
 
@@ -329,6 +333,35 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   to deliver at intake, decision points, and confirmation) — and directs
   underspecified intake to the product-manager skill rather than
   improvisation.
+- **Evolution (operator ruling 2026-09-10):** the mid-prompt section
+  underperformed — agents read it as an overlay and kept asking technical
+  questions at intake while ignoring functional requirements (observed
+  live in the companies-fix session). Roles now live in the OPENING: the
+  first line renames the agent ("You are the Z-K agent running inside the
+  Zed-Kask fork of Zed.dev") and fixes the roles (user = product manager
+  owning functional requirements; agent = technical program manager /
+  VP of engineering owning technical implementation), followed by a role
+  paragraph carrying the question-class rule — functional questions are
+  the user's to answer, asked in functional terms; technical questions
+  are the agent's to decide, "do not route technical decisions to the
+  user as questions". The section (now at `:304`) opens "The roles are
+  fixed in the opening of this prompt" and move 2 is **Decide by class**:
+  functional decisions surfaced as experiences with a recommendation;
+  technical decisions decided and presented with their functional
+  consequence, "never route one to the user as a question".
+- **Indicator reframing (operator ruling 2026-09-10, same pass):** the
+  prohibition tails were removed per the gradient-over-constraint
+  principle — move 2 now reads "decide and present the result with its
+  functional consequence, as a decision the user can veto on functional
+  grounds", and the opening's question-class rule gained the positive
+  form: a technical choice that genuinely needs the user's input is
+  "present[ed] in functional terms — what each option lets the user do —
+  with the technical detail attached as context". A feature-justification
+  bullet was added to `## Making Code Changes` (":84"): every feature
+  names the functional requirement it serves; a feature that cannot
+  name its requirement is a functional question for the user, not code
+  to write. The opening role paragraph now carries the skills pointer
+  (`program-manager` / `product-manager`).
 - **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
   (section + all four moves + the authority boundary + both skill
   references + the no-improvisation directive),
@@ -340,6 +373,37 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   `test_system_prompt_final_message_leads_with_functional_outcome`,
   `test_system_prompt_wires_four_moves_to_goal_tools_when_available`, and
   `test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable`.
+
+### 5.8 `## Tool Use` ontology-anchoring bullet — D53 de-ghettoized + D54 canonical ladder (2026-09-10)
+
+Operator rulings 2026-09-10: ontology resolution is a CRITICAL TOOL, not
+a standalone section (D53), and the tool follows the pre-existing
+anchoring pattern (D54). The former `## Ontology-anchored reasoning
+(kask)` section is removed; its content lives in two places: a
+required-tool-of-analysis bullet inside `## Tool Use` (beside "gather
+enough context before acting" — resolve domain terms with the
+**`onto_anchor` tool**, which walks the canonical fallback ladder over the
+fixture-pinned `hkask-bridge-ontology` vocabularies — domain supplements →
+derived concepts → SUMO upper → 5W1H core — and always terminates on a
+real anchor: nothing is ever untagged; a coarse core-rung anchor carries
+the ruling path), and the identity clause in the opening ("no
+professional works in a private language"). Pinned by the rewritten
+`test_system_prompt_contains_ontology_anchored_reasoning`, which asserts
+the new locations, the ladder invariant phrase, AND the ABSENCE of the
+standalone section header.
+
+### 5.9 `## Communication` redeemable-claims bullet — new (2026-09-10)
+
+Communicative-action layer (Habermas): every assertion is a claim the
+user or a reviewer can challenge, and each claim names its ground —
+functional claims answer to the user's stated requirement, technical
+claims to the tree, the run, and the commit, domain terms to their
+published ontology anchor. "A claim with no ground is not communication —
+it is noise that coordinates nothing; mark it as an inference or
+unanchored, or do not send it." This is the prompt-level expression of the
+session's core lesson: an unanchored term is an unredeemable claim — it
+can only be sustained by reassertion, and resolution then requires the
+operator's authority instead of inspectable grounds.
 
 ## 6. Divergence-free sections
 

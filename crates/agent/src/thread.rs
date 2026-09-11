@@ -2439,6 +2439,7 @@ impl Thread {
         ));
         self.add_tool(WebSearchTool);
         self.add_tool(LispEvalTool);
+        self.add_tool(OntoAnchorTool);
         self.add_tool(RenderTemplateTool);
 
         self.add_tool(AskUserTool);

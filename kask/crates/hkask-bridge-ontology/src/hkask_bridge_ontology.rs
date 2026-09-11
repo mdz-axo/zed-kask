@@ -56,13 +56,19 @@
 //! 1. **Domain supplement** — the domain's specific ontology, when the
 //!    concept exists in its published vocabulary. Never force a concept
 //!    into an ontology that has no place for it in its graph.
-//! 2. **Universal axes** — DC+BIBO (state: what the artifact is) and PKO
+//! 2. **Derived concepts** (term resolution only) — recorded compositions
+//!    over anchored constituents (`derived`), each carrying its identity
+//!    and its authority citation. Operator rulings become durable anchors
+//!    on this rung. Applies when resolving a TERM's meaning (the
+//!    `onto_anchor` tool); artifact anchoring (`select_ontology_anchor`)
+//!    skips this rung.
+//! 3. **Universal axes** — DC+BIBO (state: what the artifact is) and PKO
 //!    (process: how it came to be). Always applicable to artifacts and
-//!    processes.
-//! 3. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition):
-//!    formal categorization when no domain or axis concept fits — e.g. a
-//!    financial metric with no FIBO term is a `sumo:Quantity`.
-//! 4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+//!    processes (artifact anchoring).
+//! 4. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition):
+//!    formal categorization when no domain, derived, or axis concept fits
+//!    — e.g. a financial metric with no FIBO term is a `sumo:Quantity`.
+//! 5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
 //!
 //! The invariant: **nothing is ever untagged.** SUMO and the 5W1H core
 //! exist precisely so the ladder always terminates on a real anchor.
@@ -89,6 +95,7 @@
 
 pub mod axis;
 pub mod dc_bibo;
+pub mod derived;
 pub mod fibo;
 pub mod golem;
 pub mod ml_schema;

@@ -1438,6 +1438,10 @@ mod tests {
             // Deterministic sandboxed computation — no I/O, no network, no
             // side effects. No permission checks needed.
             "lisp_eval",
+            // Read-only ontology resolution against fixture-pinned published
+            // vocabularies — no I/O, no side effects. No permission checks
+            // needed.
+            "onto_anchor",
             // Reads a template file and renders it with Jinja2 — no side effects
             // beyond reading a file the agent already has read access to.
             "render_template",

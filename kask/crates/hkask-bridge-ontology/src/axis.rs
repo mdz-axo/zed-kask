@@ -249,6 +249,11 @@ impl OntologyAnchor {
 /// matches and token prefixes so tool names resolve to their server's
 /// domain. Unknown domains fall back to the generalists (DC + PKO) — never
 /// force a domain ontology where it doesn't fit.
+///
+/// Term resolution (the `onto_anchor` tool) walks the same ladder with a
+/// derived-concepts rung between the domain supplements and the upper
+/// ontology (see `derived.rs`); artifact anchoring — this function — has
+/// no derived rung.
 pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     let lower = domain.trim().to_lowercase();
     // Helper: does the hint start with the keyword, or contain it as a

@@ -129,7 +129,9 @@ mod tests {
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
-        assert!(rendered.contains("You are the Zed coding agent"));
+        assert!(
+            rendered.contains("You are the Z-K agent running inside the Zed-Kask fork of Zed.dev")
+        );
         assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
@@ -307,10 +309,13 @@ mod tests {
     #[test]
     fn test_system_prompt_contains_division_of_responsibilities() {
         // Pins the four-moves interaction loop (functional-interaction-spec.md,
-        // Phase A) so an upstream merge that drops it is caught. The section
-        // must carry the four moves and the authority boundary: the user
-        // decides functional questions, the agent interprets — never revises —
-        // the functional requirement.
+        // Phase A) so an upstream merge that drops it is caught. The roles are
+        // fixed in the opening (user = product manager, agent = technical
+        // program manager); the section carries the working loop, and move 2
+        // enforces the decision-class split: functional decisions are the
+        // user's, technical decisions are the agent's — never routed to the
+        // user as questions (operator ruling 2026-09-10: agents kept asking
+        // technical questions at intake and ignoring functional requirements).
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
@@ -329,9 +334,22 @@ mod tests {
             rendered.contains("## Division of Responsibilities (kask)"),
             "the division section must be present in the rendered prompt"
         );
+        // The roles live in the opening, and the section points up at them.
+        assert!(
+            rendered.contains("You are the Z-K agent running inside the Zed-Kask fork of Zed.dev"),
+            "the opening names the agent and its fork"
+        );
+        assert!(
+            rendered.contains("technical program manager"),
+            "the opening fixes the agent's role"
+        );
+        assert!(
+            rendered.contains("The roles are fixed in the opening of this prompt"),
+            "the section anchors to the opening's role statement"
+        );
         for move_phrase in [
             "Point at the same target",
-            "Bring choices to the user as experiences",
+            "Decide by class",
             "Report outcomes, not artifacts",
             "Bank the learning",
         ] {
@@ -341,8 +359,16 @@ mod tests {
             );
         }
         assert!(
-            rendered.contains("The user decides; you implement"),
-            "the authority boundary must be explicit: functional decisions are the user's"
+            rendered.contains("present it in functional terms — what each option lets the user do"),
+            "the opening's question-class rule: technical questions carry their functional context"
+        );
+        assert!(
+            rendered.contains("as a decision the user can veto on functional grounds"),
+            "move 2 presents technical decisions as decisions, positively framed"
+        );
+        assert!(
+            rendered.contains("Tie every feature to its functional requirement"),
+            "every feature names the functional requirement it serves"
         );
         assert!(
             rendered.contains("to interpret it, not to revise it"),
@@ -384,6 +410,56 @@ mod tests {
                     "the system prompt references the {skill} skill; its frontmatter must load: {e}"
                 )
             });
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_contains_ontology_anchored_reasoning() {
+        // Pins the ontology-anchored professional identity (D53) so an
+        // upstream merge that drops it is caught. De-ghettoized per operator
+        // ruling 2026-09-10: ontology resolution is a REQUIRED TOOL OF
+        // ANALYSIS living in `## Tool Use` (anchoring all reasoning and
+        // category analysis), with the identity framing in the opening —
+        // NOT a standalone section. This test pins the new locations AND
+        // the absence of the standalone section (the ghetto is closed).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        // The standalone section is gone — de-ghettoization is pinned, not
+        // just the new content's presence.
+        assert!(
+            !rendered.contains("## Ontology-anchored reasoning (kask)"),
+            "ontology anchoring must not be a standalone section; it lives in Tool Use and the opening"
+        );
+        // Identity framing in the opening.
+        assert!(
+            rendered.contains("no professional works in a private language"),
+            "the opening carries the professional-identity framing"
+        );
+        // The required-tool-of-analysis bullet in Tool Use, now naming the
+        // native onto_anchor tool and the canonical ladder invariant.
+        for phrase in [
+            "Anchor all reasoning and category analysis",
+            "resolve it with the `onto_anchor` tool",
+            "hkask-bridge-ontology",
+            "required tool of analysis",
+            "nothing is ever untagged",
+        ] {
+            assert!(
+                rendered.contains(phrase),
+                "the Tool Use anchoring bullet must carry its load-bearing phrases; missing: {phrase}"
+            );
         }
     }
 

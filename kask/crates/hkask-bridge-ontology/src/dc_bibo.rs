@@ -5,6 +5,15 @@
 //! is this" axis of the dual-axis framework (P5.4): every artifact carries a
 //! state identity drawn from this vocabulary.
 //!
+//! Scope note (operator ruling 2026-09-10): this module is canonical for
+//! ARTIFACT STATE TYPING — what a tool output or stored artifact IS
+//! (`dcmitype:Dataset`, `dcmitype:Text`, `bibo:Report`, ...), the state-axis
+//! fallbacks in `axis.rs`, and the per-tool anchors of the MCP tagging
+//! pattern. It is deliberately ABSENT from TERM RESOLUTION (the
+//! `onto_anchor` walk): BIBO was tried and deprecated as a
+//! term-categorization layer in favor of SUMO. Grow this module for
+//! artifact typing; never add it to the term-resolution ladder.
+//!
 //! Reference: <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>
 //! DCMI Type Vocabulary: <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7>
 //!   (type classes live in the `dcmitype:` namespace, `http://purl.org/dc/dcmitype/`)
@@ -80,7 +89,7 @@ pub const USES_DATA_FROM: DcConcept = "cito:usesDataFrom";
 pub const CITES_AS_DATA_SOURCE: DcConcept = "cito:citesAsDataSource";
 pub const CITES_AS_EVIDENCE: DcConcept = "cito:citesAsEvidence";
 
-// ── Mapping helpers ───────────────────────────────────────────────────────
+// ── Mapping helpers ─────────────────────────────────────────────────────────────
 
 /// Map a MIME type to its Dublin Core type.
 ///

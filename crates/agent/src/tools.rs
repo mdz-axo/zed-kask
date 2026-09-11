@@ -22,6 +22,7 @@ mod list_agents_and_models_tool;
 mod list_directory_tool;
 mod list_mcp_tools_tool;
 mod move_path_tool;
+mod onto_anchor_tool;
 mod read_file_tool;
 mod record_skill_feedback_tool;
 mod rename_tool;
@@ -149,6 +150,7 @@ pub use list_agents_and_models_tool::*;
 pub use list_directory_tool::*;
 pub use list_mcp_tools_tool::*;
 pub use move_path_tool::*;
+pub use onto_anchor_tool::*;
 pub use read_file_tool::*;
 pub use record_skill_feedback_tool::*;
 pub use rename_tool::*;
@@ -279,6 +281,7 @@ tools! {
     ListMcpToolsTool,
     LispEvalTool,
     MovePathTool,
+    OntoAnchorTool,
     ReadFileTool,
     RecordSkillFeedbackTool,
     RenameTool,

@@ -1,16 +1,7 @@
 # Agent discipline
 
-* Before your first `edit_file`/`write_file` in a session, name (in your next message) one architecture doc you read and the invariant from it that constrains your edit. If you can't name one, you haven't oriented — read `kask/docs/architecture/core/magna-carta.md` or the crate's README, then try again. Agents that edit before orienting damage code they don't understand; the task that looks self-evident (a version bump, a rename) is the one with hidden architectural context (workspace inheritance, D-seams, crate ownership) that a grep never surfaces.
 * When the requested outcome is a working capability (a skill, pipeline, or process), the goal is the capability functioning — not the completion of the instance task. Hand-completing the instance task while the capability stays broken ("cowboying a solution") is failure even if the artifact ships; the deliverable is the fixed capability, verified by running the task through it (operator correction, 2026-09-09, corpus-pipeline session: "you got the goal and gradient wrong — the goal is the working skill and working pipeline, not the specific completion of the specific task — it is a meta goal").
 * Completion records cite commit hashes, not intentions. A report or memory that says "done, all tests green" before the commit exists has outrun the tree (observed 2026-09-08: the local-swarm-budget teardown was recorded complete in the curator's memory with test counts while the work sat uncommitted). Name the hash, or say the work is uncommitted — a verification claim is only as good as the commit it points at.
-
-# Spec-loss trap (doc-from-code laundering)
-
-* A written spec (commit message, settings knob, design doc) is the operator's contract. A dead-code sweep that deletes a deliberately-designed capability must flag it to the operator — "unwired" is not "unwanted" (the stepped-ramp concurrency spec of `93b9951afe` died this way in `a71f79b263`; the AIMD replacement was ratified as the new spec by PM decision 2026-09-03).
-* Never regenerate a spec/design doc from the current code without diffing against the operator's stated intent — doc-from-code launders deviations into specs (the doc always agrees with the code because the code's author wrote the doc).
-* When the operator says "built to spec," recover the spec first (`git log -S`, commit messages, settings history); a grep of the current tree diagnoses the post-corruption state, not the spec. A reconstruction is a reconstruction until the operator ratifies it — record the ratification in the spec doc (decision, date, what it supersedes) or a future agent will "recover" the old spec from git history and revert the ratified design.
-* Division of labor: the operator is the product manager (requirements, spec authority, ground truth); the agent is the program manager (recovers specs before building, labels reconstructions, gets sign-off before deferring scope). The operator's corrections are context the agent cannot generate — when they say "there was a spec," the next action is finding it.
-* A documented operator ruling is global unless the record explicitly scopes it — live code that contradicts a ruling is reported as a spec violation, never as "plausibly deliberate design." The 2026-09-04 budget-deprecation ruling was recorded narrowly three times (thinking budgets, memory count enforcement, media's strip) while the kanban rJoule budget survived four gas→rJoule renames on exactly this misreading, and count-based memory pruning was still live four days after "count-based enforcement is deprecated" shipped in the accessor's own doc comment.
 
 # Corpus pipeline traps
 
@@ -23,17 +14,11 @@
 # Rust coding guidelines
 
 * Project scripts are bash — this is a Rust project. Do not introduce Python scripts or a Python dependency for tooling; audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09: "we are a rust project - not python - we do bash scripts not python scripts. not planning to push the python dependency into the project").
-* Prioritize correctness and clarity over speed and efficiency.
-* Comments explain "why", not "what". No organizational comments.
-* Prefer existing files over creating new ones. Avoid many small files.
 * No `unwrap()` — use `?` to propagate errors. Be careful with indexing.
 * Never silently discard errors with `let _ =` on fallible operations. Propagate with `?`, use `.log_err()` for visibility, or handle explicitly.
-* Async errors must propagate to the UI layer for meaningful user feedback.
 * No `mod.rs` files — use `src/module.rs` instead.
 * New crates: specify `[lib] path = "..."` in `Cargo.toml` (e.g., `gpui.rs`, not `lib.rs`).
 * No creative additions unless explicitly requested.
-* Full words for variable names (no abbreviations).
-* Use variable shadowing to scope clones in async contexts.
 * Build: use `./script/clippy` instead of `cargo clippy`.
 
 # Timers in tests
@@ -53,15 +38,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 # Pull request hygiene
 
 - Imperative PR title, no conventional commit prefixes, no trailing punctuation.
-- Optional crate prefix (e.g., `git_ui: Add history view`).
 - `Release Notes:` section as final section, blank line after heading, one bullet (`- Added/Fixed/Improved/N/A`).
 - Commit messages are plain text at the `git commit` boundary — never include the markdown fences used to present the message in chat. A bare ``` first or last line leaks the chat presentation into the commit subject (97 commits on main, 2026-07→09); the `kask/githooks/commit-msg` hook (wired via `git config core.hooksPath kask/githooks`) rejects fenced messages.
-
-# Sankey diagrams
-
-* Conservation is domain-dependent (engineering Sankey conserves, funnels/attribution don't). Carry a per-domain conservation mode.
-* Delegate external source extraction to specialized skills — don't ask users to transcribe machine-readable data.
-* Never fabricate weights. Use `value=1` placeholder if user declines to provide a weight.
 
 # Rules hygiene
 
@@ -72,7 +50,6 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 # Agent loop traps
 
-* **Tool retry death spiral (hard-enforced).** The `ToolRetryTracker` in `crates/agent/src/tool_retry_tracker.rs` tracks two dimensions: `(tool_name, input_hash) → failure_count` (identical retries) and `tool_name → consecutive_failure_count` (trivially different inputs, same tool). After 3 failures, the tool result carries a warning with the Bayesian probability of success (`1/(N+2)`) and a directive to switch tools. After 5 failures, the tool hard-refuses — `handle_tool_use_event` returns an error result without calling `tool.run()`. A successful call resets both trackers. This covers all tools uniformly (built-in + MCP) because they all dispatch through `handle_tool_use_event` → `run_tool`. The tracker lives on `Thread` (per-thread, not per-session).
 * **Tool-call arguments can be cut mid-JSON with no MaxTokens warning.** Via OpenRouter, GLM finishes tool-call streams with `finish_reason="stop"` instead of `"tool_calls"` (the D36 drain in `crates/language_models/src/provider/open_router.rs`), so an output-length cut mid-arguments never surfaces as MaxTokens — the turn ends "cleanly" and the signature is `Error parsing input JSON: EOF while parsing a string at line 1 column N` (observed live: a `render_template` context cut at 9707 chars, 2026-09-03; the 2026-09-01 memory_insert thread-kills match the same signature). Keep large tool payloads split — render templates in batches, pass file references instead of inline content; this applies to `spawn_agent` delegation messages too (observed 2026-09-08: a read-only review delegation requesting ~2.6M tokens failed before execution, "endpoint maximum context exceeded" — pass file paths, not contents). Distinct disease: a call that executes with a *subset* of parameters (corpus_chunk carrying 3 of 8) is model parameter-dropping under huge prompts, not transport truncation.
 * **Multi-edit `edit_file` calls apply sequentially and can fail half-applied.** Each edit is applied in order; when edit N matches multiple locations the call fails — but edits 1..N-1 are already on disk (observed 4×, 2026-09-05..08, plus thread evidence). After any multi-edit failure, re-read the file to establish which edits landed before retrying; scope every `old_text` with enough surrounding context to be unique, and count occurrences of a repeated pattern first.
 * **Composition breaks at the seam, not the stage.** When chaining tool calls or pipeline stages, verify stage N's output shape is what stage N+1 consumes *before* running the chain — wrong-shape reads fail silently (serde ignores a field placed at the wrong nesting level) or partially (the corpus JSON parser took the first `{` and dropped the rest of the array; a model under a huge prompt supplied only 3 of 8 parameters; a single-prompt watermark marked unseen turns as covered). Round-trip or count-reconciliation checks catch seam breaks; eyeballing the shapes does not.
@@ -93,14 +70,11 @@ A zed-side edit carries its DIVERGENCE.md seam update in the same pass — the s
 * Numeric env vars that fail to parse must `log::warn!` naming the malformed value, not silently fall back.
 * Opt-in `HKASK_USE_*` features that fail must log the failure classification (HTTP status, error variant), not collapse to `None` via `.ok()?`.
 * `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop — a DB outage returns 0, which the loop reads as "no deviation." Propagate the error or emit `tracing::warn!`.
-* When a deferred task wires multiple hooks in one `if` block, the `else` warn must name ALL unwired hooks, not just one.
 
 ## Skill system
 
-* Skills execute via **upstream Zed body injection**: `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`. The model reads the body and follows the instructions. `SkillTool::new(skills, fs)` matches the upstream constructor.
 * `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
 * `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. If the base path is not wired, the tool returns an error — it does not silently render from the wrong path.
-* PDCA loops are **model-coordinated**. The SKILL.md body describes convergence criteria; the model self-iterates. The model calls `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 
 ## Agent typing system (hkask-mcp-swarm)
@@ -142,11 +116,9 @@ A zed-side edit carries its DIVERGENCE.md seam update in the same pass — the s
 
 * Built-in file tools (`write_file`, `edit_file`, `create_directory`) are sandboxed to the project root. Writes under `~/Documents/zk-data` (the companies-mcp, corpus-mcp, media-mcp, portfolio-mcp data dirs) fail with a misleading "parent directory doesn't exist" even when the directory exists. Write those files via `terminal` heredoc (split long content into multiple `>>` appends) or via the owning MCP server's tools (observed live 2026-09-03, Polaris PIF report save).
 * `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused inference calls to use the wrong model.
-* `LanguageModelProvider` registry subscriptions must filter self-events to avoid unbounded warn storms.
 * `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — run `check-desktop-no-collision.sh` before committing.
 * Stale diagnostics after bulk edits: the crate's lib root is authoritative, not individual-file diagnostics. Don't retry stale diagnostics or fix phantom errors.
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
-* `read_file` can return stale content for files modified in prior sessions or by parallel processes. Before acting on `read_file` content for files that might have changed, verify with `git show HEAD:path` or `git diff --name-only`. If the file doesn't appear in `git diff`, the `read_file` content may be stale — re-read or use `terminal` (`sed`/`cat`) instead.
 * `grep -q` exits at the FIRST match — piping a large body into it under `set -o pipefail` SIGPIPEs the writer, and `if !` flips a successful match into a false flag (observed 2026-09-10: the prescreen's overlap check carried this latently since birth; reproduced at ~35% per check on 41KB bodies, `PIPESTATUS: 141 0`). Feed grep from a file or herestring, never `printf | grep -q` on large strings.
 * Never read a file in the same parallel tool batch that edits it — the read races the write and returns pre-edit content (observed 2× 2026-09-10: a prescreen run raced its own edit mid-apply; a goals.rs read raced the edit). Sequence reads and edits of the same file across batches.
 * In a shared tree, check the staged index (`git diff --cached --stat`) before any `git commit` — the operator's staged work rode into the agent's deletion commit under an unrelated message (observed 2026-09-10: commit 3cf1f7e4a5 carried ~10 files of staged operator work).
@@ -161,4 +133,4 @@ A zed-side edit carries its DIVERGENCE.md seam update in the same pass — the s
 
 # Concurrent-edit trap
 
-* Only one agent process may edit the tree at a time. A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
+* A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
