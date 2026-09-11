@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::helpers::map_service_error;
+use crate::helpers::{default_corpus_passphrase, map_service_error};
 use crate::inference_svc::InferenceContext;
 use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
@@ -107,11 +107,26 @@ fn resolve_cognition_config(
     }
 }
 
+/// Guard for the canonically-resolved passphrase: an empty resolution is
+/// an authorization failure naming the setting, never a silent fallback to
+/// an unencrypted DB (the `.rules` missing-credential pattern).
+fn require_passphrase(passphrase: &str) -> Result<(), McpToolError> {
+    if passphrase.trim().is_empty() {
+        return Err(McpToolError::permission_denied(
+            "no database passphrase resolved — set HKASK_DB_PASSPHRASE \
+             (canonical resolution: launch-injected credentials → env → \
+             keychain); kask never falls back to an unencrypted DB",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ComposeRequest {
     pub prompt: String,
     pub author: String,
     pub db_path: String,
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Optional path to a cognition config YAML (e.g. a mashup or style
     /// synthesizer config). When provided, the Jinja2 template, embedding
@@ -128,6 +143,7 @@ pub(crate) struct RewriteRequest {
     pub content: String,
     pub author: String,
     pub db_path: String,
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     #[serde(default = "default_composite")]
     pub dimension: String,
@@ -145,6 +161,7 @@ fn default_composite() -> String {
 pub(crate) struct CentroidRequest {
     pub author: String,
     pub db_path: String,
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
 }
 
@@ -158,6 +175,7 @@ impl crate::CorpusServer {
         Parameters(params): Parameters<ComposeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_compose", async {
+            require_passphrase(&params.passphrase)?;
             let gen_model = generation_model();
             let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
@@ -196,6 +214,7 @@ impl crate::CorpusServer {
         Parameters(params): Parameters<CentroidRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_centroid", async {
+            require_passphrase(&params.passphrase)?;
             let embed_model = embedding_model();
             if embed_model.trim().is_empty() {
                 return Err(McpToolError::permission_denied(
@@ -238,6 +257,7 @@ impl crate::CorpusServer {
             self,
             "corpus_rewrite",
             async {
+                require_passphrase(&params.passphrase)?;
                 let dimension_guidance = match params.dimension.to_lowercase().as_str() {
                     "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",
                     "schriver" => "Rewrite this text for maximum findability. Use scannable headings, descriptive hyperlinks, and front-load key concepts. A reader must find their answer within 30 seconds.",
