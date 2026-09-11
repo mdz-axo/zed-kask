@@ -3619,45 +3619,26 @@ impl Thread {
         };
         let summary = futures::select! {
             result = async {
-                let (mut request, split) = cx.background_spawn(async move {
+                let (request, halves) = cx.background_spawn(async move {
                     let mut request = request;
                     if let Some(condenser) = condenser {
                         let end = request.messages.len().saturating_sub(1);
                         condenser.precompress_history(&mut request.messages[..end], NO_COMPRESS_TOOLS)?;
                     }
-                    let split = compaction_split_point(&request.messages)?;
-                    anyhow::Ok((request, split))
+                    let halves = crate::kask_compaction::plan_halves(&request)?;
+                    anyhow::Ok((request, halves))
                 }).await?;
-                if let Some(split) = split {
-                    let mut history = std::mem::take(&mut request.messages);
-                    let instruction = history.pop().context("Missing compaction instruction")?;
-                    let prefix_len = history.iter().take_while(|message| message.role == Role::System).count();
-                    let prefix: Vec<_> = history.drain(..prefix_len).collect();
-                    let later_history = history.split_off(split - prefix_len);
-                    let context = |text: String| LanguageModelRequestMessage {
-                        role: Role::User, content: vec![text.into()], cache: false, reasoning_details: None,
-                    };
-                    let mut earlier = request.clone();
-                    earlier.messages = prefix.clone();
-                    earlier.messages.push(context("Summarize the earlier half below. Do not infer missing context.".into()));
-                    earlier.messages.extend(history);
-                    earlier.messages.push(instruction.clone());
-                    let mut later = request.clone();
-                    later.messages = prefix.clone();
-                    later.messages.push(context("Summarize the later half below. Do not infer missing context.".into()));
-                    later.messages.extend(later_history);
-                    later.messages.push(instruction);
-                    log::info!("Compacting two chronological halves concurrently, then merging");
-                    let (earlier, later) = futures::try_join!(
-                        Self::collect_compaction_summary(this, &model, earlier, None, cx.clone()),
-                        Self::collect_compaction_summary(this, &model, later, None, cx.clone()),
-                    )?;
-                    request.messages = prefix;
-                    request.messages.push(context(format!(
-                        "Merge these chronological summaries. Preserve later corrections and unresolved conflicts.\n\nEarlier half:\n{earlier}\n\nLater half:\n{later}"
-                    )));
-                    request.messages.push(context(COMPACTION_PROMPT.into()));
-                }
+                let request = match halves {
+                    Some((earlier, later)) => {
+                        log::info!("Compacting two chronological halves concurrently, then merging");
+                        let (earlier, later) = futures::try_join!(
+                            Self::collect_compaction_summary(this, &model, earlier, None, cx.clone()),
+                            Self::collect_compaction_summary(this, &model, later, None, cx.clone()),
+                        )?;
+                        crate::kask_compaction::merge_request(request, &earlier, &later)
+                    }
+                    None => request,
+                };
                 Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
             }.fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
@@ -5508,40 +5489,9 @@ impl Thread {
             ..Default::default()
         };
 
-        // Iterative summary refinement (Kilocode pattern): when a prior
-        // compaction summary exists in the range being compacted, feed it back
-        // so the model updates the anchored summary rather than regenerating
-        // from scratch. This preserves still-true details, removes stale ones,
-        // and merges new facts — producing a summary that monotonically
-        // converges on the task's durable facts instead of drifting.
-        let previous_summary = self.messages[..insertion_ix.min(self.messages.len())]
-            .iter()
-            .rev()
-            .find_map(|message| {
-                if let Message::Compaction(CompactionInfo::Summary(summary)) = &**message {
-                    Some(summary.as_ref())
-                } else {
-                    None
-                }
-            });
-
-        let compaction_prompt = if let Some(previous) = previous_summary {
-            format!(
-                "Update the anchored summary below using the conversation history above.\
-                 \nPreserve still-true details, remove stale details, and merge in the new facts.\
-                 \n<previous-summary>\
-                 \n{previous}\
-                 \n</previous-summary>\
-                 \n\
-                 \n{COMPACTION_PROMPT}"
-            )
-        } else {
-            COMPACTION_PROMPT.to_string()
-        };
-
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: vec![compaction_prompt.into()],
+            content: vec![COMPACTION_PROMPT.into()],
             cache: false,
             reasoning_details: None,
         });
@@ -6073,58 +6023,6 @@ pub(crate) fn drain_completed_deferred_results(
     }
     *deferred_results = remaining;
     completed
-}
-
-/// Choose a roughly byte-balanced boundary after a complete assistant response
-/// or tool exchange. Bytes balance the halves; they do not certify token fit.
-fn compaction_split_point(messages: &[LanguageModelRequestMessage]) -> Result<Option<usize>> {
-    let start = messages
-        .iter()
-        .take_while(|message| message.role == Role::System)
-        .count();
-    let end = messages.len().saturating_sub(1); // final summarization instruction
-    if start >= end {
-        return Ok(None);
-    }
-    let history = &messages[start..end];
-    let sizes = history
-        .iter()
-        .map(|message| serde_json::to_vec(message).map(|bytes| bytes.len()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    let target = sizes.iter().sum::<usize>() / 2;
-    let mut outstanding = HashSet::default();
-    let mut bytes = 0usize;
-    let mut best: Option<(usize, usize)> = None;
-    for (index, (message, size)) in history.iter().zip(sizes).enumerate() {
-        let mut has_result = false;
-        for part in &message.content {
-            match part {
-                MessageContent::ToolUse(call) => {
-                    outstanding.insert(&call.id);
-                }
-                MessageContent::ToolResult(result) => {
-                    has_result = true;
-                    if !outstanding.remove(&result.tool_use_id) {
-                        return Ok(None);
-                    }
-                }
-                _ => {}
-            }
-        }
-        bytes += size;
-        let cut = start + index + 1;
-        if cut < end && outstanding.is_empty() && (message.role == Role::Assistant || has_result) {
-            let distance = bytes.abs_diff(target);
-            if best.is_none_or(|(_, previous)| distance < previous) {
-                best = Some((cut, distance));
-            }
-        }
-    }
-    Ok(if outstanding.is_empty() {
-        best.map(|(cut, _)| cut)
-    } else {
-        None
-    })
 }
 
 /// Describes where a streamed compaction summary should land in the thread
@@ -9704,44 +9602,6 @@ mod tests {
     }
 
     #[test]
-    fn compaction_split_balances_bytes_and_keeps_indivisible_history_single_pass() -> Result<()> {
-        let mut messages = vec![LanguageModelRequestMessage {
-            role: Role::System,
-            content: vec!["system".into()],
-            cache: false,
-            reasoning_details: None,
-        }];
-        for (index, size) in [2000, 20, 20].into_iter().enumerate() {
-            messages.extend(
-                user_text_message(ClientUserMessageId::new(), &format!("request {index}"))
-                    .to_request(),
-            );
-            messages.extend(agent_text_message(&"x".repeat(size)).to_request());
-        }
-        messages
-            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
-        assert_eq!(compaction_split_point(&messages)?, Some(3));
-        messages.truncate(3);
-        messages
-            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
-        assert_eq!(compaction_split_point(&messages)?, None);
-        let history = two_half_compaction_history();
-        let mut messages: Vec<_> = history
-            .iter()
-            .take(2)
-            .flat_map(|message| message.to_request())
-            .collect();
-        messages
-            .extend(user_text_message(ClientUserMessageId::new(), COMPACTION_PROMPT).to_request());
-        assert_eq!(
-            compaction_split_point(&messages)?,
-            None,
-            "cannot split one tool exchange"
-        );
-        Ok(())
-    }
-
-    #[test]
     fn compaction_template_preserves_meaning_while_requesting_brevity() {
         assert!(COMPACTION_PROMPT.contains(
             "Preserve negations, conditions, genuine uncertainty, and decision rationale"
@@ -9786,71 +9646,6 @@ mod tests {
         }
         assert!(saw_error);
         thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
-    }
-
-    #[gpui::test]
-    async fn test_compaction_refines_prior_summary(cx: &mut TestAppContext) {
-        // When a prior CompactionInfo::Summary exists in the range being
-        // compacted, the new compaction request must feed it back so the model
-        // updates the anchored summary rather than regenerating from scratch.
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW + 1);
-        let first_user_id = ClientUserMessageId::new();
-        let compact_message_id = ClientUserMessageId::new();
-
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.set_model(model.clone(), cx);
-                thread
-                    .messages
-                    .push(user_text_message(first_user_id.clone(), "first user"));
-                thread.messages.push(agent_text_message("first assistant"));
-                // Insert a prior compaction summary — this is what should be fed back.
-                thread
-                    .messages
-                    .push(Arc::new(Message::Compaction(CompactionInfo::Summary(
-                        "prior anchored summary".into(),
-                    ))));
-                thread.messages.push(user_text_message(
-                    ClientUserMessageId::new(),
-                    "second user after compaction",
-                ));
-            });
-        });
-
-        let _events = cx
-            .update(|cx| {
-                thread.update(cx, |thread, cx| {
-                    thread.compact(compact_message_id.clone(), cx)
-                })
-            })
-            .unwrap();
-        cx.run_until_parked();
-
-        let compaction_request = model.pending_completions().pop().unwrap();
-        let compaction_texts = request_texts_after_system(&compaction_request.messages);
-
-        // The last message is the compaction prompt, which must contain the
-        // prior summary wrapped in <previous-summary> and the "Update the
-        // anchored summary" instruction.
-        let prompt = compaction_texts.last().unwrap();
-        assert!(
-            prompt.contains("Update the anchored summary"),
-            "expected iterative-refinement instruction, got: {prompt}"
-        );
-        assert!(
-            prompt.contains("<previous-summary>"),
-            "expected <previous-summary> wrapper, got: {prompt}"
-        );
-        assert!(
-            prompt.contains("prior anchored summary"),
-            "expected prior summary text in prompt, got: {prompt}"
-        );
-        assert!(
-            prompt.contains("Preserve still-true details"),
-            "expected preserve-stale-merge instruction, got: {prompt}"
-        );
     }
 
     /// Cancelling an in-flight manual compaction must not leave the zero-content
