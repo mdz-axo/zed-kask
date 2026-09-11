@@ -3715,6 +3715,7 @@ impl Thread {
         let mut stream = model.stream_completion(request, &cx).await?;
         let mut summary = String::new();
         let mut usage = TokenUsage::default();
+        let mut truncated = false;
         while let Some(event) = stream.next().await {
             match event? {
                 LanguageModelCompletionEvent::Text(text) => {
@@ -3736,13 +3737,16 @@ impl Thread {
                     })?;
                 }
                 LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
-                    anyhow::bail!(
-                        "Compaction reached the model's output limit; no summary was saved"
-                    );
+                    // Usage-only chunks may follow the stop event.
+                    truncated = true;
                 }
                 _ => {}
             }
         }
+        anyhow::ensure!(
+            !truncated,
+            "Compaction reached the model's output limit; no summary was saved"
+        );
         let summary = summary.trim().to_string();
         anyhow::ensure!(!summary.is_empty(), "Compaction produced an empty summary");
         Ok(summary)
