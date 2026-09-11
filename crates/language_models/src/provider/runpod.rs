@@ -593,6 +593,136 @@ struct RunpodEnvVar {
     value: String,
 }
 
+/// Context-length fallback for discovered endpoints when the models listing
+/// is unreachable or doesn't report `max_model_len`. RunPod's GraphQL API
+/// doesn't expose context length.
+const DISCOVERED_MAX_TOKENS_FALLBACK: u64 = 32_768;
+
+/// The OpenAI-compatible `/v1/models` listing served by a RunPod serverless
+/// endpoint's vLLM worker.
+#[derive(Debug, Deserialize)]
+struct OpenAiModelsListing {
+    #[serde(default)]
+    data: Vec<OpenAiModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelEntry {
+    /// The id vLLM actually serves — the only authoritative value for the
+    /// OpenAI `model` request field.
+    id: String,
+    /// The model's context length, when the worker reports it.
+    #[serde(default)]
+    max_model_len: Option<u64>,
+}
+
+/// Resolve the served model id (and context length) from the endpoint's own
+/// OpenAI-compatible models listing.
+///
+/// vLLM matches the OpenAI `model` field against its served ids
+/// case-sensitively, and the RunPod vLLM template can serve a model under an
+/// id that differs from the `MODEL_NAME` env var (observed on kask-ocr: env
+/// `allenai/olmOCR-2-7B-1025`, served `allenai/olmocr-2-7b-1025`). A
+/// mismatched id fails every completion — non-streaming requests get a 500,
+/// streaming requests get an HTTP 200 with an empty body, which downstream
+/// consumers (the corpus OCR pipeline) classify as a silent failure. The
+/// endpoint's own listing is the authoritative source, so prefer it.
+async fn resolve_served_model(
+    http_client: &dyn HttpClient,
+    endpoint_id: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<Option<(String, Option<u64>)>> {
+    use futures::AsyncReadExt;
+    use http_client::{AsyncBody, Method, Request as HttpRequest, RequestBuilderExt};
+
+    let uri = format!("{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1/models");
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::empty())
+        .map_err(|error| anyhow!("failed to build RunPod models request: {error}"))?;
+
+    let mut response = http_client
+        .send(request)
+        .await
+        .map_err(|error| anyhow!("RunPod models request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| anyhow!("failed to read RunPod models error body: {error}"))?;
+        return Err(anyhow!(
+            "RunPod models request returned {}: {body}",
+            response.status()
+        ));
+    }
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| anyhow!("failed to read RunPod models body: {error}"))?;
+    let parsed: OpenAiModelsListing = serde_json::from_str(&body)
+        .map_err(|error| anyhow!("failed to parse RunPod models listing: {error}"))?;
+    Ok(parsed
+        .data
+        .into_iter()
+        .next()
+        .map(|entry| (entry.id, entry.max_model_len)))
+}
+
+/// Map a discovered GraphQL endpoint to an [`AvailableModel`].
+///
+/// `served` is the authoritative `(served model id, max_model_len)` pair from
+/// the endpoint's own models listing when the probe succeeded. `None` falls
+/// back to the `MODEL_NAME` env var for the served name — the pre-probe
+/// behavior, kept as the degraded path.
+fn endpoint_to_available_model(
+    endpoint: &RunpodEndpoint,
+    served: Option<(&str, Option<u64>)>,
+) -> AvailableModel {
+    let model_name_env = endpoint
+        .env
+        .iter()
+        .find(|var| var.key == "MODEL_NAME")
+        .map(|var| var.value.clone());
+    let display_name = model_name_env
+        .as_ref()
+        .map(|mn| format!("{} ({})", endpoint.name, mn));
+    let (served_model_name, max_tokens) = match served {
+        Some((id, max_model_len)) => (
+            Some(id.to_string()),
+            max_model_len
+                .filter(|len| *len > 0)
+                .unwrap_or(DISCOVERED_MAX_TOKENS_FALLBACK),
+        ),
+        None => (model_name_env.clone(), DISCOVERED_MAX_TOKENS_FALLBACK),
+    };
+    AvailableModel {
+        name: endpoint.name.clone(),
+        display_name,
+        endpoint_id: endpoint.id.clone(),
+        max_tokens,
+        max_output_tokens: None,
+        // Infer vision support from the MODEL_NAME env var. OLMOCR and
+        // other OCR models are vision models — discovery should report
+        // `true` so the IPC vision-model list includes them and
+        // `resolve_ocr_model` can verify the model is vision-capable.
+        supports_images: model_name_env.as_ref().is_some_and(|mn| {
+            let lower = mn.to_ascii_lowercase();
+            lower.contains("olmocr") || lower.contains("ocr") || lower.contains("vision")
+        }),
+        served_model_name,
+    }
+}
+
 /// Fetch RunPod serverless endpoints via the GraphQL API and convert them to
 /// `AvailableModel` entries.
 async fn fetch_runpod_endpoints(
@@ -662,37 +792,34 @@ async fn fetch_runpod_endpoints(
         if !seen.insert(endpoint.name.clone()) {
             continue;
         }
-        // Derive a display name from MODEL_NAME when present, otherwise use
-        // the endpoint name.
-        let model_name_env = endpoint
-            .env
-            .iter()
-            .find(|var| var.key == "MODEL_NAME")
-            .map(|var| var.value.clone());
-        let display_name = model_name_env
-            .as_ref()
-            .map(|mn| format!("{} ({})", endpoint.name, mn));
-        models.push(AvailableModel {
-            name: endpoint.name,
-            display_name,
-            endpoint_id: endpoint.id,
-            // RunPod does not expose context length via GraphQL; use a sane
-            // default. The user can override via `available_models` in settings.
-            max_tokens: 32_768,
-            max_output_tokens: None,
-            // Infer vision support from the MODEL_NAME env var. OLMOCR and
-            // other OCR models are vision models — discovery should report
-            // `true` so the IPC vision-model list includes them and
-            // `resolve_ocr_model` can verify the model is vision-capable.
-            supports_images: model_name_env.as_ref().is_some_and(|mn| {
-                let lower = mn.to_ascii_lowercase();
-                lower.contains("olmocr") || lower.contains("ocr") || lower.contains("vision")
-            }),
-            // vLLM expects the `model` field to match MODEL_NAME unless
-            // --served-model-name overrides it. Populate from the env var so
-            // discovered endpoints work without manual config.
-            served_model_name: model_name_env,
-        });
+        // Resolve the authoritative served-model id from the endpoint's own
+        // OpenAI-compatible models listing. The GraphQL `MODEL_NAME` env var is
+        // the configured model, but vLLM may serve it under a different id
+        // (observed on kask-ocr: env `allenai/olmOCR-2-7B-1025`, served
+        // `allenai/olmocr-2-7b-1025`) and the OpenAI `model` field match is
+        // case-sensitive, so the env value fails every completion.
+        let served = match resolve_served_model(http_client, &endpoint.id, api_key, extra_headers)
+            .await
+        {
+            Ok(served) => served,
+            Err(error) => {
+                // Fail-visible: the MODEL_NAME fallback reproduces the
+                // served-id mismatch when the endpoint serves a different
+                // id, so the probe failure must be diagnosable in the log.
+                log::warn!(
+                    "RunPod provider: could not resolve the served model for endpoint {} ({}): {error:#} — falling back to the MODEL_NAME env var",
+                    endpoint.name,
+                    endpoint.id
+                );
+                None
+            }
+        };
+        models.push(endpoint_to_available_model(
+            &endpoint,
+            served
+                .as_ref()
+                .map(|(id, max_model_len)| (id.as_str(), *max_model_len)),
+        ));
     }
 
     Ok(models)
@@ -758,7 +885,9 @@ mod tests {
     }
 
     /// D29 pin: the GraphQL response is parsed into `AvailableModel` entries,
-    /// with the display name derived from `MODEL_NAME` when present.
+    /// with the display name derived from `MODEL_NAME` when present. This pins
+    /// the degraded (no-probe) mapping: `served_model_name` falls back to the
+    /// `MODEL_NAME` env var.
     #[test]
     fn graphql_response_parses_into_available_models() {
         let body = r#"{
@@ -788,33 +917,116 @@ mod tests {
         let endpoint = &endpoints[0];
         assert_eq!(endpoint.id, "hsldzov6932wf5");
         assert_eq!(endpoint.name, "kask-ocr");
-        let model_name = endpoint
-            .env
-            .iter()
-            .find(|var| var.key == "MODEL_NAME")
-            .map(|var| var.value.clone());
-        assert_eq!(model_name.as_deref(), Some("allenai/olmOCR-2-7B-1025"));
 
-        // Verify the discovery function populates served_model_name from MODEL_NAME.
-        // `model_name` is moved into `served_model_name` (no clone needed — it
-        // is not used after this struct literal). The `display_name` borrows it
-        // via `.as_ref()` before the move.
-        let display_name = model_name
-            .as_ref()
-            .map(|mn| format!("{} ({})", endpoint.name, mn));
-        let available = AvailableModel {
-            name: endpoint.name.clone(),
-            display_name,
-            endpoint_id: endpoint.id.clone(),
-            max_tokens: 32_768,
-            max_output_tokens: None,
-            supports_images: true,
-            served_model_name: model_name,
-        };
+        // The degraded path (probe unavailable): served_model_name comes
+        // from the MODEL_NAME env var, max_tokens from the discovery default.
+        let available = endpoint_to_available_model(endpoint, None);
+        assert_eq!(available.name, "kask-ocr");
+        assert_eq!(available.endpoint_id, "hsldzov6932wf5");
+        assert_eq!(available.max_tokens, DISCOVERED_MAX_TOKENS_FALLBACK);
+        assert!(available.supports_images);
         assert_eq!(
             available.served_model_name.as_deref(),
             Some("allenai/olmOCR-2-7B-1025"),
-            "served_model_name must be populated from MODEL_NAME env var"
+            "served_model_name must fall back to the MODEL_NAME env var"
         );
+    }
+
+    /// The served-id probe result overrides the `MODEL_NAME` env var: vLLM
+    /// serves `allenai/olmocr-2-7b-1025` (lowercase) while the env var
+    /// carries the mixed-case HF id — the case-sensitive OpenAI `model`
+    /// field match is why the probe exists. The listing's `max_model_len`
+    /// replaces the discovery-default context length.
+    #[test]
+    fn served_model_probe_overrides_case_mismatched_env_name() {
+        let body = r#"{
+            "data": {
+                "myself": {
+                    "endpoints": [
+                        {
+                            "id": "hsldzov6932wf5",
+                            "name": "kask-ocr",
+                            "type": "QB",
+                            "env": [
+                                {"key": "MODEL_NAME", "value": "allenai/olmOCR-2-7B-1025"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let parsed: GraphqlResponse = serde_json::from_str(body).unwrap();
+        let endpoint = &parsed
+            .data
+            .and_then(|data| data.myself)
+            .map(|myself| myself.endpoints)
+            .unwrap_or_default()[0];
+
+        let available = endpoint_to_available_model(
+            endpoint,
+            Some(("allenai/olmocr-2-7b-1025", Some(128_000))),
+        );
+        assert_eq!(
+            available.served_model_name.as_deref(),
+            Some("allenai/olmocr-2-7b-1025"),
+            "the endpoint's own models listing is authoritative for the served id"
+        );
+        assert_eq!(available.max_tokens, 128_000);
+        // The resolution key stays the endpoint name; the env var still
+        // drives display_name and the vision heuristic.
+        assert_eq!(available.name, "kask-ocr");
+        assert_eq!(
+            available.display_name.as_deref(),
+            Some("kask-ocr (allenai/olmOCR-2-7B-1025)")
+        );
+        assert!(available.supports_images);
+    }
+
+    /// A listing without `max_model_len` (or with a zero value) keeps the
+    /// discovery-default context length — the probe's id still wins.
+    #[test]
+    fn served_model_probe_without_max_model_len_uses_discovery_default() {
+        let body = r#"{
+            "data": {
+                "myself": {
+                    "endpoints": [
+                        {
+                            "id": "hsldzov6932wf5",
+                            "name": "kask-ocr",
+                            "type": "QB",
+                            "env": [
+                                {"key": "MODEL_NAME", "value": "allenai/olmOCR-2-7B-1025"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let parsed: GraphqlResponse = serde_json::from_str(body).unwrap();
+        let endpoint = &parsed
+            .data
+            .and_then(|data| data.myself)
+            .map(|myself| myself.endpoints)
+            .unwrap_or_default()[0];
+
+        let available = endpoint_to_available_model(endpoint, Some(("served-id", None)));
+        assert_eq!(available.served_model_name.as_deref(), Some("served-id"));
+        assert_eq!(available.max_tokens, DISCOVERED_MAX_TOKENS_FALLBACK);
+    }
+
+    /// The endpoint's OpenAI-compatible models listing parses: the served id
+    /// and `max_model_len` are extracted from the first entry.
+    #[test]
+    fn openai_models_listing_parses() {
+        let body = r#"{"data":[{"created":1789104003,"id":"allenai/olmocr-2-7b-1025","max_model_len":128000,"object":"model","owned_by":"vllm","parent":null,"permission":[]}],"object":"list"}"#;
+        let parsed: OpenAiModelsListing = serde_json::from_str(body).unwrap();
+        let first = parsed.data.first().expect("listing must have an entry");
+        assert_eq!(first.id, "allenai/olmocr-2-7b-1025");
+        assert_eq!(first.max_model_len, Some(128_000));
+
+        // A listing without max_model_len still parses (serde default).
+        let body_no_len = r#"{"data":[{"id":"m","object":"model"}],"object":"list"}"#;
+        let parsed_no_len: OpenAiModelsListing = serde_json::from_str(body_no_len).unwrap();
+        assert_eq!(parsed_no_len.data[0].max_model_len, None);
     }
 }

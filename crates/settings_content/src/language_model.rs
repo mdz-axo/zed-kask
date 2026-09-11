@@ -391,12 +391,14 @@ pub struct RunpodAvailableModel {
     #[serde(default)]
     pub supports_images: bool,
     /// The model name to send in the OpenAI `model` field of inference
-    /// requests. vLLM expects this to match `MODEL_NAME` (or a
-    /// `--served-model-name` override). If `None`, defaults to the endpoint
-    /// `name` — which works when the endpoint is configured with
-    /// `--served-model-name` equal to the endpoint name, but may cause 400/404
-    /// from vLLM otherwise. For discovered endpoints, this is populated from
-    /// the `MODEL_NAME` env var.
+    /// requests. vLLM matches this case-sensitively against its served ids.
+    /// For discovered endpoints, this is resolved from the endpoint's own
+    /// OpenAI-compatible `/v1/models` listing (the authoritative served id —
+    /// it can differ from the `MODEL_NAME` env var, e.g. lowercased), falling
+    /// back to `MODEL_NAME` when the listing is unreachable. If `None`,
+    /// defaults to the endpoint `name` — which works when the endpoint is
+    /// configured with `--served-model-name` equal to the endpoint name, but
+    /// may cause 400/404 from vLLM otherwise.
     pub served_model_name: Option<String>,
 }
 
