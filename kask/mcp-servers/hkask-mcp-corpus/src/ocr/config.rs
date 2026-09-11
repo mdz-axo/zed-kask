@@ -7,11 +7,9 @@ use serde::{Deserialize, Serialize};
 // PDFium text-object access). `Garbled` / `VectorText` reasons require a
 // PDFium-level extraction layer and are deferred (Tier 2).
 //
-// The former complexity-tier routing (Simple/Moderate/Complex →
-// Tesseract/LLM) was removed with the Tesseract backend (2026-09-10):
-// every page that enters the pipeline goes to the configured LLM OCR model,
-// and output quality is gated by `ocr::quality` instead of routed by
-// pixel-density heuristics that silently sent book pages to Tesseract.
+// Triage decides whether native text extraction needs OCR; it does not select
+// an OCR backend. Every OCR page uses the configured vision model, with
+// output checked by `ocr::quality`.
 
 /// Why a single page was flagged as needing more than the cheap text-only
 /// path. Multiple reasons can apply to one page.

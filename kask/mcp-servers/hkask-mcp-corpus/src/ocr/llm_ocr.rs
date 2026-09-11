@@ -313,10 +313,8 @@ impl OcrExecutor for LlmOcrExecutor {
         model: &str,
         image: &DynamicImage,
     ) -> Result<OcrResult, OcrError> {
-        // Circuit breaker: an open breaker is a typed, surfaced error. The
-        // former is_available/unavailable pattern silently degraded the
-        // page to the (removed) Tesseract fallback; there is no fallback
-        // now — the page fails with this reason and the run's report names it.
+        // Quarantine rejects the page explicitly; the run retains the reason
+        // rather than substituting another backend's output.
         if !self.breaker.is_closed() {
             tracing::warn!(
                 target: "reg.pipeline.ocr.circuit_breaker",
@@ -398,11 +396,8 @@ impl OcrExecutor for LlmOcrExecutor {
                 });
             }
             Err(OcrError::InferenceFailed(err_str)) => {
-                // Every inference failure is visible with its root cause —
-                // the string carries the HTTP status, DNS, TLS, or timeout
-                // detail. Swallowing it made a dead endpoint (observed: the
-                // kask-ocr 404s) indistinguishable from a healthy one while
-                // every page silently fell to Tesseract.
+                // Preserve HTTP status, DNS, TLS, or timeout details so the
+                // operator can distinguish a broken endpoint from empty text.
                 tracing::warn!(
                     target: "reg.pipeline.ocr.inference_failure",
                     page_index = page_index,

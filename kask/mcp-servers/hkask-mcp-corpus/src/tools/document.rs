@@ -675,13 +675,9 @@ impl CorpusServer {
             let mut healed = 0usize;
             let mut failures = Vec::new();
 
-            // OCR-sourced outputs land in a staging sibling directory, not
-            // the output directory: model output never enters the corpus
-            // extraction set until an explicit, quality-gated merge (a
-            // canceled run must not be able to pollute the set — observed
-            // 2026-09-10, a canceled 85-page run deposited tesseract garbage
-            // directly into the extraction dir). Text-extraction outputs are
-            // deterministic conversions and write directly.
+            // Stage OCR output separately: partial or unverified model output
+            // must not enter the extraction set before a quality-gated merge.
+            // Deterministic native-text conversions write directly.
             let staging_dir = output_dir
                 .parent()
                 .map(|p| p.join(format!("{}-ocr-staging", output.file_name().unwrap_or_default().to_string_lossy())));

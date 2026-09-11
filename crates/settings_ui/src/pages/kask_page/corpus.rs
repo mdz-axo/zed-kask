@@ -1,10 +1,8 @@
 //! Corpus sub-page — embedding model, dimension, and template root.
 //!
-//! The former OCR threshold controls (simple/moderate/sample-rate/tuneable)
-//! were removed with the Tesseract backend and its complexity-tier routing
-//! (2026-09-10): every OCR page now goes to the configured vision model
-//! (kask.models.ocr_model, on the Models page) and output quality is gated
-//! deterministically in the corpus server — there are no thresholds to tune.
+//! OCR model selection lives on the Models page (`kask.models.ocr_model`).
+//! The corpus server gates OCR output quality deterministically; this page
+//! has no OCR backend-routing or threshold controls.
 
 use super::*;
 

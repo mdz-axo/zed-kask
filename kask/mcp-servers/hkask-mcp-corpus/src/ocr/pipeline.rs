@@ -4,14 +4,10 @@
 //! PDF → [Decimate] → PageQueue → [OCR (single LLM backend)] → ResultBuffer → [Assembly] → VerifiedDocument
 //! ```
 //!
-//! There is exactly one OCR backend: the configured OCR model (a dedicated
-//! OCR endpoint such as `runpod/kask-ocr` — OLMOCR-2), invoked per page via
-//! the vision transport (image in, text out). The former Tesseract backend and its complexity-tier routing
-//! were removed (2026-09-10) — tier routing silently sent book pages to a
-//! garbage-quality engine, and the fallback ladder silently substituted
-//! degraded text on LLM failure. A page now either gets text from the
-//! configured model or a typed, surfaced error. Output quality is gated
-//! deterministically (`ocr::quality`) instead of trusted from the backend.
+//! There is exactly one OCR backend: the configured vision model, invoked
+//! per page. A page either gets text from that model or a typed, surfaced
+//! error. Output quality is gated deterministically (`ocr::quality`)
+//! instead of trusted from the backend.
 //!
 //! Supports parallel execution via `max_concurrency` for batch/corpus workloads.
 //! Interactive MCP tool calls use sequential mode (max_concurrency = None).

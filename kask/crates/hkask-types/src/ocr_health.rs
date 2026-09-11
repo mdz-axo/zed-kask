@@ -1,15 +1,10 @@
 //! OCR health snapshot — the cross-process file contract between the corpus
 //! MCP server (writer) and the cybernetics loop's OCR health source (reader).
 //!
-//! The corpus server is a subprocess: its `reg.pipeline.ocr.silent_failure`
-//! tracing events never reach the zed main process's in-memory algedonic log,
-//! so the cybernetics loop reported `signal_count=0` during an OCR silent
-//! failure storm (a dead-but-responsive OCR endpoint returning HTTP 200
-//! with empty content on every Complex page). This file is the IPC channel:
-//! the corpus server's `OcrHealthRecorder` appends events atomically
-//! (tmp+rename), and the bridge's `BridgeOcrHealthSource` reads the snapshot
-//! each regulation tick. The schema lives here — in the shared types crate —
-//! so the writer and the reader cannot drift apart.
+//! The corpus server is a subprocess: its tracing events do not directly
+//! reach the host's in-memory algedonic log. `OcrHealthRecorder` persists
+//! events atomically (tmp+rename), and `BridgeOcrHealthSource` reads this
+//! shared snapshot each regulation tick.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +24,8 @@ pub struct OcrHealthSnapshot {
     /// Unix seconds of each OCR silent failure (empty LLM output on a page),
     /// oldest first, capped at [`OCR_SILENT_FAILURE_HISTORY_CAP`].
     pub silent_failure_timestamps: Vec<i64>,
-    /// Whether the LLM OCR circuit breaker is currently open (the endpoint
-    /// is quarantined and Complex pages are degrading to Tesseract).
+    /// Whether the OCR endpoint is quarantined. An open breaker rejects
+    /// page requests with a visible error; no other backend is substituted.
     pub circuit_breaker_open: bool,
     /// Unix seconds of the last file write.
     pub updated_unix: i64,
