@@ -342,19 +342,6 @@ pub struct KaskCorpusSettings {
     /// no-hidden-models spec: no constant fallback).
     pub embedding_model: String,
 
-    /// OCR simple threshold (0.0–1.0). Pages below this are processed simply.
-    pub ocr_simple_max: f64,
-
-    /// OCR moderate threshold (0.0–1.0). Pages above simple but below this
-    /// are processed with moderate pipeline.
-    pub ocr_moderate_max: f64,
-
-    /// OCR moderate sample rate (0.0–1.0). Fraction of moderate pages sampled.
-    pub ocr_sample_rate: f64,
-
-    /// Whether OCR tuneable mode is enabled.
-    pub ocr_tuneable: bool,
-
     /// Template root directory for Jinja2 templates.
     pub template_root: String,
 }
@@ -364,10 +351,6 @@ impl Default for KaskCorpusSettings {
         Self {
             embedding_dim: 1024,
             embedding_model: default_embedding_model(),
-            ocr_simple_max: 0.05,
-            ocr_moderate_max: 0.15,
-            ocr_sample_rate: 0.10,
-            ocr_tuneable: true,
             template_root: "kask/registry".to_string(),
         }
     }
@@ -755,7 +738,6 @@ impl KaskSettings {
         crate::mcp_env::emit_portfolio_env(&mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
-        crate::mcp_env::emit_corpus_ocr_env(&self.corpus, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
@@ -905,10 +887,6 @@ impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
                 .filter(|&d| d > 0)
                 .unwrap_or(default.embedding_dim),
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
-            ocr_simple_max: c.ocr_simple_max.unwrap_or(default.ocr_simple_max),
-            ocr_moderate_max: c.ocr_moderate_max.unwrap_or(default.ocr_moderate_max),
-            ocr_sample_rate: c.ocr_sample_rate.unwrap_or(default.ocr_sample_rate),
-            ocr_tuneable: c.ocr_tuneable.unwrap_or(default.ocr_tuneable),
             template_root: c.template_root.unwrap_or(default.template_root),
         }
     }
@@ -1052,10 +1030,6 @@ mod tests {
             corpus: Some(KaskCorpusSettingsContent {
                 embedding_dim: Some(0),
                 embedding_model: None,
-                ocr_simple_max: None,
-                ocr_moderate_max: None,
-                ocr_sample_rate: None,
-                ocr_tuneable: None,
                 template_root: None,
             }),
             ..Default::default()
@@ -1074,10 +1048,6 @@ mod tests {
             corpus: Some(KaskCorpusSettingsContent {
                 embedding_dim: Some(2560),
                 embedding_model: None,
-                ocr_simple_max: None,
-                ocr_moderate_max: None,
-                ocr_sample_rate: None,
-                ocr_tuneable: None,
                 template_root: None,
             }),
             ..Default::default()
@@ -1092,10 +1062,6 @@ mod tests {
             corpus: Some(KaskCorpusSettingsContent {
                 embedding_dim: None,
                 embedding_model: None,
-                ocr_simple_max: None,
-                ocr_moderate_max: None,
-                ocr_sample_rate: None,
-                ocr_tuneable: None,
                 template_root: None,
             }),
             ..Default::default()

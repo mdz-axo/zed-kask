@@ -1,4 +1,10 @@
-//! Corpus sub-page — embedding model, OCR pipeline, and template root.
+//! Corpus sub-page — embedding model, dimension, and template root.
+//!
+//! The former OCR threshold controls (simple/moderate/sample-rate/tuneable)
+//! were removed with the Tesseract backend and its complexity-tier routing
+//! (2026-09-10): every OCR page now goes to the configured vision model
+//! (kask.models.ocr_model, on the Models page) and output quality is gated
+//! deterministically in the corpus server — there are no thresholds to tune.
 
 use super::*;
 
@@ -17,10 +23,6 @@ pub(crate) fn render_corpus_page(
     let embedding_model = corpus.embedding_model;
     let template_root = corpus.template_root;
     let embedding_dim = corpus.embedding_dim.to_string();
-    let ocr_simple_max = corpus.ocr_simple_max.to_string();
-    let ocr_moderate_max = corpus.ocr_moderate_max.to_string();
-    let ocr_sample_rate = corpus.ocr_sample_rate.to_string();
-    let ocr_tuneable = corpus.ocr_tuneable;
 
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",
@@ -46,59 +48,6 @@ pub(crate) fn render_corpus_page(
         "corpus",
         "embedding_dim",
     );
-    let ocr_simple_max_input = kask_string_input(
-        "kask-corpus-ocr-simple-max",
-        "OCR Simple Max",
-        "0.05",
-        ocr_simple_max,
-        "corpus",
-        "ocr_simple_max",
-    );
-    let ocr_moderate_max_input = kask_string_input(
-        "kask-corpus-ocr-moderate-max",
-        "OCR Moderate Max",
-        "0.15",
-        ocr_moderate_max,
-        "corpus",
-        "ocr_moderate_max",
-    );
-    let ocr_sample_rate_input = kask_string_input(
-        "kask-corpus-ocr-sample-rate",
-        "OCR Sample Rate",
-        "0.10",
-        ocr_sample_rate,
-        "corpus",
-        "ocr_sample_rate",
-    );
-    let ocr_tuneable_toggle = SwitchField::new(
-        "kask-corpus-ocr-tuneable",
-        Some("OCR Tuneable"),
-        Some(
-            "Whether OCR tuneable mode is enabled. When enabled, the OCR pipeline \
-             adapts processing depth per page. Or set HKASK_OCR_TUNEABLE."
-                .into(),
-        ),
-        if ocr_tuneable {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
-        },
-        move |state, _window, cx| {
-            let value = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .corpus
-                        .get_or_insert_default()
-                        .ocr_tuneable = Some(value);
-                },
-            );
-        },
-    )
-    .tab_index(0);
 
     v_flex()
         .id("kask-corpus-page")
@@ -116,7 +65,9 @@ pub(crate) fn render_corpus_page(
                 .child(
                     Label::new(
                         "The corpus server provides document corpus management, \
-                         OCR, and QA generation. Configure embedding and OCR settings.",
+                         OCR, and QA generation. Configure the embedding settings; \
+                         the OCR model is configured on the Models page and OCR \
+                         output quality is gated automatically (no thresholds).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -165,53 +116,5 @@ pub(crate) fn render_corpus_page(
                 )
                 .child(embedding_dim_input),
         )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("OCR Simple Max"))
-                .child(
-                    Label::new(
-                        "OCR simple threshold (0.0–1.0). Pages scored below this are \
-                         processed with the simple pipeline. Or set HKASK_OCR_SIMPLE_MAX.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(ocr_simple_max_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("OCR Moderate Max"))
-                .child(
-                    Label::new(
-                        "OCR moderate threshold (0.0–1.0). Pages above simple but below \
-                         this are processed with the moderate pipeline. Or set \
-                         HKASK_OCR_MODERATE_MAX.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(ocr_moderate_max_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("OCR Sample Rate"))
-                .child(
-                    Label::new(
-                        "OCR moderate sample rate (0.0–1.0). Fraction of moderate pages \
-                         sampled for processing. Or set HKASK_OCR_SAMPLE_RATE.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(ocr_sample_rate_input),
-        )
-        .child(Divider::horizontal())
-        .child(ocr_tuneable_toggle)
         .into_any_element()
 }

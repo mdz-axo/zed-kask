@@ -1,8 +1,16 @@
-//! OCR Pipeline — Sequential state machine: Decimate → Score → Route → OCR → Assemble.
+//! OCR Pipeline — Sequential state machine: Decimate → OCR → Quality → Verify.
 //!
 //! ```text
-//! PDF → [Decimate] → PageQueue → [Score → Route → OCR] → ResultBuffer → [Assembly] → VerifiedDocument
+//! PDF → [Decimate] → PageQueue → [OCR (single LLM backend)] → ResultBuffer → [Assembly] → VerifiedDocument
 //! ```
+//!
+//! There is exactly one OCR backend: the configured vision model, invoked
+//! per page. The former Tesseract backend and its complexity-tier routing
+//! were removed (2026-09-10) — tier routing silently sent book pages to a
+//! garbage-quality engine, and the fallback ladder silently substituted
+//! degraded text on LLM failure. A page now either gets text from the
+//! configured model or a typed, surfaced error. Output quality is gated
+//! deterministically (`ocr::quality`) instead of trusted from the backend.
 //!
 //! Supports parallel execution via `max_concurrency` for batch/corpus workloads.
 //! Interactive MCP tool calls use sequential mode (max_concurrency = None).
@@ -13,22 +21,17 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tokio::sync::Semaphore;
 
-use crate::ocr::{
-    ComplexityScore, ComplexityTier, CrossValidation, OcrBackend, OcrResult, PipelineError,
-    PipelineOutcome, ThresholdConfig,
-};
+use crate::ocr::{OcrResult, PipelineError, PipelineOutcome};
 
 use image::DynamicImage;
 
-use crate::ocr::complexity::score_page_complexity;
-use crate::ocr::routing::{SamplingState, route_page};
 use crate::ocr::verification::verify_output;
 
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
 pub(crate) enum OcrError {
-    #[error("OCR backend {backend} failed: {message}")]
-    BackendFailed { backend: String, message: String },
+    #[error("OCR model '{model}' failed: {message}")]
+    BackendFailed { model: String, message: String },
     #[error("No OCR model configured. Set HKASK_OCR_MODEL env var or pass the 'model' parameter.")]
     NoModel,
     #[error("Model '{model}' exists but may not support vision input")]
@@ -39,42 +42,33 @@ pub(crate) enum OcrError {
         "OCR model '{model}' returned no text for {input_bytes} bytes of input — empty output is a failure, not a success"
     )]
     EmptyOcrOutput { model: String, input_bytes: usize },
+    #[error(
+        "OCR circuit breaker open for model '{model}' — the endpoint is quarantined after repeated failures; wait for the cooldown or fix the endpoint"
+    )]
+    BreakerOpen { model: String },
 }
 
-/// Trait for executing OCR on a single page image via a specific backend.
-///
-/// Implementors plug in the concrete invocation path for each backend
-/// (Tesseract → local binary, LlmOcr → inference router).
+/// Trait for executing OCR on a single page image via the configured model.
 ///
 /// Must be `Send + Sync + 'static` for parallel execution via `tokio::spawn`.
 #[async_trait]
 pub(crate) trait OcrExecutor: Send + Sync {
-    /// Check whether a backend is available for use.
-    ///
-    /// Returns `true` if the backend is installed and ready.
-    /// Implementors should perform a lightweight probe (binary exists,
-    /// service reachable) — not a full execution.
-    /// Default: all backends are considered available.
-    fn is_available(&self, _backend: &OcrBackend) -> bool {
-        true
-    }
-
-    /// Execute OCR on a single page image.
+    /// Execute OCR on a single page image with the given model.
     ///
     /// Returns `Ok(OcrResult)` on success, or `Err(OcrError)` on failure.
+    /// There is no fallback: the error is the page's verdict.
     async fn execute(
         &self,
         page_index: usize,
-        backend: &OcrBackend,
+        model: &str,
         image: &DynamicImage,
-        is_fallback: bool,
     ) -> Result<OcrResult, OcrError>;
 }
 
 /// Run the OCR pipeline on a set of page images.
 ///
-/// Accepts an iterator for streaming support — pages are processed one at a time
-/// without buffering all images in memory.
+/// Accepts an iterator for streaming support — pages are processed one at a
+/// time without buffering all images in memory.
 ///
 /// # Parallel execution
 ///
@@ -83,16 +77,11 @@ pub(crate) trait OcrExecutor: Send + Sync {
 /// index and sorted before verification. This path is intended for batch/corpus
 /// workloads — interactive MCP tool calls should use `None` (sequential).
 ///
-/// Regulation observability is handled externally by the GovernedTool membrane
-/// (variety tracking, RegulationRecord persistence). Internal
-/// operational telemetry uses `tracing::info!` under `reg.pipeline` target.
-///
 /// # Arguments
 /// * `pages` — Decimated page images in document order.
 /// * `expected_pages` — Total number of pages (for verification).
 /// * `executor` — Pluggable OCR executor (`Arc` for parallel task spawning).
-/// * `thresholds` — Complexity scoring thresholds.
-/// * `llm_model` — Optional model ID for `LlmOcr` backend routing.
+/// * `model` — The vision model ID (resolved by the caller; never defaulted).
 /// * `max_concurrency` — `Some(n)` for parallel, `None` for sequential.
 ///
 /// # Returns
@@ -101,49 +90,35 @@ pub async fn run_pipeline(
     pages: impl IntoIterator<Item = DynamicImage>,
     expected_pages: usize,
     executor: Arc<dyn OcrExecutor>,
-    thresholds: &ThresholdConfig,
-    llm_model: Option<&str>,
+    model: &str,
     max_concurrency: Option<usize>,
 ) -> PipelineOutcome {
     match max_concurrency {
-        Some(n) if n > 1 => {
-            run_pipeline_parallel(pages, expected_pages, executor, thresholds, llm_model, n).await
-        }
-        _ => {
-            run_pipeline_sequential(pages, expected_pages, &*executor, thresholds, llm_model).await
-        }
+        Some(n) if n > 1 => run_pipeline_parallel(pages, expected_pages, executor, model, n).await,
+        _ => run_pipeline_sequential(pages, expected_pages, &*executor, model).await,
     }
 }
 
-/// Sequential pipeline — original implementation, now extracted as the `None`/`Some(1)` path.
+/// Sequential pipeline — the `None`/`Some(1)` path.
 async fn run_pipeline_sequential(
     pages: impl IntoIterator<Item = DynamicImage>,
     expected_pages: usize,
     executor: &(dyn OcrExecutor + '_),
-    thresholds: &ThresholdConfig,
-    llm_model: Option<&str>,
+    model: &str,
 ) -> PipelineOutcome {
     let start = Instant::now();
     let mut last_log = Instant::now();
-    let mut state = SamplingState::new(thresholds.moderate_sample_rate);
     let mut results: Vec<OcrResult> = Vec::with_capacity(expected_pages);
     let mut errors: Vec<PipelineError> = Vec::new();
-    let mut cross_validations: Vec<CrossValidation> = Vec::new();
 
     for (page_index, image) in pages.into_iter().enumerate() {
-        let (result, cv, err) = process_single_page(
-            page_index, &image, executor, thresholds, &mut state, llm_model,
-        )
-        .await;
+        let (result, err) = process_single_page(page_index, &image, executor, model).await;
 
         if let Some(e) = err {
             errors.push(e);
         }
         if let Some(r) = result {
             results.push(r);
-        }
-        if let Some(cv) = cv {
-            cross_validations.push(cv);
         }
 
         // Progress report every 50 pages or 30 seconds
@@ -164,94 +139,51 @@ async fn run_pipeline_sequential(
         }
     }
 
-    finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
+    finalize_outcome_inner(results, errors, expected_pages, start)
 }
 
 /// Parallel pipeline — uses `Arc<Semaphore>` + `tokio::spawn` for concurrent page processing.
-///
-/// Pages are scored and routed synchronously (cheap), then OCR execution is spawned
-/// as an async task gated by the semaphore. Results are collected by page index.
 async fn run_pipeline_parallel(
     pages: impl IntoIterator<Item = DynamicImage>,
     expected_pages: usize,
     executor: Arc<dyn OcrExecutor>,
-    thresholds: &ThresholdConfig,
-    llm_model: Option<&str>,
+    model: &str,
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
     // Concurrency is two layers with different jobs:
     // - This semaphore is the STATIC total-page bound: it caps in-flight
-    //   page execution (local Tesseract subprocesses plus LLM tasks waiting
-    //   on the adaptive gate) at `max_concurrency` (`HKASK_MAX_CONCURRENCY`,
-    //   the KaskGeneralSettings ceiling). Local resources don't need
-    //   adaptation — a fixed bound is correct for them.
+    //   page execution at `max_concurrency` (`HKASK_MAX_CONCURRENCY`, the
+    //   KaskGeneralSettings ceiling).
     // - The REMOTE bound is adaptive and lives in `LlmOcrExecutor`: an AIMD
     //   limiter (floor 2, +1 per success, halve per failure, same ceiling)
     //   gates each vision call, so LLM concurrency ramps instead of
-    //   launching at max. See `batch.rs::AdaptiveLimiter` and the README's
-    //   Concurrency section.
-    // There is no process-wide global limiter; these two layers are the
-    // whole concurrency surface for OCR.
+    //   launching at max. See `batch.rs::AdaptiveLimiter`.
     let semaphore = Arc::new(Semaphore::new(max_concurrency));
 
-    // Pre-score and route all pages (synchronous, cheap)
-    struct PageTask {
-        page_index: usize,
-        image: DynamicImage,
-        routing_state: SamplingState,
-    }
-
-    let mut state = SamplingState::new(thresholds.moderate_sample_rate);
-
-    // Allocate deterministic routing state in page order before concurrent execution.
-    let mut tasks = Vec::new();
-    for (page_index, image) in pages.into_iter().enumerate() {
-        let score = score_page_complexity(&image, thresholds);
-        tasks.push(PageTask {
-            page_index,
-            routing_state: state.clone(),
-            image,
-        });
-        let _ = route_page(score, &mut state, None, llm_model);
-    }
-
-    // Spawn concurrent tasks
     let mut join_set = tokio::task::JoinSet::new();
     let results_slots = Arc::new(tokio::sync::Mutex::new(vec![
         None::<OcrResult>;
         expected_pages
     ]));
-    let cvs_slots = Arc::new(tokio::sync::Mutex::new(Vec::<CrossValidation>::new()));
     let errors_slots = Arc::new(tokio::sync::Mutex::new(Vec::<PipelineError>::new()));
 
     // Shared progress tracking for parallel mode
     let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let last_progress = Arc::new(tokio::sync::Mutex::new(Instant::now()));
 
-    for task in tasks {
+    for (page_index, image) in pages.into_iter().enumerate() {
         let sem = Arc::clone(&semaphore);
         let results = Arc::clone(&results_slots);
-        let cvs = Arc::clone(&cvs_slots);
         let errs = Arc::clone(&errors_slots);
         let exec = Arc::clone(&executor);
-        let thresh = *thresholds;
-        let llm = llm_model.map(|s| s.to_string());
+        let model = model.to_string();
         let completed = Arc::clone(&completed);
         let last_progress = Arc::clone(&last_progress);
 
         join_set.spawn(async move {
             let _permit = sem.acquire().await;
-            let mut local_state = task.routing_state;
-            let (result, cv, err) = process_single_page(
-                task.page_index,
-                &task.image,
-                &*exec,
-                &thresh,
-                &mut local_state,
-                llm.as_deref(),
-            )
-            .await;
+            let (result, err) = process_single_page(page_index, &image, &*exec, &model).await;
 
             // Progress: check after each page completes
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -273,11 +205,7 @@ async fn run_pipeline_parallel(
 
             if let Some(r) = result {
                 let mut results_guard = results.lock().await;
-                results_guard[task.page_index] = Some(r);
-            }
-            if let Some(cv) = cv {
-                let mut cvs_guard = cvs.lock().await;
-                cvs_guard.push(cv);
+                results_guard[page_index] = Some(r);
             }
             if let Some(e) = err {
                 let mut errs_guard = errs.lock().await;
@@ -295,236 +223,40 @@ async fn run_pipeline_parallel(
         guard.iter().flatten().cloned().collect()
     };
 
-    let cross_validations = {
-        let mut guard = cvs_slots.lock().await;
-        std::mem::take(&mut *guard)
-    };
     let errors = {
         let mut guard = errors_slots.lock().await;
         std::mem::take(&mut *guard)
     };
 
-    // Semantic enrichment is deferred to caller — the parallel path collects
-    // raw CrossValidations without original text access. The caller can
-    // enrich via PipelineOutcome if needed.
-    finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
+    finalize_outcome_inner(results, errors, expected_pages, start)
 }
 
-/// Process a single page: score, route, execute, cross-validate.
+/// Process a single page: one OCR invocation, no fallback.
 ///
-/// Returns the primary result, any cross-validation (if dual-routed),
-/// any error, and the backend that produced the result.
+/// Returns the result (with quality assessed at construction) or a typed
+/// error carrying the model and the failure reason.
 async fn process_single_page(
     page_index: usize,
     image: &DynamicImage,
     executor: &(dyn OcrExecutor + '_),
-    thresholds: &ThresholdConfig,
-    state: &mut SamplingState,
-    llm_model: Option<&str>,
-) -> (
-    Option<OcrResult>,
-    Option<CrossValidation>,
-    Option<PipelineError>,
-) {
-    let score = score_page_complexity(image, thresholds);
-    let backends = route_page(score, state, None, llm_model);
-
-    let available: Vec<OcrBackend> = backends
-        .iter()
-        .filter(|b| executor.is_available(b))
-        .cloned()
-        .collect();
-
-    // Degradation: every routed backend is unavailable (e.g. the LLM circuit
-    // breaker is open on a Complex page). Re-route through the unified
-    // exclusion path so the tier's next-best backend serves the page instead
-    // of hard-failing it with an empty backends_tried list.
-    let available = if available.is_empty() && !backends.is_empty() {
-        let mut degraded: Vec<OcrBackend> = Vec::new();
-        for excluded in &backends {
-            degraded = route_page(score, state, Some(excluded), llm_model)
-                .into_iter()
-                .filter(|b| executor.is_available(b) && !backends.contains(b))
-                .collect();
-            if !degraded.is_empty() {
-                break;
-            }
-        }
-        degraded
-    } else {
-        available
-    };
-
-    if available.is_empty() {
-        return (
-            None,
+    model: &str,
+) -> (Option<OcrResult>, Option<PipelineError>) {
+    match executor.execute(page_index, model, image).await {
+        Ok(result) => (Some(result), None),
+        Err(e) => (
             None,
             Some(PipelineError::OcrFailed {
                 page_index,
-                backends_tried: vec![],
+                model: model.to_string(),
+                reason: e.to_string(),
             }),
-        );
+        ),
     }
-
-    // Execute OCR
-    let (primary, secondary, err) = execute_with_fallback(
-        page_index, image, executor, &available, score, state, llm_model,
-    )
-    .await;
-
-    if let Some(e) = err {
-        return (None, None, Some(e));
-    }
-
-    let mut primary = match primary {
-        Some(r) => r,
-        None => return (None, None, None),
-    };
-
-    // A breaker-open re-route executes the fallback backend as the primary
-    // attempt (`is_fallback=false`), so `was_fallback` alone would hide that
-    // degradation. Mark it here: when the final backend was not among the
-    // tier's routed backends, the page was served by a degraded path and the
-    // verification report must count it in `degraded_pages`.
-    if !backends.contains(&primary.backend) {
-        primary.was_fallback = true;
-    }
-
-    // Cross-validation for dual-routed pages. Both-empty collusion is no
-    // longer possible to observe here: an empty LLM result is a typed
-    // `EmptyOcrOutput` error (dropped as a failed secondary), never an
-    // Ok-empty result, so the former both-empty warn was unreachable and
-    // was removed with the empty-output classification.
-    let cv = if let Some(ref sec) = secondary {
-        compute_cross_validation(&primary, sec)
-    } else {
-        None
-    };
-
-    (Some(primary), cv, None)
 }
 
-/// Execute OCR on available backends with fallback on failure.
-///
-/// Returns (primary_result, secondary_result, backend_used, error).
-/// For Moderate dual-routed pages, returns the better of Tesseract/LLM as primary
-/// based on confidence comparison (inverts the old blind-trust-primary pattern).
-async fn execute_with_fallback(
-    page_index: usize,
-    image: &DynamicImage,
-    executor: &(dyn OcrExecutor + '_),
-    available: &[OcrBackend],
-    score: ComplexityScore,
-    state: &mut SamplingState,
-    llm_model: Option<&str>,
-) -> (Option<OcrResult>, Option<OcrResult>, Option<PipelineError>) {
-    let mut primary_result: Option<OcrResult> = None;
-    let mut secondary_result: Option<OcrResult> = None;
-    let mut backends_tried: Vec<OcrBackend> = Vec::new();
-
-    for (backend_idx, backend) in available.iter().enumerate() {
-        if backends_tried.contains(backend) {
-            continue;
-        }
-        backends_tried.push(backend.clone());
-
-        match executor.execute(page_index, backend, image, false).await {
-            Ok(result) => {
-                if backend_idx == 0 {
-                    primary_result = Some(result);
-                } else {
-                    secondary_result = Some(result);
-                }
-            }
-            Err(_err_msg) => {
-                // Primary failed: re-route with this backend excluded — the
-                // unified fallback path. Uses the page's actual score;
-                // re-scoring with default thresholds could re-tier the page
-                // under tuned thresholds and route the fallback wrongly.
-                if backend_idx == 0 {
-                    let fallback_backends = route_page(score, state, Some(backend), llm_model);
-
-                    let mut fallback_ok = false;
-                    for fb in &fallback_backends {
-                        if backends_tried.contains(fb) {
-                            continue;
-                        }
-                        backends_tried.push(fb.clone());
-                        if let Ok(mut result) = executor.execute(page_index, fb, image, true).await
-                        {
-                            result.was_fallback = true;
-                            primary_result = Some(result);
-                            fallback_ok = true;
-                            break;
-                        }
-                    }
-
-                    if !fallback_ok {
-                        return (
-                            None,
-                            None,
-                            Some(PipelineError::OcrFailed {
-                                page_index,
-                                backends_tried: backends_tried.clone(),
-                            }),
-                        );
-                    }
-                }
-                // Secondary failed: drop the secondary and keep the primary.
-                // A failed cross-validation pass must not fail the page —
-                // the primary result stands and the CV is skipped.
-            }
-        }
-    }
-
-    let Some(primary) = primary_result.take() else {
-        return (None, None, None);
-    };
-    let secondary = secondary_result.take();
-
-    // Invert Moderate dual-routing trust:
-    // If both Tesseract and LLM ran on a Moderate page, and the LLM has
-    // significantly higher confidence while Tesseract's is low, use LLM result.
-    let (primary, secondary) = if let Some(ref sec) = secondary {
-        let llm_confidence = if primary.backend != OcrBackend::Tesseract {
-            primary.confidence
-        } else {
-            sec.confidence
-        };
-        let tess_confidence = if primary.backend == OcrBackend::Tesseract {
-            primary.confidence
-        } else {
-            sec.confidence
-        };
-
-        if llm_confidence > tess_confidence + 0.3 && tess_confidence < 0.5 {
-            // Trust the LLM result over Tesseract
-            tracing::info!(
-                target: "reg.pipeline.ocr.trust_invert",
-                page_index = page_index,
-                tess_confidence = tess_confidence,
-                llm_confidence = llm_confidence,
-                "LLM confidence significantly higher — using LLM result for Moderate page"
-            );
-            if primary.backend == OcrBackend::Tesseract {
-                (sec.clone(), Some(primary))
-            } else {
-                (primary, Some(sec.clone()))
-            }
-        } else {
-            (primary, secondary)
-        }
-    } else {
-        (primary, secondary)
-    };
-
-    (Some(primary), secondary, None)
-}
-
-/// Shared outcome finalization: verification + Regulation tracing.
+/// Shared outcome finalization: verification + model distribution.
 fn finalize_outcome_inner(
     results: Vec<OcrResult>,
-    cross_validations: Vec<CrossValidation>,
     errors: Vec<PipelineError>,
     expected_pages: usize,
     start: Instant,
@@ -533,299 +265,180 @@ fn finalize_outcome_inner(
 
     let report = verify_output(expected_pages, &results, &errors);
 
-    let backend_counts: std::collections::HashMap<String, usize> =
+    let models: std::collections::HashMap<String, usize> =
         results
             .iter()
             .fold(std::collections::HashMap::new(), |mut acc, r| {
-                *acc.entry(r.backend.label().to_string()).or_insert(0) += 1;
+                *acc.entry(r.model.clone()).or_insert(0) += 1;
                 acc
             });
-
-    for cv in &cross_validations {
-        tracing::info!(
-            target: "reg.pipeline.ocr",
-            page_index = cv.page_index,
-            similarity = cv.similarity,
-            tier = ?cv.tier,
-            backend_a = %cv.backend_a,
-            backend_b = %cv.backend_b,
-            "OCR cross-validation"
-        );
-    }
 
     tracing::info!(
         target: "reg.pipeline.ocr",
         total_pages = expected_pages,
         result_count = results.len(),
         error_count = errors.len(),
+        quality_failed = report.quality_failed_pages.len(),
         duration_ms = duration_ms,
         passed = report.passed,
-        backends = ?backend_counts,
         "OCR pipeline verification"
     );
 
     PipelineOutcome {
         results,
         report,
-        backends: backend_counts,
-        cross_validations,
+        models,
         errors,
     }
-}
-
-// ── Cross-validation helpers (consolidated from cross_validation.rs + semantic.rs) ─
-
-/// Compute cross-validation between two OCR results for the same page.
-///
-/// Returns `None` if the results are not comparable (different page index).
-/// Otherwise computes normalized Levenshtein similarity and bundles
-/// per-backend confidence scores with the complexity tier.
-pub(crate) fn compute_cross_validation(
-    primary: &OcrResult,
-    secondary: &OcrResult,
-) -> Option<CrossValidation> {
-    if primary.page_index != secondary.page_index {
-        return None;
-    }
-
-    let similarity = normalized_levenshtein_similarity(&primary.text, &secondary.text);
-
-    Some(CrossValidation {
-        page_index: primary.page_index,
-        similarity,
-        tier: ComplexityTier::Moderate,
-        backend_a: primary.backend.clone(),
-        backend_b: secondary.backend.clone(),
-    })
-}
-
-fn normalized_levenshtein_similarity(a: &str, b: &str) -> f32 {
-    let dist = levenshtein_distance(a, b);
-    let max_len = a.len().max(b.len());
-    if max_len == 0 {
-        return 1.0;
-    }
-    1.0 - (dist as f32 / max_len as f32)
-}
-
-fn levenshtein_distance(a: &str, b: &str) -> usize {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let a_len = a_chars.len();
-    let b_len = b_chars.len();
-    if a_len > b_len {
-        return levenshtein_distance(b, a);
-    }
-    let mut prev_row: Vec<usize> = (0..=a_len).collect();
-    let mut curr_row: Vec<usize> = vec![0; a_len + 1];
-    for j in 1..=b_len {
-        curr_row[0] = j;
-        for i in 1..=a_len {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            curr_row[i] = (curr_row[i - 1] + 1)
-                .min(prev_row[i] + 1)
-                .min(prev_row[i - 1] + cost);
-        }
-        std::mem::swap(&mut prev_row, &mut curr_row);
-    }
-    prev_row[a_len]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A 2px vertical-stripe image: every interior pixel's Sobel window spans
-    /// a stripe boundary, so edge density is ~1.0 and the page scores Complex
-    /// under default thresholds. (A 1px checkerboard does NOT work — Sobel
-    /// gradients cancel to zero on a perfect high-frequency checkerboard and
-    /// the page scores Simple.)
-    fn complex_scoring_image() -> DynamicImage {
-        let size = 64;
-        let mut buffer = image::RgbaImage::new(size, size);
-        for (x, _y, pixel) in buffer.enumerate_pixels_mut() {
-            let value = if (x / 2) % 2 == 0 { 255 } else { 0 };
-            *pixel = image::Rgba([value, value, value, 255]);
-        }
-        DynamicImage::ImageRgba8(buffer)
+    /// Mock executor that returns canned results per page index.
+    struct MockExecutor {
+        results: Vec<Result<String, OcrError>>,
     }
-
-    fn tesseract_result(
-        page_index: usize,
-        text: &str,
-        is_fallback: bool,
-    ) -> Result<OcrResult, OcrError> {
-        Ok(OcrResult {
-            page_index,
-            backend: OcrBackend::Tesseract,
-            text: text.to_string(),
-            confidence: 0.9,
-            duration_ms: 1,
-            was_fallback: is_fallback,
-        })
-    }
-
-    /// Executor simulating a dead-but-responsive LLM endpoint: `LlmOcr`
-    /// returns `EmptyOcrOutput` (the post-classification behavior of
-    /// `LlmOcrExecutor`), Tesseract returns fixed text.
-    struct EmptyLlmExecutor;
 
     #[async_trait]
-    impl OcrExecutor for EmptyLlmExecutor {
+    impl OcrExecutor for MockExecutor {
         async fn execute(
             &self,
             page_index: usize,
-            backend: &OcrBackend,
+            _model: &str,
             _image: &DynamicImage,
-            is_fallback: bool,
         ) -> Result<OcrResult, OcrError> {
-            match backend {
-                OcrBackend::Tesseract => tesseract_result(page_index, "rescue text", is_fallback),
-                OcrBackend::LlmOcr(model) => Err(OcrError::EmptyOcrOutput {
-                    model: model.clone(),
-                    input_bytes: 1024,
+            match self.results.get(page_index) {
+                Some(Ok(text)) => Ok(OcrResult::new(
+                    page_index,
+                    "mock-model",
+                    text.clone(),
+                    0.8,
+                    10,
+                )),
+                Some(Err(e)) => Err(e.clone()),
+                None => Err(OcrError::BackendFailed {
+                    model: "mock-model".into(),
+                    message: "no canned result".into(),
                 }),
             }
         }
     }
 
-    /// A Complex page whose LLM backend returns empty output must degrade
-    /// to Tesseract through the unified fallback path — not hard-fail and not
-    /// a silent empty success. This pins the routing degradation ladder end
-    /// to end (the former Tesseract anomaly detector is removed; the normal
-    /// error path now covers its only reachable case).
+    fn blank_page() -> DynamicImage {
+        DynamicImage::new_rgb8(100, 100)
+    }
+
+    fn clean_text() -> String {
+        "Sleepless and persevering, the government over the next few months \
+         hauled in suspects named Caruso, Abato, Ferro, and De Filipos. No firm \
+         evidence could be found against any of them, and a few clues gradually \
+         turned up that led the investigators nowhere at all."
+            .to_string()
+    }
+
     #[tokio::test]
-    async fn complex_page_with_empty_llm_output_degrades_to_tesseract() {
-        let executor: Arc<dyn OcrExecutor> = Arc::new(EmptyLlmExecutor);
+    async fn clean_pages_pass_verification() {
+        let executor = Arc::new(MockExecutor {
+            results: vec![Ok(clean_text()), Ok(clean_text())],
+        });
         let outcome = run_pipeline(
-            [complex_scoring_image()],
-            1,
+            [blank_page(), blank_page()],
+            2,
             executor,
-            &ThresholdConfig::default(),
-            Some("mock-model"),
+            "mock-model",
             None,
         )
         .await;
-
-        assert!(outcome.errors.is_empty(), "errors: {:?}", outcome.errors);
-        assert_eq!(outcome.results.len(), 1);
-        let result = &outcome.results[0];
-        assert_eq!(result.backend, OcrBackend::Tesseract);
-        assert!(
-            result.was_fallback,
-            "degraded result must be flagged as fallback"
-        );
-        assert_eq!(result.text, "rescue text");
+        assert!(outcome.report.passed);
+        assert!(outcome.report.quality_failed_pages.is_empty());
+        assert_eq!(outcome.models.get("mock-model"), Some(&2));
+        assert!(outcome.errors.is_empty());
     }
 
-    /// Executor whose LLM backend is unavailable (circuit breaker open):
-    /// `is_available` reports false for `LlmOcr`, Tesseract returns fixed text.
-    struct BreakerOpenExecutor;
-
-    #[async_trait]
-    impl OcrExecutor for BreakerOpenExecutor {
-        fn is_available(&self, backend: &OcrBackend) -> bool {
-            *backend == OcrBackend::Tesseract
-        }
-
-        async fn execute(
-            &self,
-            page_index: usize,
-            backend: &OcrBackend,
-            _image: &DynamicImage,
-            is_fallback: bool,
-        ) -> Result<OcrResult, OcrError> {
-            match backend {
-                OcrBackend::Tesseract => {
-                    tesseract_result(page_index, "breaker-open rescue text", is_fallback)
-                }
-                OcrBackend::LlmOcr(model) => Err(OcrError::BackendFailed {
-                    backend: model.clone(),
-                    message: "unavailable".to_string(),
+    #[tokio::test]
+    async fn backend_failure_is_surfaced_not_substituted() {
+        let executor = Arc::new(MockExecutor {
+            results: vec![
+                Ok(clean_text()),
+                Err(OcrError::EmptyOcrOutput {
+                    model: "mock-model".into(),
+                    input_bytes: 20480,
                 }),
-            }
-        }
-    }
-
-    /// A Complex page with the LLM circuit breaker open must degrade to
-    /// Tesseract via the availability re-route — not hard-fail with an empty
-    /// `backends_tried` list.
-    #[tokio::test]
-    async fn complex_page_with_llm_breaker_open_degrades_to_tesseract() {
-        let executor: Arc<dyn OcrExecutor> = Arc::new(BreakerOpenExecutor);
+            ],
+        });
         let outcome = run_pipeline(
-            [complex_scoring_image()],
-            1,
+            [blank_page(), blank_page()],
+            2,
             executor,
-            &ThresholdConfig::default(),
-            Some("mock-model"),
+            "mock-model",
             None,
         )
         .await;
-
-        assert!(outcome.errors.is_empty(), "errors: {:?}", outcome.errors);
+        // The failed page is an error, not a degraded substitution.
+        assert!(!outcome.report.passed);
+        assert_eq!(outcome.report.error_count, 1);
         assert_eq!(outcome.results.len(), 1);
-        let result = &outcome.results[0];
-        assert_eq!(result.backend, OcrBackend::Tesseract);
-        assert_eq!(result.text, "breaker-open rescue text");
-        // The re-route serves the page through a degraded path — the routed
-        // LLM backend was skipped — so the result must carry the fallback
-        // marker and the verification report must count it in degraded_pages.
-        assert!(
-            result.was_fallback,
-            "breaker-open re-route must mark the result as fallback"
-        );
+        match &outcome.errors[0] {
+            PipelineError::OcrFailed {
+                page_index,
+                model,
+                reason,
+            } => {
+                assert_eq!(*page_index, 1);
+                assert_eq!(model, "mock-model");
+                assert!(reason.contains("empty output"), "reason: {reason}");
+            }
+            other => panic!("expected OcrFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn breaker_open_fails_visibly() {
+        let executor = Arc::new(MockExecutor {
+            results: vec![Err(OcrError::BreakerOpen {
+                model: "mock-model".into(),
+            })],
+        });
+        let outcome = run_pipeline([blank_page()], 1, executor, "mock-model", None).await;
+        assert!(!outcome.report.passed);
+        assert_eq!(outcome.results.len(), 0);
+        match &outcome.errors[0] {
+            PipelineError::OcrFailed { reason, .. } => {
+                assert!(reason.contains("circuit breaker open"), "reason: {reason}");
+            }
+            other => panic!("expected OcrFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn degenerate_output_fails_quality_gate() {
+        // The observed glm-ocr failure: a phrase cycled for the whole page.
+        let degenerate =
+            "another carrier in Elizabeth Street insisted that he had made the shoes ".repeat(30);
+        let executor = Arc::new(MockExecutor {
+            results: vec![Ok(degenerate)],
+        });
+        let outcome = run_pipeline([blank_page()], 1, executor, "mock-model", None).await;
+        // The text exists, but the verdict is failed and the page is named.
+        assert!(!outcome.report.passed);
+        assert_eq!(outcome.report.quality_failed_pages, vec![0]);
+        assert_eq!(outcome.results.len(), 1);
         assert_eq!(
-            outcome.report.degraded_pages,
-            vec![0],
-            "breaker-open re-route must surface in degraded_pages"
+            outcome.results[0].quality.failed_gates,
+            vec!["repetition-loop".to_string()]
         );
     }
 
-    /// A Moderate dual-routed page whose LLM secondary returns empty output
-    /// (a typed `EmptyOcrOutput` error post-classification) must keep its
-    /// Tesseract primary: the failed secondary is dropped and the
-    /// cross-validation is skipped — a failed CV pass must not fail the page.
     #[tokio::test]
-    async fn moderate_dual_route_with_empty_llm_secondary_keeps_tesseract_primary() {
-        let executor = EmptyLlmExecutor;
-        let image = complex_scoring_image();
-        let available = vec![
-            OcrBackend::Tesseract,
-            OcrBackend::LlmOcr("mock-model".to_string()),
-        ];
-        let score = ComplexityScore {
-            value: 0.1,
-            tier: ComplexityTier::Moderate,
-        };
-        let mut state = SamplingState::default();
-
-        let (primary, secondary, err) = execute_with_fallback(
-            0,
-            &image,
-            &executor,
-            &available,
-            score,
-            &mut state,
-            Some("mock-model"),
-        )
-        .await;
-
-        assert!(
-            err.is_none(),
-            "secondary failure must not fail the page: {err:?}"
-        );
-        let primary = primary.expect("Tesseract primary survives the secondary failure");
-        assert_eq!(primary.backend, OcrBackend::Tesseract);
-        assert_eq!(primary.text, "rescue text");
-        assert!(!primary.was_fallback);
-        assert!(
-            secondary.is_none(),
-            "the failed LLM secondary must be dropped"
-        );
+    async fn parallel_path_matches_sequential() {
+        let results: Vec<_> = (0..10).map(|_| Ok(clean_text())).collect();
+        let executor = Arc::new(MockExecutor { results });
+        let pages: Vec<_> = (0..10).map(|_| blank_page()).collect();
+        let outcome = run_pipeline(pages, 10, executor, "mock-model", Some(4)).await;
+        assert!(outcome.report.passed);
+        assert_eq!(outcome.results.len(), 10);
+        assert_eq!(outcome.models.get("mock-model"), Some(&10));
     }
 }

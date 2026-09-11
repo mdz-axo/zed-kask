@@ -21,7 +21,7 @@
 //! `CorpusServer` because it recurses through the `corpus_convert` tool wrapper to
 //! preserve per-file Regulation spans; it does not call the OCR helpers directly.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferencePort;
@@ -30,13 +30,10 @@ use serde_json::{Value, json};
 use crate::backend::markdown_pages_to_structure;
 use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
 use crate::helpers::map_corpus_io_error;
-use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::decimation;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
 use crate::ocr::triage::parse_target_pages;
-use crate::ocr::{
-    CrossValidation, PipelineExecutor, PipelineOutcome, ThresholdConfig, VerificationReport,
-};
+use crate::ocr::{PipelineExecutor, PipelineOutcome};
 use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
@@ -65,16 +62,13 @@ pub enum PassageIndexError {
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
 ///
 /// `ConvertService` holds the cheaply-clonable state (inference router, OCR
-/// model, thresholds, pipeline executor) by value and the shared mutable
-/// accumulator and passage-index owner by reference. The service is
-/// short-lived: it is constructed inside a single
+/// model, pipeline executor) by value and the passage-index owner by
+/// reference. The service is short-lived: it is constructed inside a single
 /// `#[tool]` call and dropped when the call returns.
 pub(crate) struct ConvertService<'a> {
     inference_router: Arc<dyn InferencePort>,
     ocr_model: Option<String>,
-    ocr_thresholds: ThresholdConfig,
     pipeline_executor: Arc<PipelineExecutor>,
-    cv_accumulator: &'a Mutex<Vec<CrossValidation>>,
     index: &'a crate::index::PassageIndex,
 }
 
@@ -87,17 +81,15 @@ pub(crate) struct PipelineOcrOutcome {
     pub(crate) verification_passed: bool,
     pub(crate) page_count_match: bool,
     pub(crate) empty_pages: Vec<usize>,
-    /// Pages served by a degraded path (routed primary failed or was
-    /// unavailable; a fallback backend produced the text).
-    pub(crate) degraded_pages: Vec<usize>,
+    /// Pages whose output failed a deterministic quality gate (CJK
+    /// hallucination, repetition loop, symbol soup). The text is retained;
+    /// the page indices are surfaced so garbage can never merge silently.
+    pub(crate) quality_failed_pages: Vec<usize>,
     pub(crate) error_count: usize,
-    /// Final-backend distribution across pages (e.g. `{"tesseract": 20,
-    /// "llm-ocr": 1}`) — the signal that separates by-design Simple-tier
-    /// tesseract routing from a dead LLM endpoint.
-    pub(crate) backends: std::collections::HashMap<String, usize>,
+    /// Model distribution across pages (e.g. `{"runpod/kask-ocr": 85}`).
+    pub(crate) models: std::collections::HashMap<String, usize>,
     /// Whether the LLM OCR circuit breaker was open when the outcome was
-    /// assembled — LLM attempts paused, so LLM-routed pages degraded to
-    /// Tesseract without an attempt.
+    /// assembled — LLM attempts paused, so pages failed without an attempt.
     pub(crate) llm_breaker_open: bool,
 }
 
@@ -128,16 +120,16 @@ fn assemble_pipeline_outcome(
         verification_passed: outcome.report.passed,
         page_count_match: outcome.report.page_count_match,
         empty_pages: outcome.report.empty_pages,
-        degraded_pages: outcome.report.degraded_pages,
+        quality_failed_pages: outcome.report.quality_failed_pages,
         error_count: outcome.errors.len(),
-        backends: outcome.backends,
+        models: outcome.models,
         llm_breaker_open,
     })
 }
 
-/// OCR page-render resolution (DPI). Default 72 — the JPEG payload fits the
+/// OCR page-render resolution (DPI). Default 72 — the image payload fits the
 /// vision model's 128K-token context. Raising it (e.g. 150) improves
-/// Tesseract accuracy on scanned books at the cost of render memory and LLM
+/// accuracy on scanned books at the cost of render memory and LLM
 /// payload size; a malformed value warns naming the bad input and falls
 /// back to the default (the parse_env_warn contract).
 fn ocr_render_dpi() -> u32 {
@@ -148,33 +140,27 @@ impl<'a> ConvertService<'a> {
     pub fn new(
         inference_router: Arc<dyn InferencePort>,
         ocr_model: Option<String>,
-        ocr_thresholds: ThresholdConfig,
         pipeline_executor: Arc<PipelineExecutor>,
-        cv_accumulator: &'a Mutex<Vec<CrossValidation>>,
         index: &'a crate::index::PassageIndex,
     ) -> Self {
         Self {
             inference_router,
             ocr_model,
-            ocr_thresholds,
             pipeline_executor,
-            cv_accumulator,
             index,
         }
     }
 
     /// Construct a service borrowing a `CorpusServer`'s OCR + index state.
     ///
-    /// Cheap: two `Arc::clone`s, one `Option<String>` clone, one `Copy` of the
-    /// thresholds, and two shared `&Mutex` borrows. Tied to the server's borrow
-    /// lifetime so the service cannot outlive the server it was built from.
+    /// Cheap: two `Arc::clone`s, one `Option<String>` clone, and a shared
+    /// `&PassageIndex` borrow. Tied to the server's borrow lifetime so the
+    /// service cannot outlive the server it was built from.
     pub fn from_corpus(server: &'a crate::CorpusServer) -> Self {
         Self::new(
             Arc::clone(&server.inference_router),
             server.ocr_model.clone(),
-            server.ocr_thresholds,
             Arc::clone(&server.pipeline_executor),
-            &server.cv_accumulator,
             &server.index,
         )
     }
@@ -289,8 +275,7 @@ impl<'a> ConvertService<'a> {
             page_images,
             expected,
             self.pipeline_executor(),
-            &self.ocr_thresholds,
-            Some(model),
+            model,
             Some(max_concurrency()),
         )
         .await;
@@ -315,8 +300,8 @@ impl<'a> ConvertService<'a> {
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
-            "degraded_pages": &outcome.report.degraded_pages,
-            "backends": &outcome.backends,
+            "quality_failed_pages": &outcome.report.quality_failed_pages,
+            "models": &outcome.models,
             "llm_breaker_open": self.pipeline_executor.llm_breaker_open(),
             "llm_concurrency": self.pipeline_executor.llm_adaptive_concurrency(),
             "error_count": outcome.errors.len(),
@@ -371,8 +356,7 @@ impl<'a> ConvertService<'a> {
             page_images,
             expected,
             executor,
-            &self.ocr_thresholds,
-            Some(model),
+            model,
             Some(max_concurrency()),
         )
         .await;
@@ -389,50 +373,14 @@ impl<'a> ConvertService<'a> {
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
-            "degraded_pages": outcome.report.degraded_pages,
-            "cross_validations": outcome.cross_validations.len(),
-            "backend_distribution": outcome.results.iter()
-                .fold(std::collections::HashMap::new(), |mut acc, r| {
-                    *acc.entry(r.backend.label().to_string()).or_insert(0) += 1;
-                    acc
-                }),
+            "quality_failed_pages": outcome.report.quality_failed_pages,
+            "model_distribution": &outcome.models,
         });
         tracing::debug!(
             target: "hkask.mcp.docproc.reg",
             detail = ?data,
             "Pipeline outcome recorded (no daemon — in-process only)",
         );
-
-        self.accumulate_and_check_drift(outcome);
-    }
-
-    /// Accumulate cross-validations and check for threshold drift.
-    fn accumulate_and_check_drift(&self, outcome: &PipelineOutcome) {
-        let mut acc = match self.cv_accumulator.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.corpus.ocr",
-                    error = %e,
-                    "Failed to lock CV accumulator for drift check — skipping."
-                );
-                return;
-            }
-        };
-        acc.extend(outcome.cross_validations.clone());
-
-        let synthetic_outcome = PipelineOutcome {
-            results: vec![],
-            report: VerificationReport::new(true, vec![], vec![], 0),
-            backends: std::collections::HashMap::new(),
-            cross_validations: acc.clone(),
-            errors: vec![],
-        };
-
-        if let Some(alert) = analyze_threshold_drift(&[synthetic_outcome], &self.ocr_thresholds) {
-            emit_drift_alert(&alert);
-            acc.clear();
-        }
     }
 
     /// Index passages into the in-memory vector store for later query.
@@ -835,7 +783,6 @@ impl<'a> ConvertService<'a> {
                                 serde_json::Value::Null
                             },
                             "pages": expected,
-                            "cross_validations": outcome.cross_validations.len(),
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
@@ -1468,9 +1415,9 @@ pub(crate) enum ExtractOutcome {
 #[cfg(test)]
 mod ocr_guards {
     use super::*;
+    use crate::ocr::OcrResult;
     use crate::ocr::document::VerificationReport;
     use crate::ocr::llm_ocr::LlmOcrExecutor;
-    use crate::ocr::{OcrBackend, OcrResult};
     use hkask_types::template::LLMParameters;
     use hkask_types::{ChatToolDefinition, InferenceError, InferenceResult, InferenceUsage};
     use std::future::Future;
@@ -1593,18 +1540,16 @@ mod ocr_guards {
         async fn execute(
             &self,
             page_index: usize,
-            _backend: &OcrBackend,
+            _model: &str,
             _image: &image::DynamicImage,
-            _is_fallback: bool,
         ) -> Result<OcrResult, OcrError> {
-            Ok(OcrResult {
+            Ok(OcrResult::new(
                 page_index,
-                backend: OcrBackend::Tesseract,
-                text: self.text.clone(),
-                confidence: 0.9,
-                duration_ms: 1,
-                was_fallback: false,
-            })
+                "mock-model",
+                self.text.clone(),
+                0.9,
+                1,
+            ))
         }
     }
 
@@ -1612,30 +1557,15 @@ mod ocr_guards {
     /// executor is never invoked by `ocr_via_pipeline` (the executor comes
     /// from the parameter); it only needs to exist for construction.
     fn test_service(port: Arc<dyn InferencePort>) -> ConvertService<'static> {
-        let cv_accumulator: &'static Mutex<Vec<CrossValidation>> = Box::leak(Box::default());
         let index: &'static crate::index::PassageIndex = Box::leak(Box::default());
         let llm_executor = Arc::new(LlmOcrExecutor::new(Arc::clone(&port)));
         let pipeline_executor = Arc::new(PipelineExecutor::new(llm_executor));
-        ConvertService::new(
-            port,
-            None,
-            ThresholdConfig::default(),
-            pipeline_executor,
-            cv_accumulator,
-            index,
-        )
+        ConvertService::new(port, None, pipeline_executor, index)
     }
 
     fn outcome_with_text(text: &str) -> PipelineOutcome {
         PipelineOutcome {
-            results: vec![OcrResult {
-                page_index: 0,
-                backend: OcrBackend::Tesseract,
-                text: text.to_string(),
-                confidence: 0.9,
-                duration_ms: 1,
-                was_fallback: false,
-            }],
+            results: vec![OcrResult::new(0, "mock-model", text.to_string(), 0.9, 1)],
             report: VerificationReport {
                 page_count_match: true,
                 empty_pages: if text.trim().is_empty() {
@@ -1643,12 +1573,11 @@ mod ocr_guards {
                 } else {
                     vec![]
                 },
-                degraded_pages: vec![],
+                quality_failed_pages: vec![],
                 error_count: 0,
                 passed: !text.trim().is_empty(),
             },
-            backends: std::collections::HashMap::new(),
-            cross_validations: vec![],
+            models: std::collections::HashMap::new(),
             errors: vec![],
         }
     }
@@ -1670,34 +1599,32 @@ mod ocr_guards {
         assert_eq!(outcome.text, "real page text");
         assert_eq!(outcome.pages, 1);
         assert!(outcome.verification_passed);
-        assert!(outcome.degraded_pages.is_empty());
-        assert!(outcome.backends.is_empty());
+        assert!(outcome.quality_failed_pages.is_empty());
         assert!(!outcome.llm_breaker_open);
     }
 
     #[test]
-    fn assemble_pipeline_outcome_surfaces_degraded_pages_and_backends() {
-        // A run where the routed LLM backend failed and Tesseract served every
-        // page must surface the degradation: degraded_pages populated, the
-        // backend map showing zero llm-ocr results, and the breaker state
-        // passed through — the fields an agent reads to tell a dead LLM
-        // endpoint apart from by-design Simple-tier tesseract routing.
-        let mut outcome = outcome_with_text("degraded page text");
-        outcome.results[0].was_fallback = true;
-        outcome.results[0].backend = OcrBackend::Tesseract;
-        outcome.report.degraded_pages = vec![0];
-        let mut backends = std::collections::HashMap::new();
-        backends.insert("tesseract".to_string(), 1);
-        outcome.backends = backends;
+    fn assemble_pipeline_outcome_surfaces_quality_failures() {
+        // A run whose page output failed a deterministic quality gate must
+        // surface the failure: quality_failed_pages populated and the
+        // verdict FAILED — garbage text is never a passing run, and there is
+        // no fallback backend to substitute for it.
+        let mut outcome = outcome_with_text(
+            "another carrier in Elizabeth Street insisted that he had made the shoes "
+                .repeat(30)
+                .as_str(),
+        );
+        outcome.results[0].quality = crate::ocr::quality::assess(&outcome.results[0].text);
+        outcome.report.quality_failed_pages = vec![0];
+        outcome.report.passed = false;
 
-        let assembled = assemble_pipeline_outcome(outcome, true)
-            .expect("degraded-but-nonempty output assembles");
-        assert_eq!(assembled.degraded_pages, vec![0]);
-        assert_eq!(assembled.backends.get("tesseract"), Some(&1));
-        assert!(assembled.llm_breaker_open);
-        // Degradation is visible but does not fail the verdict — the
-        // fallback produced text, which is the designed behavior.
-        assert!(assembled.verification_passed);
+        let assembled = assemble_pipeline_outcome(outcome, false)
+            .expect("quality-failed-but-nonempty output assembles");
+        assert_eq!(assembled.quality_failed_pages, vec![0]);
+        assert!(
+            !assembled.verification_passed,
+            "a quality-gate failure must fail the verdict"
+        );
     }
 
     #[tokio::test]
@@ -1739,10 +1666,9 @@ mod ocr_guards {
         });
         let executor = LlmOcrExecutor::new(Arc::clone(&port));
         let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
-        let backend = OcrBackend::LlmOcr("mock-model".to_string());
 
         let error = executor
-            .execute(0, &backend, &image, false)
+            .execute(0, "mock-model", &image)
             .await
             .expect_err("empty vision output must be a typed error from the executor");
         assert!(
@@ -1750,17 +1676,22 @@ mod ocr_guards {
             "expected EmptyOcrOutput, got: {error}"
         );
 
-        // Five consecutive empty outputs open the breaker — the executor must
-        // then report the LLM backend unavailable so Complex pages degrade to
-        // Tesseract without burning endpoint calls.
+        // Five consecutive empty outputs open the breaker — the next call
+        // then fails fast with the typed BreakerOpen error instead of
+        // burning another doomed endpoint call. There is no fallback
+        // backend: the breaker state IS the page's verdict.
         for _ in 0..4 {
-            let result = executor.execute(0, &backend, &image, false).await;
+            let result = executor.execute(0, "mock-model", &image).await;
             assert!(result.is_err(), "empty output must stay an error");
         }
         assert!(
-            !executor.is_available(&backend),
+            executor.breaker_open(),
             "circuit breaker must open after 5 consecutive empty outputs"
         );
+        match executor.execute(0, "mock-model", &image).await {
+            Err(OcrError::BreakerOpen { .. }) => {}
+            other => panic!("expected BreakerOpen while the breaker is open, got {other:?}"),
+        }
     }
 
     /// The wired recorder must publish silent failures to the cross-process
@@ -1782,9 +1713,8 @@ mod ocr_guards {
         ));
         let executor = LlmOcrExecutor::new(Arc::clone(&port)).with_health_recorder(recorder);
         let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
-        let backend = OcrBackend::LlmOcr("mock-model".to_string());
 
-        let result = executor.execute(0, &backend, &image, false).await;
+        let result = executor.execute(0, "mock-model", &image).await;
         assert!(result.is_err(), "empty output must be an error");
 
         let contents = std::fs::read_to_string(&health_path)
@@ -1802,7 +1732,6 @@ mod ocr_guards {
     #[tokio::test]
     async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
         let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
-        let backend = OcrBackend::LlmOcr("mock-model".to_string());
         let port = Arc::new(MutableVisionPort {
             vision_text: std::sync::Mutex::new("extracted page text".to_string()),
         });
@@ -1815,11 +1744,11 @@ mod ocr_guards {
 
         // Two successes grow the allowance additively: 2 → 3 → 4.
         executor
-            .execute(0, &backend, &image, false)
+            .execute(0, "mock-model", &image)
             .await
             .expect("non-empty vision output must succeed");
         executor
-            .execute(1, &backend, &image, false)
+            .execute(1, "mock-model", &image)
             .await
             .expect("non-empty vision output must succeed");
         assert_eq!(
@@ -1830,7 +1759,7 @@ mod ocr_guards {
 
         // An empty-output failure backs off multiplicatively: 4 → 2.
         *port.vision_text.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
-        let result = executor.execute(2, &backend, &image, false).await;
+        let result = executor.execute(2, "mock-model", &image).await;
         assert!(result.is_err(), "empty output must stay an error");
         assert_eq!(
             executor.adaptive_concurrency(),

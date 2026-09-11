@@ -1,155 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-// ── Complexity Tiers ──────────────────────────────────────────────────────
-
-/// Complexity tier derived from pixel-density heuristics.
-///
-/// Determines backend routing strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub(crate) enum ComplexityTier {
-    /// Low visual complexity — text-only or near-empty pages.
-    Simple,
-    /// Moderate complexity — tables, mixed content, forms.
-    Moderate,
-    /// High complexity — photographs, dense graphics, handwritten text.
-    Complex,
-}
-
-/// A scored complexity value for a single page image.
-///
-/// `tier` is derived from `value` via threshold dispatch and is the
-/// authoritative routing signal; `value` is the raw heuristic score for
-/// logging and threshold self-tuning.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ComplexityScore {
-    /// Raw edge-density ratio [0.0, 1.0].
-    pub value: f32,
-    /// Threshold-derived tier.
-    pub tier: ComplexityTier,
-}
-
-// ── OCR Backends ──────────────────────────────────────────────────────────
-
-/// Exhaustive set of OCR backends. Each variant maps to a concrete
-/// invocation path within the pipeline.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) enum OcrBackend {
-    /// Classical OCR via Tesseract (fast, best for text-only).
-    Tesseract,
-    /// Vision-language model OCR via hkask-inference router.
-    /// The inner `String` is the model name (e.g., `RunPod/kask-ocr`).
-    LlmOcr(String),
-}
-
-impl OcrBackend {
-    /// Human-readable label for logging and Regulation spans.
-    pub fn label(&self) -> &str {
-        match self {
-            OcrBackend::Tesseract => "tesseract",
-            OcrBackend::LlmOcr(_) => "llm-ocr",
-        }
-    }
-}
-
-impl std::fmt::Display for OcrBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OcrBackend::Tesseract => write!(f, "tesseract"),
-            OcrBackend::LlmOcr(model) => write!(f, "llm-ocr({})", model),
-        }
-    }
-}
-
-// ── Thresholds Module ─────────────────────────────────────────────────────
-
-// LLM-OCR model resolution: the `HKASK_OCR_MODEL` env var or the `llm_model`
-// pipeline parameter, routed through the inference port (the port handles
-// provider credentials — no `RUNPOD_*` env vars are read in this crate).
-// There is no built-in default: unset means complex pages route to local
-// Tesseract with a visible warn (the no-hidden-models spec).
-
-/// Configurable OCR complexity thresholds.
-///
-/// When `tuneable` is `true`, the Regulation calibration system may suggest
-/// adjustments based on accumulated cross-validation data (P4: human
-/// approval required before any change takes effect).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ThresholdConfig {
-    /// Edge-density ratio below which a page is considered Simple.
-    pub simple_max: f32,
-    /// Edge-density ratio below which a page is considered Moderate.
-    /// Values ≥ this threshold are Complex.
-    pub moderate_max: f32,
-    /// Dual-routing sampling rate for Moderate-tier pages [0.0, 1.0].
-    pub moderate_sample_rate: f32,
-    /// Whether Regulation may suggest threshold adjustments based on observed accuracy.
-    /// When `false`, thresholds are locked at configured values.
-    #[serde(default = "default_tuneable")]
-    pub tuneable: bool,
-}
-
-fn default_tuneable() -> bool {
-    true
-}
-
-impl Default for ThresholdConfig {
-    fn default() -> Self {
-        Self {
-            simple_max: 0.05,
-            moderate_max: 0.15,
-            moderate_sample_rate: 0.10,
-            tuneable: true,
-        }
-    }
-}
-
-impl ThresholdConfig {
-    /// Classify an edge-density value into a complexity tier.
-    pub fn classify(&self, edge_density: f32) -> ComplexityTier {
-        if edge_density < self.simple_max {
-            ComplexityTier::Simple
-        } else if edge_density < self.moderate_max {
-            ComplexityTier::Moderate
-        } else {
-            ComplexityTier::Complex
-        }
-    }
-
-    /// Build from env vars, falling back to [`ThresholdConfig::default`].
-    ///
-    /// Reads `HKASK_OCR_SIMPLE_MAX`, `HKASK_OCR_MODERATE_MAX`,
-    /// `HKASK_OCR_SAMPLE_RATE`, and `HKASK_OCR_TUNEABLE`. Malformed values fall
-    /// back to the corresponding default field, mirroring the `TriageConfig::from_env`
-    /// pattern.
-    pub fn from_env() -> Self {
-        let default = Self::default();
-        Self {
-            simple_max: hkask_mcp_server::parse_env_warn(
-                "HKASK_OCR_SIMPLE_MAX",
-                default.simple_max,
-            ),
-            moderate_max: hkask_mcp_server::parse_env_warn(
-                "HKASK_OCR_MODERATE_MAX",
-                default.moderate_max,
-            ),
-            moderate_sample_rate: hkask_mcp_server::parse_env_warn(
-                "HKASK_OCR_SAMPLE_RATE",
-                default.moderate_sample_rate,
-            ),
-            tuneable: std::env::var("HKASK_OCR_TUNEABLE")
-                .ok()
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(default.tuneable),
-        }
-    }
-}
-
 // ── Page Triage (pre-OCR complexity detection) ────────────────────────────
 //
 // Inspired by LiteParse's `ComplexityReason` / `PageComplexityStats`, but
 // limited to signals docproc can detect from `pdftotext` + `pdfimages` (no
 // PDFium text-object access). `Garbled` / `VectorText` reasons require a
 // PDFium-level extraction layer and are deferred (Tier 2).
+//
+// The former complexity-tier routing (Simple/Moderate/Complex →
+// Tesseract/LLM) was removed with the Tesseract backend (2026-09-10):
+// every page that enters the pipeline goes to the configured LLM OCR model,
+// and output quality is gated by `ocr::quality` instead of routed by
+// pixel-density heuristics that silently sent book pages to Tesseract.
 
 /// Why a single page was flagged as needing more than the cheap text-only
 /// path. Multiple reasons can apply to one page.
@@ -204,12 +66,11 @@ pub(crate) struct TriageVerdict {
     pub reasons: Vec<TriageReason>,
 }
 
-/// Per-page triage thresholds. Distinct from `ThresholdConfig` (which governs
-/// in-pipeline Sobel routing) — these gate *whether* a page enters the pipeline
-/// at all.
+/// Per-page triage thresholds. These gate *whether* a page enters the
+/// pipeline at all — distinct from the removed in-pipeline Sobel routing.
 ///
-/// Like `ThresholdConfig`, `tuneable` gates Regulation calibration: drift may
-/// be *suggested* (Regulation alert, ≥100 samples, >95% agreement) but **never
+/// `tuneable` gates Regulation calibration: drift may be *suggested*
+/// (Regulation alert, ≥100 samples, >95% agreement) but **never
 /// auto-applied** — P4 affirmative consent requires human approval.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TriageConfig {
@@ -230,6 +91,10 @@ pub struct TriageConfig {
     pub tuneable: bool,
 }
 
+fn default_tuneable() -> bool {
+    true
+}
+
 impl Default for TriageConfig {
     fn default() -> Self {
         Self {
@@ -247,8 +112,7 @@ impl Default for TriageConfig {
 }
 
 impl TriageConfig {
-    /// Build from env vars, falling back to defaults. Mirrors the
-    /// `HKASK_OCR_*` threshold pattern in `lib.rs::run`.
+    /// Build from env vars, falling back to defaults.
     pub fn from_env() -> Self {
         Self {
             text_native_min_words: hkask_mcp_server::parse_env_warn(

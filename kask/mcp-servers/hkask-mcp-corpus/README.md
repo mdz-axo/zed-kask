@@ -311,16 +311,19 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | `HKASK_ENABLE_CONTENT_GUARD` | Set to `false` to disable input-guard scanning (output guard is always active). Default: enabled. |
 | `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
 
-### OCR Thresholds (via env vars or `settings.json`)
+### OCR Pipeline (via env vars or `settings.json`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HKASK_OCR_SIMPLE_MAX` | 0.05 | Edge-density threshold for Simple tier |
-| `HKASK_OCR_MODERATE_MAX` | 0.15 | Edge-density threshold for Moderate tier |
-| `HKASK_OCR_SAMPLE_RATE` | 0.10 | Dual-routing sample rate for Moderate pages |
-| `HKASK_OCR_TUNEABLE` | true | Whether Regulation calibration may suggest threshold adjustments |
 | `HKASK_OCR_CONCURRENCY` | 4 | Number of pages sent to the vision model in parallel |
-| `HKASK_OCR_RENDER_DPI` | 72 | Page-render resolution for the OCR pipeline. Default 72 keeps the JPEG payload inside the vision model's 128K-token context; raise to ~150 for better Tesseract accuracy on scanned books at the cost of render memory and LLM payload size. Malformed values warn and fall back to 72. |
+| `HKASK_OCR_RENDER_DPI` | 72 | Page-render resolution for the OCR pipeline. Default 72 keeps the image payload inside the vision model's 128K-token context; raise to ~150 for better accuracy on scanned books at the cost of render memory and LLM payload size. Malformed values warn and fall back to 72. |
+
+The former complexity-tier thresholds (`HKASK_OCR_SIMPLE_MAX`,
+`HKASK_OCR_MODERATE_MAX`, `HKASK_OCR_SAMPLE_RATE`, `HKASK_OCR_TUNEABLE`)
+were removed with the Tesseract backend (2026-09-10): every OCR page goes
+to the configured vision model, and output quality is gated deterministically
+(CJK hallucination, repetition loop, garbled tokens) instead of routed by
+pixel-density heuristics.
 
 ### Page Triage Thresholds (per-page pre-OCR complexity detection)
 

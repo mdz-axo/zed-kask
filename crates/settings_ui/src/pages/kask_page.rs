@@ -483,21 +483,6 @@ pub(crate) fn kask_string_input(
                                     kask.general.get_or_insert_default().max_concurrency = Some(v);
                                 }
                             }
-                            ("corpus", "ocr_simple_max") => {
-                                if let Ok(v) = parsed.parse::<f64>() {
-                                    kask.corpus.get_or_insert_default().ocr_simple_max = Some(v);
-                                }
-                            }
-                            ("corpus", "ocr_moderate_max") => {
-                                if let Ok(v) = parsed.parse::<f64>() {
-                                    kask.corpus.get_or_insert_default().ocr_moderate_max = Some(v);
-                                }
-                            }
-                            ("corpus", "ocr_sample_rate") => {
-                                if let Ok(v) = parsed.parse::<f64>() {
-                                    kask.corpus.get_or_insert_default().ocr_sample_rate = Some(v);
-                                }
-                            }
                             _ => {}
                         }
                     },

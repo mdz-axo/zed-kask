@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::quality::{self, PageQuality};
+
 /// The form-feed character `pdftotext` uses to separate pages.
 const FORM_FEED: char = '\u{000c}';
 
@@ -21,42 +23,46 @@ pub(crate) fn split_pdftotext_pages(raw: &str) -> Vec<String> {
 
 // ── OCR Result ────────────────────────────────────────────────────────────
 
-/// The output of a single OCR backend invocation on one page.
+/// The output of a single OCR invocation on one page.
 ///
-/// Carries provenance metadata for verification and cross-validation.
+/// Carries provenance and quality metadata for verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct OcrResult {
     /// 0-based page index within the source document.
     pub page_index: usize,
-    /// Which backend produced this result.
-    pub backend: super::config::OcrBackend,
+    /// The model that produced this text (e.g. `runpod/kask-ocr`).
+    pub model: String,
     /// Extracted text content.
     pub text: String,
     /// Backend-reported confidence [0.0, 1.0].
     pub confidence: f32,
     /// Wall-clock duration of the OCR invocation in milliseconds.
     pub duration_ms: u64,
-    /// True if this result was produced by the fallback (second-attempt) path.
-    pub was_fallback: bool,
+    /// Deterministic quality assessment of `text` (see `ocr::quality`).
+    pub quality: PageQuality,
 }
 
-// ── Cross-Validation ──────────────────────────────────────────────────────
-
-/// Cross-validation data for a dual-routed page (Moderate tier + sampling).
-///
-/// Observation only — does not autonomously change routing (P4).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrossValidation {
-    /// Page index that was dual-routed.
-    pub page_index: usize,
-    /// Normalized Levenshtein similarity [0.0, 1.0] between the two results.
-    pub similarity: f32,
-    /// Complexity tier at routing time.
-    pub(crate) tier: super::config::ComplexityTier,
-    /// First backend used.
-    pub(crate) backend_a: super::config::OcrBackend,
-    /// Second backend used.
-    pub(crate) backend_b: super::config::OcrBackend,
+impl OcrResult {
+    /// Construct a result, assessing the text against the quality gates at
+    /// construction time — the single place quality is computed, so no
+    /// result can exist with an unassessed or stale quality record.
+    pub fn new(
+        page_index: usize,
+        model: impl Into<String>,
+        text: String,
+        confidence: f32,
+        duration_ms: u64,
+    ) -> Self {
+        let quality = quality::assess(&text);
+        Self {
+            page_index,
+            model: model.into(),
+            text,
+            confidence,
+            duration_ms,
+            quality,
+        }
+    }
 }
 
 // ── Pipeline Errors ───────────────────────────────────────────────────────
@@ -64,14 +70,16 @@ pub struct CrossValidation {
 /// Errors that occur during pipeline execution. Collected per-page;
 /// no error aborts the whole pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::enum_variant_names)]
 pub(crate) enum PipelineError {
     /// Decimation (PDF → images) failed.
     DecimationFailed(String),
-    /// All OCR backends exhausted for a page without success.
+    /// The OCR invocation failed for a page. There is no fallback backend —
+    /// the model and the failure reason are surfaced so the operator can
+    /// act on them (fix the endpoint, pick another model, re-run).
     OcrFailed {
         page_index: usize,
-        backends_tried: Vec<super::config::OcrBackend>,
+        model: String,
+        reason: String,
     },
 }
 
@@ -81,17 +89,13 @@ impl std::fmt::Display for PipelineError {
             PipelineError::DecimationFailed(msg) => write!(f, "decimation failed: {}", msg),
             PipelineError::OcrFailed {
                 page_index,
-                backends_tried,
+                model,
+                reason,
             } => {
                 write!(
                     f,
-                    "OCR failed for page {} (tried: {})",
-                    page_index,
-                    backends_tried
-                        .iter()
-                        .map(|b| b.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "OCR failed for page {} (model: {}): {}",
+                    page_index, model, reason
                 )
             }
         }
@@ -108,14 +112,11 @@ pub(crate) struct VerificationReport {
     pub page_count_match: bool,
     /// Indices of pages that produced zero text.
     pub empty_pages: Vec<usize>,
-    /// Indices (0-based) of pages served by a degraded path: the routed
-    /// primary backend failed (empty LLM output) or was unavailable (circuit
-    /// breaker open), so a fallback backend produced the text. Distinct from
-    /// `empty_pages` — a degraded page has text, just from the tier's
-    /// second-choice backend. `passed` does not fail on degradation (it is
-    /// by design and sensed); consumers read this field to tell by-design
-    /// Simple-tier tesseract routing apart from a dead LLM endpoint.
-    pub degraded_pages: Vec<usize>,
+    /// Indices (0-based) of pages whose output failed a deterministic
+    /// quality gate (see `ocr::quality`): CJK hallucination, repetition
+    /// loops, or symbol soup. The text is retained — the report names the
+    /// page so garbage can never merge into a corpus silently.
+    pub quality_failed_pages: Vec<usize>,
     /// Total number of pipeline errors across all pages.
     pub error_count: usize,
     /// Aggregate verification result. Derived from all checks.
@@ -125,23 +126,26 @@ pub(crate) struct VerificationReport {
 impl VerificationReport {
     /// Compute `passed` from constituent checks.
     ///
-    /// A report passes when: page count matches, no empty pages, and zero
-    /// errors. (The word-count-delta check was removed — see verification.rs.)
+    /// A report passes when: page count matches, no empty pages, no
+    /// quality-gate failures, and zero errors.
     pub fn compute_passed(&mut self) {
-        self.passed = self.page_count_match && self.empty_pages.is_empty() && self.error_count == 0;
+        self.passed = self.page_count_match
+            && self.empty_pages.is_empty()
+            && self.quality_failed_pages.is_empty()
+            && self.error_count == 0;
     }
 
     /// Create a report and compute `passed` inline.
     pub fn new(
         page_count_match: bool,
         empty_pages: Vec<usize>,
-        degraded_pages: Vec<usize>,
+        quality_failed_pages: Vec<usize>,
         error_count: usize,
     ) -> Self {
         let mut report = Self {
             page_count_match,
             empty_pages,
-            degraded_pages,
+            quality_failed_pages,
             error_count,
             passed: false,
         };
@@ -162,16 +166,11 @@ pub(crate) struct PipelineOutcome {
     pub results: Vec<OcrResult>,
     /// Verification report computed after assembly.
     pub report: VerificationReport,
-    /// Final-backend distribution across pages (e.g. `{"tesseract": 20,
-    /// "llm-ocr": 1}`). Surfaced to tool results so consumers can see whether
-    /// the LLM backend produced anything at all — an all-tesseract map with
-    /// empty `report.degraded_pages` is by-design Simple-tier routing; one
-    /// with every LLM-routed page degraded is a dead endpoint.
+    /// Model distribution across pages (e.g. `{"runpod/kask-ocr": 85}`).
+    /// Surfaced to tool results so consumers can see which model produced
+    /// the text.
     #[serde(default)]
-    pub backends: std::collections::HashMap<String, usize>,
-    /// Cross-validation data from dual-routed pages (calibration mode).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cross_validations: Vec<CrossValidation>,
+    pub models: std::collections::HashMap<String, usize>,
     /// Pipeline errors collected across all pages.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<PipelineError>,

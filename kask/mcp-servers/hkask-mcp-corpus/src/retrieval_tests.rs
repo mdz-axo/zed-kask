@@ -95,16 +95,7 @@ fn server(port: Arc<RecordingPort>) -> CorpusServer {
     let port: Arc<dyn InferencePort> = port;
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     let pipeline = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&ocr)));
-    CorpusServer::new(
-        WebID::new(),
-        None,
-        port,
-        crate::ocr::ThresholdConfig::default(),
-        Mutex::new(Vec::new()),
-        Default::default(),
-        ocr,
-        pipeline,
-    )
+    CorpusServer::new(WebID::new(), None, port, Default::default(), ocr, pipeline)
 }
 
 fn fixture() -> tempfile::TempDir {

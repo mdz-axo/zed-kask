@@ -11,14 +11,15 @@ use crate::ocr::{OcrResult, PipelineError, VerificationReport};
 /// # Checks
 /// 1. Page count match: actual results vs expected images.
 /// 2. Empty-page detection: flag pages with zero text.
-/// 3. Degraded-page detection: flag pages served by a fallback backend
-///    (`was_fallback`) — the routed primary failed or was unavailable.
+/// 3. Quality-gate detection: flag pages whose output failed a
+///    deterministic quality gate (CJK hallucination, repetition loop,
+///    symbol soup — see `ocr::quality`). The text is retained; the page is
+///    named so garbage can never merge into a corpus silently.
 /// 4. Error tally: count all pipeline errors.
 ///
-/// `passed = (error_count == 0 && all_checks_pass)`. Degraded pages do not
-/// fail `passed` — the fallback is by design and sensed — but they are
-/// reported so a wholesale degradation (dead LLM endpoint, open breaker)
-/// is visible in the report instead of hiding behind a passing verdict.
+/// `passed = (error_count == 0 && all_checks_pass)`. Quality-gate failures
+/// fail `passed` — a run that produced hallucinated or degenerate text is
+/// NOT a passing run, whatever the page counts say.
 pub(crate) fn verify_output(
     expected_pages: usize,
     results: &[OcrResult],
@@ -27,20 +28,24 @@ pub(crate) fn verify_output(
     let actual_pages = results.len();
     let page_count_match = actual_pages == expected_pages;
 
-    // Detect empty pages and collect per-page details from results
     let mut empty_pages: Vec<usize> = Vec::new();
-    let mut degraded_pages: Vec<usize> = Vec::new();
+    let mut quality_failed_pages: Vec<usize> = Vec::new();
 
-    for (idx, result) in results.iter().enumerate().take(actual_pages) {
+    for result in results.iter().take(actual_pages) {
         if result.text.trim().is_empty() {
-            empty_pages.push(idx);
+            empty_pages.push(result.page_index);
         }
-        if result.was_fallback {
-            degraded_pages.push(result.page_index);
+        if !result.quality.failed_gates.is_empty() {
+            quality_failed_pages.push(result.page_index);
         }
     }
 
     let error_count = errors.len();
 
-    VerificationReport::new(page_count_match, empty_pages, degraded_pages, error_count)
+    VerificationReport::new(
+        page_count_match,
+        empty_pages,
+        quality_failed_pages,
+        error_count,
+    )
 }

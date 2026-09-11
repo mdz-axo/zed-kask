@@ -53,8 +53,6 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use crate::ocr::ThresholdConfig;
-
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_services_core::standalone_settings::HkaskSettings;
 use hkask_types::InferencePort;
@@ -67,7 +65,7 @@ use serde::Deserialize;
 #[allow(unused_imports)]
 use serde::Serialize;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -243,8 +241,6 @@ hkask_mcp_server::mcp_server!(
     pub struct CorpusServer {
         pub ocr_model: Option<String>,
         pub inference_router: Arc<dyn InferencePort>,
-        pub ocr_thresholds: ThresholdConfig,
-        pub cv_accumulator: Mutex<Vec<crate::ocr::CrossValidation>>,
         pub index: Arc<crate::index::PassageIndex>,
         pub llm_ocr: Arc<crate::ocr::llm_ocr::LlmOcrExecutor>,
         pub pipeline_executor: Arc<crate::ocr::PipelineExecutor>,
@@ -313,14 +309,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
                     // Fall back to HkaskSettings (the visible settings
-                    // file). Unset means no LLM-OCR model — complex pages
-                    // route to local Tesseract with a visible warn (never a
+                    // file). Unset means no OCR model — OCR-needing pages
+                    // fail with a visible error naming the setting (never a
                     // hidden constant; the operator's no-hidden-models spec).
                     let model = hkask_services_core::HkaskSettings::load().ocr_model();
                     if model.is_empty() { None } else { Some(model) }
                 });
-
-            let ocr_thresholds = ThresholdConfig::from_env();
 
             // Resolve `HKASK_DB_PASSPHRASE` via the canonical 2-tier chain
             // (ctx.credentials → env → `hkask-keystore` keychain) once at
@@ -362,8 +356,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 ctx.webid,
                 ocr_model,
                 inference_port,
-                ocr_thresholds,
-                Mutex::new(Vec::new()),
                 Arc::default(),
                 llm_ocr,
                 pipeline_executor,
@@ -379,13 +371,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod smoke {
     use super::*;
-    use crate::ocr::ThresholdConfig;
     use hkask_types::WebID;
     use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
     use hkask_types::template::LLMParameters;
     use rmcp::handler::server::wrapper::Parameters;
     use std::pin::Pin;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     /// Unavailable inference for smoke tests: local operations must still work,
     /// while inference-dependent operations must surface a structured error.
@@ -422,8 +413,6 @@ mod smoke {
             WebID::new(),
             None,
             inference_port,
-            ThresholdConfig::default(),
-            Mutex::new(Vec::new()),
             Arc::default(),
             llm_ocr,
             pipeline_executor,
@@ -701,8 +690,11 @@ mod smoke {
         let out = dir.join("out");
         std::fs::create_dir_all(&src).expect("create src");
         std::fs::create_dir_all(&out).expect("create out");
-        let content = "This source document has plenty of real words. ".repeat(20);
-        std::fs::write(src.join("doc.txt"), &content).expect("write source");
+        // Varied prose: the quality gates (repetition-loop et al.) now gate
+        // the resume skip, so a fixture of one repeated sentence would be
+        // re-extracted forever — real extraction output is varied text.
+        let content = "This source document has plenty of real words in it, and they are all different from each other. It describes a system of checks where every page must earn its place. The words continue here so the total clears the fifty-word floor comfortably, covering extraction, floors, gates, and idempotent resume behavior in one sitting.";
+        std::fs::write(src.join("doc.txt"), content).expect("write source");
         // Pre-seed a garbage output (2 words, below the 50-word floor)
         // under the exact name directory mode writes.
         std::fs::write(out.join("doc.txt.txt"), "garbage zero words").expect("seed garbage");

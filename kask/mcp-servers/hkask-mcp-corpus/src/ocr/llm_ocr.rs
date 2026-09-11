@@ -8,7 +8,7 @@
 //! 429 responses, all LLM requests pause for a cooldown period.
 use async_trait::async_trait;
 
-use crate::ocr::{OcrBackend, OcrResult};
+use crate::ocr::OcrResult;
 use base64::Engine;
 use hkask_types::{InferencePort, template::LLMParameters};
 use image::DynamicImage;
@@ -308,39 +308,29 @@ impl LlmOcrExecutor {
 }
 #[async_trait]
 impl OcrExecutor for LlmOcrExecutor {
-    fn is_available(&self, backend: &OcrBackend) -> bool {
-        if !matches!(backend, OcrBackend::LlmOcr(_)) {
-            return false;
-        }
-        // Circuit breaker: if open, report as unavailable so the pipeline
-        // falls back to Tesseract gracefully without explicit circuit checks.
-        if !self.breaker.is_closed() {
-            tracing::debug!(
-                target: "reg.pipeline.ocr.circuit_breaker",
-                "LLM OCR reported unavailable — circuit breaker open"
-            );
-            return false;
-        }
-        true
-    }
-
     async fn execute(
         &self,
         page_index: usize,
-        backend: &OcrBackend,
+        model: &str,
         image: &DynamicImage,
-        is_fallback: bool,
     ) -> Result<OcrResult, OcrError> {
-        let model = match backend {
-            OcrBackend::LlmOcr(model) => model.clone(),
-            other => {
-                return Err(OcrError::BackendFailed {
-                    backend: format!("{:?}", other),
-                    message: "LlmOcrExecutor cannot handle this backend".into(),
-                });
-            }
-        };
+        // Circuit breaker: an open breaker is a typed, surfaced error. The
+        // former is_available/unavailable pattern silently degraded the
+        // page to the (removed) Tesseract fallback; there is no fallback
+        // now — the page fails with this reason and the run's report names it.
+        if !self.breaker.is_closed() {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.circuit_breaker",
+                page_index = page_index,
+                llm_model = %model,
+                "LLM OCR circuit breaker open — page fails, no fallback"
+            );
+            return Err(OcrError::BreakerOpen {
+                model: model.to_string(),
+            });
+        }
 
+        let model = model.to_string();
         let start = Instant::now();
 
         // Encode as PNG: `LanguageModelImage`'s contract is base64 PNG and
@@ -356,8 +346,8 @@ impl OcrExecutor for LlmOcrExecutor {
                 image::ImageFormat::Png,
             )
             .map_err(|e| OcrError::BackendFailed {
-                backend: "llm_ocr".into(),
-                message: format!("Failed to encode page image as JPEG: {e}"),
+                model: model.clone(),
+                message: format!("Failed to encode page image as PNG: {e}"),
             })?;
 
         // Remote-service gate: the adaptive limiter ramps LLM concurrency
@@ -398,7 +388,7 @@ impl OcrExecutor for LlmOcrExecutor {
                     page_index = page_index,
                     llm_model = %model,
                     input_bytes = input_bytes,
-                    "OCR model returned empty output — treating as failure, degrading to fallback backend"
+                    "OCR model returned empty output — treating as failure, no fallback backend exists"
                 );
                 if let Some(ref recorder) = self.recorder {
                     recorder.record_silent_failure();
@@ -420,7 +410,7 @@ impl OcrExecutor for LlmOcrExecutor {
                     page_index = page_index,
                     llm_model = %model,
                     error = %err_str,
-                    "OCR inference call failed — degrading to fallback backend"
+                    "OCR inference call failed — no fallback backend exists"
                 );
                 let is_rate_limit = err_str.contains("429")
                     || err_str.contains("rate limit")
@@ -452,7 +442,7 @@ impl OcrExecutor for LlmOcrExecutor {
                     page_index = page_index,
                     llm_model = %model,
                     error = %other,
-                    "OCR LLM executor failed before the vision call — degrading to fallback backend"
+                    "OCR LLM executor failed before the vision call — no fallback backend exists"
                 );
             }
         }
@@ -479,14 +469,13 @@ impl OcrExecutor for LlmOcrExecutor {
             );
         }
 
-        Ok(OcrResult {
+        Ok(OcrResult::new(
             page_index,
-            backend: backend.clone(),
+            model,
             text,
             confidence,
             duration_ms,
-            was_fallback: is_fallback,
-        })
+        ))
     }
 }
 
@@ -616,10 +605,12 @@ mod tests {
     async fn http_error_failures_open_the_breaker() {
         let executor = LlmOcrExecutor::new(Arc::new(HttpErrorVisionPort));
         let image = DynamicImage::new_rgb8(8, 8);
-        let backend = OcrBackend::LlmOcr("RunPod/kask-ocr".to_string());
         for _ in 0..5 {
             assert!(
-                executor.execute(0, &backend, &image, false).await.is_err(),
+                executor
+                    .execute(0, "RunPod/kask-ocr", &image)
+                    .await
+                    .is_err(),
                 "each vision call must fail"
             );
         }

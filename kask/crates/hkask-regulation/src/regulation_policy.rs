@@ -361,10 +361,10 @@ impl RegulationPolicy {
                 // OcrSilentFailures (Cybernetics Loop 6) → Escalate
                 //
                 // A dead-but-responsive OCR endpoint (HTTP 200 with empty
-                // content on every Complex page) is not something the loop
-                // can self-heal — the corpus pipeline already degrades to
-                // Tesseract and quarantines the endpoint via its circuit
-                // breaker. Escalate to Curation for operator attention:
+                // content on every page) is not something the loop
+                // can self-heal — the corpus pipeline fails the affected
+                // pages with typed errors and quarantines the endpoint via
+                // its circuit breaker (there is no fallback backend). Escalate to Curation for operator attention:
                 // the endpoint needs fixing (prompt format, RAW_OPENAI_OUTPUT,
                 // image encoding) or replacing.
                 RegulationRule {

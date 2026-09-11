@@ -136,7 +136,7 @@ pub(crate) const ADAPTIVE_CONCURRENCY_FLOOR: usize = 2;
 /// Starts at `floor`, grows additively (+1 per success) toward `ceiling`, and
 /// backs off multiplicatively (halve per failure, floor-bounded). A service
 /// with lower capacity than the ceiling is discovered by probing, not by
-/// stampede. Local work (Tesseract, file IO) is NOT gated here — a static
+/// stampede. Local work (file IO) is NOT gated here — a static
 /// bound is correct for a local resource; adaptation is for remote services.
 ///
 /// Backoff needs no permit recall: the acquire check (`in_flight < current`)

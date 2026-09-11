@@ -28,7 +28,7 @@ use serde::Deserialize;
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs."
+        description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
     )]
     pub async fn corpus_convert(
         &self,
@@ -157,8 +157,8 @@ impl CorpusServer {
                 "verification_passed": outcome.verification_passed,
                 "page_count_match": outcome.page_count_match,
                 "empty_pages": outcome.empty_pages,
-                "degraded_pages": outcome.degraded_pages,
-                "backends": outcome.backends,
+                "quality_failed_pages": outcome.quality_failed_pages,
+                "models": outcome.models,
                 "llm_breaker_open": outcome.llm_breaker_open,
                 "error_count": outcome.error_count,
             });
@@ -655,23 +655,62 @@ impl CorpusServer {
             }
 
             let mut extracted = 0usize;
+            let mut staged = 0usize;
             let mut skipped = 0usize;
+            let mut skipped_staged = 0usize;
+            let mut healed = 0usize;
             let mut failures = Vec::new();
+
+            // OCR-sourced outputs land in a staging sibling directory, not
+            // the output directory: model output never enters the corpus
+            // extraction set until an explicit, quality-gated merge (a
+            // canceled run must not be able to pollute the set — observed
+            // 2026-09-10, a canceled 85-page run deposited tesseract garbage
+            // directly into the extraction dir). Text-extraction outputs are
+            // deterministic conversions and write directly.
+            let staging_dir = output_dir
+                .parent()
+                .map(|p| p.join(format!("{}-ocr-staging", output.file_name().unwrap_or_default().to_string_lossy())));
 
             for source in &sources {
                 let Some(file_name) = source.file_name() else {
                     continue;
                 };
-                let output_path = output_dir.join(format!("{}.txt", file_name.to_string_lossy()));
+                let file_name = file_name.to_string_lossy();
+                let output_path = output_dir.join(format!("{file_name}.txt"));
                 // Skip only outputs that would PASS the Stage-1 word-count
-                // floor. The old `len > 50` byte check treated a 72-byte
-                // zero-word garbage extraction as a valid existing output,
-                // so a re-run never healed it — silent data loss presented
-                // as idempotency. A read failure falls through to
-                // re-extraction (the safe direction).
+                // floor AND the deterministic quality gates. The old `len > 50`
+                // byte check treated a 72-byte zero-word garbage extraction as
+                // a valid existing output, and the word-floor-only check
+                // honored degenerate OCR (CJK hallucination and repetition
+                // loops pass word floors — observed 2026-09-10). A re-run now
+                // heals quality-failed outputs instead of honoring them. A
+                // read failure falls through to re-extraction (the safe
+                // direction).
                 if let Ok(existing) = std::fs::read_to_string(&output_path) {
-                    if existing.split_whitespace().count() >= 50 {
+                    if existing.split_whitespace().count() >= 50
+                        && crate::ocr::quality::passes_gates(&existing)
+                    {
                         skipped += 1;
+                        continue;
+                    }
+                    if existing.split_whitespace().count() >= 50 {
+                        healed += 1;
+                    }
+                }
+
+                // A staged (unmerged) OCR output that passes the floor and
+                // the gates means the OCR already ran — skip re-extraction
+                // (resumability) but do NOT merge: the merge is the caller's
+                // explicit, quality-gated step. A staged output failing the
+                // gates falls through to re-extraction.
+                if let Some(ref staging) = staging_dir {
+                    let staged_path = staging.join(format!("{file_name}.txt"));
+                    if let Ok(existing) = std::fs::read_to_string(&staged_path)
+                        && existing.split_whitespace().count() >= 50
+                        && crate::ocr::quality::passes_gates(&existing)
+                    {
+                        skipped_staged += 1;
                         continue;
                     }
                 }
@@ -700,14 +739,48 @@ impl CorpusServer {
                     .as_ref()
                     .and_then(|value| value.get("text"))
                     .and_then(serde_json::Value::as_str);
+                let method = content
+                    .as_ref()
+                    .and_then(|value| value.get("method"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
 
                 match text {
                     Some(text) if !text.trim().is_empty() => {
-                        if let Err(e) = std::fs::write(&output_path, text) {
+                        // OCR-sourced text → staging; deterministic text
+                        // extraction → the output directory directly.
+                        let is_ocr_sourced =
+                            method == "ocr_pipeline" || method == "selective_ocr";
+                        let destination = if is_ocr_sourced {
+                            match staging_dir {
+                                Some(ref staging) => {
+                                    if let Err(e) = std::fs::create_dir_all(staging) {
+                                        failures.push(json!({
+                                            "path": source,
+                                            "error": format!("Failed to create staging dir '{}': {}", staging.display(), e),
+                                        }));
+                                        continue;
+                                    }
+                                    staging.join(format!("{file_name}.txt"))
+                                }
+                                None => {
+                                    failures.push(json!({
+                                        "path": source,
+                                        "error": "no parent directory for the OCR staging dir",
+                                    }));
+                                    continue;
+                                }
+                            }
+                        } else {
+                            output_path
+                        };
+                        if let Err(e) = std::fs::write(&destination, text) {
                             failures.push(json!({
                                 "path": source,
-                                "error": format!("Failed to write '{}': {}", output_path.display(), e),
+                                "error": format!("Failed to write '{}': {}", destination.display(), e),
                             }));
+                        } else if is_ocr_sourced {
+                            staged += 1;
                         } else {
                             extracted += 1;
                         }
@@ -723,10 +796,14 @@ impl CorpusServer {
             Ok(json!({
                 "path": path,
                 "output": output,
+                "staging_dir": staging_dir.as_ref().map(|p| p.display().to_string()),
                 "source_documents": sources.len(),
-                "total_documents": extracted + skipped,
+                "total_documents": extracted + skipped + staged + skipped_staged,
                 "extracted": extracted,
+                "staged": staged,
                 "skipped": skipped,
+                "skipped_staged": skipped_staged,
+                "healed": healed,
                 "failed": failures.len(),
                 "failures": failures,
             }))

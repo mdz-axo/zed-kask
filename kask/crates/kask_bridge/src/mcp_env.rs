@@ -197,34 +197,6 @@ pub(crate) fn emit_corpus_embedding_env(
     );
 }
 
-pub(crate) fn emit_corpus_ocr_env(
-    corpus: &KaskCorpusSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    let corpus_default = KaskCorpusSettings::default();
-    if (corpus.ocr_simple_max - corpus_default.ocr_simple_max).abs() > f64::EPSILON {
-        env.insert(
-            "HKASK_OCR_SIMPLE_MAX".to_string(),
-            corpus.ocr_simple_max.to_string(),
-        );
-    }
-    if (corpus.ocr_moderate_max - corpus_default.ocr_moderate_max).abs() > f64::EPSILON {
-        env.insert(
-            "HKASK_OCR_MODERATE_MAX".to_string(),
-            corpus.ocr_moderate_max.to_string(),
-        );
-    }
-    if (corpus.ocr_sample_rate - corpus_default.ocr_sample_rate).abs() > f64::EPSILON {
-        env.insert(
-            "HKASK_OCR_SAMPLE_RATE".to_string(),
-            corpus.ocr_sample_rate.to_string(),
-        );
-    }
-    if corpus.ocr_tuneable != corpus_default.ocr_tuneable {
-        env.insert("HKASK_OCR_TUNEABLE".to_string(), "false".to_string());
-    }
-}
-
 pub(crate) fn emit_corpus_template_root_env(
     corpus: &KaskCorpusSettings,
     data_dir: &str,
@@ -565,10 +537,6 @@ mod tests {
         assert!(
             !env.contains_key("HKASK_EMBEDDING_DIM"),
             "default embedding_dim must not be emitted"
-        );
-        assert!(
-            !env.contains_key("HKASK_OCR_SIMPLE_MAX"),
-            "default ocr_simple_max must not be emitted"
         );
         // HKASK_TEMPLATE_ROOT is now always emitted (resolved from data_dir),
         // so it's no longer suppressed for default settings — see
