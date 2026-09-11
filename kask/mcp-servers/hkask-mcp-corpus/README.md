@@ -41,7 +41,7 @@ tools/
                         corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
                         (thin wrappers → ConsolidationService / PromptBuilderService)
   tagging/            — corpus_tag_chunks (ontology tagging with validate_ontology_tags)
-  compose/             — corpus_compose, corpus_rewrite (prose generation)
+  compose_tools.rs    — corpus_compose, corpus_rewrite, corpus_centroid
   storage.rs          — corpus_cache, corpus_query, corpus_clear_index
 ocr/ (13 modules)
   pipeline.rs         — OcrExecutor trait, run_pipeline orchestrator, cross-validation
@@ -96,7 +96,7 @@ and the whole book silently degraded to Tesseract.
 > history during the 2026-09-03 incident. Do not "restore" the superseded
 > design from history; this section is the contract.
 
-## Tools (25)
+## Tools (24)
 
 ### Gather (2)
 
@@ -209,12 +209,39 @@ summary**. Output may be partial on error; this is not atomic replacement or
 an `fsync` durability guarantee. The single-chunk/cross-reference
 `corpus_generate_qa` capability is unchanged.
 
-### Compose Output (2)
+### Compose Output (3)
 
 | Tool | Description |
 |------|-------------|
 | `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. Accepts an optional `config_path` to load a cognition config YAML (mashup or style synthesizer) with a Jinja2 system prompt template. |
-| `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific Gentle Lovelace quality dimension (gentle/schriver/hopper/lovelace/composite). Accepts an optional `config_path` for a cognition config YAML. |
+| `corpus_rewrite` | Rewrite for a quality dimension (gentle/schriver/hopper/lovelace/composite), validating against `style:{author}:{dimension}:centroid`. Optional `config_path` supplies prompt/retrieval/threshold settings, not the centroid target. |
+| `corpus_centroid` | Average existing embeddings and store a centroid. Optional `refs_file` selects newline-delimited entity refs; optional quality `dimension` selects the destination. |
+
+**Step 6 — operator continuation, 2026-09-11:** `corpus_centroid` still uses
+`style:{author}:` sources and stores `style:{author}:centroid` when both new
+parameters are omitted. `refs_file` is a path-contained UTF-8 file (project root
+or Kask data directory); whitespace and blank lines are ignored, duplicate refs
+count once, and missing eligible refs fail before writing. It can select
+existing refs across prefixes without copying embeddings. An empty selection
+is an error, not a fallback. Rules (`:rule:`) and all derived `:centroid` refs
+are excluded. Recomputing replaces destination rows rather than accumulating
+duplicate centroids.
+
+Optional `dimension` stores at `style:{author}:{dimension}:centroid`; it is
+independent of embedding vector size (`HKASK_EMBEDDING_DIM`). It is trimmed and
+lowercased and must be nonblank with no `:`. Dimension alone retains the author
+source prefix; refs_file alone retains the author centroid destination.
+
+`corpus_rewrite` always requests validation against that dimension target
+(including the default `composite`), even when YAML names another centroid.
+Both compose and rewrite expose `centroid_missing`: true means validation was
+requested but the centroid is absent, with null `centroid_distance` and
+`style_passed`. A measured result reports false plus distance/pass. Explicit
+`corpus_compose(no_validate=true)` reports false with null validation values.
+Other centroid lookup failures are errors, not missing-centroid results.
+
+The registered surface remains **24 tools**: adding parameters does not add a
+tool. `tool_surface_tests` pins both the router count and optional schema fields.
 
 ### Manage (3)
 

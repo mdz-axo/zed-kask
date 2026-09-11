@@ -30,13 +30,14 @@ gather → process → output
 | Process | `tools/corpus/` | `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
 | QA Output | `tools/semantic/` | `corpus_generate_qa`, `corpus_generate_qa_batch` |
 | QA Output | `tools/corpus/` | `corpus_build_prompts`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
-| Compose | `tools/compose_tools.rs` | `corpus_compose`, `corpus_rewrite` |
+| Compose | `tools/compose_tools.rs` | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage | `tools/storage.rs` | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
-## Tool Catalog (25)
+## Tool Catalog (24)
 
-Tool count verified against `#[tool(description = ...)]` annotations in
-`mcp-servers/hkask-mcp-corpus/src/` (2026-08-05 audit).
+The combined router registers 24 tools, pinned by `tool_surface_tests`.
+Step 6 (operator continuation, 2026-09-11) extends the existing centroid tool's
+parameters, not the number of tools.
 
 ### Gather (2)
 
@@ -147,12 +148,39 @@ may remain on error; no atomic replacement or `fsync` guarantee is implied.
 See the [corpus README](../../../mcp-servers/hkask-mcp-corpus/README.md#prepared-qa-jsonl-contract)
 for the decision record and full operational contract.
 
-### Compose Output (2)
+### Compose Output (3)
 
 | Tool | Description |
 |------|-------------|
 | `corpus_compose` | Generate prose in an author's style using exemplar retrieval and centroid validation. Accepts an optional `config_path` to load a cognition config YAML (mashup or style synthesizer) with a Jinja2 system prompt template. |
-| `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Accepts an optional `config_path` for a cognition config YAML. |
+| `corpus_rewrite` | Rewrite for a quality dimension (gentle/schriver/hopper/lovelace/composite) and validate against `style:{author}:{dimension}:centroid`. YAML still supplies prompts/retrieval/thresholds; its centroid target is overridden. |
+| `corpus_centroid` | Average existing embeddings selected by author prefix or optional newline `refs_file`, with an optional quality `dimension` destination. |
+
+#### Dimension centroid contract (Step 6, 2026-09-11)
+
+- Defaults are unchanged: select `style:{author}:`, store
+  `style:{author}:centroid`. Optional `dimension` instead stores
+  `style:{author}:{dimension}:centroid`, without changing source selection.
+  Quality dimensions are trimmed/lowercased, nonblank, with no `:`; vector size
+  remains `HKASK_EMBEDDING_DIM`.
+- Optional `refs_file` is a contained UTF-8 file under the project root or Kask
+  data directory, one existing entity ref per nonblank line. Whitespace is
+  trimmed; duplicates count once, with no copied source embeddings. Missing
+  eligible refs or an empty eligible set fail rather than averaging a subset
+  or falling back to a prefix. Rules (`:rule:`) and derived `:centroid` refs
+  are excluded. Recomputing replaces prior destination rows.
+- Rewrite always enables validation for its requested dimension (default
+  `composite`). Its response includes `centroid_entity_ref`, `centroid_missing`,
+  `centroid_distance`, and `style_passed`. Missing targets return
+  `centroid_missing: true` and null distance/pass, not an author-centroid fallback.
+- Compose also exposes `centroid_missing`. Explicit `no_validate: true` means
+  validation is skipped (false/missing flag, null distance/pass). Other lookup
+  failures are tool errors. A measured validation reports false/missing flag
+  and the distance/pass result.
+
+Schema, path-containment, duplicate/missing-ref, default-prefix and dimension
+rewrite round trips are covered in `tool_surface_tests`, `retrieval_tests`,
+and the `hkask-memory` centroid tests.
 
 #### Method-aware composition (T18)
 

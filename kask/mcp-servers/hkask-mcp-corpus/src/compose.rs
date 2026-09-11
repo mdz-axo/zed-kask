@@ -133,8 +133,10 @@ pub(crate) struct ComposeResult {
     pub exemplar_count: usize,
     /// Candidates excluded because no stored method signals were available.
     pub method_signals_missing: usize,
-    /// Centroid validation result (None if validation was skipped).
+    /// Centroid validation result (None if skipped or the centroid is absent).
     pub validation: Option<CentroidValidation>,
+    /// Validation was requested, but its configured centroid does not exist.
+    pub centroid_missing: bool,
 }
 
 /// Centroid distance validation result.
@@ -152,9 +154,12 @@ pub(crate) struct CentroidComputeRequest {
     pub db_path: PathBuf,
     /// Passphrase for opening the database.
     pub db_passphrase: String,
-    /// Author identifier — the centroid is computed over the
-    /// `style:{author}:` prefix and stored at `style:{author}:centroid`.
+    /// Author identifier for the default source prefix and destination.
     pub author: String,
+    /// Optional quality dimension for the destination centroid.
+    pub dimension: Option<String>,
+    /// Existing source refs; None preserves author-prefix selection.
+    pub entity_refs: Option<Vec<String>>,
     /// Embedding model name recorded on the stored centroid.
     pub model: String,
     /// Embedding dimension — must match the stored vectors' dimension.
@@ -169,6 +174,13 @@ pub(crate) struct CentroidComputeResult {
     pub stored: bool,
     /// The entity ref the centroid is stored under.
     pub centroid_entity_ref: String,
+}
+
+pub(crate) fn style_centroid_ref(author: &str, dimension: Option<&str>) -> String {
+    match dimension {
+        Some(dimension) => format!("style:{author}:{dimension}:centroid"),
+        None => format!("style:{author}:centroid"),
+    }
 }
 
 // ── Service ──────────────────────────────────────────────────────────────
@@ -311,6 +323,7 @@ impl ComposeService {
         for r in &results {
             if !r.embedding.entity_ref.starts_with(&prefix)
                 || r.embedding.entity_ref == request.cognition.embedding.centroid_entity_ref
+                || r.embedding.entity_ref.ends_with(":centroid")
                 || r.embedding.entity_ref.contains(":rule:")
                 || r.distance > retrieval.distance_threshold
             {
@@ -470,21 +483,22 @@ impl ComposeService {
             .await?;
         let generated_prose = result.text.trim().to_string();
 
-        // 7. Validate centroid distance (optional)
+        // 7. Only an absent centroid degrades validation; lookup failures are errors.
+        let mut centroid_missing = false;
         let validation = if request.no_validate {
             None
         } else {
-            let prose_vector = inference
-                .embed(
-                    &request.cognition.embedding.model,
-                    std::slice::from_ref(&generated_prose),
-                )
-                .await?
-                .into_iter()
-                .next()
-                .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
             match embedding_store_direct.get(&request.cognition.embedding.centroid_entity_ref) {
                 Ok(centroid_embedding) => {
+                    let prose_vector = inference
+                        .embed(
+                            &request.cognition.embedding.model,
+                            std::slice::from_ref(&generated_prose),
+                        )
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
                     let distance =
                         crate::cosine_distance(&prose_vector, &centroid_embedding.vector);
                     let threshold = request.cognition.validation.centroid_distance_max;
@@ -493,7 +507,18 @@ impl ComposeService {
                         passed: distance <= threshold,
                     })
                 }
-                Err(_) => None,
+                Err(hkask_storage::EmbeddingError::NotFound(_)) => {
+                    centroid_missing = true;
+                    None
+                }
+                Err(error) => {
+                    return Err(ServiceError::Domain {
+                        kind: ErrorKind::ServiceUnavailable,
+                        domain: DomainKind::Storage,
+                        source: None,
+                        message: format!("Centroid lookup failed: {error}"),
+                    });
+                }
             }
         };
 
@@ -502,23 +527,22 @@ impl ComposeService {
             exemplar_count,
             method_signals_missing,
             validation,
+            centroid_missing,
         })
     }
 
     /// Compute and store the style centroid for an author's corpus.
     ///
-    /// The centroid is the mean of every embedding under the
-    /// `style:{author}:` prefix (excluding the centroid ref itself and
-    /// `:rule:` refs — the same filter `compose` applies to exemplar
-    /// retrieval) and is stored at `style:{author}:centroid`, the entity
-    /// ref `compose` reads for centroid validation. Without a stored
-    /// centroid, `compose` runs unvalidated (validation returns None).
+    /// Uses explicit existing refs when supplied, otherwise the unchanged
+    /// `style:{author}:` source prefix. Derived `:centroid` and `:rule:` refs
+    /// are excluded. Stores at `style:{author}:{dimension}:centroid` when a
+    /// dimension is supplied, otherwise `style:{author}:centroid`.
+    /// Missing validation centroids are surfaced by `compose.centroid_missing`.
     ///
-    /// pre: db_path points to a corpus DB with embeddings under the
-    /// `style:{author}:` prefix; model is non-empty; dim matches the
-    /// stored vectors' dimension
+    /// pre: db_path contains the explicit refs or author-prefix embeddings;
+    /// model is non-empty; dim matches the stored vectors' dimension
     /// post: returns the passage count and stored flag; Err on DB open
-    /// failure, an empty prefix set, or a store failure
+    /// failure, a missing ref, an empty eligible set, or a store failure
     pub(crate) fn style_centroid(
         request: CentroidComputeRequest,
     ) -> Result<CentroidComputeResult, ServiceError> {
@@ -548,21 +572,29 @@ impl ComposeService {
         let store = MemoryStore::new(h_mem_store, embedding_store);
 
         let prefix = format!("style:{}:", request.author);
-        let centroid_entity_ref = format!("style:{}:centroid", request.author);
-        let result = store
-            .compute_centroid(
+        let centroid_entity_ref = style_centroid_ref(&request.author, request.dimension.as_deref());
+        let result = match request.entity_refs {
+            Some(refs) => store.compute_centroid_for_refs(
+                &refs,
+                &centroid_entity_ref,
+                request.dim,
+                Some(&centroid_entity_ref),
+                Some(&request.model),
+            ),
+            None => store.compute_centroid(
                 &prefix,
                 &centroid_entity_ref,
                 request.dim,
                 Some(&centroid_entity_ref),
                 Some(&request.model),
-            )
-            .map_err(|e| ServiceError::Domain {
-                kind: ErrorKind::BadRequest,
-                domain: DomainKind::Memory,
-                source: None,
-                message: e.to_string(),
-            })?;
+            ),
+        }
+        .map_err(|e| ServiceError::Domain {
+            kind: ErrorKind::BadRequest,
+            domain: DomainKind::Memory,
+            source: None,
+            message: e.to_string(),
+        })?;
 
         Ok(CentroidComputeResult {
             passage_count: result.passage_count,

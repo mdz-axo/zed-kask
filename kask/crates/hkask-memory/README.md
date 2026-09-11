@@ -19,6 +19,21 @@ full turn text.
 The bridge that wires thread turns into this store lives in `kask_bridge`
 (`RealMemoryPort`), not in this crate.
 
+## Centroid selection
+
+`MemoryStore::compute_centroid` retains prefix selection.
+`compute_centroid_for_refs` selects existing embeddings by an explicit entity-ref
+list, with no source copies or re-embedding. Repeated refs contribute once;
+missing eligible refs fail before writing. Both paths exclude `exclude_ref`,
+`:rule:` refs, and derived `:centroid` refs, including dimension centroids, so
+recomputation never averages prior centroids into the passage mean. Empty
+eligible sets and mismatched vector dimensions are errors.
+
+Both paths share mean computation and optional storage. Supplying `store_as`
+and `model` replaces previous destination embedding rows using the existing
+embedding deletion/store operations; recomputing does not accumulate centroid
+rows. Without both, the result is returned without storage.
+
 ## Forgetting Curve
 
 Wozniak & Gorzelanczyk (1995), equation (3): **R(t) = exp(-t/S)**

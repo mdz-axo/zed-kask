@@ -73,7 +73,7 @@ fn inline_cognition_config_with(
         embedding: crate::compose::EmbeddingSection {
             model: embed_model,
             dim: crate::embedding_dim(),
-            centroid_entity_ref: format!("style:{}:centroid", author),
+            centroid_entity_ref: crate::compose::style_centroid_ref(author, None),
             retrieval: Default::default(),
         },
         validation: crate::compose::ValidationSection {
@@ -163,6 +163,46 @@ pub(crate) struct CentroidRequest {
     pub db_path: String,
     #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
+    /// Optional contained UTF-8 file: one existing entity ref per nonblank line.
+    /// Repeated refs count once; missing eligible refs fail without storing a centroid.
+    #[serde(default)]
+    pub refs_file: Option<String>,
+    /// Optional quality dimension, stored at style:{author}:{dimension}:centroid.
+    /// Omit to retain style:{author}:centroid. This is not the vector size.
+    #[serde(default)]
+    pub dimension: Option<String>,
+}
+
+fn normalize_dimension(dimension: &str) -> Result<String, McpToolError> {
+    let dimension = dimension.trim().to_lowercase();
+    if dimension.is_empty() || dimension.contains(':') {
+        return Err(McpToolError::invalid_argument(
+            "dimension must be nonblank and contain no ':' namespace separator",
+        ));
+    }
+    Ok(dimension)
+}
+
+fn load_centroid_refs(refs_file: &str) -> Result<Vec<String>, McpToolError> {
+    let path = hkask_mcp_server::server::contain_for_read(refs_file)?;
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        McpToolError::invalid_argument(format!(
+            "Failed to read refs_file {}: {error}",
+            path.display()
+        ))
+    })?;
+    let refs: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect();
+    if refs.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "refs_file contains no entity refs",
+        ));
+    }
+    Ok(refs)
 }
 
 #[tool_router(router = compose_router, vis = "pub")]
@@ -197,6 +237,7 @@ impl crate::CorpusServer {
 
             Ok(json!({
                 "prose": result.generated_prose,
+                "centroid_missing": result.centroid_missing,
                 "exemplar_count": result.exemplar_count,
                 "method_signals_missing": result.method_signals_missing,
                 "centroid_distance": result.validation.as_ref().map(|v| v.distance),
@@ -207,7 +248,7 @@ impl crate::CorpusServer {
     }
 
     #[tool(
-        description = "Compute and store a style centroid for an author's corpus: the mean of every embedding under the style:{author}: entity-ref prefix (excluding the centroid ref itself and :rule: refs), stored at style:{author}:centroid — the entity ref corpus_compose reads for centroid validation. Call this BEFORE corpus_compose: without a stored centroid, compose runs unvalidated (validation silently returns None). Requires embeddings chunked under the style:{author}: prefix (corpus_chunk entity_ref_prefix). The embedding model comes from kask.models.embedding_model; the dimension from HKASK_EMBEDDING_DIM (default 1024)."
+        description = "Compute and store a style centroid from existing embeddings. By default averages the style:{author}: prefix and stores style:{author}:centroid. Optional path-contained refs_file selects newline-delimited entity refs without copying embeddings; duplicate refs count once and missing eligible refs fail. Optional quality dimension stores style:{author}:{dimension}:centroid for corpus_rewrite. Derived :centroid and :rule: refs are excluded. Build before compose/rewrite: absent validation centroids surface as centroid_missing. Embedding model: kask.models.embedding_model; vector size: HKASK_EMBEDDING_DIM (default 1024), independent of quality dimension."
     )]
     pub async fn corpus_centroid(
         &self,
@@ -225,11 +266,23 @@ impl crate::CorpusServer {
                 ));
             }
 
+            let dimension = params
+                .dimension
+                .as_deref()
+                .map(normalize_dimension)
+                .transpose()?;
+            let entity_refs = params
+                .refs_file
+                .as_deref()
+                .map(load_centroid_refs)
+                .transpose()?;
             let result = crate::compose::ComposeService::style_centroid(
                 crate::compose::CentroidComputeRequest {
                     db_path: PathBuf::from(&params.db_path),
                     db_passphrase: params.passphrase,
                     author: params.author.clone(),
+                    dimension,
+                    entity_refs,
                     model: embed_model,
                     dim: crate::embedding_dim(),
                 },
@@ -247,7 +300,7 @@ impl crate::CorpusServer {
     }
 
     #[tool(
-        description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). When config_path is provided, loads a cognition config YAML for the Jinja2 system prompt and validation thresholds. Delegates to corpus_compose with dimension-specific guidance."
+        description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Validates against style:{author}:{dimension}:centroid; an absent centroid surfaces as centroid_missing with null distance/pass, never a successful validation. When config_path is provided, uses its Jinja2 prompt and validation thresholds but selects the requested dimension centroid."
     )]
     pub async fn corpus_rewrite(
         &self,
@@ -258,7 +311,8 @@ impl crate::CorpusServer {
             "corpus_rewrite",
             async {
                 require_passphrase(&params.passphrase)?;
-                let dimension_guidance = match params.dimension.to_lowercase().as_str() {
+                let dimension = normalize_dimension(&params.dimension)?;
+                let dimension_guidance = match dimension.as_str() {
                     "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",
                     "schriver" => "Rewrite this text for maximum findability. Use scannable headings, descriptive hyperlinks, and front-load key concepts. A reader must find their answer within 30 seconds.",
                     "hopper" => "Rewrite this text for maximum accessibility. Make it comprehensible on first reading with zero prior context. Use plain language, active voice, and short sentences.",
@@ -272,10 +326,13 @@ impl crate::CorpusServer {
                 );
 
                 let gen_model = generation_model();
-                let config = resolve_cognition_config(
+                let mut config = resolve_cognition_config(
                     params.config_path.as_deref(),
                     &params.author,
                 )?;
+                config.embedding.centroid_entity_ref =
+                    crate::compose::style_centroid_ref(&params.author, Some(&dimension));
+                let centroid_entity_ref = config.embedding.centroid_entity_ref.clone();
 
                 let inference_ctx = InferenceContext::from_parts(
                     Some(self.inference_router.clone()),
@@ -288,7 +345,7 @@ impl crate::CorpusServer {
                     db_passphrase: params.passphrase,
                     cognition: config,
                     inference_ctx,
-                    no_validate: true,
+                    no_validate: false,
                 };
 
                 let result = crate::compose::ComposeService::compose(request)
@@ -297,7 +354,9 @@ impl crate::CorpusServer {
 
                 Ok(json!({
                     "rewritten": result.generated_prose,
-                    "dimension": params.dimension,
+                    "dimension": dimension,
+                    "centroid_entity_ref": centroid_entity_ref,
+                    "centroid_missing": result.centroid_missing,
                     "author": params.author,
                     "exemplar_count": result.exemplar_count,
                     "method_signals_missing": result.method_signals_missing,

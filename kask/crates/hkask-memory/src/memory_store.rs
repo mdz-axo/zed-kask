@@ -502,11 +502,9 @@ impl MemoryStore {
     /// Compute the centroid (mean embedding) over a prefix-scoped
     /// embedding set.
     ///
-    /// Mirrors the `corpus_compose` exemplar filter so the centroid is the
-    /// mean of exactly the embeddings compose retrieves: only refs under
-    /// `prefix` count; `exclude_ref` (the centroid's own entity ref, so
-    /// recomputation stays idempotent — a stored centroid is never folded
-    /// into its own successor) and `:rule:` refs are excluded. When
+    /// Only refs under `prefix` count; `exclude_ref`, derived `:centroid`
+    /// refs and `:rule:` refs are excluded so stored author/dimension
+    /// centroids never feed back into the passage mean. When
     /// `store_as` is provided with a `model` name, the centroid is stored
     /// as an embedding under that ref — e.g. `style:{author}:centroid`,
     /// the entity ref `corpus_compose` reads for centroid validation.
@@ -524,26 +522,71 @@ impl MemoryStore {
             .embedding
             .get_all_by_prefix(prefix)?
             .into_iter()
-            .filter(|(entity_ref, _)| entity_ref != exclude_ref && !entity_ref.contains(":rule:"))
+            .filter(|(entity_ref, _)| Self::centroid_passage_ref(entity_ref, exclude_ref))
             .collect();
+        self.centroid_from_embeddings(&matching, prefix, dim, store_as, model)
+    }
 
+    /// Compute a centroid from existing embeddings named by explicit entity refs.
+    ///
+    /// expect: "I can select passages without copying embeddings or weighting duplicate refs twice." [P3]
+    /// pre: every distinct eligible ref exists; dim matches the stored vectors
+    /// post: averages each eligible ref once; missing refs fail before any write
+    /// Uses the same exclusions as `compute_centroid`; no prefix is imposed.
+    pub fn compute_centroid_for_refs(
+        &self,
+        entity_refs: &[String],
+        exclude_ref: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        let mut seen = std::collections::HashSet::new();
+        let mut matching = Vec::new();
+        for entity_ref in entity_refs {
+            if Self::centroid_passage_ref(entity_ref, exclude_ref) && seen.insert(entity_ref) {
+                let embedding = self.embedding.get(entity_ref)?;
+                matching.push((entity_ref.clone(), embedding.vector));
+            }
+        }
+        self.centroid_from_embeddings(&matching, "explicit entity refs", dim, store_as, model)
+    }
+
+    fn centroid_passage_ref(entity_ref: &str, exclude_ref: &str) -> bool {
+        entity_ref != exclude_ref
+            && !entity_ref.ends_with(":centroid")
+            && !entity_ref.contains(":rule:")
+    }
+
+    fn centroid_from_embeddings(
+        &self,
+        matching: &[(String, Vec<f32>)],
+        selection: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
         if matching.is_empty() {
             return Err(MemoryStoreError::NoEmbeddingsForCentroid(
-                prefix.to_string(),
+                selection.to_string(),
             ));
         }
 
         let mut centroid = vec![0.0f32; dim];
-        let mut count = 0usize;
-        for (_, vector) in &matching {
-            for (i, v) in vector.iter().enumerate() {
-                if i < dim {
-                    centroid[i] += v;
+        for (_, vector) in matching {
+            if vector.len() != dim {
+                return Err(EmbeddingError::DimensionMismatch {
+                    expected: dim,
+                    actual: vector.len(),
                 }
+                .into());
             }
-            count += 1;
+            for (sum, value) in centroid.iter_mut().zip(vector) {
+                *sum += value;
+            }
         }
 
+        let count = matching.len();
         let n = count as f32;
         for v in centroid.iter_mut() {
             *v /= n;
@@ -552,6 +595,9 @@ impl MemoryStore {
         let stored = if let Some(ref_to_store) = store_as {
             match model {
                 Some(m) => {
+                    // EmbeddingStore::store appends; a centroid has one current
+                    // value, unlike multi-passage entities. Replace its old rows.
+                    self.delete_embeddings_by_entity(ref_to_store)?;
                     self.store_embedding(ref_to_store, &centroid, m, None)?;
                     true
                 }
@@ -1822,6 +1868,120 @@ mod tests {
             !result.stored,
             "store_as without a model name must not store"
         );
+    }
+
+    /// expect: "Selected refs contribute once, without duplicating or altering source embeddings." [P3]
+    #[test]
+    fn compute_centroid_for_refs_math_and_exclusions() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let first: Vec<f32> = (0..dim).map(|i| i as f32).collect();
+        let second: Vec<f32> = first.iter().map(|v| v + 4.0).collect();
+        for (entity_ref, vector) in [
+            ("corpus:first", first.clone()),
+            ("other:second", second.clone()),
+            ("corpus:unselected", vec![99.0; dim]),
+            ("style:test:rule:1", vec![99.0; dim]),
+            ("style:test:centroid", vec![99.0; dim]),
+        ] {
+            store
+                .store_embedding(entity_ref, &vector, "m", None)
+                .expect("seed");
+        }
+        let refs: Vec<String> = [
+            "corpus:first",
+            "other:second",
+            "corpus:first",
+            "style:test:rule:1",
+            "style:test:centroid",
+            "style:test:hopper:centroid",
+            "excluded:missing",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        for _ in 0..2 {
+            let result = store
+                .compute_centroid_for_refs(
+                    &refs,
+                    "excluded:missing",
+                    dim,
+                    Some("style:test:hopper:centroid"),
+                    Some("m"),
+                )
+                .expect("selected centroid");
+            assert_eq!(result.passage_count, 2);
+            assert!(result.stored);
+            assert_eq!(
+                result.centroid,
+                first.iter().map(|v| v + 2.0).collect::<Vec<_>>()
+            );
+            assert_eq!(store.embedding_count().expect("count"), 6);
+        }
+        assert_eq!(
+            store
+                .embedding
+                .get("corpus:first")
+                .expect("original")
+                .vector,
+            first
+        );
+        assert_eq!(
+            store
+                .embedding
+                .get("other:second")
+                .expect("original")
+                .vector,
+            second
+        );
+        let prefix = store.compute_centroid("style:test:", "style:test:centroid", dim, None, None);
+        assert!(matches!(
+            prefix,
+            Err(MemoryStoreError::NoEmbeddingsForCentroid(_))
+        ));
+    }
+
+    /// expect: "A missing selected passage or invalid dimension cannot silently produce a partial centroid." [P3]
+    #[test]
+    fn compute_centroid_for_refs_rejects_missing_empty_and_wrong_dimension() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("corpus:present", &vec![2.0; dim], "m", None)
+            .expect("seed");
+        let refs = vec!["corpus:present".into(), "corpus:missing".into()];
+        let error = store
+            .compute_centroid_for_refs(
+                &refs,
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect_err("missing ref");
+        assert!(matches!(
+            error,
+            MemoryStoreError::Embedding(EmbeddingError::NotFound(_))
+        ));
+        assert_eq!(store.embedding_count().expect("count"), 1);
+        for refs in [
+            Vec::new(),
+            vec![
+                "style:test:rule:absent".into(),
+                "style:test:centroid".into(),
+            ],
+        ] {
+            assert!(matches!(
+                store.compute_centroid_for_refs(&refs, "style:test:centroid", dim, None, None),
+                Err(MemoryStoreError::NoEmbeddingsForCentroid(_))
+            ));
+        }
+        assert!(matches!(
+            store.compute_centroid_for_refs(&["corpus:present".into()], "", dim + 1, None, None),
+            Err(MemoryStoreError::Embedding(
+                EmbeddingError::DimensionMismatch { .. }
+            ))
+        ));
     }
 
     #[test]

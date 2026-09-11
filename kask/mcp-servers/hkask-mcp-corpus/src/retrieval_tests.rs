@@ -27,6 +27,7 @@ struct RecordingPort {
     short: bool,
     wrong_dimension: bool,
     response: Option<String>,
+    corrupt_centroid_db: Option<std::path::PathBuf>,
 }
 
 impl InferencePort for RecordingPort {
@@ -41,6 +42,15 @@ impl InferencePort for RecordingPort {
             .expect("prompts")
             .push(prompt.to_string());
         let response = self.response.clone().unwrap_or_else(|| SYNTHESIZED.into());
+        if let Some(path) = &self.corrupt_centroid_db {
+            // Fault after retrieval, before centroid validation: target the lookup,
+            // not an earlier KNN/open failure that would leave the bug untested.
+            let db = hkask_storage::open_or_repair(&path.to_string_lossy(), PASSPHRASE)
+                .expect("fault fixture database");
+            db.sqlite_pool().expect("pool").get().expect("connection")
+                .execute("UPDATE embeddings SET vector = X'00' WHERE entity_ref = 'style:test:hopper:centroid'", [])
+                .expect("corrupt centroid vector");
+        }
         Box::pin(async move {
             Ok(InferenceResult {
                 text: response,
@@ -404,12 +414,33 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
                 author: "jb-test".into(),
                 db_path: database.to_string_lossy().into(),
                 passphrase: PASSPHRASE.into(),
+                refs_file: None,
+                dimension: None,
             }))
             .await,
     );
     assert_eq!(centroid["centroid_entity_ref"], "style:jb-test:centroid");
     assert_eq!(centroid["passage_count"], 2);
     assert_eq!(centroid["stored"], true);
+    let dimension = content(
+        server
+            .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
+                author: "jb-test".into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                refs_file: None,
+                dimension: Some("composite".into()),
+            }))
+            .await,
+    );
+    assert_eq!(
+        dimension["centroid_entity_ref"],
+        "style:jb-test:composite:centroid"
+    );
+    assert_eq!(
+        dimension["passage_count"], 2,
+        "dimension without a refs file preserves prefix selection"
+    );
 
     // Idempotency through the tool: the stored centroid is excluded on
     // recompute, so the passage count stays at the seeded set.
@@ -419,6 +450,8 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
                 author: "jb-test".into(),
                 db_path: database.to_string_lossy().into(),
                 passphrase: PASSPHRASE.into(),
+                refs_file: None,
+                dimension: None,
             }))
             .await,
     );
@@ -455,6 +488,241 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
         "distance to the all-ones centroid is 0.0, got {}",
         validation.distance
     );
+}
+
+/// expect: "Step 6 reuses selected embeddings and validates rewrites against their dimension, not an author fallback." [P3]
+#[tokio::test]
+async fn dimension_centroid_tool_and_rewrite_validation_round_trip() {
+    let directory = fixture();
+    let port = Arc::new(RecordingPort::default());
+    let server = server(Arc::clone(&port));
+    let database = directory.path().join("dimension.db");
+    let store =
+        crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("store");
+    for (entity_ref, value) in [
+        ("corpus:selected:1", 1.0),
+        ("other:selected:2", 1.0),
+        ("corpus:unselected", -1.0),
+        ("style:step6:centroid", -1.0),
+        ("style:step6:gentle:centroid", -1.0),
+        ("style:step6:rule:1", -1.0),
+    ] {
+        store
+            .store_embedding(
+                entity_ref,
+                &vec![value; crate::embedding_dim()],
+                "offline",
+                None,
+            )
+            .expect("seed existing embeddings");
+    }
+    let refs_file = directory.path().join("refs.txt");
+    std::fs::write(&refs_file, " corpus:selected:1 \r\nother:selected:2\n\ncorpus:selected:1\nstyle:step6:rule:1\nstyle:step6:centroid\nstyle:step6:hopper:centroid\n")
+        .expect("refs file");
+    let centroid_request = || crate::tools::compose_tools::CentroidRequest {
+        author: "step6".into(),
+        db_path: database.to_string_lossy().into(),
+        passphrase: PASSPHRASE.into(),
+        refs_file: Some(refs_file.to_string_lossy().into()),
+        dimension: Some(" Hopper ".into()),
+    };
+    for _ in 0..2 {
+        let result = content(server.corpus_centroid(Parameters(centroid_request())).await);
+        assert_eq!(result["centroid_entity_ref"], "style:step6:hopper:centroid");
+        assert_eq!(result["passage_count"], 2);
+        assert_eq!(result["stored"], true);
+        assert_eq!(
+            store.embedding_count().expect("count"),
+            7,
+            "only destination added"
+        );
+    }
+    assert!(
+        port.inputs.lock().expect("inputs").is_empty(),
+        "centroids do not re-embed passages"
+    );
+
+    let config_path = directory.path().join("cognition.yaml");
+    // Deliberately points at the opposite author centroid: rewrite must override it.
+    let config = json!({
+        "author":"step6", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+        "centroid_entity_ref":"style:step6:centroid", "retrieval":{"k_max":10}},
+        "validation":{"centroid_distance_max":0.25}
+    });
+    std::fs::write(
+        &config_path,
+        serde_yaml_neo::to_string(&config).expect("yaml"),
+    )
+    .expect("config file");
+    let rewrite = |dimension: &str| crate::tools::compose_tools::RewriteRequest {
+        content: "Make this easier to read.".into(),
+        author: "step6".into(),
+        db_path: database.to_string_lossy().into(),
+        passphrase: PASSPHRASE.into(),
+        dimension: dimension.into(),
+        config_path: Some(config_path.to_string_lossy().into()),
+    };
+    let result = content(server.corpus_rewrite(Parameters(rewrite("Hopper"))).await);
+    assert_eq!(result["centroid_entity_ref"], "style:step6:hopper:centroid");
+    assert_eq!(result["centroid_missing"], false);
+    assert_eq!(result["style_passed"], true);
+    assert!(
+        result["centroid_distance"]
+            .as_f64()
+            .expect("distance")
+            .abs()
+            < 1e-9
+    );
+    assert_eq!(
+        port.inputs.lock().expect("inputs").len(),
+        2,
+        "query and generated prose embedded"
+    );
+
+    store
+        .delete_embeddings_by_entity("style:step6:hopper:centroid")
+        .expect("replace target");
+    store
+        .store_embedding(
+            "style:step6:hopper:centroid",
+            &vec![-1.0; crate::embedding_dim()],
+            "offline",
+            None,
+        )
+        .expect("opposite centroid");
+    let result = content(server.corpus_rewrite(Parameters(rewrite("hopper"))).await);
+    assert_eq!(result["style_passed"], false);
+    assert_eq!(result["centroid_missing"], false);
+    assert!((result["centroid_distance"].as_f64().expect("distance") - 2.0).abs() < 1e-9);
+
+    let missing = content(server.corpus_rewrite(Parameters(rewrite("lovelace"))).await);
+    assert_eq!(
+        missing["centroid_entity_ref"],
+        "style:step6:lovelace:centroid"
+    );
+    assert_eq!(missing["centroid_missing"], true);
+    assert!(missing["centroid_distance"].is_null());
+    assert!(missing["style_passed"].is_null());
+    assert_eq!(missing["rewritten"], SYNTHESIZED);
+
+    let skipped = content(
+        server
+            .corpus_compose(Parameters(crate::tools::compose_tools::ComposeRequest {
+                prompt: "Write a sentence.".into(),
+                author: "step6".into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                config_path: Some(config_path.to_string_lossy().into()),
+                no_validate: true,
+            }))
+            .await,
+    );
+    assert_eq!(skipped["centroid_missing"], false);
+    assert!(skipped["centroid_distance"].is_null());
+
+    std::fs::write(&refs_file, "corpus:selected:1\ncorpus:missing\n").expect("missing ref file");
+    let error = server
+        .corpus_centroid(Parameters(centroid_request()))
+        .await
+        .expect_err("missing ref");
+    assert!(error.to_string().contains("corpus:missing"));
+    let stored = store
+        .embeddings_by_prefix("style:step6:hopper:centroid")
+        .expect("stored target");
+    assert_eq!(
+        stored.first().expect("target").1,
+        vec![-1.0; crate::embedding_dim()],
+        "no partial overwrite"
+    );
+    assert_eq!(store.embedding_count().expect("count"), 7);
+}
+
+/// expect: "A broken centroid lookup cannot masquerade as a missing centroid or a successful rewrite." [P3]
+#[tokio::test]
+async fn rewrite_centroid_lookup_failure_is_not_missing() {
+    let directory = fixture();
+    let database = directory.path().join("fault.db");
+    let store =
+        crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("store");
+    store
+        .store_embedding(
+            "style:test:hopper:centroid",
+            &vec![1.0; crate::embedding_dim()],
+            "offline",
+            None,
+        )
+        .expect("seed centroid");
+    let config = json!({
+        "author":"test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+        "centroid_entity_ref":"style:test:hopper:centroid"},
+        "validation":{"centroid_distance_max":0.25}
+    });
+    let config_path = directory.path().join("cognition.yaml");
+    std::fs::write(
+        &config_path,
+        serde_yaml_neo::to_string(&config).expect("yaml"),
+    )
+    .expect("config");
+    let port = Arc::new(RecordingPort {
+        corrupt_centroid_db: Some(database.clone()),
+        ..Default::default()
+    });
+    let server = server(Arc::clone(&port));
+    let error = server
+        .corpus_rewrite(Parameters(crate::tools::compose_tools::RewriteRequest {
+            content: "A short sentence.".into(),
+            author: "test".into(),
+            dimension: "hopper".into(),
+            db_path: database.to_string_lossy().into(),
+            passphrase: PASSPHRASE.into(),
+            config_path: Some(config_path.to_string_lossy().into()),
+        }))
+        .await
+        .expect_err("lookup corruption surfaces");
+    assert!(
+        error.to_string().contains("Centroid lookup failed"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("Dimension mismatch"), "{error}");
+    assert_eq!(
+        port.prompts.lock().expect("prompts").len(),
+        1,
+        "fault occurred after retrieval"
+    );
+}
+
+/// expect: "A refs file cannot escape the allowed roots, and an empty selection is not a prefix fallback." [P3]
+#[cfg(unix)]
+#[tokio::test]
+async fn centroid_refs_file_containment_and_empty_selection() {
+    let directory = fixture();
+    let server = server(Arc::new(RecordingPort::default()));
+    let refs_file = directory.path().join("empty.txt");
+    std::fs::write(&refs_file, " \n\r\n").expect("empty refs");
+    let request = |path: &std::path::Path| crate::tools::compose_tools::CentroidRequest {
+        author: "test".into(),
+        db_path: directory.path().join("unused.db").to_string_lossy().into(),
+        passphrase: PASSPHRASE.into(),
+        refs_file: Some(path.to_string_lossy().into()),
+        dimension: Some("hopper".into()),
+    };
+    let error = server
+        .corpus_centroid(Parameters(request(&refs_file)))
+        .await
+        .expect_err("empty selection");
+    assert!(error.to_string().contains("contains no entity refs"));
+    assert!(!directory.path().join("unused.db").exists());
+
+    let outside = tempfile::NamedTempFile::new().expect("outside file");
+    let link = directory.path().join("escape.txt");
+    std::os::unix::fs::symlink(outside.path(), &link).expect("symlink");
+    for path in [outside.path(), link.as_path()] {
+        let error = server
+            .corpus_centroid(Parameters(request(path)))
+            .await
+            .expect_err("contained read");
+        assert!(error.to_string().contains("outside"), "{error}");
+    }
 }
 
 fn composition_request(
