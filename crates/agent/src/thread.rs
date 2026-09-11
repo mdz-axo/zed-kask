@@ -3634,8 +3634,32 @@ impl Thread {
             compaction_id.clone(),
             acp_thread::ContextCompactionStatus::InProgress,
         );
+        // zed-kask: D8 — preprocess only the manual summarizer's request copy.
+        // Keep automatic compaction, history storage, and the summary lifecycle native.
+        let condenser = if matches!(insertion, CompactionInsertion::Manual { .. }) {
+            let condenser = crate::thread_condenser();
+            if condenser.is_none() {
+                log::warn!("Kask precompression unavailable; using native summarization unchanged");
+            }
+            condenser
+        } else {
+            None
+        };
         let stream = futures::select! {
-            result = model.stream_completion(request, cx).fuse() => result,
+            result = async {
+                let request = if let Some(condenser) = condenser {
+                    cx.background_spawn(async move {
+                        let mut request = request;
+                        // The last message is the summarization instruction, not history.
+                        let end = request.messages.len().saturating_sub(1);
+                        condenser.precompress_history(&mut request.messages[..end], NO_COMPRESS_TOOLS)?;
+                        anyhow::Ok(request)
+                    }).await?
+                } else {
+                    request
+                };
+                anyhow::Ok(model.stream_completion(request, cx).await?)
+            }.fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
                 if *cancellation_rx.borrow() {
                     log::debug!("Compaction cancelled before request started");
@@ -9237,6 +9261,7 @@ mod tests {
             });
         });
 
+        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -9251,11 +9276,15 @@ mod tests {
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
+        crate::set_thread_condenser(None);
         let compaction_texts = request_texts_after_system(&compaction_request.messages);
         assert_eq!(compaction_texts.len(), 3);
         assert_eq!(compaction_texts[0], "old user");
-        assert_eq!(compaction_texts[1], "old assistant");
+        assert_eq!(compaction_texts[1], "precompressed assistant fixture");
         assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages[1].to_markdown(), "old assistant\n");
+        });
 
         model.send_completion_stream_text_chunk(&compaction_request, "summary of old context");
         model.end_completion_stream(&compaction_request);
@@ -11356,6 +11385,29 @@ mod tests {
     impl crate::ThreadCondenser for MarkerCondenser {
         fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
             format!("{output} [COMPRESSED]")
+        }
+
+        fn precompress_history(
+            &self,
+            messages: &mut [LanguageModelRequestMessage],
+            protected_tools: &[&str],
+        ) -> Result<()> {
+            assert_eq!(protected_tools, NO_COMPRESS_TOOLS);
+            assert!(
+                !messages
+                    .iter()
+                    .any(|message| message.string_contents() == COMPACTION_PROMPT)
+            );
+            for message in messages {
+                for part in &mut message.content {
+                    if let language_model::MessageContent::Text(text) = part
+                        && text == "old assistant"
+                    {
+                        *text = "precompressed assistant fixture".into();
+                    }
+                }
+            }
+            Ok(())
         }
     }
 

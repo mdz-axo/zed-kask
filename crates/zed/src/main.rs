@@ -2187,24 +2187,19 @@ fn main() {
                          (swarm panel ABW calls route through the governed MCP runtime)"
                     );
 
-                    // ── Condenser wiring: unconditional ───────────────────────
-                    //
-                    // The condenser doesn't need a model at construction time —
-                    // it uses the inference router lazily when compressing.
+                    // D8: local precompression is available to manual compaction even
+                    // when ingestion-time tool-result compression is disabled.
                     let condenser_settings = &kask_settings.condenser;
-                    if condenser_settings.auto_compress_tool_results {
-                        let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
-                            &condenser_settings.profile,
-                            condenser_settings.auto_compress_tool_results,
-                        ));
-                        agent::set_thread_condenser(Some(condenser));
-                        log::info!(
-                            "hKask thread condenser wired — tool results will be compressed (profile: {})",
-                            condenser_settings.profile
-                        );
-                    } else {
-                        log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
-                    }
+                    let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
+                        &condenser_settings.profile,
+                        condenser_settings.auto_compress_tool_results,
+                    ));
+                    agent::set_thread_condenser(Some(condenser));
+                    log::info!(
+                        "hKask manual-compaction precompression wired (profile: {}, automatic tool-result compression: {})",
+                        condenser_settings.profile,
+                        condenser_settings.auto_compress_tool_results
+                    );
 
                     if kask_settings.memory.auto_inject {
                         log::info!("hKask context injection enabled — injector will be wired after agent resolves");

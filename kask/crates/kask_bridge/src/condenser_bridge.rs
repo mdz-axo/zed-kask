@@ -1,5 +1,5 @@
-//! Thread condenser — compresses tool results before they enter the message
-//! history (D8).
+//! Thread condenser — ingestion compression and manual-compaction precompression
+//! over the existing local algorithms (D8).
 //!
 //! The `BridgeThreadCondenser` implements the `agent::ThreadCondenser` trait
 //! by delegating to a `hkask_condenser::CondenserEngine`. It:
@@ -14,8 +14,12 @@
 //! It is called from the tool-result handling path in `run_turn_internal`.
 
 use agent::ThreadCondenser;
+use anyhow::{Result, anyhow};
 use hkask_condenser::engine::CondenserEngine;
 use hkask_condenser::types::Profile;
+use language_model::{
+    LanguageModelRequestMessage, LanguageModelToolResultContent, MessageContent, Role,
+};
 use std::sync::Mutex;
 
 /// Bridge thread condenser — wraps `CondenserEngine` for use in zed's agent threads.
@@ -73,11 +77,133 @@ impl ThreadCondenser for BridgeThreadCondenser {
 
         result.content
     }
+
+    fn precompress_history(
+        &self,
+        messages: &mut [LanguageModelRequestMessage],
+        protected_tools: &[&str],
+    ) -> Result<()> {
+        let protected_start = messages
+            .iter()
+            .rposition(|message| {
+                message.role == Role::User
+                    && message
+                        .content
+                        .iter()
+                        .any(|part| !matches!(part, MessageContent::ToolResult(_)))
+            })
+            .unwrap_or(0);
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|error| anyhow!("Kask precompression unavailable: {error}"))?;
+        for message in messages.iter_mut().take(protected_start) {
+            for part in &mut message.content {
+                let MessageContent::ToolResult(result) = part else {
+                    continue;
+                };
+                if result.is_error || protected_tools.contains(&result.tool_name.as_ref()) {
+                    continue;
+                }
+                for part in &mut result.content {
+                    let LanguageModelToolResultContent::Text(text) = part else {
+                        continue;
+                    };
+                    // JSON must remain parseable, not become a set of disconnected lines.
+                    if serde_json::from_str::<serde_json::Value>(text).is_ok() {
+                        continue;
+                    }
+                    let compressed = engine.compress(&result.tool_name, text, None);
+                    if compressed.content.trim().is_empty() {
+                        continue;
+                    }
+                    let excerpt = format!(
+                        "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
+                        compressed.algorithm, compressed.content
+                    );
+                    if excerpt.len() < text.len() {
+                        *text = excerpt.into();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Manual precompression reduces expendable output, not instructions or structure.
+    #[test]
+    fn history_precompression_preserves_protected_content_and_routes_algorithms() -> Result<()> {
+        use language_model::LanguageModelToolResult;
+        let user = |text: &str| LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![text.into()],
+            cache: false,
+            reasoning_details: None,
+        };
+        let tool = |name: &str, text: &str, is_error| LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: name.into(),
+                tool_name: name.into(),
+                is_error,
+                content: vec![text.to_string().into()],
+                output: Some(serde_json::json!({"original": text})),
+            })],
+            cache: true,
+            reasoning_details: None,
+        };
+        let output = "repeated progress: build is processing a compilation unit\n".repeat(300);
+        let mut assistant = user("Decision: keep the public API unchanged.");
+        assistant.role = Role::Assistant;
+        assistant.reasoning_details = Some(std::sync::Arc::new(
+            serde_json::json!([{"signature": "keep"}]),
+        ));
+        let mut history = vec![
+            user("Never remove the authentication check."),
+            assistant,
+            tool("terminal", &output, false),
+            tool("conversation_history", &output, false),
+            tool("web_fetch", &output, false),
+            tool("read_file", &output, false),
+            tool(
+                "terminal",
+                &serde_json::to_string_pretty(&vec!["entry"; 300])?,
+                false,
+            ),
+            tool("terminal", &output, true),
+            tool("terminal", "short output", false),
+            user("Correction: preserve the error type too."),
+            tool("terminal", &output, false),
+        ];
+        let mut expected = history.clone();
+        let condenser = BridgeThreadCondenser::new("normal", false);
+        assert_eq!(condenser.compress_tool_result("terminal", &output), output);
+        condenser.precompress_history(&mut history, &["read_file"])?;
+        for (index, algorithm) in [(2, "rtk_style"), (3, "word_rank"), (4, "flashrank")] {
+            let changed = history
+                .get(index)
+                .expect("fixture message")
+                .string_contents();
+            assert!(changed.len() < output.len());
+            assert!(changed.contains(algorithm));
+            assert!(changed.contains("full tool output remains in the original thread"));
+            let Some(MessageContent::ToolResult(result)) =
+                expected.get_mut(index).and_then(|m| m.content.first_mut())
+            else {
+                panic!("expected tool result")
+            };
+            result.content = vec![changed.into()];
+        }
+        // Includes role/order, call IDs, cache flags, reasoning, debug output,
+        // valid JSON, failed results, all prose, and the latest exchange.
+        assert_eq!(history, expected);
+        Ok(())
+    }
 
     #[test]
     fn compress_tool_result_returns_compressed_text() {

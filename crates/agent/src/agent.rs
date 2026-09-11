@@ -3146,8 +3146,8 @@ pub(crate) fn context_injector_for(
     context_injector()
 }
 
-/// Thread condenser — compresses tool results before they enter the message
-/// history (D8).
+/// Thread condenser — compresses incoming tool results and precompresses a
+/// copy of historical output for manual native summarization (D8).
 ///
 /// Called from the tool-result handling path in `run_turn_internal`.
 /// When set, tool output text is compressed before being stored in the
@@ -3162,6 +3162,15 @@ pub trait ThreadCondenser: Send + Sync {
     /// Returns the compressed text. If compression is disabled or the output
     /// is already within budget, returns the original text unchanged.
     fn compress_tool_result(&self, tool_name: &str, output: &str) -> String;
+
+    /// Precompress eligible older tool output, independently of ingestion settings.
+    /// The caller excludes the summarization instruction. Preserve user/assistant
+    /// prose, the latest user-led exchange, and the named protected tools.
+    fn precompress_history(
+        &self,
+        messages: &mut [language_model::LanguageModelRequestMessage],
+        protected_tools: &[&str],
+    ) -> Result<()>;
 }
 
 /// Global hook for the thread condenser (D8).
