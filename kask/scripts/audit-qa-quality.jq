@@ -8,6 +8,7 @@ def score($m):
   then null else 0.30*$m.sar + 0.25*$m.cvr + 0.20*$m.hfr + 0.25*$m.nlr end;
 def finding($code; $detail):
   {code:$code, severity:"high", detail:$detail,
+   severity_basis:"Conservative release hold: semantic materiality has not been classified by this mechanical subset.",
    disposition:"Re-examine the answer and its citation; do not release on this audit."};
 def source_ok: type == "object" and (.entity_ref | nonblank)
   and (.source | nonblank) and (.text | nonblank);
@@ -131,6 +132,8 @@ def audit_row($index):
 | {
   audit_kind:"mechanical_grounding_verify_subset", decoupling:"in_thread",
   inputs:{qa:$qa_path,chunks:$chunks_path},
+  target_fields:["response.output", "response.evidence_quotes"],
+  instruction_scope:"Instruction text is checked structurally only; factual premises in questions are not semantically verified.",
   status:(if ($findings|length)>0 then "findings" elif ($gaps|length)>0 then "incomplete" else "mechanical_checks_completed" end),
   launch_authorized:false,
   launch_gate:"Not evaluated by this subset: every applicable grounding-verify report must reach >=0.80, no high/critical findings, all missing checks resolved, structural targets reconciled, and operator semantic judgment recorded. A partial aggregate never authorizes pilot/full runs.",
@@ -153,7 +156,8 @@ def audit_row($index):
                 else ($type_counts|map(.count)) as $counts | ($counts|min)/($counts|max) end),
       limitation:"Requested qa_type metadata, not verified Bloom difficulty; min/max count evenness includes absent expected types."},
     source_diversity:{identified_sources:($covered_sources|length),available_sources:($all_sources|length),
-      coverage:ratio(($covered_sources|length);($all_sources|length)),
+      coverage:(if ($qa_rows|length)==0 or any($qa_rows[];.source_state!="identified") then null
+                else ratio(($covered_sources|length);($all_sources|length)) end),
       missing_sources:($all_sources-$covered_sources),
       limitation:"Source identity coverage is not semantic subject diversity; imposed-frame review remains unperformed."}},
   data_gaps:$gaps, source_errors:$source_errors, duplicate_source_refs:$duplicate_refs,

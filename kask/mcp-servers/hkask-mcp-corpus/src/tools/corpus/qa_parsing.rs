@@ -7,6 +7,7 @@ pub(crate) struct ParsedQa {
     pub instruction: String,
     pub output: String,
     pub qa_type: String,
+    pub response_type: Option<String>,
     pub difficulty: usize,
     pub concepts: Vec<String>,
     pub source: String,
@@ -14,12 +15,30 @@ pub(crate) struct ParsedQa {
     pub evidence_quotes: Vec<String>,
 }
 
-/// Parse a QA record from a JSONL line. Handles both flat and envelope formats.
+#[derive(Debug, PartialEq)]
+pub(crate) enum QaRecordError {
+    GeneratorError,
+    Malformed,
+}
+
+/// Parse object-shaped QA records; missing or blank fields are counted by the
+/// caller's structural filter, not confused with malformed JSON or generator failures.
 ///
 /// Flat format: `{"instruction": ..., "output": ..., "qa_type": ...}`
 /// Envelope format: `{"chunk_ref": ..., "source": ..., "qa_type": ..., "response": {...}}`
-pub(crate) fn parse_qa_record(line: &str) -> Option<ParsedQa> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
+    let v: serde_json::Value = serde_json::from_str(line).map_err(|_| QaRecordError::Malformed)?;
+    if !v.is_object() {
+        return Err(QaRecordError::Malformed);
+    }
+    if v.get("error").is_some_and(|error| !error.is_null()) {
+        return Err(QaRecordError::GeneratorError);
+    }
+    if v.get("response")
+        .is_some_and(|response| !response.is_object())
+    {
+        return Err(QaRecordError::Malformed);
+    }
     let (instruction, output, qa_type, difficulty, concepts, source, chunk_ref, evidence_quotes) =
         if let Some(resp) = v.get("response").and_then(|r| r.as_object()) {
             // Envelope format
@@ -102,10 +121,14 @@ pub(crate) fn parse_qa_record(line: &str) -> Option<ParsedQa> {
                     .unwrap_or_default(),
             )
         };
-    if instruction.is_empty() || output.is_empty() {
-        return None;
-    }
-    Some(ParsedQa {
+    let response_type = v
+        .get("response")
+        .unwrap_or(&v)
+        .get("type")
+        .and_then(|value| value.as_str())
+        .map(String::from);
+    Ok(ParsedQa {
+        response_type,
         instruction,
         output,
         qa_type,
@@ -165,7 +188,10 @@ mod tests {
         assert_eq!(parsed.concepts, prompt.concepts);
         let value: serde_json::Value = serde_json::from_str(first)?;
         assert_eq!(value["provenance"]["prompt_id"], prompt.prompt_id);
-        assert!(parse_qa_record(lines.next().expect("failure row")).is_none());
+        assert!(matches!(
+            parse_qa_record(lines.next().expect("failure row")),
+            Err(QaRecordError::GeneratorError)
+        ));
         assert!(lines.next().is_none());
         Ok(())
     }

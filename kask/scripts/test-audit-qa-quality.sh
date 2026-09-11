@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bounded contract controls for the operator-approved grounding audit repair.
 # No inference, corpus mutation, ingestion or production run. All fixtures
-# are synthetic except optional caller-supplied read-only control inputs.
+# here are synthetic; rerun retained real controls separately, read-only.
 set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WORK=$(mktemp -d)
@@ -119,4 +119,18 @@ check 'six-grams never span answer boundaries' 2 "$WORK/mixed.jsonl" "$WORK/chun
 mutate '.response.evidence_quotes=["Revenue rose from ten to twelve units.","Invented claim."] | .response.output=(.response.evidence_quotes|tojson)'
 check 'mixed verified and rejected citations obey all four weights' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '(.rows[0].fact_score-0.625|fabs)<1e-12 and .rows[0].fact_score_breakdown=={sar:0.5,cvr:0.5,hfr:0.5,nlr:1,claims_checked:2}'
+mutate '.response.output="Unverified ordinary narrative." | .response.narrative_fields=[] | .response.provenance="tool_verified"'
+check 'caller cannot waive narrative check or elevate synthesis' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.rows[0].narrative_check.status=="unperformed" and .rows[0].verified_claims[-1].provenance=="model_inference" and .rows[0].fact_score_breakdown.sar==null and .rows[0].fact_score_breakdown.hfr==null'
+mutate '.chunk_ref="chunk:b" | .source="book-b" | .response.evidence_quotes=["Costs fell from nine to seven units."] | .response.output=(.response.evidence_quotes|tojson)'
+cat "$WORK/base.jsonl" "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
+check 'source diversity measures both identified books' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.quality_evidence.source_diversity.identified_sources==2 and .quality_evidence.source_diversity.coverage==1'
+jq -c '.response' "$WORK/base.jsonl" > "$WORK/case.jsonl"
+check 'missing metadata makes source diversity unknown not zero' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.quality_evidence.source_diversity.coverage==null'
+# Case, punctuation and embedded newline changes are not exact byte matches.
+mutate '.response.evidence_quotes=["revenue rose from ten to twelve units."] | .response.output=(.response.evidence_quotes|tojson)'
+check 'citation checking does not normalize case' 1 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.rows[0].verified_claims[0].provenance=="rejected"'
 echo "PASS: $passed bounded audit controls"

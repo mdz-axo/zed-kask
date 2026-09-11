@@ -595,10 +595,8 @@ impl MemoryStore {
         let stored = if let Some(ref_to_store) = store_as {
             match model {
                 Some(m) => {
-                    // EmbeddingStore::store appends; a centroid has one current
-                    // value, unlike multi-passage entities. Replace its old rows.
-                    self.delete_embeddings_by_entity(ref_to_store)?;
-                    self.store_embedding(ref_to_store, &centroid, m, None)?;
+                    // A centroid has one current value, unlike multi-passage entities.
+                    self.embedding.replace(ref_to_store, &centroid, m, None)?;
                     true
                 }
                 None => false,
@@ -1982,6 +1980,122 @@ mod tests {
                 EmbeddingError::DimensionMismatch { .. }
             ))
         ));
+    }
+
+    /// expect: "A failed centroid INSERT preserves the previous value and its KNN index." [P3]
+    #[test]
+    fn compute_centroid_insert_failure_preserves_original() -> anyhow::Result<()> {
+        for trigger in [
+            // Fail the metadata INSERT after replacement has deleted the old rows.
+            "CREATE TRIGGER fail_centroid_insert BEFORE INSERT ON embeddings
+             WHEN NEW.entity_ref = 'style:test:hopper:centroid'
+             BEGIN SELECT RAISE(FAIL, 'forced centroid INSERT failure'); END;",
+            // Occupy the new rowid so the subsequent vec INSERT actually fails.
+            "CREATE TRIGGER fail_centroid_vec_insert AFTER INSERT ON embeddings
+             WHEN NEW.entity_ref = 'style:test:hopper:centroid'
+             BEGIN INSERT INTO vec_embeddings (rowid, embedding)
+                 VALUES (NEW.rowid, NEW.vector); END;",
+        ] {
+            let driver = SqliteDriver::in_memory_driver();
+            let store = MemoryStore::new(
+                hkask_storage::HMemStore::from_driver(Arc::clone(&driver))?,
+                hkask_storage::EmbeddingStore::from_driver(
+                    Arc::clone(&driver),
+                    hkask_storage::embedding_dim(),
+                )?,
+            );
+            let dim = hkask_storage::embedding_dim();
+            let destination = "style:test:hopper:centroid";
+            let source = vec![2.0; dim];
+            let original = vec![1.0; dim];
+            let source_id = store.store_embedding("corpus:source", &source, "m", Some("source"))?;
+            let original_id =
+                store.store_embedding(destination, &original, "old", Some("original"))?;
+            let pool = driver.sqlite_pool().expect("SQLite pool");
+            pool.get()?.execute_batch(trigger)?;
+
+            let error = store
+                .compute_centroid_for_refs(
+                    &["corpus:source".into()],
+                    destination,
+                    dim,
+                    Some(destination),
+                    Some("new"),
+                )
+                .expect_err("forced INSERT must fail");
+            assert!(
+                matches!(
+                    error,
+                    MemoryStoreError::Embedding(EmbeddingError::Storage(_))
+                ),
+                "{error}"
+            );
+            let retained = store.embedding.get(destination)?;
+            assert_eq!(retained.id, original_id);
+            assert_eq!(retained.vector, original);
+            assert_eq!(retained.model, "old");
+            assert_eq!(retained.passage_text.as_deref(), Some("original"));
+            assert_eq!(store.embedding_count()?, 2);
+            assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
+            assert_eq!(store.embedding.get("corpus:source")?.vector, source);
+            let nearest = store.search_similar(&original, 1)?;
+            let nearest = nearest.first().expect("old centroid remains indexed");
+            assert_eq!(nearest.embedding.id, original_id);
+            assert_eq!(nearest.distance, 0.0);
+            let vectors: i64 =
+                pool.get()?
+                    .query_row("SELECT COUNT(*) FROM vec_embeddings", [], |row| row.get(0))?;
+            assert_eq!(vectors, 2, "rollback must also remove any new index row");
+        }
+        Ok(())
+    }
+
+    /// expect: "Concurrent recomputations leave one centroid without copying source embeddings." [P3]
+    #[test]
+    fn compute_centroid_concurrently_keeps_one_destination() -> anyhow::Result<()> {
+        let store = Arc::new(test_store());
+        let dim = hkask_storage::embedding_dim();
+        let destination = "style:test:hopper:centroid";
+        let source = vec![2.0; dim];
+        let source_id = store.store_embedding("corpus:source", &source, "m", Some("source"))?;
+        // Ordinary embedding writes must still append, including old duplicate destinations.
+        store.store_embedding(destination, &vec![0.0; dim], "old", None)?;
+        store.store_embedding(destination, &vec![1.0; dim], "old", None)?;
+        assert_eq!(store.embedding_count()?, 3);
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        for _ in 0..4 {
+                            let result = store.compute_centroid_for_refs(
+                                &["corpus:source".into(), "corpus:source".into()],
+                                destination,
+                                dim,
+                                Some(destination),
+                                Some("new"),
+                            )?;
+                            assert!(result.stored);
+                            assert_eq!(result.passage_count, 1);
+                            assert_eq!(result.centroid, source);
+                        }
+                        Ok::<_, MemoryStoreError>(())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().expect("centroid worker")?;
+            }
+            Ok::<_, MemoryStoreError>(())
+        })?;
+        assert_eq!(store.embeddings_by_prefix(destination)?.len(), 1);
+        assert_eq!(store.embedding_count()?, 2);
+        assert_eq!(store.embedding.get(destination)?.vector, source);
+        assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
+        assert_eq!(store.embedding.get("corpus:source")?.vector, source);
+        assert_eq!(store.search_similar(&source, 10)?.len(), 2);
+        Ok(())
     }
 
     #[test]

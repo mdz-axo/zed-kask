@@ -139,7 +139,7 @@ and the whole book silently degraded to Tesseract.
 | `corpus_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `corpus_generate_qa_batch`. |
 | `corpus_generate_qa` | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
 | `corpus_generate_qa_batch` | Execute canonical prepared QA records unchanged under one optional provider-prefixed model. AIMD synchronous processing with 3-attempt retry or provider Batch API; shared completion accounting and fallible incremental output. |
-| `corpus_ingest_qa` | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance. |
+| `corpus_ingest_qa` | Structurally validate, exact-dedup, and store generated QAs with evidence metadata; preserve concise answers and report reconciled row/storage counts. |
 | `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
 | `corpus_purge_qa` | Purge embeddings and h_mems by entity-ref prefix in the named DB; invalidate matching warm passages and overlapping in-flight publications. |
 
@@ -222,6 +222,68 @@ newline write, or flush errors propagate as tool errors, **never an OK
 summary**. Output may be partial on error; this is not atomic replacement or
 an `fsync` durability guarantee. The single-chunk/cross-reference
 `corpus_generate_qa` capability is unchanged.
+
+### Ingest QA contract (Brooks fix, operator-approved 2026-09-11)
+
+`corpus_ingest_qa` reads `generated_jsonl` with the shared contained, size-capped
+UTF-8 reader (`read_text_capped`). Flat QA objects and generation envelopes are
+accepted. `dataset` and `owner` must be nonblank, including in dry-run mode.
+
+Admission is **structural only**, not semantic quality scoring: `instruction`,
+`output`, `qa_type`, `source`, and `chunk_ref` must be nonblank strings. In an
+envelope, instruction/output come from `response` and the required metadata
+comes from the outer object. No minimum question or answer length applies;
+`Thirty`, `72 hours`, `A collision`, and `exp(-E/kB T)` are valid answers.
+Whitespace-only fields fail, but retained text is not trimmed or rewritten.
+Deduplication keeps the **first structurally valid row** for each case-insensitive
+exact instruction, within this input file; it does not trim or semantically
+compare instructions, or deduplicate against the existing DB.
+
+Training JSONL retains `instruction`, empty `input`, and `output`, and now also
+carries `qa_type`, `type`, `source`, `chunk_ref`, `evidence_quotes`, `difficulty`,
+and `concepts`. The supplied string `type` is preserved (or defaults to
+`qa_type` if absent); it does not replace the required `qa_type`. QA h_mem values
+preserve the same metadata plus the existing `question`, `answer`, `bloom_level`
+(from `qa_type`) and `dataset`. Dublin Core/BIBO and PKO metadata remain in the
+queryable ontology column. Evidence quotes remain optional; ingestion neither
+verifies quotations nor makes semantic grounding claims. This path stores h_mems,
+not embeddings.
+
+Every returned summary reconciles:
+
+- `total_nonblank_rows = generator_errors + malformed + parsed`. Blank lines
+  are ignored. A non-null top-level `error` marks a generator-error row (never
+  training data); invalid JSON, non-object rows and non-object `response`
+  envelopes are malformed. Objects with missing/blank required fields count
+  as parsed, then as filter drops.
+- `parsed = filter_drops + duplicates + retained`.
+- Existing fields remain: `filtered = duplicates + retained`,
+  `deduped = retained`, and `stored_h_mems = stored`.
+- Non-dry runs satisfy `retained = stored + failed`. `failed` counts failed
+  h_mem insert attempts, not generator or parse failures. Each failure is logged
+  and returned in `storage_errors` with its entity and reason;
+  `status: "partial_failure"` is not completed storage. With no insert failures,
+  status is `complete`.
+- Dry-run returns `dry_run: true`, `status: "dry_run"`, and zero `stored`,
+  `stored_h_mems`, and `failed`, without writing output or opening the DB.
+
+Non-dry output contains **all retained QA**, even when a DB insert fails.
+Serialization, file-write and DB-open failures propagate as tool errors, not
+stored counts. Output writing precedes DB opening; the file and per-row inserts
+are not atomic, so a tool error can leave output or earlier inserts intact.
+
+**Before re-ingestion:** inspect the target DB and verify the exact dataset
+prefix `training:qa:{dataset}:`, then explicitly purge that verified prefix with
+`corpus_purge_qa` in that DB. Do not purge a broad or inferred prefix. Existing
+entity naming stays `training:qa:{dataset}:{source}:{retained_index}`; ingest
+neither purges nor replaces a prior run, and reordered survivors can leave stale
+records. Live purge/re-ingestion is an operator/coordinator action, not an
+automatic migration.
+
+Offline public-tool coverage is in `tools/corpus/ingest_tests.rs`: contained
+fixtures and isolated SQLCipher DBs test dry-run, concise answers, metadata
+read-back, exact duplicates, rejection accounting, invalid requests, input caps,
+and injected storage failures. No active corpus DB is used.
 
 ### Compose Output (3)
 

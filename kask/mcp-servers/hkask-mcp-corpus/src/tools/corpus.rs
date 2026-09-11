@@ -24,13 +24,15 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub(crate) mod clustering;
+#[cfg(test)]
+mod ingest_tests;
 mod lora_config;
 mod qa_parsing;
 mod qa_types;
 
 pub(crate) use clustering::read_tagged_chunks;
 use lora_config::build_lora_config;
-use qa_parsing::{ParsedQa, parse_qa_record};
+use qa_parsing::{ParsedQa, QaRecordError, parse_qa_record};
 pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
 
 // Re-export helpers used by the service layer (services/consolidation.rs,
@@ -156,41 +158,56 @@ impl CorpusServer {
     // ── Ingest QA ─────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Ingest generated QA pairs: parse, quality-filter, exact-match dedup (case-insensitive on instruction), write training JSONL, store QA h_mems with 5W1H dimension + Dublin Core / PKO metadata. Semantic dedup (SemDeDup K-means) was removed — see the inline rationale."
+        description = "Ingest generated QA pairs with structural-only nonblank checks (instruction, output, qa_type, source, chunk_ref); no length or semantic filtering. Case-insensitive exact-instruction dedup keeps the first valid row. Reads contained, size-capped JSONL; preserves evidence and source metadata in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run writes nothing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
     )]
     pub async fn corpus_ingest_qa(
         &self,
         Parameters(req): Parameters<IngestQaRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_ingest_qa", async {
-            let content = std::fs::read_to_string(&req.generated_jsonl).map_err(|e| {
-                McpToolError::invalid_argument(format!("Cannot read generated_jsonl '{}': {e}", req.generated_jsonl))
-            })?;
+            for (name, value) in [("dataset", &req.dataset), ("owner", &req.owner)] {
+                if value.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "{name} must be nonblank"
+                    )));
+                }
+            }
+            let content = read_text_capped(&req.generated_jsonl, "generated_jsonl")?;
 
-            // Parse QA records — handle both flat and envelope formats
+            let mut total_nonblank_rows = 0usize;
+            let mut generator_errors = 0usize;
             let mut malformed = 0usize;
-            let qas: Vec<ParsedQa> = content
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .filter_map(|line| parse_qa_record(line).or_else(|| {
-                    malformed += 1;
-                    None
-                }))
-                .collect();
-            tracing::info!("  Parsed: {} ({} malformed rejected)", qas.len(), malformed);
+            let mut qas = Vec::new();
+            for line in content.lines().filter(|line| !line.trim().is_empty()) {
+                total_nonblank_rows += 1;
+                match parse_qa_record(line) {
+                    Ok(qa) => qas.push(qa),
+                    Err(QaRecordError::GeneratorError) => generator_errors += 1,
+                    Err(QaRecordError::Malformed) => malformed += 1,
+                }
+            }
+            tracing::info!(
+                parsed = qas.len(),
+                malformed,
+                generator_errors,
+                "Parsed QA input"
+            );
 
-            // Quality filter
+            // Structural admission only: concise answers are not low-quality answers.
             let filtered: Vec<&ParsedQa> = qas
                 .iter()
                 .filter(|q| {
-                    q.instruction.len() >= 30
-                        && q.output.len() >= 50
-                        && !q.qa_type.is_empty()
-                        && q.chunk_ref.is_some()
+                    !q.instruction.trim().is_empty()
+                        && !q.output.trim().is_empty()
+                        && !q.qa_type.trim().is_empty()
+                        && !q.source.trim().is_empty()
+                        && q.chunk_ref
+                            .as_ref()
+                            .is_some_and(|value| !value.trim().is_empty())
                 })
                 .collect();
             tracing::info!(
-                "  Quality filter: {} (removed {})",
+                "  Structural filter: {} (removed {})",
                 filtered.len(),
                 qas.len() - filtered.len()
             );
@@ -215,29 +232,58 @@ impl CorpusServer {
             }
 
             let deduped_count = deduped.len();
-            tracing::info!("  Deduped: {} (removed {})", deduped_count, filtered.len() - deduped_count);
+            tracing::info!(
+                "  Deduped: {} (removed {})",
+                deduped_count,
+                filtered.len() - deduped_count
+            );
 
+            let mut result = json!({
+                "total_nonblank_rows": total_nonblank_rows,
+                "generator_errors": generator_errors,
+                "malformed": malformed,
+                "parsed": qas.len(),
+                "filtered": filtered.len(),
+                "filter_drops": qas.len() - filtered.len(),
+                "duplicates": filtered.len() - deduped_count,
+                "deduped": deduped_count,
+                "retained": deduped_count,
+                "stored": 0,
+                "stored_h_mems": 0,
+                "failed": 0,
+                "storage_errors": [],
+                "dry_run": req.dry_run,
+                "status": "dry_run",
+            });
             if req.dry_run {
-                return Ok(json!({
-                    "parsed": qas.len(),
-                    "filtered": filtered.len(),
-                    "deduped": deduped_count,
-                    "dry_run": true,
-                }));
+                return Ok(result);
             }
 
-            // Write training JSONL
-            let train: String = deduped.iter().map(|q| {
-                serde_json::to_string(&serde_json::json!({"instruction": q.instruction, "input": "", "output": q.output}))
-                    .unwrap_or_default()
-            }).collect::<Vec<_>>().join("\n");
-            crate::helpers::write_contained(&req.output, &(train + "\n"))?;
+            // Keep evidence available for downstream audits, outside the training text.
+            let mut train = String::new();
+            for qa in &deduped {
+                let row = json!({
+                    "instruction": qa.instruction, "input": "", "output": qa.output,
+                    "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
+                    "source": qa.source, "chunk_ref": qa.chunk_ref,
+                    "evidence_quotes": qa.evidence_quotes,
+                    "difficulty": qa.difficulty, "concepts": qa.concepts,
+                });
+                train.push_str(
+                    &serde_json::to_string(&row)
+                        .map_err(|e| McpToolError::internal(format!("Serialize QA: {e}")))?,
+                ); // rr0044-ok: serialization of own JSON value
+                train.push('\n');
+            }
+            crate::helpers::write_contained(&req.output, &train)?;
             tracing::info!("  Wrote: {} QAs to {}", deduped_count, req.output);
 
-            // Store h_mems + embeddings
+            // Store h_mems; this path does not generate embeddings. The output
+            // file and individual DB inserts are not one atomic transaction.
             let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
             let webid = owner_webid(&req.owner);
             let mut stored = 0usize;
+            let mut storage_errors = Vec::new();
 
             for (i, qa) in deduped.iter().enumerate() {
                 let entity = format!("training:qa:{}:{}:{}", req.dataset, qa.source, i);
@@ -245,6 +291,8 @@ impl CorpusServer {
                     "question": qa.instruction,
                     "answer": qa.output,
                     "bloom_level": qa.qa_type,
+                    "qa_type": qa.qa_type,
+                    "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
                     "source": qa.source,
                     "dataset": req.dataset,
                     "difficulty": qa.difficulty,
@@ -270,18 +318,25 @@ impl CorpusServer {
                     .with_visibility(hkask_types::Visibility::Public)
                     .with_confidence(0.8)
                     .with_ontology(ontology);
-                if store.store(h_mem).is_ok() {
-                    stored += 1;
+                match store.store(h_mem) {
+                    Ok(()) => stored += 1,
+                    Err(error) => {
+                        tracing::warn!(%entity, %error, "QA h_mem storage failed");
+                        storage_errors.push(json!({"entity": entity, "error": error.to_string()}));
+                    }
                 }
             }
-            tracing::info!("  Stored: {} QA h_mems", stored);
-
-            let result = json!({
-                "parsed": qas.len(),
-                "filtered": filtered.len(),
-                "deduped": deduped_count,
-                "stored_h_mems": stored,
-                "output": req.output,
+            let failed = storage_errors.len();
+            tracing::info!(stored, failed, "QA h_mem storage finished");
+            result["stored"] = json!(stored);
+            result["stored_h_mems"] = json!(stored);
+            result["failed"] = json!(failed);
+            result["storage_errors"] = json!(storage_errors);
+            result["output"] = json!(req.output);
+            result["status"] = json!(if failed == 0 {
+                "complete"
+            } else {
+                "partial_failure"
             });
             Ok(result)
         })
@@ -577,9 +632,9 @@ fn default_type_distribution() -> String {
 pub struct IngestQaRequest {
     /// Path to generated QAs JSONL (from corpus_generate_qa_batch).
     pub generated_jsonl: String,
-    /// Output path for training-ready JSONL (instruction/input/output per line).
+    /// Output path for training JSONL (instruction/input/output plus QA evidence metadata).
     pub output: String,
-    /// Path to the SQLCipher memory DB for h_mem + embedding storage.
+    /// Path to the SQLCipher memory DB for QA h_mem storage (no embeddings generated).
     pub db_path: String,
     /// Passphrase for the memory DB.
     #[serde(default = "default_corpus_passphrase")]

@@ -269,8 +269,10 @@ the pipeline complete, require **all** of:
   filtered rows and source coverage; training size reaches
   `target_condition.min_qa_pairs` rather than merely exceeding zero.
 - Every applicable canonical `grounding-verify` report has a non-null
-  `fact_score >= 0.80`; no high/critical findings remain unresolved. A high
-  aggregate cannot hide a failed report or a load-bearing false citation.
+  `fact_score >= 0.80` and no high/critical findings in those reports. After
+  correction, rerun verification and retain the previous report rather than
+  erasing its findings. A high aggregate cannot hide a failed report or a
+  load-bearing false citation.
 - All missing applicable checks are resolved with retained evidence.
   Record genuinely inapplicable checks with their scope justification;
   unperformed is not inapplicable. Never substitute a partial mechanical
@@ -1054,14 +1056,19 @@ step-up ramp.
    - **Synthesis**: Does the style centroid match expected style? Would QA
      set produce a capable model?
 
-3. **Final convergence check**: Call `lisp_eval` with all stage results:
+3. **Final convergence check**: first resolve the Pilot/full-run quality
+   gate above. Set `qa_quality_gate_passed` to true ONLY with retained
+   per-applicable-report scores >=0.80, no high/critical findings in those reports,
+   resolved missing checks, reconciled counts and operator semantic review.
+   Missing evidence means false; the mechanical audit's aggregate or exit
+   code cannot set it true. Call `lisp_eval` with all stage results:
    ```
    form: "(let ((conv_rate (/ extracted_count source_count))
                  (chunk_ok (> chunk_count 0))
                  (embed_complete (eq embedding_count chunk_count))
                  (tag_ok (>= (/ tagged_count chunk_count) 0.90))
                  (qa_ok (if enable_qa (> ingested_count 0) t))
-                 (train_ok (if enable_qa (> example_count 0) t))
+                 (train_ok (if enable_qa (>= example_count min_qa_pairs) t))
                  (query_ok (> query_result_count 0)))
             (and (>= conv_rate 1.0)
                  chunk_ok
@@ -1069,10 +1076,13 @@ step-up ramp.
                  (if enable_qa tag_ok t)
                  qa_ok
                  train_ok
+                 (if enable_qa qa_quality_gate_passed t)
                  query_ok))"
    ```
-   Substitute actual values as literals. If true, the pipeline is complete.
-   If false, log which criteria failed.
+   Substitute observed values; `min_qa_pairs` is the agreed target condition,
+   not a lowered fallback. True supports completion only with the cited
+   quality-gate evidence. If false, report the blockers and their owners;
+   do not authorize a live run on structural success.
 
 ## Failure Modes
 
@@ -1111,9 +1121,10 @@ The pipeline is complete when ALL of the following hold:
 4. (If QA enabled) `corpus_tag_chunks` tagged ≥90% of chunks
 5. (If style exemplar enabled) `corpus_centroid` stored a style centroid AND `corpus_compose` generated prose within validation thresholds (centroid_distance ≤ 0.40, exemplar_count 100–10000)
 6. (If QA enabled) `corpus_ingest_qa` ingested >0 QA pairs
-7. (If QA enabled) `training_assemble_dataset` produced >0 training examples
+7. (If QA enabled) `training_assemble_dataset` reached `target_condition.min_qa_pairs`, with generated/ingested/assembled and error counts reconciled
 8. `corpus_query` returns relevant results for a test question
-9. `lisp_eval` final convergence check (Stage 10, step 3) returns true
+9. (If QA enabled) the Pilot/full-run quality gate passes: every applicable canonical grounding report has non-null `fact_score >=0.80`, no high/critical findings in those reports, missing applicable checks resolved, and operator semantic judgment retained; a partial mechanical aggregate does not qualify
+10. `lisp_eval` final convergence check (Stage 10, step 3) returns true with its quality evidence
 
 If any criterion fails, log the failure and halt — do not continue to
 downstream stages with incomplete input. The only exceptions are:

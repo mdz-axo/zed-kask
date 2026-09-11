@@ -30,9 +30,11 @@ recomputation never averages prior centroids into the passage mean. Empty
 eligible sets and mismatched vector dimensions are errors.
 
 Both paths share mean computation and optional storage. Supplying `store_as`
-and `model` replaces previous destination embedding rows using the existing
-embedding deletion/store operations; recomputing does not accumulate centroid
-rows. Without both, the result is returned without storage.
+and `model` atomically replaces previous destination embedding rows and their
+vector-index entries in one transaction. Failed inserts preserve the previous
+centroid; concurrent recomputations leave one destination row. Ordinary
+embedding writes still append. Without both, the result is returned without
+storage.
 
 ## Forgetting Curve
 
