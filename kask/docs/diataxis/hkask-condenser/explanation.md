@@ -160,8 +160,19 @@ summary. `BridgeThreadCondenser` processes a background request copy, not
 stored messages: eligible older tool text is compressed by category while
 prose, the latest exchange, protected tools, failed results, JSON and
 non-text content are preserved. Excerpts are labelled and used only when
-smaller. Automatic compaction and native summary storage/replay are unchanged.
-This is input reduction, not semantic summarization or a token-fit guarantee.
+smaller. Precompression remains manual-only; it is input reduction, not a
+semantic summary or a token-fit guarantee.
+
+Native summarization now divides splittable histories near the byte midpoint,
+without separating tool calls from their results. Two half-summaries run
+concurrently, then a third call merges them in chronological order. Both manual
+and automatic compaction use this bounded, non-recursive process. An indivisible
+history uses one call. Only the final summary is stored, using the existing
+native marker/replay format; empty, truncated, or failed phases save nothing.
+Cancellation covers both halves and the merge. Token usage is tracked per call
+before being accumulated, including usage reported after a truncation stop.
+The prompt uses terse bullets but explicitly retains uncertainty, negations,
+conditions, exact identifiers, and later corrections.
 
 Code-reading tools (`read_file`, `grep`, `list_directory`, etc.) bypass
 the condenser via `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:185`).

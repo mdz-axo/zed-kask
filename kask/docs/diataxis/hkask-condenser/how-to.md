@@ -146,14 +146,18 @@ not installation or explicit manual precompression.
 
 To compact a native thread, click **Compact context** to the right of the
 thinking control, or send `/compact`. Kask first reduces eligible older
-tool output in the summarizer's request copy. The existing native LLM then
-writes and stores the summary; the original history stays stored. The most
+tool output in the summarizer's request copy. Native compaction then runs two
+concurrent half-summaries and merges them with a third call; histories without
+a safe internal split use one call. The original history stays stored. The most
 recent exchange, user/assistant prose, protected tool results, errors, JSON
 and non-text content are not reduced by this preprocessing step.
 
 This still requires a configured inference provider and can incur inference
-charges. If protected content dominates, the summarization request can still
-exceed context limits; an informative provider error is not a promise of fit.
+charges. The split is approximately byte-balanced, not a tokenizer-based fit
+check. A half or the merge can still exceed context limits; failures are
+surfaced without saving a partial summary. There is no recursive splitting or
+retry queue. Only the final merged summary is installed, and cancellation at
+either stage leaves the original history unchanged.
 
 Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS`
 (`crates/agent/src/thread.rs:185`): `read_file`, `grep`, `find_path`,
