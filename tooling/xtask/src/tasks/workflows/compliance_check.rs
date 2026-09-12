@@ -21,9 +21,15 @@ pub fn compliance_check() -> Workflow {
 
 fn scheduled_compliance_check() -> steps::NamedJob {
     let determine_version_step = named::bash(indoc::indoc! {r#"
+        # zed-kask: D56 — D7 moved the app version to the workspace level
+        # (`version.workspace = true` in crates/zed/Cargo.toml); fall back to
+        # the workspace root's [workspace.package].version.
         VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/zed/Cargo.toml | tr -d '[:space:]')
         if [ -z "$VERSION" ]; then
-            echo "Could not determine version from crates/zed/Cargo.toml"
+            VERSION=$(awk '/^\[workspace\.package\]/{f=1} f && /^version = /{sub(/^version = "/,""); sub(/"$/,""); print; exit}' Cargo.toml | tr -d '[:space:]')
+        fi
+        if [ -z "$VERSION" ]; then
+            echo "Could not determine version from crates/zed/Cargo.toml or Cargo.toml"
             exit 1
         fi
         TAG="v${VERSION}-pre"
