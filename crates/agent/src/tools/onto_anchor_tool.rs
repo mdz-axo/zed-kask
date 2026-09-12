@@ -4,9 +4,7 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
-use hkask_bridge_ontology::{
-    derived, fibo, golem, ml_schema, omc, pko, rdf, schema_org, sdmx, sepio, sumo,
-};
+use hkask_bridge_ontology::term_resolution::{TermResolution, resolve_term};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,27 +47,23 @@ pub struct OntoAnchorToolInput {
     term: String,
 }
 
+/// Agent-tool wrapper over the shared ontology bridge output.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OntoAnchorToolOutput {
-    /// The ladder rung that terminated the walk: "domain_supplement",
-    /// "derived", "upper", or "core" (the 5W1H interrogative ground).
-    pub tier: String,
-    /// The term as given.
-    pub term: String,
-    /// The vocabulary that publishes the concept (FIBO, SUMO, derived, core).
-    pub namespace: String,
-    /// The published concept URI — or the derived concept's canonical term.
-    pub concept: String,
-    /// The derived concept's recorded identity (derived rung only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity: Option<String>,
-    /// The authority citation (derived rung only): an operator ruling with
-    /// its date, or a published standard.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authority: Option<String>,
-    /// The ruling path (core rung only): the anchor is real but coarse.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
+#[serde(transparent)]
+pub struct OntoAnchorToolOutput(TermResolution);
+
+impl std::ops::Deref for OntoAnchorToolOutput {
+    type Target = TermResolution;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TermResolution> for OntoAnchorToolOutput {
+    fn from(value: TermResolution) -> Self {
+        Self(value)
+    }
 }
 
 impl From<OntoAnchorToolOutput> for LanguageModelToolResultContent {
@@ -77,107 +71,6 @@ impl From<OntoAnchorToolOutput> for LanguageModelToolResultContent {
         serde_json::to_string_pretty(&value)
             .unwrap_or_else(|_| "null".into())
             .into()
-    }
-}
-
-/// Rung 1 — the domain supplements' fixture-pinned registries, in
-/// `OntologyNamespace` order. Dublin Core/BIBO is deliberately absent:
-/// the state axis types artifacts (server-side pattern), not terms, and
-/// BIBO was deprecated for this purpose in favor of SUMO (operator
-/// ruling 2026-09-10).
-const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
-    ("FIBO", fibo::ALL_TERMS),
-    ("PKO", pko::ALL_TERMS),
-    ("SEPIO", sepio::ALL_TERMS),
-    ("GOLEM", golem::ALL_TERMS),
-    ("SDMX", sdmx::ALL_CONCEPTS),
-    ("ML-Schema", ml_schema::ALL_CONCEPTS),
-    ("OMC", omc::ALL_CONCEPTS),
-    ("schema.org", schema_org::ALL_TERMS),
-    ("RDF", rdf::ALL_TERMS),
-];
-
-/// Lowercase alphanumeric characters only — separators and case are
-/// normalized away so "market capitalization", "MarketCapitalization" and
-/// "market-capitalization" compare equal. Exact URI matches bypass this.
-fn normalize(term: &str) -> String {
-    term.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
-/// Walk the fallback ladder (P8.3) for a term. Always terminates on a real
-/// anchor — the nothing-ever-untagged invariant.
-pub(crate) fn resolve_term(term: &str) -> OntoAnchorToolOutput {
-    let trimmed = term.trim();
-
-    // Rung 1 — domain supplements.
-    for (namespace, registry) in DOMAIN_REGISTRIES {
-        for uri in *registry {
-            let name = uri.rsplit(':').next().unwrap_or(uri);
-            if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
-                return OntoAnchorToolOutput {
-                    tier: "domain_supplement".to_string(),
-                    term: trimmed.to_string(),
-                    namespace: (*namespace).to_string(),
-                    concept: (*uri).to_string(),
-                    identity: None,
-                    authority: None,
-                    note: None,
-                };
-            }
-        }
-    }
-
-    // Rung 2 — derived concepts (recorded compositions, authority-cited).
-    if let Some(concept) = derived::resolve_derived(trimmed) {
-        return OntoAnchorToolOutput {
-            tier: "derived".to_string(),
-            term: trimmed.to_string(),
-            namespace: "derived".to_string(),
-            concept: concept.term.to_string(),
-            identity: Some(concept.identity.to_string()),
-            authority: Some(concept.authority.to_string()),
-            note: None,
-        };
-    }
-
-    // Rung 3 — the SUMO upper ontology.
-    for uri in sumo::ALL_CONCEPTS {
-        let name = uri.rsplit(':').next().unwrap_or(uri);
-        if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
-            return OntoAnchorToolOutput {
-                tier: "upper".to_string(),
-                term: trimmed.to_string(),
-                namespace: "SUMO".to_string(),
-                concept: (*uri).to_string(),
-                identity: None,
-                authority: None,
-                note: None,
-            };
-        }
-    }
-
-    // Rung 4 — the 5W1H interrogative ground. The anchor is real but
-    // coarse; the ruling path improves it (a ruling lands in the derived
-    // registry and the term resolves there ever after).
-    OntoAnchorToolOutput {
-        tier: "core".to_string(),
-        term: trimmed.to_string(),
-        namespace: "core".to_string(),
-        concept: "5w1h_core".to_string(),
-        identity: None,
-        authority: None,
-        note: Some(
-            "No domain, derived, or upper concept matched. Anchored on the 5W1H \
-             interrogative ground — a real but coarse anchor. Request a ruling from \
-             the operator to improve it: the ruling is recorded in the derived \
-             registry (hkask-bridge-ontology/src/derived.rs) with its identity and \
-             authority, and the term resolves there ever after. Never assign the \
-             term a private definition in the meantime."
-                .to_string(),
-        ),
     }
 }
 
@@ -214,16 +107,18 @@ impl AgentTool for OntoAnchorTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
-            let input = input.recv().await.map_err(|e| OntoAnchorToolOutput {
-                tier: "core".to_string(),
-                term: String::new(),
-                namespace: "core".to_string(),
-                concept: "5w1h_core".to_string(),
-                identity: None,
-                authority: None,
-                note: Some(format!("failed to receive input: {e}")),
+            let input = input.recv().await.map_err(|e| {
+                OntoAnchorToolOutput(TermResolution {
+                    tier: "core".to_string(),
+                    term: String::new(),
+                    namespace: "core".to_string(),
+                    concept: "5w1h_core".to_string(),
+                    identity: None,
+                    authority: None,
+                    note: Some(format!("failed to receive input: {e}")),
+                })
             })?;
-            Ok(resolve_term(&input.term))
+            Ok(resolve_term(&input.term).into())
         })
     }
 }

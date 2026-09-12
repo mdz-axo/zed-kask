@@ -106,6 +106,7 @@ pub mod schema_org;
 pub mod sdmx;
 pub mod sepio;
 pub mod sumo;
+pub mod term_resolution;
 
 // Re-export the universal-axis type aliases at the crate root for ergonomic
 // access (`hkask_bridge_ontology::DcConcept`, `::PkoConcept`).

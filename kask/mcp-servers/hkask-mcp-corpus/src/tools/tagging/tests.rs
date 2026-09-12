@@ -49,8 +49,9 @@ fn server(port: Arc<MockPort>) -> CorpusServer {
 }
 
 fn tags(correlation_id: &str) -> Value {
-    json!({"correlation_id":correlation_id, "dimensions":["what"], "dc_type":"bibo:Document",
-        "dc_subject":[], "ontology_tags":{"pko":["procedure"], "sepio":["evidence"], "other":["complexity"]},
+    json!({"correlation_id":correlation_id, "dimensions":["what"],
+        "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT,
+        "dc_subject":[], "candidate_terms":["procedure", "assertion", "complexity"],
         "expertise_level":"analyst"})
 }
 
@@ -133,13 +134,28 @@ async fn run(
                     .as_str()
                     .is_some_and(|s| !s.trim().is_empty())
             );
+            assert_eq!(row["candidate_terms"], json!([]));
             assert_eq!(row["ontology_tags"], json!({}));
             assert_eq!(row["concepts"], json!([]));
         } else {
             assert_eq!(row["classification"]["status"], "classified");
-            assert_eq!(row["ontology_tags"]["pko"], json!(["procedure"]));
-            assert_eq!(row["ontology_tags"]["sepio"], json!(["evidence"]));
-            assert_eq!(row["ontology_tags"]["other"], json!(["complexity"]));
+            assert_eq!(
+                row["classification"]["ontology_protocol"],
+                TERM_RESOLUTION_PROTOCOL
+            );
+            assert_eq!(
+                row["candidate_terms"],
+                json!(["procedure", "assertion", "complexity"])
+            );
+            assert_eq!(
+                row["ontology_tags"]["pko"],
+                json!([hkask_bridge_ontology::pko::PROCEDURE])
+            );
+            assert_eq!(
+                row["ontology_tags"]["sepio"],
+                json!([hkask_bridge_ontology::sepio::ASSERTION])
+            );
+            assert_eq!(row["ontology_tags"]["core"], json!(["5w1h_core"]));
         }
     }
     (summary, rows, port)
@@ -207,6 +223,14 @@ async fn public_tagging_identity_contract() {
         json!({"dimensions":["what"]}),
         json!([{"dimensions":["what"]}]),
         json!({"correlation_id":"item-0"}),
+        json!({
+            "correlation_id":"item-0",
+            "dimensions":["what"],
+            "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT,
+            "dc_subject":[],
+            "ontology_tags":{"fibo":["corporation"]},
+            "expertise_level":"analyst"
+        }),
     ] {
         let (summary, _, _) = run(&["a"], response.to_string(), 1, false).await;
         assert_eq!(
@@ -273,17 +297,15 @@ async fn public_tagging_identity_contract() {
     );
     let mut unicode = tags("item-0");
     unicode["dc_subject"] = json!(["界".repeat(50)]);
-    unicode["ontology_tags"]["custom"] = json!(["界".repeat(50)]);
+    unicode["candidate_terms"] = json!(["界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
     assert_eq!(summary["tagged"], 1);
-    for concept in [
-        &rows[0]["dc_subject"][0],
-        &rows[0]["ontology_tags"]["custom"][0],
-    ] {
-        let concept = concept.as_str().expect("concept");
-        assert!(!concept.is_empty() && concept.len() <= 80);
-        assert_eq!(concept, "界".repeat(26));
+    for term in [&rows[0]["dc_subject"][0], &rows[0]["candidate_terms"][0]] {
+        let term = term.as_str().expect("term");
+        assert!(!term.is_empty() && term.len() <= 80);
+        assert_eq!(term, "界".repeat(26));
     }
+    assert_eq!(rows[0]["ontology_tags"]["core"], json!(["5w1h_core"]));
 }
 
 /// expect: "A missing canonical template fails visibly without substituting an inline prompt."

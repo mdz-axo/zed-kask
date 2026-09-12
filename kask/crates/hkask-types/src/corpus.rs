@@ -226,7 +226,11 @@ pub struct ChunkOntology {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ClassificationOutcome {
-    Classified,
+    Classified {
+        /// Required clean-break protocol stamp. Pre-canonical classifier
+        /// records lack this field and are rejected during deserialization.
+        ontology_protocol: String,
+    },
     Failed {
         reason: String,
     },
@@ -293,20 +297,19 @@ pub struct TaggedChunk {
     #[serde(default)]
     pub expertise_level: ExpertiseLevel,
 
-    // ── Flexible ontology tags (open-world) ──────────────────────────────
-    /// Domain-specific ontology concepts, keyed by namespace.
-    /// Examples:
-    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"], "pko": ["analysis"]}
-    ///
-    /// Adding a new ontology is just a new key — no struct change needed.
-    /// The tagging LLM determines which ontologies are relevant per passage.
-    #[serde(default)]
+    // ── Canonical ontology terms ─────────────────────────────────────────
+    /// Raw descriptive terms extracted by the classifier. This required field
+    /// preserves meaning when exact resolution reaches the coarse 5W1H core.
+    /// The model never assigns these terms to namespaces.
+    pub candidate_terms: Vec<String>,
+
+    /// Published ontology concepts keyed by the namespace selected by
+    /// `hkask_bridge_ontology::term_resolution::canonicalize_terms`.
+    /// Classifier output never populates this map directly.
     pub ontology_tags: HashMap<String, Vec<String>>,
 
-    /// Union of all ontology_tags values — convenience cache for downstream
-    /// consumers that need the flat concept list without caring which ontology
-    /// each concept came from.
-    #[serde(default)]
+    /// Resolver-derived union of `ontology_tags`, used by salience and
+    /// retrieval. Writers must obtain it from the shared canonicalizer.
     pub concepts: Vec<String>,
 
     // ── Computed scores ──────────────────────────────────────────────────

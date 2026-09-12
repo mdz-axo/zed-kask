@@ -21,6 +21,7 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
 use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
 use hkask_types::template::LLMParameters;
@@ -494,6 +495,9 @@ fn structural_ontology(thread_id: &str, turn_ms: u128, chunk_index: usize) -> HM
         dc_source: format!("chat:{thread_id}:turn:{turn_ms}"),
         pko_procedure: Some("chat".to_string()),
         pko_step: Some(format!("chunk:{chunk_index}")),
+        candidate_terms: Vec::new(),
+        ontology_protocol: None,
+        expertise_level: None,
         ontology_tags: std::collections::HashMap::new(),
     }
 }
@@ -503,8 +507,8 @@ fn structural_ontology(thread_id: &str, turn_ms: u128, chunk_index: usize) -> HM
 struct ChunkContentTags {
     dimensions: Vec<String>,
     dc_subject: Vec<String>,
-    ontology_tags: std::collections::HashMap<String, Vec<String>>,
-    expertise_level: String,
+    candidate_terms: Vec<String>,
+    expertise_level: hkask_types::corpus::ExpertiseLevel,
 }
 
 /// The content dimensions the LLM may add. The structural four (who/when/
@@ -512,16 +516,12 @@ struct ChunkContentTags {
 /// pair. Anything else the model emits is dropped.
 const CONTENT_DIMENSION_ALLOWLIST: [&str; 2] = ["what", "why"];
 
-/// The expertise levels the corpus tagging schema defines; anything else
-/// falls back to the middle rung.
-const EXPERTISE_ALLOWLIST: [&str; 3] = ["practitioner", "analyst", "researcher"];
-
-const TAGGING_SYSTEM_PROMPT: &str = "You are an ontology tagger for a memory system. For each numbered passage, return one JSON object with these fields:\n\
+const TAGGING_SYSTEM_PROMPT: &str = "You are a semantic candidate extractor for a memory system. For each numbered passage, return one JSON object with these fields:\n\
 - \"dimensions\": array, subset of [\"what\", \"why\"] — what the passage is about, why it matters\n\
 - \"dc_subject\": 1-5 short subject keywords\n\
-- \"ontology_tags\": object mapping namespace keys (\"fibo\", \"golem\", \"pko\", \"schema\", \"other\") to arrays of 1-5 domain concepts\n\
+- \"candidate_terms\": 1-5 descriptive terms supported by the passage\n\
 - \"expertise_level\": one of \"practitioner\", \"analyst\", \"researcher\"\n\
-Respond with ONLY a JSON array containing exactly one object per passage, in passage order. No prose, no code fences.";
+Never choose an ontology namespace, prefix, URI, or fallback tier; the server resolves published anchors deterministically. Respond with ONLY a JSON array containing exactly one object per passage, in passage order. No prose, no code fences.";
 
 /// Tag the turn's chunks with the classifier model via the app-wide
 /// inference port. One batched call per turn. Returns `None` on any
@@ -606,43 +606,48 @@ fn parse_chunk_tags(response: &str, expected: usize) -> Option<Vec<ChunkContentT
     if items.len() != expected {
         return None;
     }
-    Some(items.iter().map(ChunkContentTags::from_value).collect())
+    items.iter().map(ChunkContentTags::from_value).collect()
 }
 
 impl ChunkContentTags {
-    /// Lenient field extraction: string-or-array coercion for list fields
-    /// (models emit both shapes), allowlist filtering for dimensions and
-    /// expertise, caps on subject and concept counts.
-    fn from_value(value: &serde_json::Value) -> Self {
-        let dimensions = string_array_field(value, "dimensions")
-            .into_iter()
-            .filter(|dim| CONTENT_DIMENSION_ALLOWLIST.contains(&dim.as_str()))
-            .collect();
+    /// Parse the classifier's closed structural contract and raw candidate
+    /// terms. Any malformed field distrusts the batch rather than silently
+    /// manufacturing a classified record.
+    fn from_value(value: &serde_json::Value) -> Option<Self> {
+        let dimensions = string_array_field(value, "dimensions");
+        if dimensions
+            .iter()
+            .any(|dimension| !CONTENT_DIMENSION_ALLOWLIST.contains(&dimension.as_str()))
+        {
+            return None;
+        }
         let dc_subject = string_array_field(value, "dc_subject")
             .into_iter()
             .take(5)
             .collect();
-        let mut ontology_tags = std::collections::HashMap::new();
-        if let Some(map) = value.get("ontology_tags").and_then(|v| v.as_object()) {
-            for (namespace, concepts) in map {
-                let concepts: Vec<String> = string_or_array(concepts).into_iter().take(5).collect();
-                if !concepts.is_empty() {
-                    ontology_tags.insert(namespace.trim().to_lowercase(), concepts);
-                }
-            }
+        let candidate_terms: Vec<String> = string_array_field(value, "candidate_terms")
+            .into_iter()
+            .take(5)
+            .collect();
+        if candidate_terms.is_empty() {
+            return None;
         }
-        let expertise_level = value
+        let expertise_level = match value
             .get("expertise_level")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| EXPERTISE_ALLOWLIST.contains(&s.as_str()))
-            .unwrap_or_else(|| "analyst".to_string());
-        Self {
+            .and_then(|field| field.as_str())
+            .map(str::trim)
+        {
+            Some("practitioner") => hkask_types::corpus::ExpertiseLevel::Practitioner,
+            Some("analyst") => hkask_types::corpus::ExpertiseLevel::Analyst,
+            Some("researcher") => hkask_types::corpus::ExpertiseLevel::Researcher,
+            _ => return None,
+        };
+        Some(Self {
             dimensions,
             dc_subject,
-            ontology_tags,
+            candidate_terms,
             expertise_level,
-        }
+        })
     }
 }
 
@@ -671,32 +676,21 @@ fn string_or_array(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
-/// Merge the content-derived tags onto the structural ontology. Content
-/// dimensions append (deduped); subjects replace the empty structural list;
-/// domain concepts merge per namespace; expertise files under the
-/// `expertise` namespace (HMemOntology has no dedicated field — the
-/// open-world map is the substrate).
+/// Merge classifier judgments onto structural provenance. Candidate terms are
+/// preserved, while namespaces and canonical concepts come only from the
+/// shared published-ontology resolver.
 fn merge_content_tags(mut ontology: HMemOntology, tags: &ChunkContentTags) -> HMemOntology {
     for dimension in &tags.dimensions {
         if !ontology.dimensions.contains(dimension) {
             ontology.dimensions.push(dimension.clone());
         }
     }
+    let canonical = canonicalize_terms(&tags.candidate_terms);
     ontology.dc_subject = tags.dc_subject.clone();
-    for (namespace, concepts) in &tags.ontology_tags {
-        ontology
-            .ontology_tags
-            .entry(namespace.clone())
-            .or_default()
-            .extend(concepts.iter().cloned());
-    }
-    if !tags.expertise_level.is_empty() {
-        ontology
-            .ontology_tags
-            .entry("expertise".to_string())
-            .or_default()
-            .push(tags.expertise_level.clone());
-    }
+    ontology.candidate_terms = canonical.candidate_terms;
+    ontology.ontology_tags = canonical.ontology_tags;
+    ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
+    ontology.expertise_level = Some(tags.expertise_level);
     ontology
 }
 
@@ -755,13 +749,16 @@ mod tests {
 
     #[test]
     fn parse_chunk_tags_accepts_array_and_single_object() {
-        let array = r#"[{"dimensions":["what"],"dc_subject":["memory"],"ontology_tags":{"fibo":["moat"]},"expertise_level":"researcher"}]"#;
+        let array = r#"[{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"researcher"}]"#;
         let tags = parse_chunk_tags(array, 1).expect("array parses");
         assert_eq!(tags[0].dc_subject, vec!["memory"]);
-        assert_eq!(tags[0].ontology_tags["fibo"], vec!["moat"]);
-        assert_eq!(tags[0].expertise_level, "researcher");
+        assert_eq!(tags[0].candidate_terms, vec!["corporation"]);
+        assert_eq!(
+            tags[0].expertise_level,
+            hkask_types::corpus::ExpertiseLevel::Researcher
+        );
 
-        let single = r#"{"dimensions":["what"],"dc_subject":["memory"]}"#;
+        let single = r#"{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["memory"],"expertise_level":"analyst"}"#;
         assert!(parse_chunk_tags(single, 1).is_some(), "single object wraps");
     }
 
@@ -780,28 +777,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_chunk_tags_coerces_string_fields_and_filters_allowlists() {
-        // dc_subject as a bare string; dimensions outside the allowlist
-        // dropped; expertise outside the allowlist falls back to analyst.
-        let raw = r#"[{"dimensions":["what","spurious"],"dc_subject":"memory systems","ontology_tags":{"FIBO":["moat","edge"]},"expertise_level":"wizard"}]"#;
-        let tags = parse_chunk_tags(raw, 1).expect("parses");
-        assert_eq!(tags[0].dimensions, vec!["what"]);
-        assert_eq!(tags[0].dc_subject, vec!["memory systems"]);
-        assert_eq!(tags[0].ontology_tags["fibo"], vec!["moat", "edge"]);
-        assert_eq!(tags[0].expertise_level, "analyst");
+    fn parse_chunk_tags_rejects_old_or_malformed_classifier_contracts() {
+        for raw in [
+            r#"[{"dimensions":["what"],"dc_subject":["memory"],"ontology_tags":{"fibo":["corporation"]},"expertise_level":"analyst"}]"#,
+            r#"[{"dimensions":["what","spurious"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"analyst"}]"#,
+            r#"[{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"wizard"}]"#,
+        ] {
+            assert!(parse_chunk_tags(raw, 1).is_none(), "must reject {raw}");
+        }
     }
 
     #[test]
-    fn merge_content_tags_appends_dimensions_and_files_expertise() {
+    fn merge_content_tags_uses_shared_resolution_and_separate_expertise() {
         let base = structural_ontology("t1", 1, 0);
         let tags = ChunkContentTags {
             dimensions: vec!["what".to_string(), "why".to_string()],
             dc_subject: vec!["memory".to_string()],
-            ontology_tags: std::collections::HashMap::from([(
-                "fibo".to_string(),
-                vec!["moat".to_string()],
-            )]),
-            expertise_level: "researcher".to_string(),
+            candidate_terms: vec!["corporation".to_string(), "unknown idea".to_string()],
+            expertise_level: hkask_types::corpus::ExpertiseLevel::Researcher,
         };
         let merged = merge_content_tags(base, &tags);
         assert_eq!(
@@ -809,7 +802,20 @@ mod tests {
             vec!["how", "when", "who", "where", "what", "why"]
         );
         assert_eq!(merged.dc_subject, vec!["memory"]);
-        assert_eq!(merged.ontology_tags["fibo"], vec!["moat"]);
-        assert_eq!(merged.ontology_tags["expertise"], vec!["researcher"]);
+        assert_eq!(merged.candidate_terms, ["corporation", "unknown idea"]);
+        assert_eq!(
+            merged.ontology_tags["fibo"],
+            [hkask_bridge_ontology::fibo::CORPORATION]
+        );
+        assert_eq!(merged.ontology_tags["core"], ["5w1h_core"]);
+        assert_eq!(
+            merged.ontology_protocol.as_deref(),
+            Some(TERM_RESOLUTION_PROTOCOL)
+        );
+        assert_eq!(
+            merged.expertise_level,
+            Some(hkask_types::corpus::ExpertiseLevel::Researcher)
+        );
+        assert!(!merged.ontology_tags.contains_key("expertise"));
     }
 }

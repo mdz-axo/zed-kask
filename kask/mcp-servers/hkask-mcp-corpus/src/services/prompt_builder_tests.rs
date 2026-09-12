@@ -36,13 +36,19 @@ fn fixture() -> anyhow::Result<tempfile::TempDir> {
     Ok(tempfile::tempdir_in(root)?)
 }
 fn chunk(reference: &str, source: &str) -> TaggedChunk {
+    let canonical = hkask_bridge_ontology::term_resolution::canonicalize_terms(["quantity"]);
     TaggedChunk {
         entity_ref: format!("corpus:test:{reference}"),
         source: source.into(),
         text: format!("Original passage {reference}."),
-        classification: ClassificationOutcome::Classified,
+        classification: ClassificationOutcome::Classified {
+            ontology_protocol: hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL
+                .to_string(),
+        },
         salience: 0.5,
-        concepts: vec!["concept".into()],
+        candidate_terms: canonical.candidate_terms,
+        ontology_tags: canonical.ontology_tags,
+        concepts: canonical.concepts,
         ..Default::default()
     }
 }
@@ -63,7 +69,7 @@ fn seed(directory: &Path, chunks: &[TaggedChunk]) -> anyhow::Result<()> {
                 hkask_types::WebID::new(),
             )
             .with_ontology(hkask_types::HMemOntology::state(
-                "bibo:Document",
+                hkask_bridge_ontology::dc_bibo::DOCUMENT,
                 chunk.concepts.clone(),
                 &chunk.source,
             )),

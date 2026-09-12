@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::corpus::{ClassificationOutcome, TaggedChunk, qa_prompt_id};
 use serde_json::json;
@@ -54,10 +55,24 @@ impl PromptBuilderService {
         let prefix = request.prefix.as_deref().unwrap_or("corpus:researcher:");
         let mut references = HashSet::new();
         for chunk in &chunks {
-            if chunk.classification != ClassificationOutcome::Classified {
+            match &chunk.classification {
+                ClassificationOutcome::Classified { ontology_protocol }
+                    if ontology_protocol == TERM_RESOLUTION_PROTOCOL => {}
+                _ => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Chunk '{}' is not classified by protocol '{}': {:?}",
+                        chunk.entity_ref, TERM_RESOLUTION_PROTOCOL, chunk.classification
+                    )));
+                }
+            }
+            let canonical = canonicalize_terms(&chunk.candidate_terms);
+            if canonical.candidate_terms != chunk.candidate_terms
+                || canonical.ontology_tags != chunk.ontology_tags
+                || canonical.concepts != chunk.concepts
+            {
                 return Err(McpToolError::invalid_argument(format!(
-                    "Chunk '{}' is not classified: {:?}",
-                    chunk.entity_ref, chunk.classification
+                    "Chunk '{}' has non-canonical or inconsistent ontology terms",
+                    chunk.entity_ref
                 )));
             }
             if !references.insert(&chunk.entity_ref) {

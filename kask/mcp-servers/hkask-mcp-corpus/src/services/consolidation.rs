@@ -13,8 +13,8 @@ use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter};
+use crate::render_docproc_template;
 use crate::tools::semantic::configured_qa_model;
-use crate::{normalize_concept, render_docproc_template};
 
 const CONSOLIDATED_PREFIX: &str = "corpus:researcher:consolidated:";
 
@@ -296,54 +296,17 @@ impl ConsolidationService {
                     .collect::<std::collections::HashSet<String>>()
                     .into_iter()
                     .collect();
-                // Merge ontology_tags: union all concept lists per namespace.
-                // C2 fix: normalize namespace keys and concept strings so the
-                // consolidated chunk's tags are graph-key-consistent with the
-                // tagging-phase output. Without this, a cluster containing
-                // chunks with "ROIC" and "roic" would produce a merged
-                // ontology_tags entry with both variants, fragmenting the
-                // salience graph and polluting the embedding annotation prefix.
-                let mut merged_tags: std::collections::HashMap<
-                    String,
-                    std::collections::HashSet<String>,
-                > = std::collections::HashMap::new();
-                for &idx in cluster {
-                    for (ns, concepts) in &chunks[idx].ontology_tags {
-                        let norm_ns = normalize_concept(ns);
-                        if norm_ns.is_empty() {
-                            continue;
-                        }
-                        let entry = merged_tags.entry(norm_ns).or_default();
-                        for c in concepts {
-                            let norm = normalize_concept(c);
-                            if !norm.is_empty() {
-                                entry.insert(norm);
-                            }
-                        }
-                    }
-                }
-                let ontology_tags: std::collections::HashMap<String, Vec<String>> = merged_tags
-                    .into_iter()
-                    .map(|(ns, set)| {
-                        let mut v: Vec<String> = set.into_iter().collect();
-                        v.sort();
-                        (ns, v)
-                    })
-                    .collect();
-                // Rebuild concepts cache from merged ontology_tags (already normalized).
-                let concepts: Vec<String> = {
-                    let mut seen: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-                    let mut v = Vec::new();
-                    for concepts_list in ontology_tags.values() {
-                        for c in concepts_list {
-                            if seen.insert(c.clone()) {
-                                v.push(c.clone());
-                            }
-                        }
-                    }
-                    v
-                };
+                // Preserve member candidates, but derive inherited anchors
+                // again through the same shared resolver. The synthesized text
+                // remains Unverified and must be reclassified before QA.
+                let canonical_terms = hkask_bridge_ontology::term_resolution::canonicalize_terms(
+                    cluster
+                        .iter()
+                        .flat_map(|&idx| chunks[idx].candidate_terms.iter()),
+                );
+                let candidate_terms = canonical_terms.candidate_terms;
+                let ontology_tags = canonical_terms.ontology_tags;
+                let concepts = canonical_terms.concepts;
                 // Take highest expertise level (researcher > analyst > practitioner).
                 // Uses ExpertiseLevel::rank() and from_rank() so the enum
                 // invariant is preserved — no string matching needed.
@@ -386,6 +349,7 @@ impl ConsolidationService {
                     dimensions,
                     dc_type,
                     dc_subject,
+                    candidate_terms,
                     ontology_tags,
                     concepts,
                     expertise_level,

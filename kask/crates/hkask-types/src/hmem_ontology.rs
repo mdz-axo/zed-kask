@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Dimension;
+use crate::corpus::ExpertiseLevel;
 
 /// Dual-axis ontological anchoring for an h_mem (P5.4).
 ///
@@ -70,14 +71,23 @@ pub struct HMemOntology {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pko_step: Option<String>,
 
-    // ── Open-world domain ontology tags ─────────────────────────────────
-    /// Domain-specific ontology concepts, keyed by namespace.
-    /// Examples:
-    ///   {"fibo": ["competitive advantage", "ROIC"], "golem": ["metaphor"]}
-    ///
-    /// Adding a new ontology is just a new key — no struct change needed.
-    /// Mirrors `corpus::TaggedChunk::ontology_tags` so h_mems and corpus
-    /// chunks share the same open-world tagging substrate.
+    // ── Canonical ontology terms ─────────────────────────────────────────
+    /// Raw descriptive terms extracted from the h_mem content. Empty means
+    /// that no content classification has been performed.
+    #[serde(default)]
+    pub candidate_terms: Vec<String>,
+
+    /// Protocol used to derive canonical anchors. `None` marks structural-only
+    /// h_mems; it never promotes old model-assigned tags to canonical status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology_protocol: Option<String>,
+
+    /// Expertise supported by the content. This is metadata, not an ontology
+    /// namespace, so it is stored separately from published anchors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expertise_level: Option<ExpertiseLevel>,
+
+    /// Published concepts grouped under resolver-selected namespaces.
     #[serde(default)]
     pub ontology_tags: HashMap<String, Vec<String>>,
 }
@@ -100,6 +110,9 @@ impl HMemOntology {
             dc_source: dc_source.into(),
             pko_procedure: Some(pko_procedure.into()),
             pko_step: Some(pko_step.into()),
+            candidate_terms: Vec::new(),
+            ontology_protocol: None,
+            expertise_level: None,
             ontology_tags: HashMap::new(),
         }
     }
@@ -118,6 +131,9 @@ impl HMemOntology {
             dc_source: dc_source.into(),
             pko_procedure: None,
             pko_step: None,
+            candidate_terms: Vec::new(),
+            ontology_protocol: None,
+            expertise_level: None,
             ontology_tags: HashMap::new(),
         }
     }
@@ -131,16 +147,16 @@ impl HMemOntology {
         self
     }
 
-    /// Add a domain ontology tag under a namespace.
-    pub fn with_ontology_tag(
-        mut self,
-        namespace: impl Into<String>,
-        concept: impl Into<String>,
-    ) -> Self {
-        self.ontology_tags
-            .entry(namespace.into())
-            .or_default()
-            .push(concept.into());
+    /// Add a descriptive term through the shared published-ontology resolver.
+    /// Callers cannot assign a namespace or canonical URI directly.
+    pub fn with_candidate_term(mut self, term: impl Into<String>) -> Self {
+        self.candidate_terms.push(term.into());
+        let canonical =
+            hkask_bridge_ontology::term_resolution::canonicalize_terms(&self.candidate_terms);
+        self.candidate_terms = canonical.candidate_terms;
+        self.ontology_tags = canonical.ontology_tags;
+        self.ontology_protocol =
+            Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL.to_string());
         self
     }
 

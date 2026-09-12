@@ -13,8 +13,11 @@ use crate::{
     extract_json_from_response, json, normalize_concept, read_jsonl_stream,
     render_docproc_template, tool, tool_router,
 };
+use hkask_bridge_ontology::term_resolution::{
+    CanonicalTerms, TERM_RESOLUTION_PROTOCOL, canonicalize_terms,
+};
 use hkask_inference::model_constants::classifier_model;
-use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
+use hkask_types::corpus::{ClassificationOutcome, ExpertiseLevel, TaggedChunk};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -24,9 +27,10 @@ use std::collections::{HashMap, HashSet};
 /// would bloat embedding annotation prefixes and QA system prompts.
 const MAX_CONCEPT_LEN: usize = 80;
 
-/// Maximum number of concepts per ontology namespace. Guards against
-/// LLM-produced concept spam that would dominate the salience graph.
-const MAX_CONCEPTS_PER_NS: usize = 30;
+/// Maximum candidate terms accepted from one classifier response.
+const MAX_CANDIDATE_TERMS: usize = 30;
+/// Maximum Dublin Core subject terms accepted from one response.
+const MAX_SUBJECT_TERMS: usize = 30;
 
 /// Minimal chunk for tagging (from chunks.jsonl).
 #[derive(Debug, Clone, Deserialize)]
@@ -38,20 +42,25 @@ struct InputChunk {
     word_count: usize,
 }
 
-/// Ontology tags extracted by the LLM from a passage.
+/// Non-authoritative content judgments extracted by the classifier.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-struct OntologyTags {
-    /// 5W1H interrogatory dimensions (at least one required).
+struct CandidateTags {
     dimensions: Vec<String>,
-    /// Dublin Core BIBO type (e.g., "bibo:Book").
     dc_type: String,
-    /// Dublin Core subject keywords.
     dc_subject: Vec<String>,
-    /// Flexible ontology tags keyed by namespace (e.g., "fibo", "golem", "pko", "other").
-    ontology_tags: std::collections::HashMap<String, Vec<String>>,
-    /// Expertise level — deserialized via `ExpertiseLevel`'s custom serde,
-    /// which maps invalid strings to `Analyst`.
-    expertise_level: hkask_types::corpus::ExpertiseLevel,
+    /// Descriptive terms only. The model never assigns namespaces or URIs.
+    candidate_terms: Vec<String>,
+    expertise_level: String,
+}
+
+/// Validated structural judgments plus server-resolved ontology terms.
+#[derive(Debug, Clone)]
+struct ValidatedTags {
+    dimensions: Vec<String>,
+    dc_type: String,
+    dc_subject: Vec<String>,
+    canonical_terms: CanonicalTerms,
+    expertise_level: ExpertiseLevel,
 }
 
 /// Both array entries and singleton responses use a short batch-local identity.
@@ -59,7 +68,7 @@ struct OntologyTags {
 struct TagResponse {
     correlation_id: String,
     #[serde(flatten)]
-    tags: OntologyTags,
+    tags: CandidateTags,
 }
 
 fn correlation_id(index: usize) -> String {
@@ -72,7 +81,7 @@ fn correlation_id(index: usize) -> String {
 fn correlate_tags(
     text: &str,
     chunks: &[InputChunk],
-) -> Result<HashMap<String, OntologyTags>, String> {
+) -> Result<HashMap<String, ValidatedTags>, String> {
     let cleaned = extract_json_from_response(text);
     let value: serde_json::Value =
         serde_json::from_str(&cleaned).map_err(|error| format!("invalid tagging JSON: {error}"))?;
@@ -107,7 +116,7 @@ fn correlate_tags(
         }
         correlated.insert(
             (*entity_ref).to_string(),
-            validate_ontology_tags(response.tags),
+            validate_candidate_tags(response.tags)?,
         );
     }
     let omitted = expected
@@ -121,11 +130,13 @@ fn correlate_tags(
     Ok(correlated)
 }
 
-fn fallback_tags() -> OntologyTags {
-    OntologyTags {
+fn fallback_tags() -> ValidatedTags {
+    ValidatedTags {
         dimensions: vec!["what".into()],
         dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.into(),
-        ..Default::default()
+        dc_subject: Vec::new(),
+        canonical_terms: CanonicalTerms::default(),
+        expertise_level: ExpertiseLevel::Analyst,
     }
 }
 
@@ -192,63 +203,72 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
     hkask_memory::salience::compute_salience_batch(&all_tags)
 }
 
-/// Validate and normalize LLM-extracted ontology tags before they enter the
-/// corpus. This is the security-critical boundary between untrusted LLM output
-/// and the trusted `TaggedChunk` record.
-///
-/// Applies the following invariants:
-/// - `dimensions`: filtered to the 5W1H allowlist; defaults to `["what"]` if empty.
-/// - `expertise_level`: must be one of `practitioner` | `analyst` | `researcher`;
-///   defaults to `analyst`.
-/// - `dc_subject`: each entry normalized via `normalize_concept`, deduped, length-capped.
-/// - `ontology_tags`: each namespace key lowercased + trimmed; each concept
-///   normalized, deduped per-namespace, length-capped, count-capped per namespace.
-///
-/// This function is the single point where LLM-produced strings become trusted
-/// corpus tags. Downstream consumers (salience graph, embedding annotation,
-/// QA prompt injection) rely on this normalization being applied uniformly.
-fn validate_ontology_tags(mut tags: OntologyTags) -> OntologyTags {
-    // Dimensions: allowlist filter, default to ["what"] if empty.
-    let valid_dims: Vec<String> = tags
-        .dimensions
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.as_str(),
+/// Validate classifier judgments and resolve descriptive terms through the
+/// shared published-ontology authority. Malformed responses fail visibly;
+/// values are never silently promoted through fallback defaults.
+fn validate_candidate_tags(tags: CandidateTags) -> Result<ValidatedTags, String> {
+    if tags.dimensions.is_empty()
+        || tags.dimensions.iter().any(|dimension| {
+            !matches!(
+                dimension.as_str(),
                 "who" | "what" | "when" | "where" | "why" | "how"
             )
         })
-        .cloned()
-        .collect();
-    tags.dimensions = if valid_dims.is_empty() {
-        vec!["what".to_string()]
-    } else {
-        valid_dims
+    {
+        return Err("dimensions must be a non-empty 5W1H subset".to_string());
+    }
+
+    let dc_type = canonical_dc_type(&tags.dc_type)
+        .ok_or_else(|| format!("unsupported Dublin Core/BIBO type: {}", tags.dc_type))?;
+    let expertise_level = match tags.expertise_level.as_str() {
+        "practitioner" => ExpertiseLevel::Practitioner,
+        "analyst" => ExpertiseLevel::Analyst,
+        "researcher" => ExpertiseLevel::Researcher,
+        other => return Err(format!("unsupported expertise_level: {other}")),
     };
 
-    // Expertise level: the custom serde deserializer on ExpertiseLevel
-    // already maps invalid strings to Analyst. No runtime validation needed
-    // here — the type system enforces the invariant.
-
-    // dc_subject: normalize + dedup + length cap.
-    tags.dc_subject = normalize_and_cap_concept_list(&tags.dc_subject);
-
-    // ontology_tags: normalize namespace keys, normalize + cap concept lists.
-    let mut cleaned_tags: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for (ns, concepts) in tags.ontology_tags {
-        let norm_ns = normalize_concept(&ns);
-        if norm_ns.is_empty() {
-            continue;
-        }
-        let cleaned_concepts = normalize_and_cap_concept_list(&concepts);
-        if !cleaned_concepts.is_empty() {
-            cleaned_tags.insert(norm_ns, cleaned_concepts);
-        }
+    let dc_subject = normalize_and_cap_concept_list(&tags.dc_subject);
+    let candidate_terms = trim_and_cap_candidate_terms(&tags.candidate_terms);
+    if candidate_terms.is_empty() {
+        return Err("candidate_terms must contain at least one descriptive term".to_string());
     }
-    tags.ontology_tags = cleaned_tags;
+    let canonical_terms = canonicalize_terms(&candidate_terms);
 
-    tags
+    Ok(ValidatedTags {
+        dimensions: tags.dimensions,
+        dc_type: dc_type.to_string(),
+        dc_subject,
+        canonical_terms,
+        expertise_level,
+    })
+}
+
+fn canonical_dc_type(raw: &str) -> Option<&'static str> {
+    [
+        hkask_bridge_ontology::dc_bibo::BOOK,
+        hkask_bridge_ontology::dc_bibo::ARTICLE,
+        hkask_bridge_ontology::dc_bibo::REPORT,
+        hkask_bridge_ontology::dc_bibo::WEBPAGE,
+        hkask_bridge_ontology::dc_bibo::DOCUMENT,
+    ]
+    .into_iter()
+    .find(|candidate| raw.eq_ignore_ascii_case(candidate))
+}
+
+fn trim_and_cap_candidate_terms(raw: &[String]) -> Vec<String> {
+    raw.iter()
+        .map(|term| term.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|term| !term.is_empty())
+        .map(|mut term| {
+            if term.len() > MAX_CONCEPT_LEN {
+                let prefix = utf8_prefix(&term, MAX_CONCEPT_LEN);
+                let end = prefix.rfind(' ').unwrap_or(prefix.len());
+                term.truncate(end);
+            }
+            term
+        })
+        .take(MAX_CANDIDATE_TERMS)
+        .collect()
 }
 
 /// Normalize a list of concept strings: lowercase + trim + collapse whitespace,
@@ -265,7 +285,7 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
             let end = prefix.rfind(' ').unwrap_or(prefix.len());
             norm.truncate(end);
         }
-        if !norm.is_empty() && seen.insert(norm.clone()) && out.len() < MAX_CONCEPTS_PER_NS {
+        if !norm.is_empty() && seen.insert(norm.clone()) && out.len() < MAX_SUBJECT_TERMS {
             out.push(norm);
         }
     }
@@ -449,7 +469,12 @@ impl CorpusServer {
                             let tags = tags.remove(&chunk.entity_ref).ok_or_else(|| {
                                 McpToolError::internal("validated tagging response lost chunk_ref")
                             })?;
-                            results.push((tags, ClassificationOutcome::Classified));
+                            results.push((
+                                tags,
+                                ClassificationOutcome::Classified {
+                                    ontology_protocol: TERM_RESOLUTION_PROTOCOL.to_string(),
+                                },
+                            ));
                         }
                     }
                     Err(reason) => {
@@ -464,7 +489,7 @@ impl CorpusServer {
                 }
             }
 
-            let c = results.iter().filter(|(_, outcome)| matches!(outcome, ClassificationOutcome::Classified)).count();
+            let c = results.iter().filter(|(_, outcome)| matches!(outcome, ClassificationOutcome::Classified { .. })).count();
             let f = results.iter().filter(|(_, outcome)| matches!(outcome, ClassificationOutcome::Failed { .. })).count();
             if c + f != total {
                 return Err(McpToolError::internal("tagging outcome count does not match input count"));
@@ -477,21 +502,6 @@ impl CorpusServer {
                 .iter()
                 .zip(results)
                 .map(|(chunk, (tags, classification))| {
-
-                    // Union all ontology_tags values, normalized for graph consistency.
-                    // The salience graph keys on exact strings, so case/whitespace
-                    // variants of the same concept would be disconnected nodes.
-                    // Normalization (lowercase + trim + collapse) merges them.
-                    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-                    let mut concepts: Vec<String> = Vec::new();
-                    for concept_list in tags.ontology_tags.values() {
-                        for c in concept_list {
-                            let norm = normalize_concept(c);
-                            if !norm.is_empty() && seen.insert(norm.clone()) {
-                                concepts.push(norm);
-                            }
-                        }
-                    }
 
                     let ontology = hkask_types::corpus::ChunkOntology {
                         dc_type: tags.dc_type.clone(),
@@ -513,8 +523,9 @@ impl CorpusServer {
                         dimensions,
                         dc_type: tags.dc_type,
                         dc_subject: tags.dc_subject,
-                        ontology_tags: tags.ontology_tags,
-                        concepts,
+                        candidate_terms: tags.canonical_terms.candidate_terms,
+                        ontology_tags: tags.canonical_terms.ontology_tags,
+                        concepts: tags.canonical_terms.concepts,
                         expertise_level: tags.expertise_level,
                         salience: 0.0,
                         consolidated_from: Vec::new(),

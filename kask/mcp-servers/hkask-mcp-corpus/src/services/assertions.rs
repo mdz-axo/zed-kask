@@ -327,14 +327,10 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             "subject": subject,
                             "object": object,
                         });
-                        // The predicate's tag family is recorded as an
-                        // open-world tag only when the chunk was actually
-                        // tagged with it — the same cross-check that gates the
-                        // confidence cap above, so a hallucinated namespace
-                        // doesn't get an ontology anchor it never earned.
-                        // GOLEM-family prefixes (gc/crm/dlp/lrmoo) are stored
-                        // under the "golem" key to match the tagging-phase
-                        // vocabulary.
+                        // The predicate is offered as a descriptive candidate
+                        // only when its published family was present on the
+                        // chunk. The shared resolver, never the model or this
+                        // service, selects its namespace and canonical URI.
                         //
                         // State-axis type: SEPIO's published `assertion`
                         // class — a statement that a proposition is true.
@@ -348,7 +344,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                         .with_dimension(dimension);
                         if let Some(tag_key) = abstract_namespace_tag_key(&pred_ns) {
                             if chunk_namespaces.contains(tag_key) {
-                                ontology = ontology.with_ontology_tag(tag_key, predicate);
+                                ontology = ontology.with_candidate_term(predicate);
                             }
                         }
 
