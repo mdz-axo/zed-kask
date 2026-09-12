@@ -51,6 +51,13 @@ macro_rules! sepio_terms {
         /// in the official SEPIO term list — a fabricated URI cannot pass.
         /// New terms must go through this macro.
         pub const ALL_TERMS: &[SepioConcept] = &[$($name),*];
+
+        /// Published CURIEs paired with their bridge constant names. SEPIO
+        /// CURIEs are numeric, so exact term resolution cannot recover labels
+        /// from the URI suffix as it can for named vocabularies.
+        pub const ALL_NAMED_TERMS: &[(&str, SepioConcept)] = &[
+            $((stringify!($name), $name)),*
+        ];
     };
 }
 

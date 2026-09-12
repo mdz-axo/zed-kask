@@ -6,13 +6,12 @@
 //! `HMemOntology` blob is the first-class column that makes h_mems queryable
 //! by ontology, putting them on the same substrate as corpus `TaggedChunk`s.
 //!
-//! Design: open-world ontology tagging (mirrors `corpus::TaggedChunk`).
-//! - 5W1H dimensions are structural (every h_mem has at least one)
-//! - Dublin Core + BIBO anchor the state axis (what this is)
-//! - PKO anchors the process axis (how this came to be)
-//! - `ontology_tags` is the open-world map for domain supplements (FIBO,
-//!   GOLEM, SEPIO, ML-Schema, SUMO) — adding a new ontology doesn't
-//!   require a schema change
+//! Design: deterministic ontology authority (mirrors `corpus::TaggedChunk`).
+//! - 5W1H dimensions are structural.
+//! - Dublin Core + BIBO anchor state; PKO anchors process.
+//! - Models may supply raw `candidate_terms`, never namespaces or URIs.
+//! - The shared bridge resolver derives `ontology_tags`; structural-only
+//!   h_mems remain explicitly unclassified.
 
 use std::collections::HashMap;
 
@@ -24,9 +23,9 @@ use crate::corpus::ExpertiseLevel;
 /// Dual-axis ontological anchoring for an h_mem (P5.4).
 ///
 /// Serialized as a JSON blob in the `ontology` column of the `hmems` table.
-/// Queryable via `json_extract(ontology, '$.dc_type')` etc. The open-world
-/// `ontology_tags` map lets domain ontologies annotate h_mems without schema
-/// changes — the same pattern as `corpus::TaggedChunk::ontology_tags`.
+/// Queryable via `json_extract(ontology, '$.dc_type')` etc. Canonical
+/// `ontology_tags` are derived from preserved candidates by the same resolver
+/// used for corpus chunks.
 ///
 /// Every h_mem carries both a state identity (DC+BIBO — the noun) and a
 /// process identity (PKO — the verb). Both axes are optional — a chat turn

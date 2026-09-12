@@ -40,7 +40,7 @@ lists parameters. Enforcement anchors (paths relative to the repository root):
 | Invariant | Current enforcement |
 |---|---|
 | One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:373` |
-| Required terminal classification and identity-correlated tags | `kask/crates/hkask-types/src/corpus.rs:228`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:66` |
+| Required current-protocol classification, identity correlation and server-resolved published anchors | `kask/crates/hkask-types/src/corpus.rs`; `kask/crates/hkask-bridge-ontology/src/term_resolution.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs` |
 | Full-source stored context and partition-stable prompt IDs | `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:119`; `kask/crates/hkask-types/src/corpus.rs:38` |
 | Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:19`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |
 | Exclusive QA output ownership and typed retries | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:99`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:73` |
@@ -137,9 +137,13 @@ verify retained inputs suffice for reconstruction. Deletion/replacement requires
 operator authorization; it is not implied by a docs edit or an ambiguous refresh.
 Never purge unrelated namespaces in a shared DB. Preserve originals and valid
 extractions, keeping out-of-scope retained inputs outside the active source set.
-Remove superseded derived outputs and update their references in the same run;
-do not leave parallel abandoned datasets. Clear warm retrieval before selecting
-a rebuilt DB. Ambiguous ownership or incomplete retained inputs blocks deletion.
+Record every removed artifact in the execution cleanup manifest with path, reason,
+model/protocol if known, size and disposition. Remove superseded, partial,
+wrong-model and pre-current-protocol derived outputs from active stage directories
+and update their references in the same run; do not leave parallel abandoned
+datasets. Never reinterpret them through a compatibility adapter. Clear warm
+retrieval before selecting a rebuilt DB. Ambiguous ownership or incomplete
+retained inputs blocks deletion.
 
 ## Stage 1 — Convert and audit extraction
 
@@ -224,24 +228,30 @@ keep original identities and verify the merged identity set equals the input.
 Each output `TaggedChunk` requires `classification`:
 
 ```json
-{"status":"classified"}
+{"status":"classified","ontology_protocol":"published-term-resolution-v1"}
 ```
 
 or `{"status":"failed","reason":"the actual failure"}` or
-`{"status":"unverified"}`. Missing status is invalid, not implicit success.
-A classifier response is an array keyed by exact short batch-local
-`correlation_id` values (`item-N`); canonical `entity_ref` values remain
-server-owned and are restored only after whole-batch correlation succeeds. A
-singleton object is allowed only for one input. Missing, duplicate, unknown or
-malformed entries reject the entire affected batch. There is no positional or
-string fallback.
-Failure annotations and deterministic method signals do not make a row classified.
-Synthesized consolidation text is `unverified` and must itself be classified.
+`{"status":"unverified"}`. Missing status/protocol is invalid, not implicit
+success; pre-current-protocol classifier data is stale and receives no
+compatibility upgrade. A classifier response is an array keyed by exact short
+batch-local `correlation_id` values (`item-N`); canonical `entity_ref` values
+remain server-owned and are restored only after whole-batch correlation succeeds.
+The model returns structural judgments and raw `candidate_terms`; it never assigns
+ontology namespaces, prefixes, URIs or fallback tiers. The shared bridge resolver
+preserves candidates and derives canonical `ontology_tags`/`concepts`. A singleton
+object is allowed only for one input. Missing, duplicate, unknown or malformed
+entries reject the entire affected batch. There is no positional or string
+fallback. Failure annotations and deterministic method signals do not make a row
+classified. Synthesized consolidation text is `unverified` and must itself be
+classified.
 
-**Gate:** count `.classification.status == "classified"`, reconcile it with
-returned `tagged`, `failed` and `total_chunks`, and require all chunk identities
-classified. Failed/unverified rows block QA; output line count and annotation
-presence are not substitutes. Re-run only after diagnosing the failure and
+**Gate:** count current-protocol `.classification.status == "classified"`,
+recompute anchors from every row's `candidate_terms`, require exact equality with
+stored `ontology_tags`/`concepts`, reconcile returned `tagged`, `failed` and
+`total_chunks`, and require all chunk identities classified. Failed, unverified,
+stale or noncanonical rows block embedding-with-tags, assertions and QA; output
+line count and annotation presence are not substitutes. Re-run only after diagnosing the failure and
 replace affected terminal records by identity, never duplicate them in a merge.
 If neither QA nor another requested output requires tags, classification may be
 marked not requested.

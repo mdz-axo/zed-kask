@@ -2,6 +2,7 @@
 use super::*;
 use crate::CorpusServer;
 use crate::tools::corpus::BuildPromptsRequest as ToolRequest;
+use hkask_types::corpus::ClassificationOutcome;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use rmcp::handler::server::wrapper::Parameters;
@@ -221,8 +222,8 @@ async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()>
     Ok(())
 }
 
-/// expect: Failed, unverified and duplicate refs are errors before output; no
-/// apparent success from a fallback tag record, even when max_prompts would cap it.
+/// expect: Failed, unverified, non-canonical and duplicate refs are errors
+/// before output; no apparent success from a stale or fallback tag record.
 #[tokio::test]
 async fn invalid_tagged_inputs_are_rejected_before_output() -> anyhow::Result<()> {
     let directory = fixture()?;
@@ -245,9 +246,24 @@ async fn invalid_tagged_inputs_are_rejected_before_output() -> anyhow::Result<()
             .corpus_build_prompts(Parameters(req))
             .await
             .expect_err("status must fail");
-        assert!(error.to_string().contains("not classified"));
+        assert!(error.to_string().contains("not reconciled"));
         assert!(!Path::new(&output).exists());
     }
+    let mut inconsistent = chunk("bad-canonical", "book-a");
+    inconsistent.ontology_tags.clear();
+    let req = request(
+        directory.path(),
+        "inconsistent",
+        &[chunk("a", "book-a"), inconsistent],
+    )?;
+    let output = req.output.clone();
+    let error = server
+        .corpus_build_prompts(Parameters(req))
+        .await
+        .expect_err("derived ontology fields must reconcile");
+    assert!(error.to_string().contains("not reconciled"));
+    assert!(!Path::new(&output).exists());
+
     let duplicate = chunk("a", "book-a");
     let req = request(
         directory.path(),

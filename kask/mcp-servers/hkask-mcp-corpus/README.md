@@ -137,13 +137,13 @@ Nonempty `zero_chunk_files` is an explicit coverage failure for the pipeline.
 Every on-disk `TaggedChunk` requires a `classification: ClassificationOutcome`:
 
 ```json
-{"classification":{"status":"classified"}}
+{"classification":{"status":"classified","ontology_protocol":"published-term-resolution-v1"}}
 ```
 
 The other outcomes are `{"status":"failed","reason":"actual failure"}` and
-`{"status":"unverified"}`. Missing classification is a schema error; synthesized
-consolidation text is unverified until classified itself
-(`hkask-types/src/corpus.rs:223–260`).
+`{"status":"unverified"}`. Missing classification or protocol is a schema error;
+pre-canonical classifier records are not upgraded. Synthesized consolidation text
+is unverified until classified itself (`hkask-types/src/corpus.rs`).
 
 `corpus_tag_chunks` defaults to **10 chunks per inference call**. Canonical
 `entity_ref` values remain server-owned and are not sent to the model. Each
@@ -161,17 +161,21 @@ is **classified successes**; `tagged + failed = total_chunks`. Dry-run reports
 inputs only and writes no tagged artifact. A full-source QA pipeline requires all
 input identities classified, irrespective of the shared 10% degraded threshold.
 
-Tag normalization filters dimensions, normalizes/caps concepts and constrains
-expertise labels. Graph salience uses concepts, not numeric method measurements.
-Tagging includes `how` and stores measured signals in `ontology.method_signals`;
-consolidation recomputes signals from synthesized text. These measurements do not
-certify classifier accuracy (`src/tools/tagging/ops.rs:453–510`).
+The classifier returns structural judgments plus raw `candidate_terms`; it never
+chooses an ontology namespace, prefix, URI or fallback tier. The shared
+`hkask-bridge-ontology` resolver preserves those candidates and deterministically
+derives `ontology_tags` and `concepts`. Downstream embedding, assertion and QA
+readers reject mismatched derived fields or the wrong protocol. Graph salience
+uses canonical concepts, not numeric method measurements. Tagging includes `how`
+and stores measured signals in `ontology.method_signals`; consolidation recomputes
+signals from synthesized text but remains unverified.
 
 ## Complete-source prompt context
 
-`corpus_build_prompts` takes classified tagged rows, the corpus DB, and an explicit
-matching `prefix` (tool default `corpus:researcher:`). It rejects duplicate refs,
-blank source/text, non-finite salience and prefix mismatches before building.
+`corpus_build_prompts` takes current-protocol, canonically reconciled tagged rows,
+the corpus DB, and an explicit matching `prefix` (tool default
+`corpus:researcher:`). It rejects stale/noncanonical rows, duplicate refs, blank
+source/text, non-finite salience and prefix mismatches before building.
 
 With `context_k > 0`, the builder loads stored embeddings and full `passage_text`
 across the namespace, excluding reserved rule/centroid refs. Each passage must

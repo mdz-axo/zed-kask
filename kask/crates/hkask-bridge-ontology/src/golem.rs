@@ -35,6 +35,12 @@ macro_rules! golem_terms {
         /// in the official GOLEM v1.1 term list — a fabricated URI cannot
         /// pass. New terms must go through this macro.
         pub const ALL_TERMS: &[GolemConcept] = &[$($name),*];
+
+        /// Published URIs paired with bridge constant names for exact
+        /// descriptive-term resolution when URI suffixes carry numeric codes.
+        pub const ALL_NAMED_TERMS: &[(&str, GolemConcept)] = &[
+            $((stringify!($name), $name)),*
+        ];
     };
 }
 
@@ -133,7 +139,7 @@ golem_terms! {
 
 /// Map a predicate prefix from the GOLEM family of namespaces to the
 /// chunk-tag namespace key used by the tagging pipeline
-/// (`tag-chunks-batch.j2` emits `ontology_tags` keyed by `"golem"`).
+/// (`canonicalize_terms` groups resolved GOLEM concepts under `"golem"`).
 /// GOLEM's own `gc:` terms and the CIDOC-CRM / LRMoo / DOLCE-Lite-Plus
 /// terms it reuses all belong to that one tag family. Returns `None` for
 /// prefixes outside the family.

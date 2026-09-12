@@ -149,7 +149,7 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         return;
     }
     for response in [
-        json!([{"correlation_id":"item-0", "dimensions":["what"], "dc_type":"bibo:Document", "dc_subject":[], "ontology_tags":{}, "expertise_level":"analyst", "method_signals":{"word_count":999}}])
+        json!([{"correlation_id":"item-0", "dimensions":["what"], "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT, "dc_subject":[], "candidate_terms":["quantity"], "expertise_level":"analyst", "method_signals":{"word_count":999}}])
             .to_string(),
         "not JSON".to_string(),
     ] {
@@ -877,7 +877,7 @@ async fn retrieval_consolidation_survives_restart() {
     let port = Arc::new(RecordingPort::default());
     let server = server(Arc::clone(&port));
     let mut request = embed_request(directory.path(), "memory.db", ORIGINAL);
-    let chunks = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| json!({"entity_ref":entity_ref, "classification":{"status":"classified"}, "source":"river.txt", "text":ORIGINAL, "word_count":10, "concepts":[], "salience":0.5}));
+    let chunks = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| json!({"entity_ref":entity_ref, "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"river.txt", "text":ORIGINAL, "word_count":10, "candidate_terms":["quantity"], "ontology_tags":{"sumo":[hkask_bridge_ontology::sumo::QUANTITY]}, "concepts":[hkask_bridge_ontology::sumo::QUANTITY], "salience":0.5}));
     let path = directory.path().join("tagged.jsonl");
     std::fs::write(
         &path,
@@ -930,13 +930,13 @@ async fn retrieval_consolidation_survives_restart() {
             );
         }
     }
-    assert!(
-        port.inputs
-            .lock()
-            .expect("inputs")
-            .iter()
-            .any(|input| input == &format!("[unclassified] {SYNTHESIZED}"))
-    );
+    assert!(port.inputs.lock().expect("inputs").iter().any(|input| {
+        input
+            == &format!(
+                "[sumo: {}] {SYNTHESIZED}",
+                hkask_bridge_ontology::sumo::QUANTITY
+            )
+    }));
     let fresh = self::server(port);
     for current in [&server, &fresh] {
         let result = content(
@@ -977,18 +977,16 @@ async fn retrieval_upsert_preserves_unannotated_text() {
     let tags = directory.path().join("tags.jsonl");
     std::fs::write(
         &tags,
-        json!({"entity_ref":"corpus:test:1", "ontology_tags":{"golem":["river"]}}).to_string(),
+        json!({"entity_ref":"corpus:test:1", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"river.txt", "text":ORIGINAL, "candidate_terms":["character"], "ontology_tags":{"golem":[hkask_bridge_ontology::golem::CHARACTER]}, "concepts":[hkask_bridge_ontology::golem::CHARACTER]}).to_string(),
     )
     .expect("tags");
     request.tagged_jsonl = Some(tags.to_string_lossy().into());
     content(server.corpus_embed(Parameters(request)).await);
-    assert!(
-        port.inputs
-            .lock()
-            .expect("inputs")
-            .iter()
-            .any(|input| input == &format!("[golem: river] {ORIGINAL}"))
-    );
+    assert!(port.inputs.lock().expect("inputs").iter().any(|input| input
+        == &format!(
+            "[golem: {}] {ORIGINAL}",
+            hkask_bridge_ontology::golem::CHARACTER
+        )));
     let fresh = self::server(Arc::clone(&port));
     for current in [&server, &fresh] {
         let result = content(
@@ -1291,7 +1289,7 @@ async fn consolidation_fixture(
     let mut request = embed_request(directory, "memory.db", ORIGINAL);
     let tagged = directory.join("tagged.jsonl");
     let rows = ["corpus:test:1", "corpus:test:2"].map(|entity_ref| {
-        json!({"entity_ref":entity_ref,"classification":{"status":"classified"},"source":"river.txt","text":ORIGINAL,"word_count":10,"concepts":[],"salience":0.5}).to_string()
+        json!({"entity_ref":entity_ref,"classification":{"status":"classified","ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL},"source":"river.txt","text":ORIGINAL,"word_count":10,"candidate_terms":["quantity"],"ontology_tags":{"sumo":[hkask_bridge_ontology::sumo::QUANTITY]},"concepts":[hkask_bridge_ontology::sumo::QUANTITY],"salience":0.5}).to_string()
     });
     std::fs::write(&tagged, rows.join("\n")).expect("tagged chunks");
     request.chunks_jsonl = tagged.to_string_lossy().into();

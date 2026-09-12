@@ -158,7 +158,10 @@ mod tests {
         let json = serde_json::to_value(error).expect("serialize error");
         let restored: OntoAnchorToolOutput =
             serde_json::from_value(json).expect("deserialize owned error");
-        let note = restored.note.expect("input failure must be surfaced");
+        let note = restored
+            .note
+            .as_deref()
+            .expect("input failure must be surfaced");
         assert_eq!(note, "failed to receive input: invalid tool JSON");
     }
 

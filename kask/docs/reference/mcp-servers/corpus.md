@@ -129,17 +129,20 @@ same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:935–11
 
 ### Classification and prompt context
 
-`TaggedChunk.classification` is required. Its `ClassificationOutcome` JSON is
-`{"status":"classified"}`, `{"status":"failed","reason":"..."}` or
-`{"status":"unverified"}`. Missing status cannot be promoted to success.
-Tag responses correlate exact `chunk_ref` identities; singleton objects are only
-valid for one input. Unknown/duplicate/missing/malformed entries fail the batch,
-not a position-based partial mapping. Count actual classified rows and reconcile
-`tagged + failed = total_chunks`; failed fallback annotations and numeric method
-signals do not qualify (`kask/crates/hkask-types/src/corpus.rs:228–260`;
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:66–108`).
+`TaggedChunk.classification` is required. Classified JSON carries the clean-break
+protocol stamp: `{"status":"classified","ontology_protocol":"published-term-resolution-v1"}`.
+Other outcomes are `{"status":"failed","reason":"..."}` and
+`{"status":"unverified"}`. Missing status/protocol and pre-canonical records cannot
+be promoted. Tag responses correlate short batch-local `correlation_id` values;
+canonical entity refs never enter model authority. The classifier emits raw
+`candidate_terms`, not namespaces or URIs; `hkask-bridge-ontology` derives
+`ontology_tags` and `concepts`. Downstream readers reject wrong protocols or any
+candidate/anchor mismatch. Count actual classified rows and reconcile
+`tagged + failed = total_chunks`; fallback annotations and numeric method signals
+do not qualify.
 
-The prompt builder rejects nonclassified/duplicate refs and invalid metadata.
+The prompt builder rejects nonclassified, stale, noncanonical or duplicate refs
+and invalid metadata.
 With KNN enabled, it reads full stored passage text and one original source from
 text h_mem `ontology.dc_source`, groups candidates by source and selects neighbors
 across the entire stored source, independent of tagged-file splits. Missing text,

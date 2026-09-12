@@ -50,10 +50,9 @@ pub fn qa_prompt_id(source: &str, chunk_ref: &str, qa_type: &str, ordinal: usize
 
 /// Expertise level supported by the corpus pipeline.
 ///
-/// Closed enum — the LLM may produce arbitrary strings, but the tagging
-/// validation (`validate_ontology_tags`) maps invalid values to `Analyst`
-/// before they enter a `TaggedChunk`. This makes invalid states
-/// unrepresentable in the persistent record.
+/// Closed enum. Classifier boundaries reject unsupported values before they
+/// enter a classified record; serde retains the middle-rung fallback only for
+/// non-classifier callers constructing unverified metadata.
 ///
 /// Serialization is lowercase to match the JSONL format produced by the
 /// tagging template (`tag-chunks.j2`).
@@ -243,12 +242,12 @@ pub enum ClassificationOutcome {
 /// This is the canonical type that flows through the entire corpus pipeline.
 /// The MCP server (hkask-mcp-corpus) uses this struct — no local duplicates.
 ///
-/// Design: open-world ontology tagging.
-/// - 5W1H dimensions and Dublin Core are structural (every chunk has them)
-/// - Domain-specific ontologies (FIBO, GOLEM, PKO, etc.) are stored in
-///   `ontology_tags` — a flexible map keyed by namespace. Adding a new
-///   ontology doesn't require changing this struct.
-/// - `concepts` is a convenience cache = union of all ontology_tags values.
+/// Design: model-extracted semantics with deterministic ontology authority.
+/// - 5W1H dimensions and Dublin Core are structural.
+/// - The model supplies raw `candidate_terms`, never namespaces or URIs.
+/// - The shared bridge resolver derives `ontology_tags` and `concepts`.
+/// - Classified records carry the current protocol stamp and reconcile before
+///   downstream embedding, assertions, or QA.
 ///
 /// Pipeline flow:
 ///   tag-chunks → writes TaggedChunk to JSONL
@@ -290,10 +289,8 @@ pub struct TaggedChunk {
 
     /// Expertise level supported by the passage.
     ///
-    /// Stored as `ExpertiseLevel` so invalid values are impossible in the
-    /// persistent record. The custom serde deserializer maps unknown strings
-    /// to `Analyst` (the default), matching the `validate_ontology_tags`
-    /// runtime allowlist behavior.
+    /// Stored as `ExpertiseLevel` so persisted values are typed. Classifier
+    /// output is checked strictly before this value is constructed.
     #[serde(default)]
     pub expertise_level: ExpertiseLevel,
 
@@ -326,4 +323,25 @@ pub struct TaggedChunk {
     /// Dublin Core + PKO metadata and method signals from tagging/consolidation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<ChunkOntology>,
+}
+
+impl TaggedChunk {
+    /// Whether this record was classified by the current published-ontology
+    /// protocol and its stored derived fields still reconcile exactly.
+    pub fn has_current_canonical_terms(&self) -> bool {
+        let current_protocol = matches!(
+            &self.classification,
+            ClassificationOutcome::Classified { ontology_protocol }
+                if ontology_protocol
+                    == hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL
+        );
+        if !current_protocol {
+            return false;
+        }
+        let canonical =
+            hkask_bridge_ontology::term_resolution::canonicalize_terms(&self.candidate_terms);
+        canonical.candidate_terms == self.candidate_terms
+            && canonical.ontology_tags == self.ontology_tags
+            && canonical.concepts == self.concepts
+    }
 }

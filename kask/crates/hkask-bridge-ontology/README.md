@@ -15,8 +15,8 @@ that does tagging depends on this crate.
   noun dimension. Always available.
 - **Process axis** — PKO (`pko`): the "how did this come to be" verb dimension.
   Always available.
-- **Domain supplements** — FIBO, ESO, GOLEM, ML-Schema: layered on top
-  where the universal axes aren't specific enough for a domain.
+- **Domain supplements** — FIBO, SEPIO, GOLEM, ML-Schema, SDMX and OMC:
+  layered on top where the universal axes aren't specific enough.
 
 The invariant: one axis is always Dublin Core or PKO, so every artifact has a
 common mapping in process or state space regardless of domain.
@@ -28,10 +28,13 @@ common mapping in process or state space regardless of domain.
 | `dc_bibo` | Dublin Core + BIBO + CiTO | State (universal) |
 | `pko` | Procedural Knowledge Ontology | Process (universal) |
 | `fibo` | Financial Industry Business Ontology | Domain supplement (financial) |
-| `eso` | Epistemic Science Ontology | Domain supplement (scientific) |
+| `sepio` | Scientific Evidence and Provenance Information Ontology | Domain supplement (scientific evidence) |
 | `golem` | GOLEM narrative ontology | Domain supplement (narrative) |
-| `mlschema` | ML-Schema | Domain supplement (ML training) |
+| `ml_schema` | ML-Schema | Domain supplement (ML training) |
+| `sdmx` | Statistical Data and Metadata eXchange | Domain supplement (statistics) |
+| `omc` | MovieLabs Ontology for Media Creation | Domain supplement (media) |
 | `axis` | Domain-selection logic | `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor` |
+| `term_resolution` | Exact fallback-ladder resolution | `resolve_term`, `canonicalize_terms`, `TERM_RESOLUTION_PROTOCOL` |
 
 ## Usage
 
@@ -48,10 +51,17 @@ let mcap = fibo::MARKET_CAPITALIZATION;   // "fibo-ind-mkt-bas:MarketCapitalizat
 
 // Domain selection.
 let anchor = axis::select_ontology_anchor("prediction-markets");
-// → OntologyAnchor::DomainSupplement { namespace: Fibo, concept: "dcterms:Dataset" }
+
+// Model output supplies descriptive candidates only; the bridge owns authority.
+let terms = hkask_bridge_ontology::term_resolution::canonicalize_terms([
+    "corporation",
+    "quantity",
+]);
+assert_eq!(terms.ontology_tags["fibo"], [fibo::CORPORATION]);
 ```
 
-## No dependencies
+## Thin dependency surface
 
-Pure Rust vocabulary + selection logic. No reasoners, no OWL parsing, no graph
-databases. Bridges are thin vocabulary layers, not ontology engines.
+Pure Rust vocabulary + selection logic with serialization/schema derives. No
+reasoners, OWL parsing or graph databases. Bridges are thin vocabulary layers,
+not ontology engines.

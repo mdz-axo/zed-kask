@@ -143,9 +143,14 @@ async fn run(
                 row["classification"]["ontology_protocol"],
                 TERM_RESOLUTION_PROTOCOL
             );
-            assert_eq!(
-                row["candidate_terms"],
-                json!(["procedure", "assertion", "complexity"])
+            let candidate_terms = row["candidate_terms"].as_array().expect("candidate terms");
+            assert!(
+                candidate_terms.starts_with(
+                    json!(["procedure", "assertion", "complexity"])
+                        .as_array()
+                        .expect("expected terms")
+                ),
+                "{row}"
             );
             assert_eq!(
                 row["ontology_tags"]["pko"],
@@ -297,10 +302,10 @@ async fn public_tagging_identity_contract() {
     );
     let mut unicode = tags("item-0");
     unicode["dc_subject"] = json!(["界".repeat(50)]);
-    unicode["candidate_terms"] = json!(["界".repeat(50)]);
+    unicode["candidate_terms"] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
     assert_eq!(summary["tagged"], 1);
-    for term in [&rows[0]["dc_subject"][0], &rows[0]["candidate_terms"][0]] {
+    for term in [&rows[0]["dc_subject"][0], &rows[0]["candidate_terms"][3]] {
         let term = term.as_str().expect("term");
         assert!(!term.is_empty() && term.len() <= 80);
         assert_eq!(term, "界".repeat(26));

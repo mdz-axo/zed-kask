@@ -808,7 +808,7 @@ mod tests {
         use crate::services::prompt_builder::{BuildPromptsRequest, PromptBuilderService};
         let directory = fixture_directory()?;
         let tagged = directory.path().join("tagged.jsonl");
-        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "classification":{"status":"classified"}, "source":"source.txt", "text":"The passage supplies a verifiable fact.", "concepts":["fact"], "salience":0.5}).to_string())?;
+        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"source.txt", "text":"The passage supplies a verifiable fact.", "candidate_terms":["quantity"], "ontology_tags":{"sumo":[hkask_bridge_ontology::sumo::QUANTITY]}, "concepts":[hkask_bridge_ontology::sumo::QUANTITY], "salience":0.5}).to_string())?;
         for max_prompts in [0, 2, 4] {
             let path = directory.path().join("built.jsonl");
             let result = PromptBuilderService::new()

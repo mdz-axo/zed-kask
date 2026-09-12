@@ -139,19 +139,8 @@ pub(crate) fn normalize_in_place(v: &mut [f32]) {
     }
 }
 
-/// Normalize a concept string for graph-key and embedding-annotation consistency.
-///
-/// The salience graph (`hkask_memory::salience::compute_salience_batch`) keys
-/// on exact strings, so "ROIC", "Roic", "roic  " would be three disconnected
-/// nodes. Lowercase + trim + collapse whitespace merges them. This helper is
-/// the single canonical normalization point shared by:
-/// - `tagging/ops.rs` (initial `concepts` vector build + `validate_ontology_tags`)
-/// - `corpus.rs` (consolidation merge — must match the tagging-phase form)
-/// - `semantic.rs` (embedding annotation prefix + ontology namespace cross-check)
-///
-/// Corpus-specific canonicalization (e.g. "DCF" → "discounted cash flow") is
-/// driven by the tagging template, not hardcoded here — docproc is a general
-/// processor.
+/// Normalize descriptive Dublin Core subjects for stable metadata. Published
+/// ontology terms use `hkask_bridge_ontology::term_resolution` instead.
 pub(crate) fn normalize_concept(s: &str) -> String {
     s.trim()
         .to_lowercase()
@@ -888,7 +877,7 @@ mod smoke {
                     hkask_types::WebID::new(),
                 )
                 .with_ontology(hkask_types::HMemOntology::state(
-                    "bibo:Document",
+                    hkask_bridge_ontology::dc_bibo::DOCUMENT,
                     Vec::new(),
                     "doc.txt",
                 )),
@@ -898,17 +887,23 @@ mod smoke {
         // Source context is loaded from stored passages and their provenance.
         let doc1 = serde_json::json!({
             "entity_ref": "corpus:custom:doc1",
-            "classification": {"status": "classified"},
+            "classification": {"status": "classified", "ontology_protocol": hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL},
             "source": "doc.txt",
             "text": "The Cinderella curve describes firms with high returns on capital that fade over time.",
             "dimensions": ["what"],
+            "candidate_terms": ["corporation"],
+            "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
+            "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
         });
         let doc2 = serde_json::json!({
             "entity_ref": "corpus:custom:doc2",
-            "classification": {"status": "classified"},
+            "classification": {"status": "classified", "ontology_protocol": hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL},
             "source": "doc.txt",
             "text": "A passage about capital returns and their durability.",
             "dimensions": ["what"],
+            "candidate_terms": ["corporation"],
+            "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
+            "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
         });
         std::fs::write(&tagged_path, format!("{doc1}\n{doc2}\n")).expect("write tagged jsonl");
 

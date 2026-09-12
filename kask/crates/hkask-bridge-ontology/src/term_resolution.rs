@@ -49,6 +49,11 @@ pub struct CanonicalTerms {
 }
 
 /// Rung 1 registries, in stable resolution order.
+const NAMED_DOMAIN_REGISTRIES: &[(&str, &[(&str, &str)])] = &[
+    ("SEPIO", sepio::ALL_NAMED_TERMS),
+    ("GOLEM", golem::ALL_NAMED_TERMS),
+];
+
 const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
     ("FIBO", fibo::ALL_TERMS),
     ("PKO", pko::ALL_TERMS),
@@ -72,6 +77,24 @@ fn normalize(term: &str) -> String {
 /// real but coarse 5W1H ground, so matching is never fuzzy.
 pub fn resolve_term(term: &str) -> TermResolution {
     let trimmed = term.trim();
+
+    // Some published URI suffixes carry numeric class codes. Their
+    // fixture-backed bridge constant names provide exact descriptive labels.
+    for (namespace, registry) in NAMED_DOMAIN_REGISTRIES {
+        for (name, uri) in *registry {
+            if normalize(trimmed) == normalize(name) {
+                return TermResolution {
+                    tier: "domain_supplement".to_string(),
+                    term: trimmed.to_string(),
+                    namespace: (*namespace).to_string(),
+                    concept: (*uri).to_string(),
+                    identity: None,
+                    authority: None,
+                    note: None,
+                };
+            }
+        }
+    }
 
     for (namespace, registry) in DOMAIN_REGISTRIES {
         for uri in *registry {
@@ -153,7 +176,12 @@ where
             continue;
         }
         let normalized = normalize(trimmed);
-        if normalized.is_empty() || !seen_terms.insert(normalized) {
+        let dedup_key = if normalized.is_empty() {
+            trimmed.to_lowercase()
+        } else {
+            normalized
+        };
+        if !seen_terms.insert(dedup_key) {
             continue;
         }
 
@@ -185,6 +213,7 @@ mod tests {
                 "FIBO",
                 "fibo-be-le-cb:Corporation",
             ),
+            ("assertion", "domain_supplement", "SEPIO", sepio::ASSERTION),
             ("net margin", "derived", "derived", "net_margin"),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),
