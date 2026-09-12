@@ -1,7 +1,7 @@
-{# goal: Extract visible page text as Markdown while preserving headings, tables, equations and reading order, without inventing image links or duplicating captions as image descriptions. #}
-Extract all visible text from this page image as Markdown. Preserve headings, tables, equations, figure references, and natural reading order. Do not invent image links or repeat captions as image descriptions. If the page is blank or contains no text, output BLANK.
-{% if anchored_text %}
-
-Native text blocks detected on this page (use as a reading-order hint; the image is authoritative where they disagree):
-{{ anchored_text }}
-{% endif %}
+{# goal: Request the publisher's structured page response: transcribed text and tables, YAML page metadata, and explicitly marked figure annotations that the corpus decoder keeps separate from source text. #}
+{# Contract: allenai/olmocr prompts.py, build_no_anchoring_v4_yaml_prompt.
+   The decoder requires this format; do not replace it with a plain-text prompt.
+   https://github.com/allenai/olmocr/blob/main/olmocr/prompts/prompts.py #}
+Attached is one page of a document that you must process. Just return the plain text representation of this document as if you were reading it naturally. Convert equations to LateX and tables to HTML.
+If there are any figures or charts, label them with the following markdown syntax ![Alt text describing the contents of the figure](page_startx_starty_width_height.png)
+Return your output as markdown, with a front matter section on top specifying values for the primary_language, is_rotation_valid, rotation_correction, is_table, and is_diagram parameters.

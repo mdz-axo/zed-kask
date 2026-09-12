@@ -53,6 +53,9 @@ impl CorpusServer {
                 let result = ConvertService::from_corpus(self)
                     .convert(path, force_ocr, target_pages, include_structure.unwrap_or(false))
                     .await?;
+                let text = result.get("text").and_then(serde_json::Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+                    .ok_or_else(|| McpToolError::failed_precondition(format!("Conversion produced no usable text; report: {result}")))?;
                 // Honor the `output` parameter on the file path: the
                 // extracted text lands at the caller's destination instead
                 // of the parameter being silently dropped (the directory
@@ -71,7 +74,6 @@ impl CorpusServer {
                             )
                         })?;
                     }
-                    let text = result["text"].as_str().unwrap_or("");
                     std::fs::write(&destination, text).map_err(|e| {
                         map_corpus_io_error(
                             e,
@@ -119,14 +121,13 @@ impl CorpusServer {
                 }
             };
 
-            let file_bytes = match std::fs::read(&resolved) {
-                Ok(b) => b,
-                Err(e) => {
-                    return Err(map_corpus_io_error(
-                        e,
-                        &format!("Failed to read file '{}'", path),
-                    ));
-                }
+            let file_bytes = if format == "pdf" {
+                Vec::new()
+            } else {
+                crate::path_safety::read_capped(
+                    &resolved.to_string_lossy(),
+                    crate::path_safety::MAX_READ_BYTES,
+                )?
             };
 
             // PDFs and images go through the page pipeline (decimate to page
@@ -154,6 +155,9 @@ impl CorpusServer {
                 "text": outcome.text,
                 "word_count": outcome.text.split_whitespace().count(),
                 "pages": outcome.pages,
+                "ocr_protocol": crate::ocr::response::OCR_PROTOCOL,
+                "page_reports": outcome.page_reports,
+                "errors": outcome.errors,
                 "verification_passed": outcome.verification_passed,
                 "page_count_match": outcome.page_count_match,
                 "empty_pages": outcome.empty_pages,
@@ -736,6 +740,7 @@ impl CorpusServer {
                             Ok(mut report) if report.get("text").and_then(serde_json::Value::as_str) == Some(existing.as_str())
                                 && report.get("path").and_then(serde_json::Value::as_str) == source.to_str()
                                 && report.get("verification_passed").and_then(serde_json::Value::as_bool).is_some()
+                                && report.get("ocr_protocol").and_then(serde_json::Value::as_str) == Some(crate::ocr::response::OCR_PROTOCOL)
                                 && existing.split_whitespace().count() >= 50
                                 && crate::ocr::quality::passes_gates(&existing) => {
                                     if let Some(map) = report.as_object_mut() {

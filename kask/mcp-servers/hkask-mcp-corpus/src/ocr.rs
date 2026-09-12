@@ -21,6 +21,7 @@ pub(crate) mod document;
 pub(crate) mod llm_ocr;
 pub(crate) mod pipeline;
 pub(crate) mod quality;
+pub(crate) mod response;
 pub(crate) mod triage;
 pub(crate) mod verification;
 

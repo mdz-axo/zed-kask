@@ -61,6 +61,14 @@ then ensure the corpus process is fresh because it caches templates. For reposit
 tests, set `HKASK_TEMPLATE_ROOT="$PWD/kask/registry"` explicitly. Source-faithfulness
 still requires checking OCR output; a prompt constraint is not a quality verdict.
 
+The OCR page contract uses color images with a 1288-pixel longest edge and puts
+the task alongside the image in a user message. The response decoder separates
+required YAML metadata and declared figure annotations from transcribed text.
+`page_reports` preserves annotations as model inference, not source quotations or
+created files; `errors` preserves page failure reasons. Unsupported image links,
+malformed metadata and rotation requests fail visibly. Old staged reports lacking
+the current `ocr_protocol` do not resume; no plain-text compatibility route exists.
+
 ## Pipeline parameters
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–945`,

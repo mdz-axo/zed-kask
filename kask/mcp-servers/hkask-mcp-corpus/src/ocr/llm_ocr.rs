@@ -327,10 +327,19 @@ impl OcrExecutor for LlmOcrExecutor {
         // `to_base64_url` hardcodes the `data:image/png` MIME. JPEG bytes under
         // a PNG MIME are dropped by strict decoders (the RunPod OLMOCR-2 proxy
         // returned empty output for exactly this reason; ollama happens to
-        // sniff the real format). Binarized 72-DPI pages compress well as PNG,
-        // so the size cost vs JPEG is modest (~1.4x on measured pages).
+        // sniff the real format). Preserve color and normalize the longest
+        // edge to the page protocol's input size for both PDFs and images.
+        let normalized = DynamicImage::ImageRgb8(
+            image
+                .resize(
+                    crate::ocr::OCR_IMAGE_LONG_EDGE,
+                    crate::ocr::OCR_IMAGE_LONG_EDGE,
+                    image::imageops::FilterType::Lanczos3,
+                )
+                .to_rgb8(),
+        );
         let mut img_bytes: Vec<u8> = Vec::new();
-        image
+        normalized
             .write_to(
                 &mut std::io::Cursor::new(&mut img_bytes),
                 image::ImageFormat::Png,
@@ -345,7 +354,9 @@ impl OcrExecutor for LlmOcrExecutor {
         // launching every in-flight page at the ceiling. The slot reports
         // the call's outcome and releases its in-flight count on drop.
         let slot = self.limiter.acquire().await;
-        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model).await;
+        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model)
+            .await
+            .and_then(|raw| super::response::parse_page_response(&raw));
         match &result {
             Ok(_) => slot.report_success(),
             Err(_) => slot.report_failure(),
@@ -421,6 +432,9 @@ impl OcrExecutor for LlmOcrExecutor {
                     recorder.record_breaker_state(!self.breaker.is_closed());
                 }
             }
+            Err(OcrError::InvalidResponse(reason)) => {
+                tracing::warn!(target: "reg.pipeline.ocr.protocol", page_index, model = %model, reason = %reason, "OCR response rejected; no plain-text fallback");
+            }
             // No silent swallows: pre-call failures (wrong backend, JPEG
             // encoding) surface with their cause too.
             Err(other) => {
@@ -434,13 +448,13 @@ impl OcrExecutor for LlmOcrExecutor {
             }
         }
 
-        let text = result?;
-        let word_count = text.split_whitespace().count();
+        let response = result?;
+        let word_count = response.text.split_whitespace().count();
 
         // Direct plausibility check for the Regulation low-confidence alert: non-empty
         // but near-empty output is likely a hallucination or garbage. Replaces
         // the former `ocr_quality_heuristic < 0.3` trigger.
-        if !text.trim().is_empty() && word_count < 5 {
+        if !response.text.trim().is_empty() && word_count < 5 {
             tracing::warn!(
                 target: "reg.pipeline.ocr.low_confidence",
                 page_index = page_index,
@@ -450,7 +464,7 @@ impl OcrExecutor for LlmOcrExecutor {
             );
         }
 
-        Ok(OcrResult::new(page_index, model, text))
+        Ok(OcrResult::from_response(page_index, model, response))
     }
 }
 

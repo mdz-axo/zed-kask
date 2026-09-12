@@ -805,10 +805,9 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let messages = vec![
-            ChatMessage::system(prompt.to_string()),
-            ChatMessage::user("Execute the instructions above.".to_string()),
-        ];
+        // Vision models receive the task with its image, matching their multimodal
+        // user-message contract rather than relying on a separate system instruction.
+        let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request_with_images(&messages, images, parameters, None);
         let model_override = model_override.map(|s| s.to_string());
         let (tx_reply, rx_reply) = oneshot::channel();
@@ -1014,6 +1013,41 @@ mod tests {
     use language_model_core::{LanguageModelCompletionError, LanguageModelProviderName};
     use std::sync::Arc;
     use std::time::Duration;
+
+    /// expect: [P7] A vision task reaches the model alongside its image in the user message, without a dummy replacement instruction.
+    #[gpui::test]
+    async fn vision_task_and_image_share_user_message(cx: &mut gpui::TestAppContext) {
+        use language_model::{MessageContent, Role};
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_supports_images(true);
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(30),
+            2,
+            cx.to_async(),
+        );
+        let generate = cx.spawn(async move |_cx| {
+            port.generate_vision("Transcribe the visible text.", &["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==".into()], &LLMParameters::default(), None).await
+        });
+        cx.run_until_parked();
+        let requests = model.pending_completions();
+        let request = requests.first().expect("vision request");
+        assert_eq!(request.messages.len(), 1);
+        let message = request.messages.first().expect("user message");
+        assert_eq!(message.role, Role::User);
+        assert!(message.content.iter().any(|part| matches!(part, MessageContent::Text(text) if text == "Transcribe the visible text.")));
+        assert_eq!(
+            message
+                .content
+                .iter()
+                .filter(|part| matches!(part, MessageContent::Image(_)))
+                .count(),
+            1
+        );
+        model.send_last_completion_stream_text_chunk("transcribed text");
+        model.end_last_completion_stream();
+        assert_eq!(generate.await.expect("completion").text, "transcribed text");
+    }
 
     /// Dedicated QA selection reaches the registered generator even when the
     /// active model requires thinking. Unknown IDs fail without using chat.

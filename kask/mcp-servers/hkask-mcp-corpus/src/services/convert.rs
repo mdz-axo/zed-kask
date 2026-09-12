@@ -87,6 +87,8 @@ pub(crate) struct PipelineOcrOutcome {
     /// the page indices are surfaced so garbage can never merge silently.
     pub(crate) quality_failed_pages: Vec<usize>,
     pub(crate) error_count: usize,
+    pub(crate) page_reports: Vec<serde_json::Value>,
+    pub(crate) errors: Vec<crate::ocr::PipelineError>,
     /// Whether the LLM OCR circuit breaker was open when the outcome was
     /// assembled — LLM attempts paused, so pages failed without an attempt.
     pub(crate) llm_breaker_open: bool,
@@ -107,6 +109,21 @@ fn quality_failure_detail(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::
                 "cjk_ratio": r.quality.cjk_ratio,
                 "repetition_ratio": r.quality.repetition_ratio,
                 "garble_ratio": r.quality.garble_ratio,
+            })
+        })
+        .collect()
+}
+
+fn page_reports(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .map(|page| {
+            serde_json::json!({
+                "page_index": page.page_index,
+                "metadata": page.metadata,
+                "figure_annotations": page.figure_annotations,
+                "figure_annotations_provenance": "model_inference",
+                "figure_artifacts_created": false,
             })
         })
         .collect()
@@ -141,17 +158,10 @@ fn assemble_pipeline_outcome(
         empty_pages: outcome.report.empty_pages,
         quality_failed_pages: outcome.report.quality_failed_pages,
         error_count: outcome.errors.len(),
+        page_reports: page_reports(&outcome.results),
+        errors: outcome.errors,
         llm_breaker_open,
     })
-}
-
-/// OCR page-render resolution (DPI). Default 72 — the image payload fits the
-/// vision model's 128K-token context. Raising it (e.g. 150) improves
-/// accuracy on scanned books at the cost of render memory and LLM
-/// payload size; a malformed value warns naming the bad input and falls
-/// back to the default (the parse_env_warn contract).
-fn ocr_render_dpi() -> u32 {
-    hkask_mcp_server::parse_env_warn("HKASK_OCR_RENDER_DPI", 72_u32)
 }
 
 impl<'a> ConvertService<'a> {
@@ -330,7 +340,11 @@ impl<'a> ConvertService<'a> {
         // Structure is deliberately NOT folded here: it is site-specific
         // (three of the four OCR paths carry it) and doubles the response
         // with the full text — each site gates it on `include_structure`.
+
         let common = serde_json::json!({
+            "ocr_protocol": crate::ocr::response::OCR_PROTOCOL,
+            "page_reports": page_reports(&outcome.results),
+            "errors": outcome.errors,
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
@@ -349,7 +363,7 @@ impl<'a> ConvertService<'a> {
     }
 
     /// OCR a file through the page pipeline — the same execution path as
-    /// `convert(force_ocr)`. PDFs are decimated to 72-DPI page images; image
+    /// `convert(force_ocr)`. PDFs are rendered as bounded color page images; image
     /// files become a single page. Returns the assembled text plus the
     /// pipeline's verification report.
     ///
@@ -368,7 +382,7 @@ impl<'a> ConvertService<'a> {
         executor: std::sync::Arc<dyn OcrExecutor>,
     ) -> Result<PipelineOcrOutcome, McpToolError> {
         let page_images = if format == "pdf" {
-            decimation::pdf_to_images(resolved, ocr_render_dpi())
+            decimation::pdf_to_images(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("PDF page rendering failed: {e}")))?
         } else {
@@ -576,17 +590,17 @@ impl<'a> ConvertService<'a> {
                 return Ok(self.with_pipeline_outcome(result, &outcome));
             }
 
-            // Not an image — try decimation + pipeline for PDFs (72 DPI JPEG to stay within 128K token limit)
+            // Not an image — render PDF pages for the vision pipeline
             if format == "pdf" {
                 let imgs_res = if let Some(ref ts) = target_set {
                     decimation::pdf_to_images_for_pages(
                         &resolved,
-                        ocr_render_dpi(),
+                        crate::ocr::OCR_IMAGE_LONG_EDGE,
                         &target_indices(ts),
                     )
                     .await
                 } else {
-                    decimation::pdf_to_images(&resolved, ocr_render_dpi()).await
+                    decimation::pdf_to_images(&resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
                 };
                 match imgs_res {
                     Ok(page_images) => {
@@ -714,7 +728,7 @@ impl<'a> ConvertService<'a> {
             {
                 match decimation::pdf_to_images_for_pages(
                     std::path::Path::new(&path),
-                    ocr_render_dpi(),
+                    crate::ocr::OCR_IMAGE_LONG_EDGE,
                     ocr_pages,
                 )
                 .await
@@ -774,19 +788,19 @@ impl<'a> ConvertService<'a> {
                 }
             }
 
-            // Insufficient text — try the typed OCR pipeline (72 DPI JPEG to stay within 128K token limit)
+            // Insufficient text — try the typed OCR page pipeline
             if self.has_ocr()
                 && let Ok(model) = self.resolve_ocr_model(None).await
             {
                 let imgs_res = if let Some(ref ts) = target_set {
                     decimation::pdf_to_images_for_pages(
                         &resolved,
-                        ocr_render_dpi(),
+                        crate::ocr::OCR_IMAGE_LONG_EDGE,
                         &target_indices(ts),
                     )
                     .await
                 } else {
-                    decimation::pdf_to_images(&resolved, ocr_render_dpi()).await
+                    decimation::pdf_to_images(&resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
                 };
                 match imgs_res {
                     Ok(page_images) => {
@@ -1792,7 +1806,7 @@ mod ocr_guards {
     async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
         let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
         let port = Arc::new(MutableVisionPort {
-            vision_text: std::sync::Mutex::new("extracted page text".to_string()),
+            vision_text: std::sync::Mutex::new("---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\nextracted page text".to_string()),
         });
         let executor = LlmOcrExecutor::new(Arc::clone(&port) as Arc<dyn InferencePort>);
         assert_eq!(
@@ -1805,11 +1819,11 @@ mod ocr_guards {
         executor
             .execute(0, "mock-model", &image)
             .await
-            .expect("non-empty vision output must succeed");
+            .expect("valid page response must succeed");
         executor
             .execute(1, "mock-model", &image)
             .await
-            .expect("non-empty vision output must succeed");
+            .expect("valid page response must succeed");
         assert_eq!(
             executor.adaptive_concurrency(),
             4,

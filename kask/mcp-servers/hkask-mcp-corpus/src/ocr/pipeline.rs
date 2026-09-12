@@ -31,6 +31,8 @@ pub(crate) enum OcrError {
         "Required OCR template ocr-extract is missing or invalid; check HKASK_TEMPLATE_ROOT and host template deployment, then restart the corpus server"
     )]
     TemplateUnavailable,
+    #[error("OCR response violates the required page protocol: {0}")]
+    InvalidResponse(String),
     #[error("OCR model '{model}' failed: {message}")]
     BackendFailed { model: String, message: String },
     #[error("No OCR model configured. Set HKASK_OCR_MODEL env var or pass the 'model' parameter.")]

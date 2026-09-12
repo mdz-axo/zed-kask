@@ -28,28 +28,57 @@ pub(crate) fn split_pdftotext_pages(raw: &str) -> Vec<String> {
 /// Carries provenance and quality metadata for verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct OcrResult {
-    /// 0-based page index within the source document.
+    /// 0-based position in the OCR request; selective requests map it through triage.
     pub page_index: usize,
     /// The model that produced this text (e.g. `runpod/kask-ocr`).
     pub model: String,
     /// Extracted text content.
     pub text: String,
-    /// Deterministic quality assessment of `text` (see `ocr::quality`).
+    /// Deterministic quality assessment of the text view, excluding HTML markup.
     pub quality: PageQuality,
+    pub metadata: super::response::PageMetadata,
+    /// Model-generated structural annotations, not transcribed source text.
+    pub figure_annotations: Vec<super::response::FigureAnnotation>,
 }
 
 impl OcrResult {
     /// Construct a result, assessing the text against the quality gates at
     /// construction time — the single place quality is computed, so no
     /// result can exist with an unassessed or stale quality record.
-    pub fn new(page_index: usize, model: impl Into<String>, text: String) -> Self {
-        let quality = quality::assess(&text);
+    pub fn from_response(
+        page_index: usize,
+        model: impl Into<String>,
+        response: super::response::PageResponse,
+    ) -> Self {
+        let quality = quality::assess(&crate::convert::strip_html(&response.text));
         Self {
             page_index,
             model: model.into(),
-            text,
+            text: response.text,
             quality,
+            metadata: response.metadata,
+            figure_annotations: response.figures,
         }
+    }
+
+    /// Pipeline fixtures supply plain text without exercising provider decoding.
+    #[cfg(test)]
+    pub fn new(page_index: usize, model: impl Into<String>, text: String) -> Self {
+        Self::from_response(
+            page_index,
+            model,
+            super::response::PageResponse {
+                text,
+                metadata: super::response::PageMetadata {
+                    primary_language: Some("en".into()),
+                    is_rotation_valid: true,
+                    rotation_correction: 0,
+                    is_table: false,
+                    is_diagram: false,
+                },
+                figures: Vec::new(),
+            },
+        )
     }
 }
 

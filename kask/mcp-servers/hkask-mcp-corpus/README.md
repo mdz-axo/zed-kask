@@ -48,8 +48,15 @@ set `HKASK_TEMPLATE_ROOT="$PWD/kask/registry"` explicitly; there is no cwd or
 compile-time checkout fallback. OCR requires the deployed `ocr-extract.j2` and
 fails before vision inference when it is missing or invalid, rather than using
 an inline prompt. Template updates therefore require host reseeding and a fresh
-corpus process. OCR transcribes visible text; invented image links and duplicated
-caption descriptions are not source content.
+corpus process. The configured OCR model must emit the documented page-response
+contract: YAML page metadata followed by text/HTML tables and optional inline
+`page_x_y_width_height.png` figure annotations. The decoder rejects malformed
+metadata, rotation requests and unsupported image destinations. Printed text
+remains in `text`; `page_reports` retains metadata and figure annotations as
+`model_inference`, without claiming that image files or verified crops exist.
+Literal Markdown in code is preserved. Images use color and a 1288-pixel longest
+edge, matching the publisher's input contract. Empty/failed conversions cannot
+write an extraction file; these mechanical checks are not semantic acceptance.
 
 ## Extraction and chunking
 
@@ -59,7 +66,7 @@ pass its 50-word floor and deterministic quality checks. OCR-derived directory
 outputs go to `{output}-ocr-staging`; merging into accepted extractions is an
 explicit quality-gated operation. Each staged OCR text has a `.report.json`
 companion containing the complete conversion result. Resume requires a matching
-source path, exact staged text and explicit verification verdict; a missing or
+source path, exact staged text, current `ocr_protocol` and explicit verification verdict; a missing or
 mismatched report fails visibly without re-OCR or admission. Directory responses
 return `document_reports` (without text/structure) and `verification_failed`,
 separate from I/O/conversion `failed`. A staged or resumed file is not an accepted
@@ -429,7 +436,7 @@ literal and case-sensitive: `%`, `_` and backslash do not widen the selection.
 | `HKASK_TEMPLATE_ROOT` | Root for docproc templates |
 | `HKASK_QA_MODEL` | Consolidation model, not a QA-generation alias |
 | `HKASK_DEFAULT_MODEL` | General generation, including composition; not QA fallback |
-| `HKASK_OCR_RENDER_DPI` | Page render resolution (default 72); higher values cost memory/payload |
+
 
 The server runs as an editor-managed MCP child process. Source reading,
 configuration/authorization failure, partial output and unperformed validation

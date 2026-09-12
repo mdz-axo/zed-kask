@@ -53,7 +53,8 @@ fn large_native_pdf(path: &Path) -> anyhow::Result<()> {
     let mut file = std::fs::File::create(path)?;
     file.write_all(b"%PDF-1.4\n")?;
     let mut offsets = Vec::new();
-    let mut text = String::from("BT /F1 12 Tf 40 760 Td 16 TL\n");
+    let mut text =
+        String::from("1 0 0 rg 40 400 100 100 re f\n0 0 0 rg\nBT /F1 12 Tf 40 760 Td 16 TL\n");
     for line in 0..12 {
         text.push_str(&format!("(Source line {line} explains how evidence supports careful decisions about systems and their observed behavior.) Tj T*\n"));
     }
@@ -115,8 +116,11 @@ async fn large_pdf_converts_through_directory_without_ocr() -> anyhow::Result<()
     Ok(())
 }
 
+const PAGE_HEADER: &str = "---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\n";
+
 struct VisionPort {
     calls: std::sync::atomic::AtomicUsize,
+    response: String,
 }
 impl InferencePort for VisionPort {
     fn generate(
@@ -153,10 +157,7 @@ impl InferencePort for VisionPort {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async {
             Ok(InferenceResult {
-                text: (0..80)
-                    .map(|n| format!("term {n}"))
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                text: self.response.clone(),
                 model: "fixture/ocr".into(),
                 usage: hkask_types::InferenceUsage {
                     prompt_tokens: 0,
@@ -172,6 +173,121 @@ impl InferencePort for VisionPort {
     }
 }
 
+/// expect: [P7] OCR preserves transcribed text and reports model figure annotations separately, never as created files or source quotations.
+#[tokio::test]
+async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("control.png");
+    image::DynamicImage::new_rgb8(8, 8).save(&input)?;
+    let body = "The pump runs for seventeen minutes.\n\n![Pump diagram](page_0_0_100_100.png)\n\nThe gauge reads five bars.";
+    let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
+        calls: 0.into(),
+        response: format!("{PAGE_HEADER}{body}"),
+    });
+    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
+    let server = CorpusServer::new(
+        hkask_types::WebID::new(),
+        Some("fixture/ocr".into()),
+        port,
+        Default::default(),
+        ocr,
+    );
+    let mut request = request(&input, &dir.path().join("text.txt"));
+    request.force_ocr = true;
+    let result = server.corpus_convert(Parameters(request)).await?;
+    let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
+    let text = result["text"].as_str().expect("text");
+    assert_eq!(
+        text.split_whitespace().collect::<Vec<_>>().join(" "),
+        "The pump runs for seventeen minutes. The gauge reads five bars."
+    );
+    assert_eq!(
+        result["page_reports"][0]["metadata"]["primary_language"],
+        "en"
+    );
+    assert_eq!(
+        result["page_reports"][0]["figure_annotations"][0]["description"],
+        "Pump diagram"
+    );
+    assert_eq!(
+        result["page_reports"][0]["figure_annotations_provenance"],
+        "model_inference"
+    );
+    assert_eq!(result["page_reports"][0]["figure_artifacts_created"], false);
+    let second = server
+        .corpus_ocr(Parameters(super::OcrRequest {
+            path: input.to_string_lossy().into_owned(),
+            model: None,
+        }))
+        .await?;
+    let second = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&second)?);
+    assert_eq!(second["text"], result["text"]);
+    assert_eq!(second["page_reports"], result["page_reports"]);
+    Ok(())
+}
+
+/// expect: [P4] A rejected page response cannot create a purported extraction file.
+#[tokio::test]
+async fn ocr_protocol_rejects_bad_page_before_output() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("control.png");
+    image::DynamicImage::new_rgb8(8, 8).save(&input)?;
+    for (index, response) in [
+        "legacy plain text".to_string(),
+        format!("{PAGE_HEADER}![Bad](https://example.com/fake.png)"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
+            calls: 0.into(),
+            response,
+        });
+        let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
+        let server = CorpusServer::new(
+            hkask_types::WebID::new(),
+            Some("fixture/ocr".into()),
+            port,
+            Default::default(),
+            ocr,
+        );
+        let output = dir.path().join(format!("rejected-{index}.txt"));
+        let mut request = request(&input, &output);
+        request.force_ocr = true;
+        let error = server
+            .corpus_convert(Parameters(request))
+            .await
+            .expect_err("invalid page response");
+        assert!(error.to_string().contains("page protocol"), "{error}");
+        assert!(!output.exists());
+    }
+    Ok(())
+}
+
+/// expect: [P4] Page rendering preserves color and treats its bound as pixels, not DPI.
+#[tokio::test]
+async fn ocr_page_rendering_preserves_color_with_pixel_bound() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("control.pdf");
+    large_native_pdf(&input)?;
+    for images in [
+        crate::ocr::decimation::pdf_to_images(&input, 80)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+        crate::ocr::decimation::pdf_to_images_for_pages(&input, 80, &[0])
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+    ] {
+        let image = images.first().expect("rendered page");
+        assert_eq!(image.width().max(image.height()), 80);
+        assert!(image.to_rgb8().pixels().any(|pixel| {
+            let [r, g, b] = pixel.0;
+            r > g && r > b
+        }));
+    }
+    Ok(())
+}
+
 /// expect: [P7] A real OCR execution persists its report and resumes without paying for OCR again.
 #[tokio::test]
 async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<()> {
@@ -180,7 +296,16 @@ async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<(
     let output = dir.path().join("extracted");
     std::fs::create_dir(&sources)?;
     large_native_pdf(&sources.join("book.pdf"))?;
-    let port = Arc::new(VisionPort { calls: 0.into() });
+    let port = Arc::new(VisionPort {
+        calls: 0.into(),
+        response: format!(
+            "{PAGE_HEADER}{}",
+            (0..80)
+                .map(|n| format!("term {n}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    });
     let inference: Arc<dyn InferencePort> = port.clone();
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(inference.clone()));
     let server = CorpusServer::new(
@@ -210,7 +335,7 @@ async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<(
         .path()
         .join("extracted-ocr-staging/book.pdf.report.json");
     let report: serde_json::Value = serde_json::from_slice(&std::fs::read(&report_path)?)?;
-    for field in ["text", "path", "verification_passed"] {
+    for field in ["text", "path", "verification_passed", "ocr_protocol"] {
         let mut mismatched = report.clone();
         mismatched[field] = serde_json::Value::Null;
         std::fs::write(&report_path, serde_json::to_vec(&mismatched)?)?;
@@ -275,6 +400,7 @@ async fn staged_ocr_resume_returns_failed_report() -> anyhow::Result<()> {
     std::fs::write(&source, &text)?;
     std::fs::write(staging.join("book.txt.txt"), &text)?;
     let report = serde_json::json!({"path":source,"method":"selective_ocr", "verification_passed":false,
+        "ocr_protocol":crate::ocr::response::OCR_PROTOCOL,
         "page_count_match":true,"quality_failed_pages":[7],"error_count":0});
     let mut stored = report.clone();
     stored["text"] = serde_json::json!(text);

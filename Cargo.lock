@@ -8833,6 +8833,7 @@ dependencies = [
  "image",
  "minijinja",
  "pptx-to-md",
+ "pulldown-cmark 0.13.4",
  "regex",
  "rmcp",
  "schemars 1.0.4",

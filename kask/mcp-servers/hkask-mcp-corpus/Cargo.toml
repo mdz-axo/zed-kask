@@ -49,6 +49,7 @@ async-trait.workspace = true
 
 regex.workspace = true
 minijinja.workspace = true
+pulldown-cmark.workspace = true
 
 serde_yaml_neo.workspace = true
 

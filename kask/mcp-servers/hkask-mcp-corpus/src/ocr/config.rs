@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Input size documented by the configured page-response protocol's publisher.
+/// https://huggingface.co/allenai/olmOCR-2-7B-1025
+pub(crate) const OCR_IMAGE_LONG_EDGE: u32 = 1288;
+
 // ── Page Triage (pre-OCR complexity detection) ────────────────────────────
 //
 // Inspired by LiteParse's `ComplexityReason` / `PageComplexityStats`, but
