@@ -32,7 +32,10 @@ fn server() -> CorpusServer {
 }
 
 fn fixture() -> anyhow::Result<tempfile::TempDir> {
-    Ok(tempfile::tempdir_in(std::env::current_dir()?)?)
+    // Keep contained scratch files out of the editor's source-tree watch set.
+    let root = std::env::current_dir()?.join("target/chunk-test");
+    std::fs::create_dir_all(&root)?;
+    Ok(tempfile::tempdir_in(root)?)
 }
 
 fn request(patch: Value) -> anyhow::Result<ChunkRequest> {
