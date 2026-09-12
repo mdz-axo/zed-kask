@@ -149,8 +149,7 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         return;
     }
     for response in [
-        json!([{"correlation_id":"item-0", "dimensions":["what"], "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT, "dc_subject":[], "candidate_terms":["quantity"], "expertise_level":"analyst", "method_signals":{"word_count":999}}])
-            .to_string(),
+        json!([["item-0", [], ["quantity", "process", "assertion"]]]).to_string(),
         "not JSON".to_string(),
     ] {
         let directory = fixture();
@@ -181,7 +180,14 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         let row: Value =
             serde_json::from_str(&std::fs::read_to_string(output).expect("tagged output"))
                 .expect("tagged row");
-        assert_eq!(row["classification"]["status"], if response.starts_with('[') { "classified" } else { "failed" });
+        assert_eq!(
+            row["classification"]["status"],
+            if response.starts_with('[') {
+                "classified"
+            } else {
+                "failed"
+            }
+        );
         let expected = hkask_memory::salience::compute_method_signals(text);
         assert_eq!(
             row["ontology"]["method_signals"],
