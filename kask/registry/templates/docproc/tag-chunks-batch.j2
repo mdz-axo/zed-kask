@@ -24,10 +24,10 @@ The six dimensions (who/what/when/where/why/how) are the canonical 5W1H vocabula
 
 ### 2. Dublin Core (state axis — what is this document?)
 - **dc_type**: BIBO document type (bibo:Book, bibo:Article, bibo:Report, bibo:Webpage, bibo:Document)
-- **dc_subject**: General subject keywords (5-10 terms describing the topic). All lowercase canonical forms. Spell out acronyms (e.g. "return on invested capital", not "ROIC").
+- Dublin Core subjects are derived server-side from the candidate terms below; do not return a second duplicate subject list.
 
 ### 3. Candidate Terms
-Extract 5-15 specific descriptive terms supported by each passage. These are raw candidates for deterministic server-side ontology resolution.
+Extract 5-8 specific descriptive terms supported by each passage. These serve both as Dublin Core subjects and as raw candidates for deterministic server-side ontology resolution.
 
 Do not choose an ontology, namespace, prefix, URI, or fallback tier. The server owns published-ontology authority. Include the best passage terms even when you do not know whether a published vocabulary contains them.
 
@@ -54,7 +54,6 @@ Schema (one object per passage, all fields required):
   "correlation_id": "<exact item-N correlation_id from this passage>",
   "dimensions": ["what", "why"],
   "dc_type": "bibo:Book",
-  "dc_subject": ["competitive advantage", "return on capital", "barrier to entry"],
   "candidate_terms": ["market capitalization", "corporation", "valuation", "analysis", "systems thinking"],
   "expertise_level": "analyst"
 }
@@ -63,7 +62,7 @@ Rules:
 - Return every supplied correlation_id exactly once: no omitted, duplicate, invented or blank IDs
 - Never identify a passage by its array position; always include its explicit correlation_id
 - "dimensions" must contain at least one 5W1H interrogatory
-- "candidate_terms" contains 5-15 specific descriptive terms; never namespace keys or ontology URIs
+- "candidate_terms" contains 5-8 specific descriptive terms; never namespace keys or ontology URIs
 - "expertise_level" is one of: "practitioner", "analyst", "researcher"
 - Candidate terms must be found in or directly implied by the passage
 - Do not invent terms not supported by the text

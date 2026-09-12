@@ -506,7 +506,6 @@ fn structural_ontology(thread_id: &str, turn_ms: u128, chunk_index: usize) -> HM
 #[derive(Debug, Default, PartialEq)]
 struct ChunkContentTags {
     dimensions: Vec<String>,
-    dc_subject: Vec<String>,
     candidate_terms: Vec<String>,
     expertise_level: hkask_types::corpus::ExpertiseLevel,
 }
@@ -518,8 +517,7 @@ const CONTENT_DIMENSION_ALLOWLIST: [&str; 2] = ["what", "why"];
 
 const TAGGING_SYSTEM_PROMPT: &str = "You are a semantic candidate extractor for a memory system. For each numbered passage, return one JSON object with these fields:\n\
 - \"dimensions\": array, subset of [\"what\", \"why\"] — what the passage is about, why it matters\n\
-- \"dc_subject\": 1-5 short subject keywords\n\
-- \"candidate_terms\": 1-5 descriptive terms supported by the passage\n\
+- \"candidate_terms\": 3-5 descriptive terms supported by the passage; these also become Dublin Core subjects\n\
 - \"expertise_level\": one of \"practitioner\", \"analyst\", \"researcher\"\n\
 Never choose an ontology namespace, prefix, URI, or fallback tier; the server resolves published anchors deterministically. Respond with ONLY a JSON array containing exactly one object per passage, in passage order. No prose, no code fences.";
 
@@ -621,10 +619,6 @@ impl ChunkContentTags {
         {
             return None;
         }
-        let dc_subject = string_array_field(value, "dc_subject")
-            .into_iter()
-            .take(5)
-            .collect();
         let candidate_terms: Vec<String> = string_array_field(value, "candidate_terms")
             .into_iter()
             .take(5)
@@ -644,7 +638,6 @@ impl ChunkContentTags {
         };
         Some(Self {
             dimensions,
-            dc_subject,
             candidate_terms,
             expertise_level,
         })
@@ -686,7 +679,7 @@ fn merge_content_tags(mut ontology: HMemOntology, tags: &ChunkContentTags) -> HM
         }
     }
     let canonical = canonicalize_terms(&tags.candidate_terms);
-    ontology.dc_subject = tags.dc_subject.clone();
+    ontology.dc_subject = canonical.candidate_terms.clone();
     ontology.candidate_terms = canonical.candidate_terms;
     ontology.ontology_tags = canonical.ontology_tags;
     ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
@@ -749,16 +742,16 @@ mod tests {
 
     #[test]
     fn parse_chunk_tags_accepts_array_and_single_object() {
-        let array = r#"[{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"researcher"}]"#;
+        let array = r#"[{"dimensions":["what"],"candidate_terms":["corporation"],"expertise_level":"researcher"}]"#;
         let tags = parse_chunk_tags(array, 1).expect("array parses");
-        assert_eq!(tags[0].dc_subject, vec!["memory"]);
         assert_eq!(tags[0].candidate_terms, vec!["corporation"]);
         assert_eq!(
             tags[0].expertise_level,
             hkask_types::corpus::ExpertiseLevel::Researcher
         );
 
-        let single = r#"{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["memory"],"expertise_level":"analyst"}"#;
+        let single =
+            r#"{"dimensions":["what"],"candidate_terms":["memory"],"expertise_level":"analyst"}"#;
         assert!(parse_chunk_tags(single, 1).is_some(), "single object wraps");
     }
 
@@ -792,7 +785,6 @@ mod tests {
         let base = structural_ontology("t1", 1, 0);
         let tags = ChunkContentTags {
             dimensions: vec!["what".to_string(), "why".to_string()],
-            dc_subject: vec!["memory".to_string()],
             candidate_terms: vec!["corporation".to_string(), "unknown idea".to_string()],
             expertise_level: hkask_types::corpus::ExpertiseLevel::Researcher,
         };
@@ -801,7 +793,7 @@ mod tests {
             merged.dimensions,
             vec!["how", "when", "who", "where", "what", "why"]
         );
-        assert_eq!(merged.dc_subject, vec!["memory"]);
+        assert_eq!(merged.dc_subject, ["corporation", "unknown idea"]);
         assert_eq!(merged.candidate_terms, ["corporation", "unknown idea"]);
         assert_eq!(
             merged.ontology_tags["fibo"],

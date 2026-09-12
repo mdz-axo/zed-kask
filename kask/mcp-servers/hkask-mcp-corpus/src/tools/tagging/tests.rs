@@ -51,7 +51,7 @@ fn server(port: Arc<MockPort>) -> CorpusServer {
 fn tags(correlation_id: &str) -> Value {
     json!({"correlation_id":correlation_id, "dimensions":["what"],
         "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT,
-        "dc_subject":[], "candidate_terms":["procedure", "assertion", "complexity"],
+        "candidate_terms":["procedure", "assertion", "complexity"],
         "expertise_level":"analyst"})
 }
 
@@ -309,11 +309,10 @@ async fn public_tagging_identity_contract() {
             .contains("JSON")
     );
     let mut unicode = tags("item-0");
-    unicode["dc_subject"] = json!(["界".repeat(50)]);
     unicode["candidate_terms"] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
     assert_eq!(summary["tagged"], 1);
-    for term in [&rows[0]["dc_subject"][0], &rows[0]["candidate_terms"][3]] {
+    for term in [&rows[0]["dc_subject"][3], &rows[0]["candidate_terms"][3]] {
         let term = term.as_str().expect("term");
         assert!(!term.is_empty() && term.len() <= 80);
         assert_eq!(term, "界".repeat(26));

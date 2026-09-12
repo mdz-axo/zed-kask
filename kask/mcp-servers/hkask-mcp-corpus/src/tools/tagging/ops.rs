@@ -28,9 +28,7 @@ use std::collections::{HashMap, HashSet};
 const MAX_CONCEPT_LEN: usize = 80;
 
 /// Maximum candidate terms accepted from one classifier response.
-const MAX_CANDIDATE_TERMS: usize = 30;
-/// Maximum Dublin Core subject terms accepted from one response.
-const MAX_SUBJECT_TERMS: usize = 30;
+const MAX_CANDIDATE_TERMS: usize = 8;
 
 /// Minimal chunk for tagging (from chunks.jsonl).
 #[derive(Debug, Clone, Deserialize)]
@@ -47,7 +45,6 @@ struct InputChunk {
 struct CandidateTags {
     dimensions: Vec<String>,
     dc_type: String,
-    dc_subject: Vec<String>,
     /// Descriptive terms only. The model never assigns namespaces or URIs.
     candidate_terms: Vec<String>,
     expertise_level: String,
@@ -227,12 +224,12 @@ fn validate_candidate_tags(tags: CandidateTags) -> Result<ValidatedTags, String>
         other => return Err(format!("unsupported expertise_level: {other}")),
     };
 
-    let dc_subject = normalize_and_cap_concept_list(&tags.dc_subject);
     let candidate_terms = trim_and_cap_candidate_terms(&tags.candidate_terms);
     if candidate_terms.is_empty() {
         return Err("candidate_terms must contain at least one descriptive term".to_string());
     }
     let canonical_terms = canonicalize_terms(&candidate_terms);
+    let dc_subject = normalize_and_cap_concept_list(&canonical_terms.candidate_terms);
 
     Ok(ValidatedTags {
         dimensions: tags.dimensions,
@@ -285,7 +282,7 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
             let end = prefix.rfind(' ').unwrap_or(prefix.len());
             norm.truncate(end);
         }
-        if !norm.is_empty() && seen.insert(norm.clone()) && out.len() < MAX_SUBJECT_TERMS {
+        if !norm.is_empty() && seen.insert(norm.clone()) && out.len() < MAX_CANDIDATE_TERMS {
             out.push(norm);
         }
     }
