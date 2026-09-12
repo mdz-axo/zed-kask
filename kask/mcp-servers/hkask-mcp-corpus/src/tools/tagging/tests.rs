@@ -327,6 +327,29 @@ async fn public_tagging_identity_contract() {
 }
 
 #[test]
+fn missing_outer_array_bracket_is_repaired_but_partial_semantics_are_rejected() {
+    let complete = json!([tags("item-0")]).to_string();
+    let (value, repaired) = parse_tagging_json(&complete).expect("complete JSON");
+    assert!(value.is_array());
+    assert!(!repaired);
+
+    let missing_outer = complete.strip_suffix(']').expect("outer bracket");
+    let (value, repaired) = parse_tagging_json(missing_outer).expect("outer repair");
+    assert!(value.is_array());
+    assert!(repaired);
+
+    for partial in [
+        r#"[["item-0",[],["unfinished"#,
+        r#"[["item-0",[],["one","two","three"]"#,
+    ] {
+        assert!(
+            parse_tagging_json(partial).is_err(),
+            "must reject {partial}"
+        );
+    }
+}
+
+#[test]
 fn salience_uses_descriptive_candidates_when_anchors_are_coarse() {
     let tagged = [
         vec!["alpha", "bridge"],

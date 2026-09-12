@@ -72,10 +72,9 @@ fn correlation_id(index: usize) -> String {
 fn correlate_tags(
     text: &str,
     chunks: &[InputChunk],
-) -> Result<HashMap<String, ValidatedTags>, String> {
+) -> Result<(HashMap<String, ValidatedTags>, bool), String> {
     let cleaned = extract_json_from_response(text);
-    let value: serde_json::Value =
-        serde_json::from_str(&cleaned).map_err(|error| format!("invalid tagging JSON: {error}"))?;
+    let (value, repaired_outer_array) = parse_tagging_json(&cleaned)?;
     let entries = match value {
         serde_json::Value::Array(entries) => entries,
         _ => return Err("expected outer tagging JSON array".into()),
@@ -113,7 +112,29 @@ fn correlate_tags(
     if !omitted.is_empty() {
         return Err(format!("omitted correlation_id(s): {}", omitted.join(", ")));
     }
-    Ok(correlated)
+    Ok((correlated, repaired_outer_array))
+}
+
+/// Repair only the observed complete-tuples/missing-outer-bracket response.
+/// Exact correlation and field validation still run after this parse. Any
+/// semantic truncation remains invalid because one appended bracket cannot
+/// complete an inner tuple, array, or string.
+fn parse_tagging_json(cleaned: &str) -> Result<(serde_json::Value, bool), String> {
+    match serde_json::from_str(cleaned) {
+        Ok(value) => Ok((value, false)),
+        Err(error) if error.is_eof() && cleaned.trim_start().starts_with('[') => {
+            let mut repaired = cleaned.trim_end().to_string();
+            repaired.push(']');
+            serde_json::from_str(&repaired)
+                .map(|value| (value, true))
+                .map_err(|repair_error| {
+                    format!(
+                        "invalid tagging JSON: {error}; outer-array repair failed: {repair_error}"
+                    )
+                })
+        }
+        Err(error) => Err(format!("invalid tagging JSON: {error}")),
+    }
 }
 
 fn fallback_tags() -> ValidatedTags {
@@ -425,6 +446,7 @@ impl CorpusServer {
             let mut completion_tokens = 0u64;
             let mut total_tokens = 0u64;
             let mut reported_cost_usd = 0.0f64;
+            let mut repaired_outer_arrays = 0usize;
             for (start_idx, batch_len, handle) in handles {
                 let outcome = match handle.await {
                     Ok(Ok((result, usage, cost_usd))) => {
@@ -442,7 +464,10 @@ impl CorpusServer {
                     Err(error) => Err(format!("tagging batch task join failed: {error}")),
                 };
                 match outcome {
-                    Ok(mut tags) => {
+                    Ok((mut tags, repaired_outer_array)) => {
+                        if repaired_outer_array {
+                            repaired_outer_arrays += 1;
+                        }
                         for chunk in &chunks[start_idx..start_idx + batch_len] {
                             let tags = tags.remove(&chunk.entity_ref).ok_or_else(|| {
                                 McpToolError::internal("validated tagging response lost chunk_ref")
@@ -567,6 +592,7 @@ impl CorpusServer {
                 },
                 "reported_cost_usd": reported_cost,
                 "cost_reporting_complete": cost_reporting_complete,
+                "repaired_outer_arrays": repaired_outer_arrays,
             });
 
             let outcome = BatchOutcome::from_counts(f, total);
