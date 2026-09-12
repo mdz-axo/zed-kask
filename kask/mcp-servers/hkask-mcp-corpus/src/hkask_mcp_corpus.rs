@@ -686,6 +686,81 @@ mod smoke {
         );
     }
 
+    /// expect: I can review every front/back-matter exclusion made while chunking a directory.
+    /// [P3] Motivating: Generative Space — emitted chunks contain substantive content.
+    /// [P1] Constraining: Human Agency — each source reports removed words, reasons, and boundaries.
+    /// [P2] Constraining: Cognitive Sovereignty — the tool never hides content removal behind a total.
+    /// pre: directory mode receives a form-feed-free book with explicit bounded sections
+    /// post: chunks omit those sections and the response reports the exact source exclusions
+    #[tokio::test]
+    async fn chunk_directory_reports_bounded_boilerplate_exclusions() {
+        use crate::tools::document::ChunkRequest;
+
+        let dir = std::path::Path::new("target/test-chunk-boilerplate-report");
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).expect("create scratch src dir");
+        let body = "Substantive evidence and analysis remain available to retrieval. ".repeat(80);
+        std::fs::write(
+            src.join("book.txt"),
+            format!(
+                "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nReferences\nSmith, A. Example Work."
+            ),
+        )
+        .expect("write book source");
+
+        let output = dir.join("out.jsonl");
+        let response = make_server()
+            .corpus_chunk(Parameters(ChunkRequest {
+                text: None,
+                path: None,
+                input_dir: Some(src.to_string_lossy().into_owned()),
+                output: Some(output.to_string_lossy().into_owned()),
+                entity_ref_prefix: "test-boilerplate".into(),
+                max_tokens: Some(128),
+                overlap_tokens: Some(32),
+                strip_gutenberg: None,
+                multi_tier: Some(false),
+                coarse_max_tokens: None,
+                medium_max_tokens: None,
+                fine_max_tokens: None,
+                index: false,
+                target_pages: None,
+            }))
+            .await
+            .expect("directory chunk call succeeds");
+
+        let content = hkask_types::tool_response::parse_tool_response(&response)
+            .expect("parse chunk response");
+        let reports = content
+            .get("boilerplate_exclusion_reports")
+            .and_then(serde_json::Value::as_array)
+            .expect("per-source exclusion reports present");
+        assert_eq!(reports.len(), 1);
+        assert_eq!(
+            reports[0].get("source").and_then(serde_json::Value::as_str),
+            Some("book.txt")
+        );
+        assert!(
+            reports[0]
+                .get("removed_words")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                > 0
+        );
+        assert_eq!(
+            reports[0]
+                .get("exclusions")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+
+        let chunks = std::fs::read_to_string(output).expect("read chunk output");
+        assert!(chunks.contains("Substantive evidence"));
+        assert!(!chunks.contains("A Useful Book"));
+        assert!(!chunks.contains("References"));
+    }
+
     /// `convert_directory` skips only outputs that pass the Stage-1
     /// word-count floor. The old `len > 50` byte check treated a 72-byte
     /// zero-word garbage extraction as a valid existing output, so a

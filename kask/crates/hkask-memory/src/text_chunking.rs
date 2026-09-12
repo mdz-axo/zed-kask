@@ -320,118 +320,319 @@ const FORM_FEED: char = '\u{000c}';
 ///
 /// Returns the text with boilerplate pages removed, rejoined with
 /// form-feed so downstream chunking sees only content pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoilerplateExclusion {
+    pub reason: &'static str,
+    pub boundary_unit: &'static str,
+    pub start: usize,
+    pub end: usize,
+    pub removed_words: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoilerplateFilterResult {
+    pub text: String,
+    pub input_words: usize,
+    pub retained_words: usize,
+    pub exclusions: Vec<BoilerplateExclusion>,
+}
+
+/// expect: I can remove bounded book furniture while retaining substantive content and reviewing every exclusion.
+/// [P3] Motivating: Generative Space — downstream corpus stages receive content rather than front/back matter.
+/// [P1] Constraining: Human Agency — every removal carries a reason and source boundary.
+/// [P2] Constraining: Cognitive Sovereignty — prose mentions never act as deletion commands.
+/// pre: text is valid UTF-8 and may be page-delimited or a form-feed-free extraction
+/// post: returns retained text plus complete word-count and exclusion-range accounting
+pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResult {
+    let input_words = text.split_whitespace().count();
+    let (filtered, exclusions) = if text.contains(FORM_FEED) {
+        filter_page_delimited_boilerplate(text)
+    } else if let Some(reason) = boilerplate_page_reason(text) {
+        let removed_words = text.split_whitespace().count();
+        (
+            String::new(),
+            vec![BoilerplateExclusion {
+                reason,
+                boundary_unit: "document",
+                start: 0,
+                end: 1,
+                removed_words,
+            }],
+        )
+    } else {
+        filter_unpaged_boilerplate(text)
+    };
+    let retained_words = filtered.split_whitespace().count();
+
+    BoilerplateFilterResult {
+        text: filtered,
+        input_words,
+        retained_words,
+        exclusions,
+    }
+}
+
 pub fn filter_boilerplate_pages(text: &str) -> String {
-    let pages: Vec<&str> = text.split(FORM_FEED).collect();
-    let kept: Vec<String> = pages
+    filter_boilerplate_pages_with_report(text).text
+}
+
+fn filter_page_delimited_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let mut kept = Vec::new();
+    let mut exclusions = Vec::new();
+    for (page_index, page) in text.split(FORM_FEED).enumerate() {
+        if let Some(reason) = boilerplate_page_reason(page) {
+            exclusions.push(BoilerplateExclusion {
+                reason,
+                boundary_unit: "page",
+                start: page_index,
+                end: page_index + 1,
+                removed_words: page.split_whitespace().count(),
+            });
+        } else {
+            let page = page.trim();
+            if !page.is_empty() {
+                kept.push(page.to_string());
+            }
+        }
+    }
+    (kept.join("\n"), exclusions)
+}
+
+fn filter_unpaged_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return (String::new(), Vec::new());
+    }
+
+    let front_search_end = lines.len().min(400).max((lines.len() / 5).min(400));
+    let front_signal = lines
         .iter()
-        .filter(|page| !is_boilerplate_page(page))
-        .map(|p| p.trim().to_string())
-        .filter(|p| !p.is_empty())
+        .take(front_search_end)
+        .position(|line| is_front_matter_signal(line));
+    let front_end = front_signal
+        .and_then(|signal| {
+            lines
+                .iter()
+                .enumerate()
+                .take(front_search_end)
+                .skip(signal + 1)
+                .find(|(_, line)| is_body_start_heading(line))
+                .map(|(index, _)| index)
+        })
+        .unwrap_or(0);
+
+    let back_search_start = word_fraction_line_index(&lines, 2, 3).max(front_end);
+    let back_boundary =
+        lines
+            .iter()
+            .enumerate()
+            .skip(back_search_start)
+            .find_map(|(index, line)| {
+                back_matter_reason(&lines, index, line).map(|reason| (index, reason))
+            });
+    let back_start = back_boundary.map_or(lines.len(), |(index, _)| index);
+
+    let mut exclusions = Vec::new();
+    if front_end > 0 {
+        exclusions.push(line_exclusion("front_matter", &lines, 0, front_end));
+    }
+    if let Some((index, reason)) = back_boundary {
+        exclusions.push(line_exclusion(reason, &lines, index, lines.len()));
+    }
+
+    let retained = lines
+        .get(front_end..back_start)
+        .unwrap_or_default()
+        .join("\n")
+        .trim()
+        .to_string();
+    (retained, exclusions)
+}
+
+fn word_fraction_line_index(lines: &[&str], numerator: usize, denominator: usize) -> usize {
+    let total_words = lines
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+        .count();
+    let target_words = total_words.saturating_mul(numerator) / denominator.max(1);
+    let mut words_before = 0usize;
+    for (index, line) in lines.iter().enumerate() {
+        if words_before >= target_words {
+            return index;
+        }
+        words_before = words_before.saturating_add(line.split_whitespace().count());
+    }
+    lines.len()
+}
+
+fn line_exclusion(
+    reason: &'static str,
+    lines: &[&str],
+    start: usize,
+    end: usize,
+) -> BoilerplateExclusion {
+    let removed_words = lines
+        .get(start..end)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+        .count();
+    BoilerplateExclusion {
+        reason,
+        boundary_unit: "line",
+        start,
+        end,
+        removed_words,
+    }
+}
+
+fn normalized_heading(line: &str) -> String {
+    line.trim()
+        .trim_matches(|character: char| !character.is_alphanumeric() && !character.is_whitespace())
+        .to_lowercase()
+}
+
+fn is_front_matter_signal(line: &str) -> bool {
+    let heading = normalized_heading(line);
+    heading == "contents"
+        || heading == "table of contents"
+        || heading.contains("copyright")
+        || heading.contains("all rights reserved")
+        || heading.contains("isbn")
+        || heading.contains("printed in")
+}
+
+fn is_body_start_heading(line: &str) -> bool {
+    let heading = normalized_heading(line);
+    let words: Vec<&str> = heading.split_whitespace().collect();
+    if heading.contains("...")
+        || (words.len() > 2
+            && words
+                .last()
+                .is_some_and(|word| word.parse::<usize>().is_ok()))
+    {
+        return false;
+    }
+    heading == "preface"
+        || heading == "foreword"
+        || heading == "introduction"
+        || heading == "prologue"
+        || heading.starts_with("chapter ")
+        || heading.starts_with("part ")
+}
+
+fn back_matter_reason(lines: &[&str], index: usize, line: &str) -> Option<&'static str> {
+    match normalized_heading(line).as_str() {
+        "bibliography" => Some("bibliography"),
+        "references" => Some("references"),
+        "works cited" => Some("works_cited"),
+        "index" if looks_like_index_tail(lines.get(index + 1..).unwrap_or_default()) => {
+            Some("index")
+        }
+        _ => None,
+    }
+}
+
+fn looks_like_index_tail(lines: &[&str]) -> bool {
+    let candidates: Vec<&str> = lines
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .take(100)
         .collect();
-    kept.join("\n")
+    if candidates.len() < 5 {
+        return false;
+    }
+    let index_entries = candidates
+        .iter()
+        .filter(|line| is_index_entry(line))
+        .count();
+    index_entries * 2 >= candidates.len()
+}
+
+fn is_index_entry(line: &str) -> bool {
+    line.len() < 120 && line.matches(',').count() >= 2 && {
+        let numbers = line.rsplit(',').take(3);
+        numbers
+            .filter(|part| part.trim().parse::<usize>().is_ok())
+            .count()
+            >= 2
+    }
 }
 
 /// Classify a single page as boilerplate (title, TOC, index, copyright, blank)
 /// or content. Returns true if the page should be dropped.
+#[cfg(test)]
 fn is_boilerplate_page(page: &str) -> bool {
+    boilerplate_page_reason(page).is_some()
+}
+
+fn boilerplate_page_reason(page: &str) -> Option<&'static str> {
     let trimmed = page.trim();
     if trimmed.is_empty() {
-        return true;
+        return Some("blank");
     }
     let char_count = trimmed.chars().count();
     let lower = trimmed.to_lowercase();
 
-    // Blank or near-blank pages (title pages are often mostly whitespace)
     if char_count < 50 {
-        return true;
+        return Some("title_or_short_page");
     }
-
-    // A page larger than any real front/back-matter page is content. The
-    // heuristics below are calibrated for small pages; applied to a whole
-    // form-feed-free document (OCR outputs, HTML extractions are a single
-    // "page" to the caller) they nuke entire books — observed live: 8
-    // OCR'd sources, each one 170K-530K-char "page" of prose whose long
-    // lines carry >5 sentence periods, tripping the TOC dot-leader rule
-    // at a 41% line ratio.
     if char_count > 3000 {
-        return false;
+        return None;
     }
-
-    // Copyright / publisher pages. Size-gated like the contents/index rule
-    // below: these notices live on small front/back-matter pages. Without
-    // the gate, any document that MENTIONS "copyright" or an ISBN anywhere
-    // (OCR'd books, Project Gutenberg texts) is a single form-feed-free
-    // "page" to the caller and the whole document is silently classified
-    // as boilerplate — observed live: 17 of 138 corpus sources (four
-    // freshly-OCR'd books among them) vanished from a chunk run while
-    // total_documents still reported 138.
     if char_count < 2000
         && (lower.contains("all rights reserved")
             || lower.contains("copyright")
             || lower.contains("printed in")
             || lower.contains("isbn"))
     {
-        return true;
+        return Some("copyright");
     }
 
-    // Table of contents: dot leaders (.... ) or repeated "N. Title    page" patterns.
-    // Line-length bounded like the sibling TOC rule: a dot-leader line is a
-    // short "1. Introduction ..... 3" entry, not a page of prose whose
-    // sentence periods alone exceed the dot count.
     let lines: Vec<&str> = trimmed.lines().collect();
     let dot_leader_count = lines
         .iter()
-        .filter(|l| {
-            let l = l.trim();
-            l.len() < 100 && (l.contains("...") || l.matches('.').count() > 5)
+        .filter(|line| {
+            let line = line.trim();
+            line.len() < 100 && (line.contains("...") || line.matches('.').count() > 5)
         })
         .count();
     if lines.len() > 3 && dot_leader_count as f64 / lines.len() as f64 > 0.4 {
-        return true;
+        return Some("contents");
     }
 
-    // Table of contents: lines matching "N.  Title   page_num" pattern
     let toc_line_count = lines
         .iter()
-        .filter(|l| {
-            let l = l.trim();
-            // "1. Introduction    3" or "1.1 Background  15"
-            l.len() < 100
-                && (l.starts_with(|c: char| c.is_ascii_digit()) || l.starts_with("Chapter"))
-                && l.chars().filter(|c| c.is_ascii_digit()).count() > 0
-                && (l.contains('.') && l.split_whitespace().count() < 12)
+        .filter(|line| {
+            let line = line.trim();
+            line.len() < 100
+                && (line.starts_with(|character: char| character.is_ascii_digit())
+                    || line.starts_with("Chapter"))
+                && line.chars().any(|character| character.is_ascii_digit())
+                && line.contains('.')
+                && line.split_whitespace().count() < 12
         })
         .count();
     if lines.len() > 5 && toc_line_count as f64 / lines.len() as f64 > 0.6 {
-        return true;
+        return Some("contents");
     }
 
-    // Index pages: entries are short phrases followed by comma-separated page numbers
-    // e.g. "algorithm, 42, 87, 103" or "lambda calculus, 15, 22"
     let index_entry_count = lines
         .iter()
-        .filter(|l| {
-            let l = l.trim();
-            // Short line with multiple comma-separated numbers at the end
-            l.len() < 120 && l.matches(',').count() >= 2 && {
-                let nums: Vec<&str> = l.rsplit(',').take(3).collect();
-                nums.iter()
-                    .filter(|s| s.trim().parse::<usize>().is_ok())
-                    .count()
-                    >= 2
-            }
-        })
+        .filter(|line| is_index_entry(line.trim()))
         .count();
     if lines.len() > 5 && index_entry_count as f64 / lines.len() as f64 > 0.5 {
-        return true;
+        return Some("index");
+    }
+    if lower.starts_with("contents") && char_count < 2000 {
+        return Some("contents");
+    }
+    if lower.starts_with("index") && char_count < 2000 {
+        return Some("index");
     }
 
-    // Explicit "Contents" or "Index" header on a short page
-    if (lower.starts_with("contents") || lower.starts_with("index")) && char_count < 2000 {
-        return true;
-    }
-
-    false
+    None
 }
 
 #[cfg(test)]
@@ -739,5 +940,78 @@ mod tests {
     fn filter_drops_title_pages() {
         let title = "Meaning, Logic and Ludics\n\nAlain Lecomte";
         assert!(is_boilerplate_page(title));
+    }
+
+    /// expect: I can exclude front matter and a trailing bibliography from a
+    /// form-feed-free book without deleting its substantive body.
+    /// [P3] Motivating: Generative Space — downstream corpus stages receive content, not book furniture.
+    /// [P1] Constraining: Human Agency — every removal carries a reviewable reason and boundary.
+    /// [P2] Constraining: Cognitive Sovereignty — prose mentions do not become deletion commands.
+    /// pre: the document has explicit front/back section headings and substantive body text
+    /// post: only bounded front/back sections are removed and every removed range is reported
+    #[test]
+    fn unpaged_book_filters_bounded_front_and_back_matter_with_report() {
+        let body = "This chapter contains substantive analysis and evidence. ".repeat(80);
+        let document = format!(
+            "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nBibliography\nSmith, A. Example Work.\nJones, B. Another Work."
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.starts_with("Chapter 1\n"));
+        assert!(result.text.contains("substantive analysis"));
+        assert!(!result.text.contains("A Useful Book"));
+        assert!(!result.text.contains("Contents"));
+        assert!(!result.text.contains("Bibliography"));
+        assert_eq!(result.input_words, document.split_whitespace().count());
+        assert_eq!(
+            result.retained_words,
+            result.text.split_whitespace().count()
+        );
+        assert_eq!(result.exclusions.len(), 2);
+        assert_eq!(result.exclusions[0].reason, "front_matter");
+        assert_eq!(result.exclusions[0].boundary_unit, "line");
+        assert_eq!(result.exclusions[1].reason, "bibliography");
+        assert!(result.exclusions.iter().all(|item| item.removed_words > 0));
+    }
+
+    /// expect: I keep substantive prose that merely discusses bibliographies or indices.
+    /// [P3] Motivating: Generative Space — content survives unless it crosses an explicit bounded section gate.
+    /// [P2] Constraining: Cognitive Sovereignty — keyword mentions cannot silently erase a document.
+    /// pre: a long form-feed-free document contains bibliography/index words only inside prose
+    /// post: the complete document is retained and no exclusion is reported
+    #[test]
+    fn unpaged_prose_mentions_do_not_trigger_section_removal() {
+        let document = "The author discusses how a bibliography supports inquiry and how an index helps readers navigate evidence. ".repeat(100);
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert_eq!(result.text, document.trim());
+        assert!(result.exclusions.is_empty());
+    }
+
+    /// expect: I remove a trailing index only when its entries prove that the heading is structural.
+    /// [P3] Motivating: Generative Space — navigation entries do not become retrieval passages.
+    /// [P2] Constraining: Cognitive Sovereignty — an ordinary section named Index remains content.
+    /// pre: an Index heading occurs in the final third of a form-feed-free document
+    /// post: structured index entries are removed while prose under the same heading is retained
+    #[test]
+    fn unpaged_index_requires_index_entry_structure() {
+        let body = "Substantive chapter evidence remains available. ".repeat(120);
+        let structured = format!(
+            "Chapter 1\n{body}\nIndex\nalpha, 1, 2\nbeta, 3, 4\ngamma, 5, 6\ndelta, 7, 8\nepsilon, 9, 10"
+        );
+        let narrative = format!(
+            "Chapter 1\n{body}\nIndex\nThis section explains how an index supports navigation without presenting index entries."
+        );
+
+        let filtered = filter_boilerplate_pages_with_report(&structured);
+        assert!(!filtered.text.contains("alpha, 1, 2"));
+        assert_eq!(filtered.exclusions.len(), 1);
+        assert_eq!(filtered.exclusions[0].reason, "index");
+
+        let retained = filter_boilerplate_pages_with_report(&narrative);
+        assert!(retained.text.contains("This section explains"));
+        assert!(retained.exclusions.is_empty());
     }
 }

@@ -41,7 +41,9 @@ use crate::{
     OCR_FALLBACK_WORD_THRESHOLD, chunk_structure, chunk_word_bounds, default_embedding_model,
     max_concurrency, sanitize_links,
 };
-use hkask_memory::text_chunking::{filter_boilerplate_pages, has_corrupted_font_encoding};
+use hkask_memory::text_chunking::{
+    filter_boilerplate_pages_with_report, has_corrupted_font_encoding,
+};
 
 /// A passage-indexing failure, structured by kind. `index_passages`
 /// returns this so callers can surface *why* nothing was indexed — a dead
@@ -1021,6 +1023,7 @@ impl<'a> ConvertService<'a> {
         // no error. Surfaced in the result (never silently dropped) so the
         // caller's coverage gate can halt on it.
         let mut zero_chunk_files: Vec<String> = Vec::new();
+        let mut boilerplate_exclusion_reports = Vec::with_capacity(sources.len());
 
         for (source, resolved) in &sources {
             let file_name = source
@@ -1050,7 +1053,28 @@ impl<'a> ConvertService<'a> {
             let processed = sanitize_links(&processed);
             let processed = decode_html_entities(&processed);
             let processed = strip_html_comments(&processed);
-            let processed = filter_boilerplate_pages(&processed);
+            let filter_result = filter_boilerplate_pages_with_report(&processed);
+            let exclusions = filter_result
+                .exclusions
+                .iter()
+                .map(|exclusion| {
+                    json!({
+                        "reason": exclusion.reason,
+                        "boundary_unit": exclusion.boundary_unit,
+                        "start": exclusion.start,
+                        "end": exclusion.end,
+                        "removed_words": exclusion.removed_words,
+                    })
+                })
+                .collect::<Vec<_>>();
+            boilerplate_exclusion_reports.push(json!({
+                "source": file_name,
+                "input_words": filter_result.input_words,
+                "retained_words": filter_result.retained_words,
+                "removed_words": filter_result.input_words.saturating_sub(filter_result.retained_words),
+                "exclusions": exclusions,
+            }));
+            let processed = filter_result.text;
 
             let passages = chunk_structure(
                 &processed,
@@ -1123,6 +1147,7 @@ impl<'a> ConvertService<'a> {
             "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
             "source_id_encoding": "utf8-hex",
             "zero_chunk_files": zero_chunk_files,
+            "boilerplate_exclusion_reports": boilerplate_exclusion_reports,
             "indexed": indexed,
         }))
     }
