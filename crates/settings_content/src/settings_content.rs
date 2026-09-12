@@ -1923,6 +1923,6 @@ pub struct KaskModelsSettingsContent {
     pub ocr_model: Option<String>,
     /// Rerank model for the research server's deep-search rerank stage
     /// (provider-prefixed). When empty, falls back to the kask default
-    /// (`OpenRouter/qwen/qwen3-reranker-8b`).
+    /// (`deepinfra/Qwen/Qwen3-Reranker-8B`).
     pub rerank_model: Option<String>,
 }

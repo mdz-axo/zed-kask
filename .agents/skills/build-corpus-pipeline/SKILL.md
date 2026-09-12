@@ -86,9 +86,13 @@ Do not fan out DB ingestion with independently restarting retained-row indices.
 ### One Brooks corpus from retained sources
 
 This is an execution procedure, **not a claim that a rebuild has run**.
-Preserve **all retained sources and two prompts per chunk**. The prior approvals
-of **27,518 chunks / 55,036 prompts** must be **remeasured under the real-overlap
-contract**; do not force those totals or lower coverage to reproduce them.
+Preserve **the operator's current approved source set and two prompts per chunk**.
+The 2026-09-11 ruling replaces the former 125-source set with the **120 files in
+`Clones/Library/Researcher`**; compare identities/content, not just counts. Preserve
+removed originals and valid extractions outside the active corpus input set.
+The historical **27,518 chunks / 55,036 prompts** must be **remeasured under the
+real-overlap contract and current source set**; do not force those totals or lower
+coverage to reproduce them.
 
 Before a rebuild, inspect and explicitly identify the obsolete Brooks DB and
 derived chunks, tags, prompts, generated QA, training exports and centroid
@@ -110,7 +114,13 @@ operations: a docs-only request authorizes none of them.
 Use `corpus_convert(path, output)` for the source set. Directory conversion
 requires an output directory, resumes only quality-passing outputs, and places
 OCR-derived text in `{output}-ocr-staging`. File mode writes its requested output;
-that write is not a quality acceptance verdict.
+that write is not a quality acceptance verdict. Staged OCR has a `.report.json`
+companion with its complete conversion result; preserve it for review. Directory
+responses expose `document_reports` and `verification_failed` separately from
+conversion/I/O `failed`. Check both: a failed page verdict can coexist with a
+successfully written staged file. Resume requires a matching report; missing or
+mismatched evidence blocks without automatic re-OCR. Do not fabricate a report
+for old staged text; diagnose it and explicitly regenerate only when needed.
 
 For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidence.
 Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then

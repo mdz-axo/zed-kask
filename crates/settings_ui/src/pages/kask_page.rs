@@ -463,6 +463,10 @@ pub(crate) fn kask_string_input(
                                 kask.models.get_or_insert_default().ocr_model =
                                     Some(parsed.clone());
                             }
+                            ("models", "rerank_model") => {
+                                kask.models.get_or_insert_default().rerank_model =
+                                    Some(parsed.clone());
+                            }
                             ("condenser", "persona_keywords") => {
                                 let keywords: Vec<String> = parsed
                                     .split(',')

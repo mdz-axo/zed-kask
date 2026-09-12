@@ -622,7 +622,7 @@ impl CorpusServer {
     /// [P7] Motivating: Composable Systems — one MCP call executes the manifest's directory conversion step.
     /// pre: `path` names a readable directory and `output` names its destination directory
     /// post: each supported source has a non-empty `.txt` output or an entry in `failures`
-    /// inv: existing outputs larger than 50 bytes are preserved unchanged
+    /// inv: accepted outputs resume only above the 50-word floor and quality gates; staged OCR also retains its verification report
     /// [P3] Constraining: Generative Space — batch progress and failures remain visible in the tool result.
     async fn convert_directory(
         &self,
@@ -674,6 +674,7 @@ impl CorpusServer {
             let mut skipped_staged = 0usize;
             let mut healed = 0usize;
             let mut failures = Vec::new();
+            let mut document_reports = Vec::new();
 
             // Stage OCR output separately: partial or unverified model output
             // must not enter the extraction set before a quality-gated merge.
@@ -709,18 +710,47 @@ impl CorpusServer {
                     }
                 }
 
-                // A staged (unmerged) OCR output that passes the floor and
-                // the gates means the OCR already ran — skip re-extraction
-                // (resumability) but do NOT merge: the merge is the caller's
-                // explicit, quality-gated step. A staged output failing the
-                // gates falls through to re-extraction.
+                // Staged OCR is never admitted or silently rerun. Its retained
+                // report is evidence for review, not a whole-file quality proxy.
+                // Invalid staged text/report pairs require explicit regeneration.
                 if let Some(ref staging) = staging_dir {
                     let staged_path = staging.join(format!("{file_name}.txt"));
-                    if let Ok(existing) = std::fs::read_to_string(&staged_path)
-                        && existing.split_whitespace().count() >= 50
-                        && crate::ocr::quality::passes_gates(&existing)
-                    {
-                        skipped_staged += 1;
+                    let staged_text = match std::fs::read_to_string(&staged_path) {
+                        Ok(text) => Some(text),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => {
+                            failures.push(json!({"path":source,"error":format!("Cannot read staged OCR for verification: {e}")}));
+                            continue;
+                        }
+                    };
+                    if let Some(existing) = staged_text {
+                        // Whole-file quality cannot recover a failed page-level
+                        // verdict. Retain the original result and bind it to the
+                        // staged text before treating this as a resumable OCR run.
+                        let report_path = staging.join(format!("{file_name}.report.json"));
+                        let report = crate::helpers::read_text_capped(
+                            &report_path.to_string_lossy(), "OCR verification report",
+                        ).and_then(|text| serde_json::from_str::<serde_json::Value>(&text)
+                            .map_err(|e| McpToolError::invalid_argument(format!("Invalid OCR verification report: {e}"))));
+                        match report {
+                            Ok(mut report) if report.get("text").and_then(serde_json::Value::as_str) == Some(existing.as_str())
+                                && report.get("path").and_then(serde_json::Value::as_str) == source.to_str()
+                                && report.get("verification_passed").and_then(serde_json::Value::as_bool).is_some()
+                                && existing.split_whitespace().count() >= 50
+                                && crate::ocr::quality::passes_gates(&existing) => {
+                                    if let Some(map) = report.as_object_mut() {
+                                        map.remove("text");
+                                        map.remove("structure");
+                                    }
+                                    document_reports.push(report);
+                                    skipped_staged += 1;
+                                }
+                            other => failures.push(json!({
+                                "path": source,
+                                "error": format!("Staged OCR verification report missing, invalid, or mismatched; no re-extraction or admission performed: {}",
+                                    other.err().map(|e| e.to_string()).unwrap_or_else(|| report_path.display().to_string())),
+                            })),
+                        }
                         continue;
                     }
                 }
@@ -784,12 +814,28 @@ impl CorpusServer {
                         } else {
                             output_path
                         };
+                        let destination = crate::path_safety::contain_for_write(&destination.to_string_lossy())?;
                         if let Err(e) = std::fs::write(&destination, text) {
                             failures.push(json!({
                                 "path": source,
                                 "error": format!("Failed to write '{}': {}", destination.display(), e),
                             }));
                         } else if is_ocr_sourced {
+                            let report_path = destination.with_file_name(format!("{file_name}.report.json"));
+                            let report_path = crate::path_safety::contain_for_write(&report_path.to_string_lossy())?;
+                            let result = content.as_ref().ok_or_else(|| McpToolError::internal("Missing parsed conversion result"))?;
+                            let serialized = serde_json::to_vec(result)
+                                .map_err(|e| McpToolError::internal(format!("Cannot serialize OCR verification report: {e}")))?;
+                            if let Err(e) = std::fs::write(&report_path, serialized) {
+                                failures.push(json!({"path":source,"error":format!("Cannot persist OCR verification report '{}': {e}", report_path.display())}));
+                                continue;
+                            }
+                            let mut report = result.clone();
+                            if let Some(map) = report.as_object_mut() {
+                                map.remove("text");
+                                map.remove("structure");
+                            }
+                            document_reports.push(report);
                             staged += 1;
                         } else {
                             extracted += 1;
@@ -814,6 +860,8 @@ impl CorpusServer {
                 "skipped": skipped,
                 "skipped_staged": skipped_staged,
                 "healed": healed,
+                "verification_failed": document_reports.iter().filter(|r| r.get("verification_passed").and_then(serde_json::Value::as_bool) == Some(false)).count(),
+                "document_reports": document_reports,
                 "failed": failures.len(),
                 "failures": failures,
             }))
@@ -945,3 +993,7 @@ pub(crate) fn default_true() -> bool {
 #[cfg(test)]
 #[path = "chunk_tests.rs"]
 mod chunk_tests;
+
+#[cfg(test)]
+#[path = "document_tests.rs"]
+mod document_tests;

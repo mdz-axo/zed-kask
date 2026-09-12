@@ -193,8 +193,8 @@ pub(crate) fn render_models_page(
                 .child(
                     Label::new(
                         "Provider-prefixed model for the research server's deep-search \
-                         rerank stage (per-candidate relevance scoring). No code default \
-                         exists — the stage requires this setting.",
+                         rerank stage (per-candidate relevance scoring). Defaults to \
+                         deepinfra/Qwen/Qwen3-Reranker-8B.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -219,6 +219,21 @@ mod tests {
         assert!(dispatcher.contains(concat!(
             "kask.models.get_or_insert_default().",
             "qa_generation_model ="
+        )));
+    }
+
+    /// D9: the rerank control suffered the missing-dispatch-arm defect — the
+    /// input rendered but its value never reached the settings file. Pin both
+    /// the arm and the control so the pair cannot drift apart again.
+    #[test]
+    fn rerank_control_has_a_save_dispatch_arm() {
+        let page = include_str!("models.rs");
+        let dispatcher = include_str!("../kask_page.rs");
+        assert!(page.contains(concat!("\"models\",\n        ", "\"rerank_model\",")));
+        assert!(dispatcher.contains(concat!("(\"models\", ", "\"rerank_model\") => {")));
+        assert!(dispatcher.contains(concat!(
+            "kask.models.get_or_insert_default().",
+            "rerank_model ="
         )));
     }
 
@@ -266,6 +281,56 @@ mod tests {
                 let env = resolved.mcp_env();
                 assert_eq!(
                     env.get("HKASK_QA_GENERATION_MODEL").map(String::as_str),
+                    (!value.is_empty()).then_some(value)
+                );
+            });
+        }
+    }
+
+    /// Same writer/reload path for the rerank model — the field whose save
+    /// dispatch arm was missing (the persistence defect this test pins).
+    #[gpui::test]
+    async fn rerank_model_persists_and_reloads(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().expect("settings directory"))
+            .await
+            .expect("create fake settings directory");
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        cx.update(settings::init);
+        for value in ["deepinfra/Qwen/Qwen3-Reranker-8B", ""] {
+            let completion = cx.update(|cx| {
+                SettingsStore::global(cx).update_settings_file_with_completion(
+                    fs.clone(),
+                    move |settings, _| {
+                        settings
+                            .kask
+                            .get_or_insert_default()
+                            .models
+                            .get_or_insert_default()
+                            .rerank_model = Some(value.into());
+                    },
+                )
+            });
+            completion
+                .await
+                .expect("writer finished")
+                .expect("settings saved");
+            let saved = fs
+                .load(paths::settings_file())
+                .await
+                .expect("read saved settings");
+            cx.update(|cx| {
+                let mut reloaded = SettingsStore::new(cx, &settings::default_settings());
+                reloaded
+                    .set_user_settings(&saved, cx)
+                    .expect("reload saved settings");
+                cx.set_global(reloaded);
+                let content = raw_kask_settings(cx).expect("persisted Kask settings");
+                let resolved: kask_bridge::KaskSettings = content.into();
+                assert_eq!(resolved.models.rerank_model, value);
+                let env = resolved.mcp_env();
+                assert_eq!(
+                    env.get("HKASK_RERANK_MODEL").map(String::as_str),
                     (!value.is_empty()).then_some(value)
                 );
             });

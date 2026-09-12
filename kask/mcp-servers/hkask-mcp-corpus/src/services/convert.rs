@@ -482,14 +482,10 @@ impl<'a> ConvertService<'a> {
 
     /// Convert a single document file to text, with OCR fallback.
     ///
-    /// Mirrors the former `corpus_convert` file-case body: detect format, parse
-    /// `target_pages` (PDF only), and route through text extraction → selective
-    /// OCR → typed OCR pipeline → raw-byte OCR, returning a JSON result with
-    /// `format`, `path`, `method`, `text`, `word_count`, and pipeline diagnostics.
-    ///
-    /// `output` is unused here — it only applies to directory mode, which the
-    /// `corpus_convert` tool wrapper dispatches to `CorpusServer::convert_directory`
-    /// before calling this method.
+    /// Detect format, parse `target_pages` (PDF only), and route through native
+    /// text extraction or the page OCR pipeline. PDFs are consumed by path;
+    /// only image decoding and text-format parsing need an in-memory byte read.
+    /// The tool wrapper persists the result when `output` is requested.
     #[must_use = "result must be used"]
     pub async fn convert(
         &self,
@@ -531,19 +527,14 @@ impl<'a> ConvertService<'a> {
             v
         };
 
-        // Read the file from the canonicalized, contained path so a TOCTOU
-        // swap between contain_for_read and the read cannot escape the root.
-        let file_bytes = match std::fs::read(&resolved) {
-            Ok(b) => b,
-            Err(e) => {
-                return Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to read file '{}'", path),
-                ));
-            }
-        };
-
-        if file_bytes.is_empty() {
+        let metadata = std::fs::metadata(&resolved)
+            .map_err(|e| map_corpus_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+        if !metadata.is_file() {
+            return Err(McpToolError::invalid_argument(format!(
+                "'{path}' is not a file"
+            )));
+        }
+        if metadata.len() == 0 {
             return Err(McpToolError::invalid_argument(format!(
                 "File '{}' is empty",
                 path
@@ -552,7 +543,16 @@ impl<'a> ConvertService<'a> {
 
         // When force_ocr is set, skip text extraction entirely.
         if force_ocr {
-            if let Ok(image) = image::load_from_memory(&file_bytes) {
+            let image = if format == "pdf" {
+                None
+            } else {
+                let bytes = crate::path_safety::read_capped(
+                    &resolved.to_string_lossy(),
+                    crate::path_safety::MAX_READ_BYTES,
+                )?;
+                image::load_from_memory(&bytes).ok()
+            };
+            if let Some(image) = image {
                 let model = match self.resolve_ocr_model(None).await {
                     Ok(m) => m,
                     Err(guidance) => {
@@ -1118,9 +1118,9 @@ impl<'a> ConvertService<'a> {
 
 /// Shared text extraction from a file path.
 ///
-/// Detects format, reads the file, and extracts plain text. For PDFs,
-/// falls back to OCR if text extraction yields fewer than
-/// `OCR_FALLBACK_WORD_THRESHOLD` words and an OCR model is available.
+/// Extracts plain text from contained files. PDF tools consume the canonical
+/// path, not a redundant in-memory copy of the PDF. Other formats retain the
+/// raw-input read cap. PDF triage returns OCR requirements for the caller.
 ///
 /// Used by both `corpus_convert` and `corpus_chunk` to eliminate ~160
 /// lines of duplicated extraction logic (P5: surgical deduplication).
@@ -1135,14 +1135,24 @@ pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolEr
         )));
     }
 
-    let file_bytes = crate::path_safety::read_capped(path, crate::path_safety::MAX_READ_BYTES)?;
-
-    if file_bytes.is_empty() {
+    let resolved = contain_for_read(path)?;
+    let metadata = std::fs::metadata(&resolved)
+        .map_err(|e| map_corpus_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+    if !metadata.is_file() || metadata.len() == 0 {
         return Err(McpToolError::invalid_argument(format!(
-            "File '{}' is empty",
-            path
+            "File '{path}' must be a nonempty regular file"
         )));
     }
+    // PDF extraction is path-based: the container's bytes are not text input.
+    // Keep the existing cap for every format actually decoded in memory.
+    let file_bytes = if format == "pdf" {
+        Vec::new()
+    } else {
+        crate::path_safety::read_capped(
+            &resolved.to_string_lossy(),
+            crate::path_safety::MAX_READ_BYTES,
+        )?
+    };
 
     let extract_result = match format {
         "pdf" => {
@@ -1152,7 +1162,7 @@ pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolEr
             // read top-to-bottom within each column rather than across columns.
             let output = tokio::process::Command::new("pdftotext")
                 .arg("-layout")
-                .arg(path)
+                .arg(&resolved)
                 .arg("-")
                 .output()
                 .await;
@@ -1166,12 +1176,7 @@ pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolEr
                     // fall back to the legacy whole-doc word-count check.
                     let per_page = crate::ocr::split_pdftotext_pages(&raw);
                     let triage_cfg = crate::ocr::TriageConfig::from_env();
-                    match crate::ocr::triage::triage_pages(
-                        std::path::Path::new(path),
-                        &per_page,
-                        &triage_cfg,
-                    )
-                    .await
+                    match crate::ocr::triage::triage_pages(&resolved, &per_page, &triage_cfg).await
                     {
                         Ok(verdicts) => {
                             let ocr_pages = crate::ocr::triage::ocr_page_indices(&verdicts);

@@ -46,8 +46,21 @@ anchors do not turn generated assertions or exact citations into verified prose.
 `output`, persists one `.txt` per supported source and resumes only outputs that
 pass its 50-word floor and deterministic quality checks. OCR-derived directory
 outputs go to `{output}-ocr-staging`; merging into accepted extractions is an
-explicit quality-gated operation. File mode honors its `output` path, but writing
+explicit quality-gated operation. Each staged OCR text has a `.report.json`
+companion containing the complete conversion result. Resume requires a matching
+source path, exact staged text and explicit verification verdict; a missing or
+mismatched report fails visibly without re-OCR or admission. Directory responses
+return `document_reports` (without text/structure) and `verification_failed`,
+separate from I/O/conversion `failed`. A staged or resumed file is not an accepted
+extraction, including when its whole-file text passes quality checks. File mode honors its `output` path, but writing
 text does not certify quality (`src/tools/document.rs:30–101`).
+
+PDF extraction and page rendering consume a contained file path, not an
+in-memory copy of the PDF container. A PDF larger than the 32 MiB raw-text/JSONL
+read cap can therefore use normal conversion without forcing paid OCR of native
+pages. Text inputs retain that cap; this does not promise a bound on Poppler's
+memory use or extracted output size. `tools/document_tests.rs` pins large native
+PDF conversion, oversized-text rejection and PDF symlink containment.
 
 `corpus_is_complex` performs PDF text-layer/image-inventory triage; `summary=true`
 returns routing counts and examples instead of every page. OCR uses the configured

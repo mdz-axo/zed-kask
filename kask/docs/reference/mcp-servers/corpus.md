@@ -74,6 +74,22 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–9
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
 
+### Document size and containment
+
+Normal PDF conversion passes the contained canonical path to Poppler and uses
+page-based OCR only where needed; it does not read the PDF container under the
+32 MiB text/JSONL cap. Large PDFs therefore do not require a forced-OCR workaround.
+Raw text and JSONL reads remain capped. This is not a Poppler memory or output-size
+limit; extraction quality and complete page/source coverage still require review.
+
+Directory OCR staging retains the complete conversion result in a `.report.json`
+companion next to each staged text. Resume verifies the stored source path, exact
+text and presence of a boolean verification verdict, then returns its report.
+Missing/mismatched reports block that source without silently paying for OCR again.
+`document_reports` omits bulky text/structure; `verification_failed` counts failed
+OCR verdicts separately from `failed` conversion/I/O operations. Neither `staged`
+nor `skipped_staged` admits a document to the accepted extraction directory.
+
 ### Chunk bounds and source identity
 
 `max_tokens` defaults through `HKASK_CHUNK_MAX_TOKENS` / shared settings (code

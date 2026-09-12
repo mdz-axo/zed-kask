@@ -102,9 +102,10 @@ pub fn ocr_model() -> Option<String> {
 }
 
 /// Read the rerank model from the env layer: `HKASK_RERANK_MODEL` →
-/// `None` when unset. No code default exists for rerank (no configured
-/// model to draw from) — callers surface a typed error naming the
-/// setting.
+/// `None` when unset. The settings chain carries `DEFAULT_RERANK_MODEL`
+/// as the code default; a `None` here means the env was not injected
+/// (direct CLI callers) — the research server surfaces a typed error
+/// naming the setting rather than silently skipping the rerank stage.
 pub fn rerank_model() -> Option<String> {
     std::env::var("HKASK_RERANK_MODEL")
         .ok()
@@ -193,3 +194,10 @@ pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-tu
 /// disabled"). This model is non-reasoning, vision-capable, and cheap — the
 /// tagging workload's shape.
 pub const DEFAULT_MEDIA_VISION_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";
+
+/// Default rerank model for the research server's deep-search rerank stage
+/// (env `HKASK_RERANK_MODEL` via `KaskModelsSettings::rerank_model`). The
+/// rerank stage sends non-reasoning relevance-scoring requests. Verified on
+/// DeepInfra's catalog 2026-09-11: `Qwen/Qwen3-Reranker-8B`, $0.05/1M tokens,
+/// 32K context, instruction-aware (operator ruling 2026-09-11).
+pub const DEFAULT_RERANK_MODEL: &str = "deepinfra/Qwen/Qwen3-Reranker-8B";

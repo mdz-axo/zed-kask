@@ -613,7 +613,8 @@ pub struct KaskModelsSettings {
 
 // Code defaults (operator ruling 2026-09-04, superseding the
 // no-hidden-models spec): configured models have code defaults; the settings
-// UI / settings.json overrides them. QA generation and rerank stay unconfigured.
+// UI / settings.json overrides them. QA generation stays unconfigured (no
+// verified generator default; operator ruling 2026-09-11).
 // The values are the operator's configured models, verbatim.
 //
 // `embedding_model` also stays empty HERE because its
@@ -639,10 +640,10 @@ impl Default for KaskModelsSettings {
             // No verified generator default (operator ruling 2026-09-11).
             qa_generation_model: String::new(),
             ocr_model: "ollama/glm-ocr:latest".to_string(),
-            // No configured rerank model to default from — the research
-            // server's rerank stage fails visibly naming the setting until
-            // one is named.
-            rerank_model: String::new(),
+            // DeepInfra Qwen3 reranker (operator ruling 2026-09-11): the
+            // research server's rerank stage defaults to the verified
+            // catalog model instead of failing unconfigured.
+            rerank_model: hkask_inference::model_constants::DEFAULT_RERANK_MODEL.to_string(),
         }
     }
 }

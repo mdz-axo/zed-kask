@@ -941,6 +941,30 @@ mod tests {
         );
     }
 
+    /// The rerank default (operator ruling 2026-09-11) must reach the research
+    /// server's filtered env, and only the research server — the same
+    /// consumer-scoping discipline the QA generator follows.
+    #[test]
+    fn rerank_default_reaches_only_the_research_server() {
+        use hkask_inference::model_constants::DEFAULT_RERANK_MODEL;
+        let settings: crate::KaskSettings = settings::KaskSettingsContent::default().into();
+        assert_eq!(settings.models.rerank_model, DEFAULT_RERANK_MODEL);
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_RERANK_MODEL").map(String::as_str),
+            Some(DEFAULT_RERANK_MODEL)
+        );
+        for server in BUILT_IN_MCP_SERVERS {
+            let filtered = filter_config_env_for_server(server.id, &env);
+            assert_eq!(
+                filtered.get("HKASK_RERANK_MODEL").map(String::as_str),
+                (server.id == "research").then_some(DEFAULT_RERANK_MODEL),
+                "{}",
+                server.id
+            );
+        }
+    }
+
     fn server_by_id(id: &str) -> &'static BuiltinMcpServer {
         BUILT_IN_MCP_SERVERS
             .iter()
