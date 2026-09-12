@@ -40,6 +40,17 @@ anchors do not turn generated assertions or exact citations into verified prose.
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
+## Template deployment
+
+The host seeds registry templates at startup and supplies `HKASK_TEMPLATE_ROOT`.
+The corpus server caches loaded templates until restart. Repository tests must
+set `HKASK_TEMPLATE_ROOT="$PWD/kask/registry"` explicitly; there is no cwd or
+compile-time checkout fallback. OCR requires the deployed `ocr-extract.j2` and
+fails before vision inference when it is missing or invalid, rather than using
+an inline prompt. Template updates therefore require host reseeding and a fresh
+corpus process. OCR transcribes visible text; invented image links and duplicated
+caption descriptions are not source content.
+
 ## Extraction and chunking
 
 `corpus_convert` handles documents or a source directory. Directory mode requires

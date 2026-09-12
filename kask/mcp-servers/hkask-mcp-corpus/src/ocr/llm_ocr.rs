@@ -17,22 +17,15 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use crate::ocr::pipeline::{OcrError, OcrExecutor};
 
-/// Fallback prompt used when the `docproc/ocr-extract.j2` template is missing.
-/// Kept minimal — vision OCR models (OLMOCR-2 et al.) are trained to extract
-/// structured markdown faithfully; restating what they already do is
-/// over-engineering (hkask P5: simplicity).
-const OCR_FALLBACK_PROMPT: &str = "Extract all text from this page image as Markdown. Preserve headings, tables, equations, and reading order. If the page is blank or contains no text, output BLANK.";
-
-/// Build the OCR prompt, preferring the `docproc/ocr-extract.j2` template
-/// (tunable without recompile) and falling back to `OCR_FALLBACK_PROMPT` when
-/// the template is absent or fails to render.
-pub(crate) fn build_ocr_prompt() -> String {
+/// Load the one deployed OCR prompt. Missing instructions are a deployment
+/// failure, not permission to dispatch a different inline prompt.
+pub(crate) fn build_ocr_prompt() -> Result<String, OcrError> {
     let vars = std::collections::HashMap::new();
     let rendered = crate::render_docproc_template("ocr-extract", &vars);
     if rendered.is_empty() {
-        OCR_FALLBACK_PROMPT.to_string()
+        Err(OcrError::TemplateUnavailable)
     } else {
-        rendered
+        Ok(rendered)
     }
 }
 
@@ -53,8 +46,9 @@ pub(crate) async fn vision_ocr_bytes(
         temperature: 0.1,
         ..Default::default()
     };
+    let prompt = build_ocr_prompt()?;
     let result = router
-        .generate_vision(&build_ocr_prompt(), &[b64_data], &params, Some(model))
+        .generate_vision(&prompt, &[b64_data], &params, Some(model))
         .await
         .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
     if result.text.trim().is_empty() {
@@ -580,6 +574,45 @@ mod tests {
                 ))
             })
         }
+    }
+
+    /// expect: [P4] Missing deployed OCR instructions must fail before the provider, even inside a developer checkout.
+    #[tokio::test]
+    async fn ocr_requires_deployed_template() -> anyhow::Result<()> {
+        const CHILD: &str = "HKASK_TEST_OCR_TEMPLATE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let error = vision_ocr_bytes(&HttpErrorVisionPort, &[1], "fixture/ocr")
+                .await
+                .expect_err("missing template");
+            assert!(
+                error.to_string().contains("Required OCR template"),
+                "{error}"
+            );
+            return Ok(());
+        }
+        let dir = tempfile::tempdir()?;
+        for configured in [false, true] {
+            let mut child = tokio::process::Command::new(std::env::current_exe()?);
+            child
+                .args([
+                    "--exact",
+                    "ocr::llm_ocr::tests::ocr_requires_deployed_template",
+                ])
+                .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+                .env(CHILD, "1")
+                .env_remove("HKASK_TEMPLATE_ROOT");
+            if configured {
+                child.env("HKASK_TEMPLATE_ROOT", dir.path().join("missing"));
+            }
+            let result = child.output().await?;
+            assert!(
+                result.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        Ok(())
     }
 
     #[tokio::test]

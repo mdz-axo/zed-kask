@@ -1,13 +1,27 @@
 ---
 name: build-corpus-pipeline
-description: "Build a source-complete corpus through convert → chunk → embed → classify, with optional style centroids and evidence-carrying QA for operator-approved LoRA training. Gate every stage on identity, actual outcomes, source coverage and semantic review."
+description: "Build or refresh a source-complete corpus from a caller-selected folder through conversion, chunking and retrieval, with optional classification, evidence-carrying QA and centroids. Bind run-specific identities, parameters and approvals at intake; verify each required stage before expansion."
 ---
 
 # Build Corpus Pipeline
 
 Build a functioning, verifiable corpus pipeline, not a hand-produced substitute
-for a failed stage. Use one canonical corpus and current schemas throughout.
-A tool return, a nonempty file, and a completed capability are different claims.
+for a failed stage. This skill is the reusable procedure; the caller supplies the
+source set, corpus identity, requested outputs and operating limits. Keep names,
+paths, source inventories, approvals, measured counts and calibration in that
+execution's record, never in this skill. A tool return, a nonempty file, and a
+completed capability are different claims.
+
+## When to Use
+
+Build or refresh a corpus from a user-selected folder, optionally producing
+classified passages, evidence-carrying QA, training exports or style centroids.
+The source set need not be literary, single-author or related to a previous run.
+
+## When NOT to Use
+
+For a question over an existing corpus, use `corpus_query`. Training execution
+belongs to `lora-training` after its separate model/configuration approval.
 
 ## Anchors and contract
 
@@ -39,7 +53,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 
 | Input | Contract |
 |---|---|
-| `corpus_source` | Retained source directory; inventory every source before processing |
+| `corpus_source`, source selection | Caller-selected folder and agreed file scope, including whether nested files are included; freshly inventory every selected file, including unsupported formats |
 | `entity_ref_prefix` | One namespace; use `style:{author}` for an author corpus, with the exact same author identifier in compose/centroid calls |
 | `db_path`, `passphrase` | One corpus DB; resolve the current `HKASK_DB_PASSPHRASE` from authorized credentials, never invent or print it |
 | `max_tokens` | Optional approximate size target; absent uses `HKASK_CHUNK_MAX_TOKENS` / shared settings (code default 256), not a model tokenizer |
@@ -48,13 +62,15 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | embedding `model`, `batch_size` | Use the configured embedding model and tool's batching; do not substitute a training or chat model |
 | `tag_batch_size` | **10** chunks per tagging inference call by default; distinct from the number of rows in a file partition |
 | `concurrency` | Bound tool concurrency to available capacity; AIMD starts at up to 2, grows by 1, halves on capacity failure |
-| `enable_qa` | Select before work; if true, QA stages are required, not silently skipped on failure |
-| `reference_author`, `config_path` | Optional style branch; exact author identity and current cognition YAML |
-| `prompts_per_chunk` | Skill/run setting **2**; pass explicitly because the tool default is **5** |
+| requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
+| `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
+| `prompts_per_chunk` | Caller-approved positive integer for QA runs; pass explicitly rather than silently inheriting the tool default of **5** |
 | `context_k` | Tool default **3**; `0` explicitly disables KNN, never a recovery from failed context reads |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_prompts` | Explicitly `classified_count × prompts_per_chunk`, or `0` for all; not a small fixed cap |
-| `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split; never inherit another corpus's defaults |
+| `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split for QA exports; never inherit another corpus's defaults |
+| execution record | Caller-selected record of source identities/hashes, stage paths, parameters, counts, verification and unresolved issues; keep credentials out |
+| pilot and spend bounds | Measured input scope, selected models, request/time/retry limits and approved cost ceiling; changed source/model/volume invalidates old estimates |
 
 QA requires a dedicated non-thinking generator: explicit tool `model`, otherwise
 Settings → Kask → Models → **QA Generation Model** (`kask.models.qa_generation_model`,
@@ -70,44 +86,60 @@ scheduling only: preserve every row, source, entity reference and prompt ID.
 Never copy source files into nested input directories to simulate partitioning.
 Do not fan out DB ingestion with independently restarting retained-row indices.
 
-## Stage 0 — Establish scope and rebuild plan
+## Instructions
 
-1. Inventory retained originals and accepted extractions, including their exact
-   paths, source identities and per-source word counts. A bad extraction is a
-   processing failure, not permission to remove its source from scope.
-2. Record the target source set, chunk/overlap parameters, two prompts per chunk,
-   desired QA type mix, semantic quality criteria and dataset-size requirement.
-3. Confirm model configuration, writable output paths, DB identity and credential
-   access. Do not bypass containment with terminal conversions or manual QA.
-4. Classify each stage as required or explicitly not requested. A requested style
-   branch may fail without blocking independent QA, but the whole goal remains
-   incomplete until the branch succeeds or the operator changes the scope.
+### Execution loop
 
-### One Brooks corpus from retained sources
+Plan from current inputs → run the smallest discriminating stage probe → compare
+actual identities, counts and quality against that stage's gate → fix the failing
+capability or premise and rerun that stage. Expand only after the probe passes.
+The target is zero unresolved failures across the required source set and stages,
+not a plausible output file. Stop an approach after three no-progress attempts.
+On operator cancellation, stop and ask what was wrong; do not resubmit the call.
 
-This is an execution procedure, **not a claim that a rebuild has run**.
-Preserve **the operator's current approved source set and two prompts per chunk**.
-The 2026-09-11 ruling replaces the former 125-source set with the **120 files in
-`Clones/Library/Researcher`**; compare identities/content, not just counts. Preserve
-removed originals and valid extractions outside the active corpus input set.
-The historical **27,518 chunks / 55,036 prompts** must be **remeasured under the
-real-overlap contract and current source set**; do not force those totals or lower
-coverage to reproduce them.
+## Stage 0 — Bind inputs and verify readiness
 
-Before a rebuild, inspect and explicitly identify the obsolete Brooks DB and
-derived chunks, tags, prompts, generated QA, training exports and centroid
-artifacts. Verify ownership, stopped workers, dependencies and that retained
-sources/extractions suffice for reconstruction. Delete only those verified
-obsolete DB/derived artifacts, including coupled DB sidecars when safe with the
-DB closed. Do not retain a second Brooks DB, numbered corpus variant, backup or
-compatibility dataset. Do not delete originals or accepted source extractions.
-Ambiguous ownership or insufficient retained sources blocks deletion.
+1. Locate and inventory the caller's current source folder. Record each selected
+   file's identity, relative path, content hash and extraction mapping. For a
+   refresh, diff this against the previous execution: additions, removals and
+   content changes. Do not infer sameness from file counts or inherited notes.
+   Unsupported files and failed extractions remain visible scope gaps.
+2. Record requested outputs, namespace/DB ownership, chunk/overlap parameters,
+   QA prompt count/type mix and semantic criteria, optional centroid selectors,
+   and pilot/spend bounds. Ask only for missing functional choices; do not borrow
+   another execution's identities, volume targets or budget approval.
+3. Verify tool schemas, installed/running components, settings-to-provider routing,
+   template seeding/cache behavior, output paths and canonical credentials before
+   expensive work. Do not hide broken setting propagation with per-call overrides.
+   For a source folder outside permitted MCP roots, stage the approved files under
+   the artifacts root and reconcile hashes/identity mappings. Do not broaden
+   containment, use escaping symlinks or substitute terminal text conversion.
+4. Reuse valid extractions only when they match unchanged source content and pass
+   current checks. Directory conversion/chunking enumerate immediate children;
+   for an agreed nested selection, process files individually with distinct source
+   identities and reconcile the complete set. Never silently omit subdirectories,
+   flatten colliding names or copy duplicates to simulate concurrency.
+5. Mark each stage required or not requested. Verify prerequisites before each
+   paid expansion and reprice from measured counts and current model pricing.
+   A failed optional branch does not block independent work, but remains an open
+   requirement until it succeeds or the operator changes the scope.
 
-Rebuild the single canonical corpus from Stage 2 when accepted extractions are
-complete, otherwise from Stage 1. Clear stale in-memory retrieval before selecting
-the rebuilt DB. Recompute embeddings, classifications, prompts, QA and centroids;
-do not relabel stale rows as current. Cleanup and rebuild are explicit data
-operations: a docs-only request authorizes none of them.
+### Refresh and invalidation
+
+Use one canonical identity for the requested corpus. When source content,
+chunking, embedding models or schemas invalidate derived state, record which
+outputs depend on it and regenerate those stages; never relabel stale rows as
+current. Remeasure counts rather than forcing a previous total.
+
+Before deleting derived data, inventory exact owned paths/prefixes and coupled
+references, confirm workers are stopped and maintenance locks are respected, and
+verify retained inputs suffice for reconstruction. Deletion/replacement requires
+operator authorization; it is not implied by a docs edit or an ambiguous refresh.
+Never purge unrelated namespaces in a shared DB. Preserve originals and valid
+extractions, keeping out-of-scope retained inputs outside the active source set.
+Remove superseded derived outputs and update their references in the same run;
+do not leave parallel abandoned datasets. Clear warm retrieval before selecting
+a rebuilt DB. Ambiguous ownership or incomplete retained inputs blocks deletion.
 
 ## Stage 1 — Convert and audit extraction
 
@@ -182,8 +214,11 @@ A bad DB credential is not an excuse to leave a second DB alongside the first.
 
 ## Stage 4 — Classify, then count actual outcomes
 
-Call `corpus_tag_chunks(chunks_jsonl, output, concurrency, tag_batch_size=10,
-dry_run=false)`. Split input JSONL into bounded disjoint files if necessary;
+When classification is required, call `corpus_tag_chunks(chunks_jsonl, output,
+concurrency, tag_batch_size, dry_run=false)`. Start the probe with
+`tag_batch_size=1`; increase only within this execution's approved bounds after
+identity correlation passes. Split JSONL below the tool's byte cap at record
+boundaries, into disjoint files; never split records. When partitioning,
 keep original identities and verify the merged identity set equals the input.
 
 Each output `TaggedChunk` requires `classification`:
@@ -205,14 +240,19 @@ returned `tagged`, `failed` and `total_chunks`, and require all chunk identities
 classified. Failed/unverified rows block QA; output line count and annotation
 presence are not substitutes. Re-run only after diagnosing the failure and
 replace affected terminal records by identity, never duplicate them in a merge.
-If QA was explicitly disabled, tagging may be marked not requested.
+If neither QA nor another requested output requires tags, classification may be
+marked not requested.
 
 ## Stage 5 — Optional style centroid and measured composition
 
 Call `corpus_centroid(author, db_path, passphrase)` after complete embedding.
 It selects `style:{author}:` and stores `style:{author}:centroid`. Optional
 `refs_file` selects existing newline-delimited references without copying vectors;
-optional `dimension` stores `style:{author}:{dimension}:centroid`. Empty or missing
+optional `dimension` stores `style:{author}:{dimension}:centroid`. Select subsets
+using this execution's explicit predicates; subsets may overlap. Report membership
+counts, weak mappings and discrimination limitations instead of silently changing
+the selectors. Calibrate with subset verbatim and contrasting controls, not only
+generated outputs. Do not duplicate embeddings for subsets. Empty or missing
 eligible selections fail; duplicates count once. The shared
 `hkask_types::corpus::is_corpus_passage_ref` excludes empty, `:rule:` and all
 suffix-`:centroid` refs from centroid sources, compose exemplars and prompt context.
@@ -233,7 +273,8 @@ or report the branch blocked. Independent QA may continue, not erase the blocker
 
 Call `corpus_build_prompts` with `tagged_jsonl`, `output`, the single `db_path`
 and `passphrase`, explicit `prefix` matching the chunk namespace, `context_k`,
-`prompts_per_chunk=2`, `type_distribution`, and `max_prompts=classified_count*2`
+the approved `prompts_per_chunk`, `type_distribution`, and
+`max_prompts=classified_count*prompts_per_chunk`
 (or `0` for all). Pass `ontology_bloom_overrides` only when deliberately selected.
 No inference occurs in this stage.
 
@@ -251,7 +292,7 @@ within-type ordinal. Preserve them when splitting/merging; do not renumber files
 The eight required `PreparedQaPrompt` fields are `prompt_id`, `chunk_ref`,
 `source`, `concepts`, `salience`, `qa_type`, `system`, `user`. Unknown fields fail.
 
-**Gate:** `prompts_written == classified_count*2`, unique prompt IDs, full primary
+**Gate:** `prompts_written == classified_count*prompts_per_chunk`, unique prompt IDs, full primary
 source/chunk coverage, and expected `context_enabled`, `context_scope`,
 `stored_passages`, `context_links`. `context_links` counts neighbors per processed
 chunk, not per prompt. The type rotation restarts for each chunk: at two prompts
@@ -394,7 +435,7 @@ Verify source/text identity and relevant retrieval, not merely a positive count.
 
 Use `lisp_eval` to check measured stage equalities and a separately evidenced
 semantic-gate boolean. Require all requested sources, complete embeddings,
-classified chunks, two prompts per chunk, reconciled generation/ingestion/export,
+classification and the approved prompt count when required, reconciled generation/ingestion/export,
 semantic acceptance, relevant retrieval and requested style validation. Never
 substitute fixed totals, incomplete coverage, a model's success claim or file size.
 
@@ -407,3 +448,17 @@ failures via `curator_report_skill_use_issue`, never silently bypass the engine.
 No claim of a rebuild, ingestion, centroid or training completion is valid without
 the corresponding run. Code/doc work cites its commit, or explicitly says
 **uncommitted**; training readiness is not evidence of trained capability.
+
+## Constraints
+
+- Keep this procedure independent of corpus names, locations, historical totals,
+  model aliases and one execution's approval. Such values belong in the run record.
+- Retain source coverage, identity, evidence and explicit failure states across
+  every stage; neither a file's existence nor a green mechanical check authorizes
+  the next semantic or paid stage.
+- Fix the capability rather than hand-completing its output. Prefer the existing
+  tool path and the smallest requirement-derived repair; remove superseded paths.
+- Validate generalization with a small independent source set and different run
+  parameters as well as the requested corpus. Keep fixtures outside production
+  inputs and disclose which branches were actually exercised.
+- No training submission without its separate operator approval.

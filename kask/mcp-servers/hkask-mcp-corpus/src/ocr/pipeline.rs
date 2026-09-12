@@ -27,6 +27,10 @@ use crate::ocr::verification::verify_output;
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
 pub(crate) enum OcrError {
+    #[error(
+        "Required OCR template ocr-extract is missing or invalid; check HKASK_TEMPLATE_ROOT and host template deployment, then restart the corpus server"
+    )]
+    TemplateUnavailable,
     #[error("OCR model '{model}' failed: {message}")]
     BackendFailed { model: String, message: String },
     #[error("No OCR model configured. Set HKASK_OCR_MODEL env var or pass the 'model' parameter.")]

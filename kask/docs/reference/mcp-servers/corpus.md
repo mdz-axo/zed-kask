@@ -51,6 +51,16 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_clear_index` | Clear warm passages and cancel pending publications; no DB deletion |
 | | `corpus_purge_qa` | Explicitly purge a verified DB/entity prefix and invalidate overlapping warm data |
 
+## Template deployment
+
+The host seeds templates at startup and injects `HKASK_TEMPLATE_ROOT`. The server
+requires that root; cwd and compile-time checkout lookup are not fallbacks. OCR
+fails before vision inference if `ocr-extract.j2` cannot be loaded/rendered; it
+has no inline substitute. Rebuild/restart the host to seed changed templates,
+then ensure the corpus process is fresh because it caches templates. For repository
+tests, set `HKASK_TEMPLATE_ROOT="$PWD/kask/registry"` explicitly. Source-faithfulness
+still requires checking OCR output; a prompt constraint is not a quality verdict.
+
 ## Pipeline parameters
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–945`,

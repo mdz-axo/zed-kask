@@ -11,33 +11,15 @@
 static TEMPLATE_CACHE: std::sync::OnceLock<std::sync::Mutex<minijinja::Environment<'static>>> =
     std::sync::OnceLock::new();
 
-/// Resolve the docproc template root. The cwd-relative default assumes the
-/// process was launched from the workspace root (zed's launch cwd when run
-/// from the project directory); tests run from the package directory and a
-/// desktop-launched zed may anchor elsewhere, so fall back to the
-/// compile-time workspace path before giving up.
-fn template_root() -> std::path::PathBuf {
-    if let Ok(root) = std::env::var("HKASK_TEMPLATE_ROOT") {
-        if !root.trim().is_empty() {
-            return std::path::PathBuf::from(root);
-        }
-    }
-    let cwd_relative = std::path::Path::new("kask/registry");
-    if cwd_relative.join("templates").is_dir() {
-        return cwd_relative.to_path_buf();
-    }
-    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../registry"))
-}
-
 /// Load a docproc template from registry and render with minijinja.
 ///
 /// Templates live in `registry/templates/docproc/` as Jinja2 files.
-/// Falls back to empty string if the template file is missing or rendering
-/// fails — callers provide an inline fallback prompt.
+/// Logs failures and returns an empty string when loading or rendering fails.
+/// Callers requiring a template must reject that result before inference.
 ///
-/// Template base path is resolved by [`template_root`]: the
-/// `HKASK_TEMPLATE_ROOT` env var, then the cwd-relative default, then the
-/// compile-time workspace path.
+/// `HKASK_TEMPLATE_ROOT` names the host-seeded registry. Repository tests must
+/// set it explicitly; neither the working directory nor the build checkout is
+/// a deployment fallback. Restart the server after updating deployed templates.
 pub(crate) fn render_docproc_template(
     template_name: &str,
     vars: &std::collections::HashMap<&str, String>,
@@ -64,8 +46,13 @@ pub(crate) fn render_docproc_template(
     // names by string value, so the temporary lookup_key finds templates
     // added under the leaked 'static key.
     if env_guard.get_template(&lookup_key).is_err() {
-        let template_root = template_root();
-        let template_path = template_root
+        let Some(template_root) =
+            std::env::var_os("HKASK_TEMPLATE_ROOT").filter(|root| !root.is_empty())
+        else {
+            tracing::warn!(target: "hkask.mcp.docproc.template", "HKASK_TEMPLATE_ROOT is not configured; required templates must be deployed by the host");
+            return String::new();
+        };
+        let template_path = std::path::PathBuf::from(template_root)
             .join("templates/docproc")
             .join(format!("{template_name}.j2"));
 
