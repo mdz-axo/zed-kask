@@ -478,14 +478,14 @@ fn front_matter_end(lines: &[&str], search_end: usize) -> usize {
         .enumerate()
         .filter(|(_, line)| is_contents_heading(line))
         .map(|(index, _)| index)
-        .last();
+        .next_back();
     let metadata_signal = lines
         .iter()
         .take(search_end)
         .enumerate()
         .filter(|(_, line)| is_front_matter_signal(line))
         .map(|(index, _)| index)
-        .last();
+        .next_back();
     let signal = contents_signal.or(metadata_signal);
     let Some(signal) = signal else {
         return 0;
@@ -502,7 +502,7 @@ fn front_matter_end(lines: &[&str], search_end: usize) -> usize {
         return 0;
     };
 
-    (signal + 1..prose_start)
+    let candidate = (signal + 1..prose_start)
         .rev()
         .find(|index| {
             lines
@@ -515,7 +515,22 @@ fn front_matter_end(lines: &[&str], search_end: usize) -> usize {
                     || (!is_toc_like_line(line) && line.split_whitespace().count() <= 12)
             })
         })
-        .unwrap_or(prose_start)
+        .unwrap_or(prose_start);
+    let total_words = lines
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+        .count();
+    let candidate_words = lines
+        .get(..candidate)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+        .count();
+    if candidate_words.saturating_mul(20) > total_words {
+        0
+    } else {
+        candidate
+    }
 }
 
 fn is_contents_heading(line: &str) -> bool {
@@ -1108,6 +1123,29 @@ mod tests {
         assert!(result.text.contains("Chapter 1"));
         assert!(!result.text.contains("All rights reserved"));
         assert!(!result.text.contains("Preface .... ix"));
+    }
+
+    /// expect: I never erase an earlier work because a multi-work volume contains a later Contents page.
+    /// [P3] Motivating: Generative Space — substantive works remain available to retrieval.
+    /// [P1] Constraining: Human Agency — unsafe front candidates remain visible in source text for review.
+    /// pre: a candidate front boundary occurs after more than five percent of document words
+    /// post: no front exclusion occurs and all preceding substantive content remains
+    #[test]
+    fn unpaged_front_filter_refuses_late_multiwork_contents() {
+        let first_work =
+            "The first work contains substantive biological and epistemological analysis. "
+                .repeat(120);
+        let second_work =
+            "The second work continues with substantive cognition research. ".repeat(40);
+        let document = format!(
+            "Copyright 2026 Example Press\nContents\nFirst Work .... 1\n\nChapter 1\n{first_work}\nContents\nSecond Work .... 80\n\nI. Introduction\n{second_work}"
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("The first work contains"));
+        assert!(result.text.contains("The second work continues"));
+        assert!(result.exclusions.is_empty());
     }
 
     /// expect: I keep substantive prose that merely discusses bibliographies or indices.

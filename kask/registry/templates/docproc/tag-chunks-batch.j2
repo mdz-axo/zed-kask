@@ -2,9 +2,9 @@
 {#
 [inference]
   Variables:
-    passages_block: rendered passages with explicit chunk_ref and source
+    passages_block: rendered passages with short batch-local correlation_id and source
     batch_count: number of passages
-  Output: JSON array with ontology-anchored tags — exactly one ID-correlated object per passage.
+  Output: JSON array with ontology-anchored tags — exactly one correlation-ID object per passage.
   Every passage gets at least one 5W1H dimension — no zero-tag passages.
 #}
 <system>
@@ -48,7 +48,7 @@ What level of expertise does each passage support questions at?
 </system>
 
 <task>
-Tag each passage below. Respond with a JSON array of {{ batch_count }} objects, exactly one per supplied chunk_ref. Copy each chunk_ref exactly; order does not matter.
+Tag each passage below. Respond with a JSON array of {{ batch_count }} objects, exactly one per supplied correlation_id. Copy each short correlation_id exactly; order does not matter.
 
 {{ passages_block }}
 --- End of passages ---
@@ -59,7 +59,7 @@ Respond with ONLY a JSON array, including when there is one passage — no markd
 
 Schema (one object per passage, all fields required):
 {
-  "chunk_ref": "<exact chunk_ref from this passage>",
+  "correlation_id": "<exact item-N correlation_id from this passage>",
   "dimensions": ["what", "why"],
   "dc_type": "bibo:Book",
   "dc_subject": ["competitive advantage", "return on capital", "barrier to entry"],
@@ -72,8 +72,8 @@ Schema (one object per passage, all fields required):
 }
 
 Rules:
-- Return every supplied chunk_ref exactly once: no omitted, duplicate, invented or blank IDs
-- Never identify a passage by its array position; always include its explicit chunk_ref
+- Return every supplied correlation_id exactly once: no omitted, duplicate, invented or blank IDs
+- Never identify a passage by its array position; always include its explicit correlation_id
 - "dimensions" must contain at least one 5W1H interrogatory
 - "ontology_tags" only includes namespaces with relevant concepts (omit empty ones)
 - "expertise_level" is one of: "practitioner", "analyst", "researcher"

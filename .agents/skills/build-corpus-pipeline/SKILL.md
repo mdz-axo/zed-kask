@@ -229,9 +229,12 @@ Each output `TaggedChunk` requires `classification`:
 
 or `{"status":"failed","reason":"the actual failure"}` or
 `{"status":"unverified"}`. Missing status is invalid, not implicit success.
-A classifier response is an array keyed by exact `chunk_ref`; a singleton object
-is allowed only for one input. Missing, duplicate, unknown or malformed entries
-reject the entire affected batch. There is no positional or string fallback.
+A classifier response is an array keyed by exact short batch-local
+`correlation_id` values (`item-N`); canonical `entity_ref` values remain
+server-owned and are restored only after whole-batch correlation succeeds. A
+singleton object is allowed only for one input. Missing, duplicate, unknown or
+malformed entries reject the entire affected batch. There is no positional or
+string fallback.
 Failure annotations and deterministic method signals do not make a row classified.
 Synthesized consolidation text is `unverified` and must itself be classified.
 

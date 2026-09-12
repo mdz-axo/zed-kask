@@ -145,12 +145,14 @@ The other outcomes are `{"status":"failed","reason":"actual failure"}` and
 consolidation text is unverified until classified itself
 (`hkask-types/src/corpus.rs:223–260`).
 
-`corpus_tag_chunks` defaults to **10 chunks per inference call**. Each returned
-entry must carry exact `chunk_ref`, matching one input `entity_ref`. Array order
-is irrelevant. A singleton object is accepted only for one input. Unknown,
-duplicate, omitted or malformed entries reject the entire affected batch before
-any tags are accepted; no position-based association or string-only fallback
-exists (`src/tools/tagging/ops.rs:66–108`).
+`corpus_tag_chunks` defaults to **10 chunks per inference call**. Canonical
+`entity_ref` values remain server-owned and are not sent to the model. Each
+returned entry must carry its exact short batch-local `correlation_id` (`item-N`);
+after whole-batch validation the server restores the original canonical identity.
+Array order is irrelevant. A singleton object is accepted only for one input.
+Unknown, duplicate, omitted or malformed correlation entries reject the entire
+affected batch before any tags are accepted; no position-based association or
+string-only fallback exists (`src/tools/tagging/ops.rs`).
 
 Failed inference, rejected responses and task join failures emit failed outcomes
 with reasons. Structural fallback annotations and deterministic `method_signals`

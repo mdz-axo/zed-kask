@@ -149,7 +149,7 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         return;
     }
     for response in [
-        json!([{"chunk_ref":"style:test:1", "dimensions":["what"], "dc_type":"bibo:Document", "dc_subject":[], "ontology_tags":{}, "expertise_level":"analyst", "method_signals":{"word_count":999}}])
+        json!([{"correlation_id":"item-0", "dimensions":["what"], "dc_type":"bibo:Document", "dc_subject":[], "ontology_tags":{}, "expertise_level":"analyst", "method_signals":{"word_count":999}}])
             .to_string(),
         "not JSON".to_string(),
     ] {

@@ -54,16 +54,21 @@ struct OntologyTags {
     expertise_level: hkask_types::corpus::ExpertiseLevel,
 }
 
-/// Both array entries and singleton responses use this same required identity.
+/// Both array entries and singleton responses use a short batch-local identity.
 #[derive(Deserialize)]
 struct TagResponse {
-    chunk_ref: String,
+    correlation_id: String,
     #[serde(flatten)]
     tags: OntologyTags,
 }
 
-/// Accept a response only when it covers exactly this batch's identity set.
-/// Validate before publishing anything: a malformed batch cannot spill into its neighbor.
+fn correlation_id(index: usize) -> String {
+    format!("item-{index}")
+}
+
+/// Accept a response only when it covers exactly this batch's correlation set.
+/// Canonical entity refs never enter model authority: validated short IDs are
+/// restored to their original refs before any `TaggedChunk` is published.
 fn correlate_tags(
     text: &str,
     chunks: &[InputChunk],
@@ -78,29 +83,40 @@ fn correlate_tags(
             return Err("expected tagging JSON array (singleton object only for one input)".into());
         }
     };
-    let expected: HashSet<&str> = chunks
+    let expected = chunks
         .iter()
-        .map(|chunk| chunk.entity_ref.as_str())
-        .collect();
+        .enumerate()
+        .map(|(index, chunk)| (correlation_id(index), chunk.entity_ref.as_str()))
+        .collect::<HashMap<_, _>>();
+    let mut seen = HashSet::new();
     let mut correlated = HashMap::new();
     for entry in entries {
         let response: TagResponse = serde_json::from_value(entry)
             .map_err(|error| format!("invalid tagging JSON entry: {error}"))?;
-        if !expected.contains(response.chunk_ref.as_str()) {
-            return Err(format!("unknown chunk_ref: {}", response.chunk_ref));
+        let Some(entity_ref) = expected.get(&response.correlation_id) else {
+            return Err(format!(
+                "unknown correlation_id: {}",
+                response.correlation_id
+            ));
+        };
+        if !seen.insert(response.correlation_id.clone()) {
+            return Err(format!(
+                "duplicate correlation_id: {}",
+                response.correlation_id
+            ));
         }
-        if correlated.contains_key(&response.chunk_ref) {
-            return Err(format!("duplicate chunk_ref: {}", response.chunk_ref));
-        }
-        correlated.insert(response.chunk_ref, validate_ontology_tags(response.tags));
+        correlated.insert(
+            (*entity_ref).to_string(),
+            validate_ontology_tags(response.tags),
+        );
     }
-    let omitted: Vec<&str> = chunks
-        .iter()
-        .map(|chunk| chunk.entity_ref.as_str())
-        .filter(|id| !correlated.contains_key(*id))
-        .collect();
+    let omitted = expected
+        .keys()
+        .filter(|id| !seen.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
     if !omitted.is_empty() {
-        return Err(format!("omitted chunk_ref(s): {}", omitted.join(", ")));
+        return Err(format!("omitted correlation_id(s): {}", omitted.join(", ")));
     }
     Ok(correlated)
 }
@@ -345,9 +361,9 @@ impl CorpusServer {
                         .enumerate()
                         .map(|(i, chunk)| {
                             format!(
-                                "--- Passage {} (chunk_ref: {}, source: {}) ---\n{}\n",
+                                "--- Passage {} (correlation_id: {}, source: {}) ---\n{}\n",
                                 i + 1,
-                                chunk.entity_ref,
+                                correlation_id(i),
                                 chunk.source,
                                 chunk.text
                             )

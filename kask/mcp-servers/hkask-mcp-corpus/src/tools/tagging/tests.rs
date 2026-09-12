@@ -48,9 +48,9 @@ fn server(port: Arc<MockPort>) -> CorpusServer {
     CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)
 }
 
-fn tags(id: &str) -> Value {
-    json!({"chunk_ref":id, "dimensions":["what"], "dc_type":"bibo:Document",
-        "dc_subject":[], "ontology_tags":{"pko":[id], "sepio":["evidence"], "other":["complexity"]},
+fn tags(correlation_id: &str) -> Value {
+    json!({"correlation_id":correlation_id, "dimensions":["what"], "dc_type":"bibo:Document",
+        "dc_subject":[], "ontology_tags":{"pko":["procedure"], "sepio":["evidence"], "other":["complexity"]},
         "expertise_level":"analyst"})
 }
 
@@ -137,7 +137,7 @@ async fn run(
             assert_eq!(row["concepts"], json!([]));
         } else {
             assert_eq!(row["classification"]["status"], "classified");
-            assert_eq!(row["ontology_tags"]["pko"], json!([id]));
+            assert_eq!(row["ontology_tags"]["pko"], json!(["procedure"]));
             assert_eq!(row["ontology_tags"]["sepio"], json!(["evidence"]));
             assert_eq!(row["ontology_tags"]["other"], json!(["complexity"]));
         }
@@ -177,36 +177,36 @@ async fn public_tagging_identity_contract() {
         return;
     }
 
-    let (summary, _, port) = run(
-        &["a", "b"],
-        json!([tags("b"), tags("a")]).to_string(),
+    let long_ref = "style:test:utf8-4170706c6965642d436f72706f726174652d46696e616e63652d612d55736572732d4d616e75616c:1777";
+    let (summary, rows, port) = run(
+        &[long_ref, "b"],
+        json!([tags("item-1"), tags("item-0")]).to_string(),
         2,
         false,
     )
     .await;
     assert_eq!(summary["tagged"], 2);
+    assert_eq!(rows[0]["entity_ref"], long_ref);
     let prompt = port.prompts.lock().expect("prompts").join("\n");
-    assert!(prompt.contains("chunk_ref"));
-    for response in [tags("a"), json!([tags("a")])] {
+    assert!(prompt.contains("correlation_id: item-0"));
+    assert!(!prompt.contains(long_ref));
+    for response in [tags("item-0"), json!([tags("item-0")])] {
         let (summary, _, _) = run(&["a"], response.to_string(), 1, false).await;
         assert_eq!(summary["tagged"], 1);
     }
 
-    let (summary, rows, _) = run(&["a", "b", "c"], tags("a").to_string(), 1, false).await;
-    assert_eq!(summary["tagged"], 1);
-    assert_eq!(summary["failed"], 2);
-    assert_eq!(rows[0]["classification"]["status"], "classified");
+    let (summary, rows, _) = run(&["a", "b", "c"], tags("item-0").to_string(), 1, false).await;
+    assert_eq!(summary["tagged"], 3);
+    assert_eq!(summary["failed"], 0);
     assert!(
-        rows[1]["classification"]["reason"]
-            .as_str()
-            .expect("reason")
-            .contains("unknown")
+        rows.iter()
+            .all(|row| row["classification"]["status"] == "classified")
     );
 
     for response in [
         json!({"dimensions":["what"]}),
         json!([{"dimensions":["what"]}]),
-        json!({"chunk_ref":"a"}),
+        json!({"correlation_id":"item-0"}),
     ] {
         let (summary, _, _) = run(&["a"], response.to_string(), 1, false).await;
         assert_eq!(
@@ -215,15 +215,21 @@ async fn public_tagging_identity_contract() {
         );
     }
 
-    // Whole-batch identity contract: short, long, unknown, duplicate, missing ID,
+    // Whole-batch identity contract: unknown, duplicate, missing correlation ID,
     // and singleton object for a multi-input request must never be positional matches.
     for (response, reason) in [
-        (json!([tags("a")]), "omitted"),
-        (json!([tags("a"), tags("b"), tags("extra")]), "unknown"),
-        (json!([tags("a"), tags("unknown")]), "unknown"),
-        (json!([tags("a"), tags("a")]), "duplicate"),
-        (json!([{"dimensions":["what"]}, tags("b")]), "chunk_ref"),
-        (tags("a"), "array"),
+        (json!([tags("item-0")]), "omitted"),
+        (
+            json!([tags("item-0"), tags("item-1"), tags("item-extra")]),
+            "unknown",
+        ),
+        (json!([tags("item-0"), tags("item-unknown")]), "unknown"),
+        (json!([tags("item-0"), tags("item-0")]), "duplicate"),
+        (
+            json!([{"dimensions":["what"]}, tags("item-1")]),
+            "correlation_id",
+        ),
+        (tags("item-0"), "array"),
     ] {
         let (summary, rows, _) = run(&["a", "b"], response.to_string(), 2, false).await;
         assert_eq!(summary["failed"], 2, "{response}");
@@ -265,7 +271,7 @@ async fn public_tagging_identity_contract() {
             .expect("reason")
             .contains("JSON")
     );
-    let mut unicode = tags("a");
+    let mut unicode = tags("item-0");
     unicode["dc_subject"] = json!(["界".repeat(50)]);
     unicode["ontology_tags"]["custom"] = json!(["界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
@@ -307,7 +313,7 @@ async fn missing_template_never_infers() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
         return;
     }
-    let (summary, rows, port) = run(&["a"], tags("a").to_string(), 1, false).await;
+    let (summary, rows, port) = run(&["a"], tags("item-0").to_string(), 1, false).await;
     assert_eq!(summary["failed"], 1);
     assert!(port.prompts.lock().expect("prompts").is_empty());
     assert!(
