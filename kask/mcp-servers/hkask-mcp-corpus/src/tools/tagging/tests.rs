@@ -49,10 +49,11 @@ fn server(port: Arc<MockPort>) -> CorpusServer {
 }
 
 fn tags(correlation_id: &str) -> Value {
-    json!({"correlation_id":correlation_id, "dimensions":["what"],
-        "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT,
-        "candidate_terms":["procedure", "assertion", "complexity"],
-        "expertise_level":"analyst"})
+    json!([
+        correlation_id,
+        ["who", "why"],
+        ["procedure", "assertion", "complexity"]
+    ])
 }
 
 fn fixture() -> tempfile::TempDir {
@@ -214,14 +215,19 @@ async fn public_tagging_identity_contract() {
     assert_eq!(summary["cost_reporting_complete"], true);
     assert_eq!(rows[0]["entity_ref"], long_ref);
     let prompt = port.prompts.lock().expect("prompts").join("\n");
-    assert!(prompt.contains("correlation_id: item-0"));
+    assert!(prompt.contains("Passage 1 (item-0)"));
     assert!(!prompt.contains(long_ref));
-    for response in [tags("item-0"), json!([tags("item-0")])] {
-        let (summary, _, _) = run(&["a"], response.to_string(), 1, false).await;
-        assert_eq!(summary["tagged"], 1);
-    }
+    assert!(!prompt.contains("source:"));
+    let (summary, _, _) = run(&["a"], json!([tags("item-0")]).to_string(), 1, false).await;
+    assert_eq!(summary["tagged"], 1);
 
-    let (summary, rows, _) = run(&["a", "b", "c"], tags("item-0").to_string(), 1, false).await;
+    let (summary, rows, _) = run(
+        &["a", "b", "c"],
+        json!([tags("item-0")]).to_string(),
+        1,
+        false,
+    )
+    .await;
     assert_eq!(summary["tagged"], 3);
     assert_eq!(summary["failed"], 0);
     assert!(
@@ -261,9 +267,9 @@ async fn public_tagging_identity_contract() {
         (json!([tags("item-0"), tags("item-0")]), "duplicate"),
         (
             json!([{"dimensions":["what"]}, tags("item-1")]),
-            "correlation_id",
+            "invalid tagging JSON entry",
         ),
-        (tags("item-0"), "array"),
+        (tags("item-0"), "invalid tagging JSON entry"),
     ] {
         let (summary, rows, _) = run(&["a", "b"], response.to_string(), 2, false).await;
         assert_eq!(summary["failed"], 2, "{response}");
@@ -309,7 +315,7 @@ async fn public_tagging_identity_contract() {
             .contains("JSON")
     );
     let mut unicode = tags("item-0");
-    unicode["candidate_terms"] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
+    unicode[2] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
     assert_eq!(summary["tagged"], 1);
     for term in [&rows[0]["dc_subject"][3], &rows[0]["candidate_terms"][3]] {

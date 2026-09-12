@@ -164,10 +164,12 @@ The summary reports planned batches, provider responses, successful-response tok
 usage, `reported_cost_usd`, and whether cost reporting is complete. A null cost is
 unknown—not zero—and must not be used to justify expansion under a dollar ceiling.
 
-The classifier returns structural judgments plus raw `candidate_terms`; it never
-chooses an ontology namespace, prefix, URI or fallback tier. The shared
-`hkask-bridge-ontology` resolver preserves those candidates and deterministically
-derives `ontology_tags` and `concepts`. Downstream embedding, assertion and QA
+The classifier returns a compact tuple containing its short correlation ID,
+exceptional `who/when/where/why` dimensions, and 3–5 raw `candidate_terms`. The
+server adds universal `what/how`, grounded `bibo:Document`, default `Analyst`,
+and Dublin Core subjects. The model never chooses an ontology namespace, prefix,
+URI or fallback tier. The shared `hkask-bridge-ontology` resolver preserves
+candidates and deterministically derives `ontology_tags` and `concepts`. Downstream embedding, assertion and QA
 readers reject mismatched derived fields or the wrong protocol. Graph salience
 and QA concept context use preserved descriptive candidates, because exact
 published resolution may honestly collapse many terms to the common core; they

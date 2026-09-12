@@ -1,72 +1,39 @@
-{# Goal: Extract multi-dimensional ontology tags from multiple text passages in a single LLM call. #}
+{# Goal: Extract compact semantic candidates for deterministic server-side ontology resolution. #}
 {#
 [inference]
   Variables:
-    passages_block: rendered passages with short batch-local correlation_id and source
+    passages_block: passages with short batch-local correlation IDs
     batch_count: number of passages
-  Output: JSON array with structural judgments and raw candidate terms — exactly one correlation-ID object per passage.
-  Every passage gets at least one 5W1H dimension — no zero-tag passages.
+  Output: one compact tuple per correlation ID
 #}
 <system>
-You are a semantic candidate extractor. Given multiple text passages, extract structural judgments and descriptive terms based on actual content — do not impose an external analytical frame. Never assign ontology authority; the server resolves published anchors deterministically.
+Extract passage-specific semantic metadata without assigning ontology authority.
 
-## Ontology Dimensions
+For each passage return:
+1. Its exact short correlation ID.
+2. Any exceptional 5W1H dimensions from: "who", "when", "where", "why".
+   The server always adds "what" and "how"; do not return them.
+3. Three to five specific lowercase descriptive terms supported by the passage.
+   Spell out acronyms and prefer singular forms.
 
-### 1. 5W1H Interrogatory Dimensions (mandatory — every passage gets at least one)
-Classify which interrogative pronouns each passage answers. A passage can answer multiple.
-The six dimensions (who/what/when/where/why/how) are the canonical 5W1H vocabulary:
-- **who**: Describes agents, people, organizations, entities acting in the world
-- **what**: Describes phenomena, facts, states, properties, metrics, outcomes
-- **when**: Contains temporal information, historical context, timelines, sequences
-- **where**: Contains spatial context, locations, markets, geographic scope
-- **why**: Explains causation, motivation, reasoning, rationale for why something is
-- **how**: Describes methods, procedures, mechanisms, techniques, how something works
-
-### 2. Dublin Core (state axis — what is this document?)
-- **dc_type**: BIBO document type (bibo:Book, bibo:Article, bibo:Report, bibo:Webpage, bibo:Document)
-- Dublin Core subjects are derived server-side from the candidate terms below; do not return a second duplicate subject list.
-
-### 3. Candidate Terms
-Extract 5-8 specific descriptive terms supported by each passage. These serve both as Dublin Core subjects and as raw candidates for deterministic server-side ontology resolution.
-
-Do not choose an ontology, namespace, prefix, URI, or fallback tier. The server owns published-ontology authority. Include the best passage terms even when you do not know whether a published vocabulary contains them.
-
-### 4. Expertise Level
-What level of expertise does each passage support questions at?
-- **practitioner**: Senior professional applying knowledge to real decisions (factual/conceptual)
-- **analyst**: Professional analyst evaluating evidence and making recommendations (analyze/evaluate)
-- **researcher**: Postgraduate researcher at a leading academic institution (evaluate/create)
-
+Never emit ontology namespaces, prefixes, URIs, document types, expertise levels,
+or terms unsupported by the passage. The server derives those fields and resolves
+published ontology anchors deterministically.
 </system>
 
 <task>
-Tag each passage below. Respond with a JSON array of {{ batch_count }} objects, exactly one per supplied correlation_id. Copy each short correlation_id exactly; order does not matter.
+Classify all {{ batch_count }} passages:
 
 {{ passages_block }}
---- End of passages ---
+--- End ---
 </task>
 
 <output_contract>
-Respond with ONLY a JSON array, including when there is one passage — no markdown wrapping, no explanation.
+Return only a JSON array containing exactly one tuple per supplied ID:
+["item-N", ["who", "why"], ["term one", "term two", "term three"]]
 
-Schema (one object per passage, all fields required):
-{
-  "correlation_id": "<exact item-N correlation_id from this passage>",
-  "dimensions": ["what", "why"],
-  "dc_type": "bibo:Book",
-  "candidate_terms": ["market capitalization", "corporation", "valuation", "analysis", "systems thinking"],
-  "expertise_level": "analyst"
-}
-
-Rules:
-- Return every supplied correlation_id exactly once: no omitted, duplicate, invented or blank IDs
-- Never identify a passage by its array position; always include its explicit correlation_id
-- "dimensions" must contain at least one 5W1H interrogatory
-- "candidate_terms" contains 5-8 specific descriptive terms; never namespace keys or ontology URIs
-- "expertise_level" is one of: "practitioner", "analyst", "researcher"
-- Candidate terms must be found in or directly implied by the passage
-- Do not invent terms not supported by the text
-- All candidate terms MUST be lowercase descriptive forms — no title case, no ALL CAPS
-- Spell out acronyms: "return on invested capital" not "ROIC", "price to earnings" not "P/E"
-- Use singular canonical forms: "competitive advantage" not "competitive advantages"
+The outer array contains {{ batch_count }} tuples. Order does not matter. Copy
+every ID exactly once; do not omit, duplicate, invent, or positionally identify
+an item. The dimensions array may be empty. The terms array must contain 3-5
+specific terms.
 </output_contract>

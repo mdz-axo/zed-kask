@@ -134,9 +134,11 @@ protocol stamp: `{"status":"classified","ontology_protocol":"published-term-reso
 Other outcomes are `{"status":"failed","reason":"..."}` and
 `{"status":"unverified"}`. Missing status/protocol and pre-canonical records cannot
 be promoted. Tag responses correlate short batch-local `correlation_id` values;
-canonical entity refs never enter model authority. The classifier emits raw
-`candidate_terms`, not namespaces or URIs; `hkask-bridge-ontology` derives
-`ontology_tags` and `concepts`. Downstream readers reject wrong protocols or any
+canonical entity refs never enter model authority. The classifier emits compact
+tuples of short ID, exceptional `who/when/where/why` dimensions, and 3–5 raw
+`candidate_terms`. The server adds `what/how`, document type, Analyst expertise
+and Dublin Core subjects; `hkask-bridge-ontology` derives `ontology_tags` and
+`concepts`. Downstream readers reject wrong protocols or any
 candidate/anchor mismatch. Count actual classified rows and reconcile
 `tagged + failed = total_chunks`; fallback annotations and numeric method signals
 do not qualify.

@@ -1,9 +1,8 @@
 //! Ontology tagging tools — multi-dimensional chunk annotation.
 //!
-//! `corpus_tag_chunks`: extracts 5W1H dimensions, Dublin Core metadata,
-//! descriptive candidate terms and expertise. The shared bridge—not the
-//! model—resolves candidates to published ontology anchors. Every classified
-//! chunk gets at least one 5W1H dimension.
+//! `corpus_tag_chunks`: extracts exceptional 5W1H dimensions and descriptive
+//! candidate terms. The server supplies universal dimensions, document type,
+//! default expertise and published ontology anchors.
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
@@ -28,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 const MAX_CONCEPT_LEN: usize = 80;
 
 /// Maximum candidate terms accepted from one classifier response.
-const MAX_CANDIDATE_TERMS: usize = 8;
+const MAX_CANDIDATE_TERMS: usize = 5;
 
 /// Minimal chunk for tagging (from chunks.jsonl).
 #[derive(Debug, Clone, Deserialize)]
@@ -43,11 +42,10 @@ struct InputChunk {
 /// Non-authoritative content judgments extracted by the classifier.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 struct CandidateTags {
+    /// Exceptional dimensions only; the server always adds what + how.
     dimensions: Vec<String>,
-    dc_type: String,
     /// Descriptive terms only. The model never assigns namespaces or URIs.
     candidate_terms: Vec<String>,
-    expertise_level: String,
 }
 
 /// Validated structural judgments plus server-resolved ontology terms.
@@ -60,13 +58,9 @@ struct ValidatedTags {
     expertise_level: ExpertiseLevel,
 }
 
-/// Both array entries and singleton responses use a short batch-local identity.
+/// Compact wire tuple: [short correlation ID, exceptional dimensions, terms].
 #[derive(Deserialize)]
-struct TagResponse {
-    correlation_id: String,
-    #[serde(flatten)]
-    tags: CandidateTags,
-}
+struct TagResponse(String, Vec<String>, Vec<String>);
 
 fn correlation_id(index: usize) -> String {
     format!("item-{index}")
@@ -84,10 +78,7 @@ fn correlate_tags(
         serde_json::from_str(&cleaned).map_err(|error| format!("invalid tagging JSON: {error}"))?;
     let entries = match value {
         serde_json::Value::Array(entries) => entries,
-        serde_json::Value::Object(_) if chunks.len() == 1 => vec![value],
-        _ => {
-            return Err("expected tagging JSON array (singleton object only for one input)".into());
-        }
+        _ => return Err("expected outer tagging JSON array".into()),
     };
     let expected = chunks
         .iter()
@@ -97,23 +88,21 @@ fn correlate_tags(
     let mut seen = HashSet::new();
     let mut correlated = HashMap::new();
     for entry in entries {
-        let response: TagResponse = serde_json::from_value(entry)
-            .map_err(|error| format!("invalid tagging JSON entry: {error}"))?;
-        let Some(entity_ref) = expected.get(&response.correlation_id) else {
-            return Err(format!(
-                "unknown correlation_id: {}",
-                response.correlation_id
-            ));
+        let TagResponse(correlation_id, dimensions, candidate_terms) =
+            serde_json::from_value(entry)
+                .map_err(|error| format!("invalid tagging JSON entry: {error}"))?;
+        let Some(entity_ref) = expected.get(&correlation_id) else {
+            return Err(format!("unknown correlation_id: {correlation_id}"));
         };
-        if !seen.insert(response.correlation_id.clone()) {
-            return Err(format!(
-                "duplicate correlation_id: {}",
-                response.correlation_id
-            ));
+        if !seen.insert(correlation_id.clone()) {
+            return Err(format!("duplicate correlation_id: {correlation_id}"));
         }
         correlated.insert(
             (*entity_ref).to_string(),
-            validate_candidate_tags(response.tags)?,
+            validate_candidate_tags(CandidateTags {
+                dimensions,
+                candidate_terms,
+            })?,
         );
     }
     let omitted = expected
@@ -204,52 +193,28 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
 /// shared published-ontology authority. Malformed responses fail visibly;
 /// values are never silently promoted through fallback defaults.
 fn validate_candidate_tags(tags: CandidateTags) -> Result<ValidatedTags, String> {
-    if tags.dimensions.is_empty()
-        || tags.dimensions.iter().any(|dimension| {
-            !matches!(
-                dimension.as_str(),
-                "who" | "what" | "when" | "where" | "why" | "how"
-            )
-        })
+    if tags
+        .dimensions
+        .iter()
+        .any(|dimension| !matches!(dimension.as_str(), "who" | "when" | "where" | "why"))
     {
-        return Err("dimensions must be a non-empty 5W1H subset".to_string());
+        return Err("dimensions must contain only exceptional 5W1H values".to_string());
     }
 
-    let dc_type = canonical_dc_type(&tags.dc_type)
-        .ok_or_else(|| format!("unsupported Dublin Core/BIBO type: {}", tags.dc_type))?;
-    let expertise_level = match tags.expertise_level.as_str() {
-        "practitioner" => ExpertiseLevel::Practitioner,
-        "analyst" => ExpertiseLevel::Analyst,
-        "researcher" => ExpertiseLevel::Researcher,
-        other => return Err(format!("unsupported expertise_level: {other}")),
-    };
-
     let candidate_terms = trim_and_cap_candidate_terms(&tags.candidate_terms);
-    if candidate_terms.is_empty() {
-        return Err("candidate_terms must contain at least one descriptive term".to_string());
+    if candidate_terms.len() < 3 {
+        return Err("candidate_terms must contain 3-5 descriptive terms".to_string());
     }
     let canonical_terms = canonicalize_terms(&candidate_terms);
     let dc_subject = normalize_and_cap_concept_list(&canonical_terms.candidate_terms);
 
     Ok(ValidatedTags {
         dimensions: tags.dimensions,
-        dc_type: dc_type.to_string(),
+        dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
         dc_subject,
         canonical_terms,
-        expertise_level,
+        expertise_level: ExpertiseLevel::Analyst,
     })
-}
-
-fn canonical_dc_type(raw: &str) -> Option<&'static str> {
-    [
-        hkask_bridge_ontology::dc_bibo::BOOK,
-        hkask_bridge_ontology::dc_bibo::ARTICLE,
-        hkask_bridge_ontology::dc_bibo::REPORT,
-        hkask_bridge_ontology::dc_bibo::WEBPAGE,
-        hkask_bridge_ontology::dc_bibo::DOCUMENT,
-    ]
-    .into_iter()
-    .find(|candidate| raw.eq_ignore_ascii_case(candidate))
 }
 
 fn trim_and_cap_candidate_terms(raw: &[String]) -> Vec<String> {
@@ -292,7 +257,7 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
 #[tool_router(router = tagging_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Classify chunks with model-extracted 5W1H dimensions, Dublin Core metadata, descriptive candidate terms, and expertise. The server resolves candidates to published ontology anchors and computes candidate-term graph salience. Every classified chunk has at least one 5W1H dimension."
+        description = "Classify chunks with model-extracted exceptional 5W1H dimensions and descriptive candidate terms. The server supplies universal dimensions, document type and default expertise, resolves published ontology anchors, and computes candidate-term graph salience."
     )]
     pub async fn corpus_tag_chunks(
         &self,
@@ -307,7 +272,7 @@ impl CorpusServer {
                 return Ok(json!({
                     "total_chunks": total,
                     "dry_run": true,
-                    "note": "Would extract 5W1H + Dublin Core + descriptive candidate terms + expertise, then resolve published ontology anchors server-side"
+                    "note": "Would extract exceptional 5W1H dimensions + descriptive candidate terms, then derive document metadata and published ontology anchors server-side"
                 }));
             }
 
@@ -378,10 +343,9 @@ impl CorpusServer {
                         .enumerate()
                         .map(|(i, chunk)| {
                             format!(
-                                "--- Passage {} (correlation_id: {}, source: {}) ---\n{}\n",
+                                "--- Passage {} ({}) ---\n{}\n",
                                 i + 1,
                                 correlation_id(i),
-                                chunk.source,
                                 chunk.text
                             )
                         })
@@ -524,9 +488,11 @@ impl CorpusServer {
                         pko_extracted_from: vec![chunk.entity_ref.clone()],
                         method_signals: Some(hkask_memory::salience::compute_method_signals(&chunk.text)),
                     };
-                    let mut dimensions = tags.dimensions;
-                    if !dimensions.iter().any(|dimension| dimension == "how") {
-                        dimensions.push("how".to_string());
+                    let mut dimensions = vec!["what".to_string(), "how".to_string()];
+                    for dimension in tags.dimensions {
+                        if !dimensions.contains(&dimension) {
+                            dimensions.push(dimension);
+                        }
                     }
                     TaggedChunk {
                         entity_ref: chunk.entity_ref.clone(),

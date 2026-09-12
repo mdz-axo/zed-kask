@@ -234,15 +234,16 @@ Each output `TaggedChunk` requires `classification`:
 or `{"status":"failed","reason":"the actual failure"}` or
 `{"status":"unverified"}`. Missing status/protocol is invalid, not implicit
 success; pre-current-protocol classifier data is stale and receives no
-compatibility upgrade. A classifier response is an array keyed by exact short
-batch-local `correlation_id` values (`item-N`); canonical `entity_ref` values
-remain server-owned and are restored only after whole-batch correlation succeeds.
-The model returns structural judgments and raw `candidate_terms`; it never assigns
-ontology namespaces, prefixes, URIs or fallback tiers. The shared bridge resolver
-preserves candidates and derives canonical `ontology_tags`/`concepts`. A singleton
-object is allowed only for one input. Missing, duplicate, unknown or malformed
-entries reject the entire affected batch. There is no positional or string
-fallback. Failure annotations and deterministic method signals do not make a row
+compatibility upgrade. A classifier response is an outer array of compact tuples:
+`["item-N", ["who", "why"], ["term one", "term two", "term three"]]`.
+Canonical `entity_ref` values remain server-owned and are restored only after
+whole-batch short-ID correlation succeeds. The model returns only exceptional
+`who/when/where/why` dimensions and 3–5 raw candidate terms; the server supplies
+`what/how`, document type, default expertise and Dublin Core subjects. The model
+never assigns ontology namespaces, prefixes, URIs or fallback tiers. The shared
+bridge resolver preserves candidates and derives canonical
+`ontology_tags`/`concepts`. Missing, duplicate, unknown or malformed tuples reject
+the entire affected batch. There is no singleton, positional or string fallback. Failure annotations and deterministic method signals do not make a row
 classified. Synthesized consolidation text is `unverified` and must itself be
 classified.
 
