@@ -703,7 +703,7 @@ mod smoke {
         std::fs::write(
             src.join("book.txt"),
             format!(
-                "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nReferences\nSmith, A. Example Work."
+                "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nReferences\nSmith, A. (2024). Example Work.\nJones, B. (2025). Another Work."
             ),
         )
         .expect("write book source");

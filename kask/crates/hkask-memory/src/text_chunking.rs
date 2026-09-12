@@ -404,32 +404,11 @@ fn filter_unpaged_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>)
         return (String::new(), Vec::new());
     }
 
-    let front_search_end = lines.len().min(400).max((lines.len() / 5).min(400));
-    let front_signal = lines
-        .iter()
-        .take(front_search_end)
-        .position(|line| is_front_matter_signal(line));
-    let front_end = front_signal
-        .and_then(|signal| {
-            lines
-                .iter()
-                .enumerate()
-                .take(front_search_end)
-                .skip(signal + 1)
-                .find(|(_, line)| is_body_start_heading(line))
-                .map(|(index, _)| index)
-        })
-        .unwrap_or(0);
+    let front_search_end = lines.len().min(400);
+    let front_end = front_matter_end(&lines, front_search_end);
 
     let back_search_start = word_fraction_line_index(&lines, 2, 3).max(front_end);
-    let back_boundary =
-        lines
-            .iter()
-            .enumerate()
-            .skip(back_search_start)
-            .find_map(|(index, line)| {
-                back_matter_reason(&lines, index, line).map(|reason| (index, reason))
-            });
+    let back_boundary = terminal_back_boundary(&lines, back_search_start);
     let back_start = back_boundary.map_or(lines.len(), |(index, _)| index);
 
     let mut exclusions = Vec::new();
@@ -492,14 +471,83 @@ fn normalized_heading(line: &str) -> String {
         .to_lowercase()
 }
 
+fn front_matter_end(lines: &[&str], search_end: usize) -> usize {
+    let contents_signal = lines
+        .iter()
+        .take(search_end)
+        .enumerate()
+        .filter(|(_, line)| is_contents_heading(line))
+        .map(|(index, _)| index)
+        .last();
+    let metadata_signal = lines
+        .iter()
+        .take(search_end)
+        .enumerate()
+        .filter(|(_, line)| is_front_matter_signal(line))
+        .map(|(index, _)| index)
+        .last();
+    let signal = contents_signal.or(metadata_signal);
+    let Some(signal) = signal else {
+        return 0;
+    };
+
+    let prose_start = lines
+        .iter()
+        .enumerate()
+        .take(search_end)
+        .skip(signal + 1)
+        .find(|(_, line)| is_substantive_prose_line(line))
+        .map(|(index, _)| index);
+    let Some(prose_start) = prose_start else {
+        return 0;
+    };
+
+    (signal + 1..prose_start)
+        .rev()
+        .find(|index| {
+            lines
+                .get(*index)
+                .is_some_and(|line| !line.trim().is_empty())
+        })
+        .filter(|index| {
+            lines.get(*index).is_some_and(|line| {
+                is_body_start_heading(line)
+                    || (!is_toc_like_line(line) && line.split_whitespace().count() <= 12)
+            })
+        })
+        .unwrap_or(prose_start)
+}
+
+fn is_contents_heading(line: &str) -> bool {
+    matches!(
+        normalized_heading(line).as_str(),
+        "contents" | "table of contents"
+    )
+}
+
 fn is_front_matter_signal(line: &str) -> bool {
     let heading = normalized_heading(line);
-    heading == "contents"
-        || heading == "table of contents"
+    is_contents_heading(line)
         || heading.contains("copyright")
         || heading.contains("all rights reserved")
         || heading.contains("isbn")
         || heading.contains("printed in")
+}
+
+fn is_substantive_prose_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.split_whitespace().count() >= 8 && !is_toc_like_line(trimmed)
+}
+
+fn is_toc_like_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains("...")
+        || (trimmed.split_whitespace().count() < 20
+            && trimmed
+                .split_whitespace()
+                .last()
+                .map(|word| word.trim_matches(|character: char| !character.is_ascii_digit()))
+                .is_some_and(|word| !word.is_empty() && word.parse::<usize>().is_ok()))
 }
 
 fn is_body_start_heading(line: &str) -> bool {
@@ -513,24 +561,87 @@ fn is_body_start_heading(line: &str) -> bool {
     {
         return false;
     }
-    heading == "preface"
-        || heading == "foreword"
-        || heading == "introduction"
-        || heading == "prologue"
+    heading.starts_with("preface")
+        || heading.starts_with("foreword")
+        || heading.starts_with("introduction")
+        || heading.starts_with("prologue")
         || heading.starts_with("chapter ")
         || heading.starts_with("part ")
 }
 
+fn terminal_back_boundary(lines: &[&str], search_start: usize) -> Option<(usize, &'static str)> {
+    let candidates = lines
+        .iter()
+        .enumerate()
+        .skip(search_start)
+        .filter_map(|(index, line)| {
+            back_matter_reason(lines, index, line).map(|reason| (index, reason))
+        })
+        .collect::<Vec<_>>();
+
+    candidates
+        .iter()
+        .filter(|(index, reason)| {
+            !candidates
+                .iter()
+                .any(|(later_index, later_reason)| later_reason == reason && later_index > index)
+        })
+        .min_by_key(|(index, _)| *index)
+        .copied()
+}
+
 fn back_matter_reason(lines: &[&str], index: usize, line: &str) -> Option<&'static str> {
+    let tail = lines.get(index + 1..).unwrap_or_default();
     match normalized_heading(line).as_str() {
-        "bibliography" => Some("bibliography"),
-        "references" => Some("references"),
-        "works cited" => Some("works_cited"),
-        "index" if looks_like_index_tail(lines.get(index + 1..).unwrap_or_default()) => {
-            Some("index")
-        }
+        "bibliography" if looks_like_reference_tail(tail) => Some("bibliography"),
+        "references" if looks_like_reference_tail(tail) => Some("references"),
+        "works cited" if looks_like_reference_tail(tail) => Some("works_cited"),
+        "index" if looks_like_index_tail(tail) => Some("index"),
         _ => None,
     }
+}
+
+fn looks_like_reference_tail(lines: &[&str]) -> bool {
+    let candidates = lines
+        .iter()
+        .map(|line| line.trim())
+        .take_while(|line| !is_following_section_heading(line))
+        .filter(|line| !line.is_empty())
+        .take(100)
+        .collect::<Vec<_>>();
+    if candidates.len() < 2 {
+        return false;
+    }
+    let reference_entries = candidates
+        .iter()
+        .filter(|line| is_reference_entry(line))
+        .count();
+    reference_entries * 4 >= candidates.len()
+}
+
+fn is_following_section_heading(line: &str) -> bool {
+    matches!(
+        normalized_heading(line).as_str(),
+        "bibliography" | "references" | "works cited" | "index"
+    ) || is_body_start_heading(line)
+}
+
+fn is_reference_entry(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("doi:")
+        || lower.contains("doi.org")
+        || lower.contains("http://")
+        || lower.contains("https://")
+        || line
+            .split(|character: char| !character.is_ascii_digit())
+            .filter(|part| part.len() == 4)
+            .filter_map(|part| part.parse::<u16>().ok())
+            .any(|year| (1800..=2099).contains(&year))
+        || line
+            .split_whitespace()
+            .next()
+            .map(|first| first.trim_matches(|character: char| !character.is_ascii_digit()))
+            .is_some_and(|first| !first.is_empty() && first.parse::<usize>().is_ok())
 }
 
 fn looks_like_index_tail(lines: &[&str]) -> bool {
@@ -953,7 +1064,7 @@ mod tests {
     fn unpaged_book_filters_bounded_front_and_back_matter_with_report() {
         let body = "This chapter contains substantive analysis and evidence. ".repeat(80);
         let document = format!(
-            "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nBibliography\nSmith, A. Example Work.\nJones, B. Another Work."
+            "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nChapter 1 .... 1\nChapter 2 .... 25\n\nChapter 1\n{body}\nBibliography\nSmith, A. (2024). Example Work.\nJones, B. (2025). Another Work."
         );
 
         let result = filter_boilerplate_pages_with_report(&document);
@@ -973,6 +1084,30 @@ mod tests {
         assert_eq!(result.exclusions[0].boundary_unit, "line");
         assert_eq!(result.exclusions[1].reason, "bibliography");
         assert!(result.exclusions.iter().all(|item| item.removed_words > 0));
+    }
+
+    /// expect: I keep a substantive introduction or preface even when its heading is not a bare canonical word.
+    /// [P3] Motivating: Generative Space — introductory analysis remains available to retrieval.
+    /// [P2] Constraining: Cognitive Sovereignty — front-matter detection stops when substantive prose begins.
+    /// pre: metadata and a TOC precede a titled preface containing prose before Chapter 1
+    /// post: metadata/TOC are removed while the preface heading and prose are retained
+    #[test]
+    fn unpaged_front_filter_preserves_titled_preface_prose() {
+        let preface =
+            "This revised preface explains the argument, evidence, and changes made for readers. "
+                .repeat(30);
+        let body = "The first chapter develops the central analysis. ".repeat(40);
+        let document = format!(
+            "A Useful Book\nJane Author\nCopyright 2026 Example Press\nAll rights reserved\n\nContents\nPreface .... ix\nChapter 1 .... 1\n\nPreface to the Revised Edition\n{preface}\nChapter 1\n{body}"
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.starts_with("Preface to the Revised Edition\n"));
+        assert!(result.text.contains("This revised preface explains"));
+        assert!(result.text.contains("Chapter 1"));
+        assert!(!result.text.contains("All rights reserved"));
+        assert!(!result.text.contains("Preface .... ix"));
     }
 
     /// expect: I keep substantive prose that merely discusses bibliographies or indices.
@@ -1013,5 +1148,49 @@ mod tests {
         let retained = filter_boilerplate_pages_with_report(&narrative);
         assert!(retained.text.contains("This section explains"));
         assert!(retained.exclusions.is_empty());
+    }
+
+    /// expect: I keep chapters after chapter-level reference lists and remove only the terminal references section.
+    /// [P3] Motivating: Generative Space — later chapters remain available for retrieval.
+    /// [P2] Constraining: Cognitive Sovereignty — repeated section names cannot erase subsequent content.
+    /// pre: multiple citation-like References headings occur after two-thirds of document words
+    /// post: filtering starts at the final References heading and retains intervening chapters
+    #[test]
+    fn unpaged_repeated_references_use_the_terminal_boundary() {
+        let body = "Substantive systems analysis remains available to readers. ".repeat(180);
+        let later_body = "This later chapter must remain in the corpus. ".repeat(60);
+        let document = format!(
+            "Chapter 1\n{body}\nReferences\nAckoff, R. (1981). Creating the Corporate Future.\nBeer, S. (1972). Brain of the Firm.\nChapter 9\n{later_body}\nReferences\nSmith, A. (2024). Final Source.\nJones, B. (2025). Final Evidence."
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("Chapter 9"));
+        assert!(result.text.contains("This later chapter"));
+        assert!(!result.text.contains("Final Source"));
+        assert_eq!(result.exclusions.len(), 1);
+        assert_eq!(result.exclusions[0].reason, "references");
+    }
+
+    /// expect: I do not treat a table field named references as a terminal bibliography.
+    /// [P3] Motivating: Generative Space — substantive content survives until a real citation section begins.
+    /// [P2] Constraining: Cognitive Sovereignty — exact headings still require structural evidence.
+    /// pre: a late false References heading precedes prose and a genuine citation-like Bibliography
+    /// post: prose after the false heading remains and filtering starts at the genuine bibliography
+    #[test]
+    fn unpaged_reference_heading_requires_citation_structure() {
+        let body = "Substantive ontology discussion establishes the document context. ".repeat(170);
+        let later_body = "This material follows a table field and remains substantive. ".repeat(50);
+        let document = format!(
+            "Chapter 1\n{body}\nTerm\nReferences\nDatabase cross references identify related objects in other databases.\n{later_body}\nBibliography\nSmith, A. (2024). Ontology Source.\nJones, B. (2025). Knowledge Graph Evidence."
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("Database cross references"));
+        assert!(result.text.contains("This material follows"));
+        assert!(!result.text.contains("Ontology Source"));
+        assert_eq!(result.exclusions.len(), 1);
+        assert_eq!(result.exclusions[0].reason, "bibliography");
     }
 }
