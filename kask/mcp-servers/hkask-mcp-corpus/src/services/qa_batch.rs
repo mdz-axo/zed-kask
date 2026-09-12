@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::{ChatMessage, InferencePort};
+use hkask_types::InferencePort;
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, inference_error_is_transient,
@@ -16,6 +16,7 @@ use crate::batch::{
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
     PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters, read_prompts,
+    render_prepared_messages,
 };
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -149,16 +150,7 @@ impl QaBatchService {
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
                 let task_lease = Arc::clone(&lease);
-                let messages = [
-                    ChatMessage {
-                        role: "system".into(),
-                        content: prompt.system.clone(),
-                    },
-                    ChatMessage {
-                        role: "user".into(),
-                        content: prompt.user.clone(),
-                    },
-                ];
+                let messages = render_prepared_messages(&prompt)?;
                 let prompt_id = prompt.prompt_id.clone();
                 let task = tasks.spawn(async move {
                     // JoinSet abort is asynchronous: retain ownership until this
@@ -246,7 +238,7 @@ mod tests {
     use crate::services::qa_pipeline::PreparedQaPrompt;
     use hkask_types::inference_ipc::{BatchPromptEntry, BatchResultEntry};
     use hkask_types::template::LLMParameters;
-    use hkask_types::{ChatToolDefinition, InferenceError, InferenceResult};
+    use hkask_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
     use serde_json::json;
     use std::future::Future;
     use std::pin::Pin;
@@ -361,10 +353,21 @@ mod tests {
     }
 
     fn response_text(question: &str) -> String {
-        json!({"qa_pairs": [
-            {"question": question, "answer": "Grounded answer one.", "bloom_level": "factual", "evidence_quotes": []},
-            {"question": "Second question?", "answer": "Grounded answer two.", "bloom_level": "factual", "evidence_quotes": []}
-        ]}).to_string()
+        json!([
+            [
+                "factual",
+                question,
+                "Grounded answer one.",
+                [["p0", "Grounded answer one."]]
+            ],
+            [
+                "conceptual",
+                "Second question?",
+                "Grounded answer two.",
+                [["p0", "Grounded answer two."]]
+            ]
+        ])
+        .to_string()
     }
 
     impl InferencePort for RecordingPort {
@@ -399,14 +402,14 @@ mod tests {
                 .content
                 .clone();
             Box::pin(async move {
-                assert_ne!(user, "panic", "injected task panic");
-                if user == "provider-error" {
+                assert!(!user.contains("panic"), "injected task panic");
+                if user.contains("provider-error") {
                     return Err(InferenceError::Connection(
                         "injected provider outage".into(),
                     ));
                 }
                 Ok(InferenceResult {
-                    text: if user == "malformed" {
+                    text: if user.contains("malformed") {
                         "not JSON".into()
                     } else {
                         response_text(&user)
@@ -453,16 +456,21 @@ mod tests {
         }
     }
 
-    fn prepared(identity: &str, user: &str) -> PreparedQaPrompt {
+    fn prepared(identity: &str, marker: &str) -> PreparedQaPrompt {
         PreparedQaPrompt {
             prompt_id: identity.into(),
-            chunk_ref: "shared-chunk".into(),
-            source: "source.txt".into(),
-            concepts: vec!["concept".into()],
-            salience: 0.5,
-            qa_type: "factual".into(),
-            system: format!("Exact prepared instructions for {identity}\nDo not rewrap."),
-            user: user.into(),
+            protocol: crate::services::qa_pipeline::PREPARED_QA_PROTOCOL.into(),
+            passages: vec![crate::services::qa_pipeline::PreparedQaPassage {
+                local_id: "p0".into(),
+                chunk_ref: "shared-chunk".into(),
+                source: "source.txt".into(),
+                text: format!("Grounded answer one. Grounded answer two. {marker}"),
+            }],
+            candidate_terms: vec!["grounded answer".into()],
+            qa_types: vec![
+                crate::tools::corpus::QaType::Factual,
+                crate::tools::corpus::QaType::Conceptual,
+            ],
         }
     }
 
@@ -550,13 +558,13 @@ mod tests {
                     .filter(|row| row["prompt_id"] == prompt.prompt_id)
                     .collect();
                 assert_eq!(matching.len(), 2);
-                assert_eq!(matching[0]["response"]["instruction"], prompt.user);
+                assert_eq!(matching[0]["qa_type"], "factual");
+                assert_eq!(matching[1]["qa_type"], "conceptual");
                 for row in matching {
-                    assert_eq!(row["chunk_ref"], prompt.chunk_ref);
-                    assert_eq!(row["source"], prompt.source);
-                    assert_eq!(row["response"]["concepts"], json!(prompt.concepts));
-                    assert_eq!(row["qa_type"], prompt.qa_type);
-                    assert_eq!(row["salience"], prompt.salience);
+                    assert_eq!(row["chunk_ref"], prompt.primary().chunk_ref);
+                    assert_eq!(row["source"], prompt.primary().source);
+                    assert_eq!(row["response"]["concepts"], json!(prompt.candidate_terms));
+                    assert!(row.get("salience").is_none());
                     assert_eq!(row["provenance"]["prompt_id"], prompt.prompt_id);
                     assert_eq!(row["provenance"]["generator_model"], model);
                 }
@@ -567,9 +575,10 @@ mod tests {
                 let (called_model, entries) = batches.first().expect("one batch");
                 assert_eq!(called_model, model);
                 for (entry, prompt) in entries.iter().zip(&prompts) {
+                    let [system, user] = render_prepared_messages(prompt)?;
                     assert_eq!(entry.custom_id, prompt.prompt_id);
-                    assert_eq!(entry.system, prompt.system);
-                    assert_eq!(entry.user, prompt.user);
+                    assert_eq!(entry.system, system.content);
+                    assert_eq!(entry.user, user.content);
                 }
             } else {
                 assert!(router.batches.lock().expect("batches").is_empty());
@@ -584,9 +593,12 @@ mod tests {
                     assert_eq!(user.role, "user");
                     let prompt = prompts
                         .iter()
-                        .find(|prompt| prompt.user == user.content)
+                        .find(|prompt| {
+                            render_prepared_messages(prompt)
+                                .is_ok_and(|rendered| rendered[1].content == user.content)
+                        })
                         .expect("known prompt");
-                    assert_eq!(system.content, prompt.system);
+                    assert_eq!(system.content, render_prepared_messages(prompt)?[0].content);
                 }
             }
         }
@@ -604,40 +616,36 @@ mod tests {
         ];
         for field in [
             "prompt_id",
-            "chunk_ref",
-            "source",
-            "qa_type",
-            "system",
-            "user",
-        ] {
-            let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
-            record[field] = json!("  ");
-            invalid_records.push(record);
-        }
-        for field in [
-            "prompt_id",
-            "chunk_ref",
-            "source",
-            "qa_type",
-            "system",
-            "user",
-            "salience",
-            "concepts",
+            "protocol",
+            "passages",
+            "candidate_terms",
+            "qa_types",
         ] {
             let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
             record.as_object_mut().expect("object").remove(field);
             invalid_records.push(record);
         }
         for (field, value) in [
-            ("concepts", json!([""])),
-            ("concepts", json!([1])),
-            ("salience", json!("bad")),
+            ("protocol", json!("old-protocol")),
+            ("passages", json!([])),
+            ("candidate_terms", json!([""])),
+            ("qa_types", json!([])),
             ("prompt_id", json!("unsafe/id")),
             ("prompt_id", json!("x".repeat(65))),
             ("text", json!("legacy alias")),
         ] {
             let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
             record[field] = value;
+            invalid_records.push(record);
+        }
+        for (field, value) in [
+            ("local_id", json!("wrong")),
+            ("chunk_ref", json!("")),
+            ("source", json!("")),
+            ("text", json!("")),
+        ] {
+            let mut record = serde_json::to_value(prepared("qa-2", "user"))?;
+            record["passages"][0][field] = value;
             invalid_records.push(record);
         }
         for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
@@ -794,95 +802,103 @@ mod tests {
                 .iter()
                 .filter(|(_, messages)| messages
                     .iter()
-                    .any(|message| message.content == "provider-error"))
+                    .any(|message| message.content.contains("provider-error")))
                 .count(),
             MAX_RETRIES as usize
         );
         Ok(())
     }
 
-    /// expect: [P8] The real builder emits one canonical identity per prompt, with a response contract the transports preserve.
+    /// expect: The real builder emits one compact two-pair request per chunk,
+    /// and both transports render the same local-identity messages.
     #[tokio::test]
     async fn builder_records_round_trip_through_both_transports()
     -> Result<(), Box<dyn std::error::Error>> {
         use crate::services::prompt_builder::{BuildPromptsRequest, PromptBuilderService};
         let directory = fixture_directory()?;
         let tagged = directory.path().join("tagged.jsonl");
-        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"source.txt", "text":"The passage supplies a verifiable fact.", "candidate_terms":["quantity"], "ontology_tags":{"sumo":[hkask_bridge_ontology::sumo::QUANTITY]}, "concepts":[hkask_bridge_ontology::sumo::QUANTITY], "salience":0.5}).to_string())?;
-        for max_prompts in [0, 2, 4] {
-            let path = directory.path().join("built.jsonl");
-            let result = PromptBuilderService::new()
-                .build_prompts(BuildPromptsRequest {
-                    tagged_jsonl: tagged.to_string_lossy().into(),
-                    output: path.to_string_lossy().into(),
-                    db_path: directory.path().join("memory.db").to_string_lossy().into(),
-                    passphrase: "offline-test-passphrase".into(),
-                    prefix: Some("shared-".into()),
-                    context_k: 0,
-                    prompts_per_chunk: 3,
-                    type_distribution: "1,0,0,0,0".into(),
-                    max_prompts,
-                    ontology_bloom_overrides: None,
+        std::fs::write(&tagged, json!({"entity_ref":"shared-chunk", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"source.txt", "text":"Grounded answer one. Grounded answer two.", "candidate_terms":["quantity"], "ontology_tags":{"sumo":[hkask_bridge_ontology::sumo::QUANTITY]}, "concepts":[hkask_bridge_ontology::sumo::QUANTITY], "salience":0.5}).to_string())?;
+        let path = directory.path().join("built.jsonl");
+        let result = PromptBuilderService::new()
+            .build_prompts(BuildPromptsRequest {
+                tagged_jsonl: tagged.to_string_lossy().into(),
+                output: path.to_string_lossy().into(),
+                db_path: None,
+                passphrase: None,
+                prefix: Some("shared-".into()),
+                context_k: 0,
+                qa_pairs_per_chunk: 2,
+                type_distribution: "1,1,1,1,1".into(),
+                max_pairs: 0,
+            })
+            .await?;
+        assert_eq!(result["prompts_written"], 1);
+        assert_eq!(result["pairs_requested"], 2);
+        let prompts = read_prompts(&path.to_string_lossy())?;
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].primary().chunk_ref, "shared-chunk");
+        assert_eq!(prompts[0].qa_types.len(), 2);
+        let expected_messages = render_prepared_messages(&prompts[0])?;
+        let rendered = expected_messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Grounded answer one."));
+        assert!(!rendered.contains("shared-chunk"));
+        assert!(!rendered.contains("source.txt"));
+
+        for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
+            let router = Arc::new(RecordingPort::default());
+            let summary = QaBatchService::new(router.clone())
+                .generate_qa_batch(QaBatchRequest {
+                    prompts_jsonl: path.to_string_lossy().into(),
+                    output: directory
+                        .path()
+                        .join(format!("generated-{}.jsonl", model.ends_with(":batch")))
+                        .to_string_lossy()
+                        .into(),
+                    concurrency: 2,
+                    model: Some(model.into()),
                 })
                 .await?;
-            let expected = if max_prompts == 2 { 2 } else { 3 };
-            assert_eq!(result["prompts_written"], expected);
-            let prompts = read_prompts(&path.to_string_lossy())?;
-            assert_eq!(prompts.len(), expected);
-            assert_eq!(
-                prompts
-                    .iter()
-                    .map(|prompt| &prompt.prompt_id)
-                    .collect::<std::collections::HashSet<_>>()
-                    .len(),
-                expected
-            );
-            for prompt in &prompts {
-                assert_eq!(prompt.chunk_ref, "shared-chunk");
-                assert!(prompt.system.contains("qa_pairs"));
-                assert!(prompt.system.contains("bloom_level"));
-                assert!(
-                    prompt
-                        .user
-                        .contains("The passage supplies a verifiable fact.")
-                );
-            }
-            for model in ["OpenRouter/offline-model", "OpenRouter/offline-model:batch"] {
-                let router = Arc::new(RecordingPort::default());
-                let summary = QaBatchService::new(router.clone())
-                    .generate_qa_batch(QaBatchRequest {
-                        prompts_jsonl: path.to_string_lossy().into(),
-                        output: directory
-                            .path()
-                            .join("generated.jsonl")
-                            .to_string_lossy()
-                            .into(),
-                        concurrency: 2,
-                        model: Some(model.into()),
-                    })
-                    .await?;
-                assert_eq!(summary["prompts_succeeded"], expected);
-                if model.ends_with(":batch") {
-                    let calls = router.batches.lock().expect("batch calls");
-                    let (_, entries) = calls.first().expect("batch call");
-                    for (entry, prompt) in entries.iter().zip(&prompts) {
-                        assert_eq!(entry.system, prompt.system);
-                        assert_eq!(entry.user, prompt.user);
-                    }
-                } else {
-                    let calls = router.messages.lock().expect("calls");
-                    for (_, messages) in calls.iter() {
-                        let [system, user] = messages.as_slice() else {
-                            panic!("Expected system and user")
-                        };
-                        assert!(
-                            prompts.iter().any(|prompt| prompt.system == system.content
-                                && prompt.user == user.content)
-                        );
-                    }
+            assert_eq!(summary["prompts_succeeded"], 1);
+            assert_eq!(summary["qa_rows_written"], 2);
+            if model.ends_with(":batch") {
+                let calls = router.batches.lock().expect("batch calls");
+                let (_, entries) = calls.first().expect("batch call");
+                assert_eq!(entries[0].system, expected_messages[0].content);
+                assert_eq!(entries[0].user, expected_messages[1].content);
+            } else {
+                let calls = router.messages.lock().expect("calls");
+                assert_eq!(calls[0].1.len(), expected_messages.len());
+                for (actual, expected) in calls[0].1.iter().zip(&expected_messages) {
+                    assert_eq!(actual.role, expected.role);
+                    assert_eq!(actual.content, expected.content);
                 }
             }
         }
+
+        let capped = directory.path().join("capped.jsonl");
+        let result = PromptBuilderService::new()
+            .build_prompts(BuildPromptsRequest {
+                tagged_jsonl: tagged.to_string_lossy().into(),
+                output: capped.to_string_lossy().into(),
+                db_path: None,
+                passphrase: None,
+                prefix: Some("shared-".into()),
+                context_k: 0,
+                qa_pairs_per_chunk: 2,
+                type_distribution: "1,1,1,1,1".into(),
+                max_pairs: 1,
+            })
+            .await?;
+        assert_eq!(result["prompts_written"], 1);
+        assert_eq!(result["pairs_requested"], 1);
+        assert_eq!(
+            read_prompts(&capped.to_string_lossy())?[0].qa_types.len(),
+            1
+        );
         Ok(())
     }
 

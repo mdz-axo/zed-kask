@@ -642,11 +642,11 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            // FMP profiles carry `price`; EODHD-routed profiles (every
-            // exchange-qualified symbol) do not — the stock quote's `close`
-            // is the fallback, in the listing currency (consistent with the
-            // local-currency financials above).
-            let (current_price, price_source) =
+            // FMP profiles can carry a current price; EODHD-routed profiles
+            // generally require the quote fallback. The raw security price is
+            // then converted from the listing currency into the normalized
+            // statement currency before entering the valuation model.
+            let (raw_price, raw_price_source) =
                 match resolve_current_price(profile.raw(), None) {
                     Some((price, source)) => (price, source),
                     None => {
@@ -661,6 +661,10 @@ impl CompaniesServer {
                         }
                     }
                 };
+            let (current_price, normalization) = self
+                .normalize_price_for_financials(raw_price, profile.raw(), &income)
+                .await?;
+            let price_source = format!("{raw_price_source}; {normalization}");
 
             // Solve via the shared bisection in `financial_model` — the single
             // source of truth for the search direction, shared with

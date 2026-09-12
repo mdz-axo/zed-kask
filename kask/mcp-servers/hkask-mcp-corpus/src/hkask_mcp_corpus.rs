@@ -914,14 +914,13 @@ mod smoke {
             .corpus_build_prompts(Parameters(BuildPromptsRequest {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: prompts_path.to_string_lossy().to_string(),
-                db_path: db_path.to_string_lossy().to_string(),
-                passphrase: "test-passphrase".to_string(),
+                db_path: Some(db_path.to_string_lossy().to_string()),
+                passphrase: Some("test-passphrase".to_string()),
                 prefix: Some("corpus:custom:".to_string()),
                 context_k: 3,
-                prompts_per_chunk: 1,
+                qa_pairs_per_chunk: 1,
                 type_distribution: "1".to_string(),
-                max_prompts: 0,
-                ontology_bloom_overrides: None,
+                max_pairs: 0,
             }))
             .await
             .expect("build_prompts ok");
@@ -932,8 +931,8 @@ mod smoke {
         );
         let prompts_text = std::fs::read_to_string(&prompts_path).expect("prompts file written");
         assert!(
-            prompts_text.contains("similarity"),
-            "the KNN scaffold must carry scored passages when the prefix matches"
+            prompts_text.contains("\"local_id\":\"p1\""),
+            "the KNN scaffold must carry a local context identity"
         );
         assert!(
             prompts_text.contains("Cinderella"),
@@ -946,14 +945,13 @@ mod smoke {
             .corpus_build_prompts(Parameters(BuildPromptsRequest {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: default_prompts.to_string_lossy().to_string(),
-                db_path: db_path.to_string_lossy().to_string(),
-                passphrase: "test-passphrase".to_string(),
+                db_path: Some(db_path.to_string_lossy().to_string()),
+                passphrase: Some("test-passphrase".to_string()),
                 prefix: None,
                 context_k: 3,
-                prompts_per_chunk: 1,
+                qa_pairs_per_chunk: 1,
                 type_distribution: "1".to_string(),
-                max_prompts: 0,
-                ontology_bloom_overrides: None,
+                max_pairs: 0,
             }))
             .await
             .expect_err("mismatched prefix must fail");

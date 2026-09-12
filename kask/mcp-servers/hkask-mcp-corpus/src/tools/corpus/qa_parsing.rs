@@ -106,8 +106,10 @@ pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
 mod tests {
     use super::*;
     use crate::services::qa_pipeline::{
-        PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
+        PREPARED_QA_PROTOCOL, PreparedQaPassage, PreparedQaPrompt, QaCompletion, QaCompletionError,
+        QaOutput,
     };
+    use crate::tools::corpus::QaType;
     use serde_json::json;
 
     /// expect: Generation retains distinct source identities and quotes in both
@@ -116,13 +118,23 @@ mod tests {
     fn shared_qa_output_is_ingest_compatible() -> Result<(), Box<dyn std::error::Error>> {
         let prompt = PreparedQaPrompt {
             prompt_id: "qa-1".into(),
-            chunk_ref: "chunk-1".into(),
-            source: "source.txt".into(),
-            concepts: vec!["concept".into()],
-            salience: 0.5,
-            qa_type: "factual".into(),
-            system: "prepared system".into(),
-            user: "prepared user".into(),
+            protocol: PREPARED_QA_PROTOCOL.into(),
+            passages: vec![
+                PreparedQaPassage {
+                    local_id: "p0".into(),
+                    chunk_ref: "chunk-1".into(),
+                    source: "source.txt".into(),
+                    text: "Answer.".into(),
+                },
+                PreparedQaPassage {
+                    local_id: "p1".into(),
+                    chunk_ref: "chunk-2".into(),
+                    source: "other.txt".into(),
+                    text: "Other evidence.".into(),
+                },
+            ],
+            candidate_terms: vec!["concept".into()],
+            qa_types: vec![QaType::Factual],
         };
         let quotes = json!([
             {"chunk_ref":"chunk-1", "source":"source.txt", "quote":"Answer."},
@@ -133,8 +145,12 @@ mod tests {
         output.complete(
             &prompt,
             Ok(QaCompletion {
-                text: json!({"qa_pairs":[{"question":"Question?", "answer":"Answer.",
-                "bloom_level":"factual", "evidence_quotes":quotes}]})
+                text: json!([[
+                    "factual",
+                    "Question?",
+                    "Answer.",
+                    [["p0", "Answer."], ["p1", "Other evidence."]]
+                ]])
                 .to_string(),
                 tokens_used: 10,
             }),
@@ -156,10 +172,13 @@ mod tests {
         let parsed = parse_qa_record(first).map_err(|_| "ingest rejected QA")?;
         assert_eq!(parsed.instruction, "Question?");
         assert_eq!(parsed.output, "Answer.");
-        assert_eq!(parsed.qa_type, prompt.qa_type);
-        assert_eq!(parsed.source, prompt.source);
-        assert_eq!(parsed.chunk_ref.as_deref(), Some(prompt.chunk_ref.as_str()));
-        assert_eq!(parsed.concepts, prompt.concepts);
+        assert_eq!(parsed.qa_type, "factual");
+        assert_eq!(parsed.source, prompt.primary().source);
+        assert_eq!(
+            parsed.chunk_ref.as_deref(),
+            Some(prompt.primary().chunk_ref.as_str())
+        );
+        assert_eq!(parsed.concepts, prompt.candidate_terms);
         assert_eq!(serde_json::to_value(parsed.evidence_quotes)?, quotes);
         assert_eq!(parsed.prompt_id.as_deref(), Some("qa-1"));
         assert_eq!(

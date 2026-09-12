@@ -1,42 +1,37 @@
-//! Prepared QA prompts from complete-source stored passages, never from the
-//! current input partition's accidental subset of neighboring chunks.
+//! Compact prepared QA requests from current-protocol classified passages.
 
 use std::collections::{HashMap, HashSet};
 
 use hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL;
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::corpus::{TaggedChunk, qa_prompt_id};
-use serde_json::json;
+use hkask_types::corpus::qa_prompt_id;
 
 use crate::helpers::map_memory_store_error;
-use crate::services::qa_pipeline::{PreparedQaPrompt, QA_RESPONSE_CONTRACT};
-use crate::tools::corpus::{
-    QaType, parse_type_distribution, qa_type_instruction, qa_type_str, read_tagged_chunks,
-};
-use crate::{normalize_in_place, render_docproc_template};
+use crate::normalize_in_place;
+use crate::services::qa_pipeline::{PREPARED_QA_PROTOCOL, PreparedQaPassage, PreparedQaPrompt};
+use crate::tools::corpus::read_tagged_chunks;
+use crate::tools::corpus::{QaType, parse_type_distribution};
 
 pub(crate) struct BuildPromptsRequest {
     pub tagged_jsonl: String,
     pub output: String,
-    pub db_path: String,
-    pub passphrase: String,
+    pub db_path: Option<String>,
+    pub passphrase: Option<String>,
     pub prefix: Option<String>,
     pub context_k: usize,
-    pub prompts_per_chunk: usize,
+    pub qa_pairs_per_chunk: usize,
     pub type_distribution: String,
-    pub max_prompts: usize,
-    pub ontology_bloom_overrides: Option<String>,
+    pub max_pairs: usize,
 }
 
 struct StoredPassage {
     source: String,
     text: String,
     vector: Vec<f32>,
-    memories: Vec<hkask_storage::HMem>,
 }
 
-/// Canonical MemoryStore reads own provenance and passage text. No source DB,
-/// copied embedding store, partition fallback, or inference is introduced.
+/// One compact prepared-request builder. Provider messages are rendered later
+/// from the stored protocol and variables by both transports identically.
 pub(crate) struct PromptBuilderService;
 
 impl PromptBuilderService {
@@ -70,55 +65,41 @@ impl PromptBuilderService {
             if chunk.entity_ref.trim().is_empty()
                 || chunk.source.trim().is_empty()
                 || chunk.text.trim().is_empty()
-                || !chunk.salience.is_finite()
                 || !chunk.entity_ref.starts_with(prefix)
             {
                 return Err(McpToolError::invalid_argument(format!(
-                    "Chunk '{}' needs nonblank source/text, finite salience and a reference under prefix '{prefix}'",
+                    "Chunk '{}' needs nonblank source/text and a reference under prefix '{prefix}'",
                     chunk.entity_ref
                 )));
             }
         }
-        if request.prompts_per_chunk == 0 {
+        if request.qa_pairs_per_chunk == 0 {
             return Err(McpToolError::invalid_argument(
-                "prompts_per_chunk must be positive",
+                "qa_pairs_per_chunk must be positive",
             ));
         }
-        let requested = chunks
+        let requested_pairs = chunks
             .len()
-            .checked_mul(request.prompts_per_chunk)
+            .checked_mul(request.qa_pairs_per_chunk)
             .ok_or_else(|| {
-                McpToolError::invalid_argument("Requested prompt count overflows usize")
+                McpToolError::invalid_argument("Requested QA pair count overflows usize")
             })?;
-        let limit = if request.max_prompts == 0 {
-            requested
+        let pair_limit = if request.max_pairs == 0 {
+            requested_pairs
         } else {
-            request.max_prompts.min(requested)
+            request.max_pairs.min(requested_pairs)
         };
-        let default_rotation = parse_type_distribution(&request.type_distribution);
-        let mut bloom_overrides: HashMap<&str, Vec<QaType>> = HashMap::new();
-        if let Some(overrides) = request.ontology_bloom_overrides.as_deref() {
-            for entry in overrides.split('|') {
-                let (namespace, distribution) = entry.split_once(':').ok_or_else(|| {
-                    McpToolError::invalid_argument(
-                        "ontology_bloom_overrides must use namespace:distribution entries",
-                    )
-                })?;
-                if namespace.is_empty()
-                    || bloom_overrides
-                        .insert(namespace, parse_type_distribution(distribution))
-                        .is_some()
-                {
-                    return Err(McpToolError::invalid_argument(
-                        "Empty or duplicate Bloom override namespace",
-                    ));
-                }
-            }
-        }
-        let store = crate::helpers::open_memory_store(&request.db_path, &request.passphrase)?;
+        let rotation = parse_type_distribution(&request.type_distribution);
+
         let mut passages = HashMap::new();
-        // context_k=0 is an explicit opt-out, not a fallback after failed reads.
         if request.context_k > 0 {
+            let db_path = request.db_path.as_deref().ok_or_else(|| {
+                McpToolError::invalid_argument("db_path is required when context_k > 0")
+            })?;
+            let passphrase = request.passphrase.as_deref().ok_or_else(|| {
+                McpToolError::invalid_argument("passphrase is required when context_k > 0")
+            })?;
+            let store = crate::helpers::open_memory_store(db_path, passphrase)?;
             let rows = store.all_embeddings_with_text().map_err(|error| {
                 map_memory_store_error(error, "Cannot load complete-source QA context")
             })?;
@@ -168,7 +149,6 @@ impl PromptBuilderService {
                             source,
                             text,
                             vector,
-                            memories,
                         },
                     )
                     .is_some()
@@ -179,6 +159,7 @@ impl PromptBuilderService {
                 }
             }
         }
+
         let mut by_source: HashMap<&str, Vec<(&str, &StoredPassage)>> = HashMap::new();
         for (reference, passage) in &passages {
             by_source
@@ -186,26 +167,33 @@ impl PromptBuilderService {
                 .or_default()
                 .push((reference, passage));
         }
-        let mut sorted: Vec<&TaggedChunk> = chunks.iter().collect();
-        sorted.sort_by(|a, b| {
-            b.salience
-                .total_cmp(&a.salience)
-                .then_with(|| a.entity_ref.cmp(&b.entity_ref))
-        });
+
         let mut output = String::new();
-        let mut written = 0;
-        let mut context_links = 0;
-        'chunks: for chunk in sorted {
-            let (context, memories) = if request.context_k == 0 {
-                (
-                    Vec::new(),
-                    store
-                        .query_deduped_untouched(&chunk.entity_ref)
-                        .map_err(|error| {
-                            map_memory_store_error(error, "Cannot read QA knowledge graph")
-                        })?,
-                )
-            } else {
+        let mut prompts_written = 0usize;
+        let mut pairs_requested = 0usize;
+        let mut context_links = 0usize;
+        for chunk in &chunks {
+            if pairs_requested == pair_limit {
+                break;
+            }
+            let pair_count = request.qa_pairs_per_chunk.min(pair_limit - pairs_requested);
+            let qa_types = (0..pair_count)
+                .map(|ordinal| rotation[ordinal % rotation.len()])
+                .collect::<Vec<QaType>>();
+            let type_key = qa_types
+                .iter()
+                .map(QaType::as_str)
+                .collect::<Vec<_>>()
+                .join("+");
+            let prompt_id = qa_prompt_id(&chunk.source, &chunk.entity_ref, &type_key, 0);
+
+            let mut prepared_passages = vec![PreparedQaPassage {
+                local_id: "p0".to_string(),
+                chunk_ref: chunk.entity_ref.clone(),
+                source: chunk.source.clone(),
+                text: chunk.text.clone(),
+            }];
+            if request.context_k > 0 {
                 let primary = passages.get(&chunk.entity_ref).ok_or_else(|| {
                     McpToolError::failed_precondition(format!(
                         "No stored passage for primary '{}'",
@@ -230,118 +218,55 @@ impl PromptBuilderService {
                             "Embedding dimensions differ for '{reference}'"
                         )));
                     }
-                    let similarity: f32 = primary
+                    let similarity = primary
                         .vector
                         .iter()
                         .zip(&candidate.vector)
-                        .map(|(a, b)| a * b)
-                        .sum();
+                        .map(|(left, right)| left * right)
+                        .sum::<f32>();
                     scored.push((*reference, *candidate, similarity));
                 }
-                scored.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(b.0)));
+                scored.sort_by(|left, right| {
+                    right.2.total_cmp(&left.2).then_with(|| left.0.cmp(right.0))
+                });
                 scored.truncate(request.context_k);
-                let context = scored.into_iter().map(|(reference, passage, similarity)| json!({
-                    "chunk_ref":reference, "source":passage.source, "text":passage.text, "similarity":similarity
-                })).collect::<Vec<_>>();
-                (context, primary.memories.clone())
-            };
-            context_links += context.len();
-            let context_text = serde_json::to_string(&context).map_err(|error| {
-                McpToolError::internal(format!("Cannot serialize QA context: {error}"))
-            })?;
-            // Assertion values are context, never independently verified facts.
-            let mut assertions: Vec<_> = memories
-                .iter()
-                .filter(|memory| {
-                    !matches!(
-                        memory.attribute.as_str(),
-                        "text" | "method_signals" | "ontology_tags"
-                    )
-                })
-                .map(|memory| format!("{}: {}", memory.attribute, memory.value))
-                .collect();
-            assertions.sort();
-            let rotation = ["pko", "golem", "fibo", "sepio", "epistemic"]
-                .into_iter()
-                .find_map(|namespace| {
-                    chunk
-                        .ontology_tags
-                        .contains_key(namespace)
-                        .then(|| bloom_overrides.get(namespace))
-                        .flatten()
-                })
-                .unwrap_or(&default_rotation);
-            let mut type_ordinals: HashMap<&str, usize> = HashMap::new();
-            for ordinal in 0..request.prompts_per_chunk {
-                if written == limit {
-                    break 'chunks;
+                for (index, (reference, passage, _)) in scored.into_iter().enumerate() {
+                    prepared_passages.push(PreparedQaPassage {
+                        local_id: format!("p{}", index + 1),
+                        chunk_ref: reference.to_string(),
+                        source: passage.source.clone(),
+                        text: passage.text.clone(),
+                    });
                 }
-                let qa_type = *rotation
-                    .get(ordinal % rotation.len())
-                    .ok_or_else(|| McpToolError::invalid_argument("Empty QA type rotation"))?;
-                let kind = qa_type_str(qa_type);
-                let type_ordinal = type_ordinals.entry(kind).or_default();
-                let prompt_id = qa_prompt_id(&chunk.source, &chunk.entity_ref, kind, *type_ordinal);
-                *type_ordinal += 1;
-                let mut tags: Vec<_> = chunk.ontology_tags.iter().collect();
-                tags.sort_by(|a, b| a.0.cmp(b.0));
-                let mut vars = HashMap::new();
-                vars.insert("qa_instruction", qa_type_instruction(qa_type).to_string());
-                vars.insert("dimensions", chunk.dimensions.join(", "));
-                vars.insert("qa_type", kind.to_string());
-                vars.insert("expertise", chunk.expertise_level.as_str().to_string());
-                vars.insert("source", chunk.source.clone());
-                vars.insert("dc_type", chunk.dc_type.clone());
-                vars.insert("dc_subject", chunk.dc_subject.join(", "));
-                vars.insert("consolidated_from", chunk.consolidated_from.join(", "));
-                vars.insert(
-                    "ontology_tags",
-                    tags.into_iter()
-                        .map(|(namespace, concepts)| {
-                            format!("{namespace}: {}", concepts.join(", "))
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" | "),
-                );
-                vars.insert("context_passages", context_text.clone());
-                vars.insert("concept_graph", chunk.candidate_terms.join(", "));
-                vars.insert("knowledge_graph", assertions.join("\n"));
-                let system = render_docproc_template("build-prompts", &vars);
-                if system.is_empty() {
-                    return Err(McpToolError::failed_precondition(
-                        "Required docproc/build-prompts template is unavailable",
-                    ));
-                }
-                let primary =
-                    json!({"chunk_ref":chunk.entity_ref,"source":chunk.source,"text":chunk.text});
-                let prompt = PreparedQaPrompt {
-                    prompt_id,
-                    chunk_ref: chunk.entity_ref.clone(),
-                    source: chunk.source.clone(),
-                    concepts: chunk.concepts.clone(),
-                    salience: f64::from(chunk.salience),
-                    qa_type: kind.to_string(),
-                    system: format!(
-                        "{system}\n\n{QA_RESPONSE_CONTRACT}\nRequested bloom_level: {kind}."
-                    ),
-                    user: format!(
-                        "Generate a {kind} QA pair from this primary passage (explicit source and chunk identities):\n{primary}"
-                    ),
-                };
-                prompt.validate()?;
-                output.push_str(&serde_json::to_string(&prompt).map_err(|error| {
-                    McpToolError::internal(format!("Cannot serialize prepared QA: {error}"))
-                })?);
-                output.push('\n');
-                written += 1;
             }
+            context_links += prepared_passages.len() - 1;
+
+            let prompt = PreparedQaPrompt {
+                prompt_id,
+                protocol: PREPARED_QA_PROTOCOL.to_string(),
+                passages: prepared_passages,
+                candidate_terms: chunk.candidate_terms.clone(),
+                qa_types,
+            };
+            prompt.validate()?;
+            output.push_str(&serde_json::to_string(&prompt).map_err(|error| {
+                McpToolError::internal(format!("Cannot serialize prepared QA: {error}"))
+            })?);
+            output.push('\n');
+            prompts_written += 1;
+            pairs_requested += pair_count;
         }
         crate::helpers::write_contained(&request.output, &output)?;
-        Ok(
-            json!({"total_chunks":chunks.len(), "prompts_written":written, "output":request.output,
-            "context_enabled":request.context_k > 0, "context_links":context_links,
-            "context_scope":"complete_source", "stored_passages":passages.len()}),
-        )
+        Ok(serde_json::json!({
+            "total_chunks": chunks.len(),
+            "prompts_written": prompts_written,
+            "pairs_requested": pairs_requested,
+            "output": request.output,
+            "context_enabled": request.context_k > 0,
+            "context_links": context_links,
+            "context_scope": if request.context_k > 0 { "complete_source" } else { "primary_only" },
+            "stored_passages": passages.len(),
+        }))
     }
 }
 

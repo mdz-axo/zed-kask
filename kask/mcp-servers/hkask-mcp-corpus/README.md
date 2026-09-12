@@ -179,10 +179,11 @@ signals from synthesized text but remains unverified.
 
 ## Complete-source prompt context
 
-`corpus_build_prompts` takes current-protocol, canonically reconciled tagged rows,
-the corpus DB, and an explicit matching `prefix` (tool default
-`corpus:researcher:`). It rejects stale/noncanonical rows, duplicate refs, blank
-source/text, non-finite salience and prefix mismatches before building.
+`corpus_build_prompts` takes current-protocol, canonically reconciled tagged rows
+and an explicit matching `prefix` (tool default `corpus:researcher:`). It rejects
+stale/noncanonical rows, duplicate refs, blank source/text and prefix mismatches.
+Primary-only preparation (`context_k=0`, the default) does not open a DB and needs
+no DB path or passphrase.
 
 With `context_k > 0`, the builder loads stored embeddings and full `passage_text`
 across the namespace, excluding reserved rule/centroid refs. Each passage must
@@ -194,79 +195,55 @@ vectors, ambiguous/missing provenance, duplicate stored refs, dimension mismatch
 primary source/text disagreement or failed reads are errors, not empty context
 (`src/services/prompt_builder.rs:119–246`).
 
-Context carries each neighbor's full text, `chunk_ref`, `source` and similarity.
-Knowledge-graph values are contextual assertions, not independently verified
-facts. Required `docproc/build-prompts` template failure is visible.
-`context_k=0` explicitly disables KNN, reports `context_enabled=false`, and still
-opens the DB and reads the primary's knowledge graph; it is not a fallback.
+With positive `context_k`, `db_path` and `passphrase` are required. The builder
+loads complete-source embeddings and provenance, selects neighbors by similarity,
+and stores canonical passage mappings as local `p1`, `p2`, etc. Canonical IDs are
+metadata in the prepared request but never enter model messages.
 
-Builder defaults: `context_k=3`, `prompts_per_chunk=5`,
-`type_distribution="1,1,1,1,1"`, `max_prompts=0` (all). Positive prompt counts are
-required; a positive cap limits prompt **records**, not chunks. QA labels rotate
-in factual/conceptual/analyze/evaluate/create order, restarting per chunk.
-Five weights expand that rotation; optional `ontology_bloom_overrides` selects
-namespace-specific rotations. Validate supplied distributions before running;
-malformed/empty distributions can resolve to factual-only in the parser.
-
-For the Brooks build, explicitly pass **2 prompts per chunk** and measure the new
-chunk count; equal weights then yield factual/conceptual, not five-level balance.
-The returned `total_chunks`, `prompts_written`, `output`, `context_enabled`,
-`context_links`, `context_scope="complete_source"`, `stored_passages` support
-reconciliation. `context_links` counts selected neighbors per processed chunk,
-not multiplied by prompt count (`src/services/prompt_builder.rs:247–342`).
+Builder defaults: `context_k=0`, `qa_pairs_per_chunk=2`,
+`type_distribution="1,1,1,1,1"`, `max_pairs=0` (all). One prepared request per
+chunk carries both factual and conceptual levels by default; a positive cap limits
+requested **pairs**, and the final request may contain fewer levels. Summary fields
+separate `prompts_written` (provider calls) from `pairs_requested` (expected QA
+rows), plus context scope/link counts.
 
 ## Prepared QA JSONL contract
 
-Each nonblank line has exactly these eight required fields
-(`src/services/qa_pipeline.rs:23–103`):
+Each line has five required fields: `prompt_id`, protocol
+`prepared-qa-local-evidence-v1`, ordered `passages`, `candidate_terms`, and
+`qa_types`. Each passage has sequential local ID `p0`, `p1`, canonical
+`chunk_ref`/`source`, and text. Unknown or old rendered-message fields are rejected.
 
-| Field | Contract |
-|---|---|
-| `prompt_id` | Unique in the input; 1–64 ASCII letters/digits/`-`/`_` |
-| `chunk_ref`, `source` | Nonblank primary passage and source identities |
-| `concepts` | Array of nonblank strings; empty allowed |
-| `salience` | Finite JSON number |
-| `qa_type` | Nonblank requested level; each accepted pair must match exactly |
-| `system`, `user` | Nonblank fully prepared messages, including response instructions |
-
-Unknown fields are rejected. The builder generates deterministic `qa-<UUIDv5>`
-IDs from length-framed source, chunk ref, QA type and within-type ordinal
-(`hkask-types/src/corpus.rs:38–49`). Splitting/reordering input does not renumber
-identities. Preserve them on merge and check duplicates. Both transports forward
-prepared system/user roles unchanged; provider batches use `custom_id=prompt_id`.
+The builder generates one deterministic `qa-<UUIDv5>` ID from source, chunk, the
+ordered level set, and ordinal zero. Both transports call the same deterministic
+renderer; provider batches use `custom_id=prompt_id`. Stored canonical identities
+are withheld from rendered model messages.
 
 ### Evidence and generated records
 
-The canonical inference response is:
+Prepared inference returns compact tuples in requested-level order:
 
 ```json
-{"qa_pairs":[{"question":"What is the delay?","answer":"72 hours","bloom_level":"factual","evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
 
-`QaEvidence` has exactly three nonblank strings: `chunk_ref`, `source`, `quote`.
-Every citation carries its own identity, so a context quotation need not point at
-the envelope's primary passage. `evidence_quotes` is **required**, may be empty,
-and accepts neither bare quoted strings nor numeric passage indices. Unknown
-fields in the response/pairs/evidence are rejected. Empty pair arrays, blank
-question/answer, incorrect Bloom levels or malformed evidence reject the whole
-prompt (`src/tools/semantic/qa.rs:29–110`).
-
-Generation validates structure, **not citation membership, substring truth or
-answer entailment**. Source-free `corpus_generate_qa(text/texts, chunk_id)` asks
-for empty evidence rather than inventing source identities. Use the prepared
-pipeline for attributable QA. Audit actual quotations against source text before
-semantic acceptance; an empty array is valid structure but a citation gap.
+Every pair must match its requested Bloom level and contain nonblank question,
+answer, and evidence. Every local ID must resolve to a prepared passage and every
+quote must be an exact substring. Only then does the server restore canonical
+`QaEvidence {chunk_ref, source, quote}`. Any bad pair rejects the whole prompt;
+answer entailment remains a separate semantic audit. Source-free
+`corpus_generate_qa` retains its empty-evidence contract.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","salience":0.5,"qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":[],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_template":"prepared-qa","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"},"tokens_used":10}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
-The model identifier above is illustrative, not a configured default. Usage is
-per prompt completion, repeated on its pair rows, not per-pair consumption.
-A failed prompt instead writes `prompt_id`, `chunk_ref`, `source`, `error`, with
-no response. It is never training data (`src/services/qa_pipeline.rs:169–235,333–359`).
+The model identifier above is illustrative, not a configured default. Prompt
+token usage is counted once in the batch summary rather than repeated on every
+pair row. A failed prompt writes primary `prompt_id`, `chunk_ref`, `source` and
+`error`, with no response; it is never training data.
 
 ## QA routing, scheduling and output ownership
 

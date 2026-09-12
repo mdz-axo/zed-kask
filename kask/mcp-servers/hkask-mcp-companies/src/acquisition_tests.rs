@@ -341,7 +341,7 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
             // EODHD-routed profile shape: no `price` field.
             return (
                 200,
-                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0}]),
+                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"USD"}]),
             );
         }
         if endpoint == "/fmp/quote" {
@@ -349,6 +349,13 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
                 200,
                 json!({"symbol":"ACME","price":30.0,"open":29.0,"high":31.0,"low":28.0}),
             );
+        }
+        if endpoint == "/fmp/income-statement" {
+            let (status, mut rows) = financial_fixture(path);
+            for row in rows.as_array_mut().expect("income rows") {
+                row["reportedCurrency"] = json!("USD");
+            }
+            return (status, rows);
         }
         financial_fixture(path)
     })
@@ -366,13 +373,76 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
                     .await
                     .expect("reverse dcf tool"),
             );
-            assert_eq!(output["price_source"], json!("stock_quote"));
+            assert_eq!(
+                output["price_source"],
+                json!("stock_quote; currency_normalized:USD->USD")
+            );
             assert_eq!(output["current_price"], json!(30.0));
             assert!(
                 output["implied_growth_rate"]
                     .as_f64()
                     .is_some_and(f64::is_finite),
                 "implied growth must resolve with the quote-close price"
+            );
+        })
+        .await;
+}
+
+/// expect: [P5] A quote in pence is converted through pounds into the USD
+/// statement currency before reverse DCF; raw GBX is never treated as USD.
+/// dcterms:identifier: CompaniesServer::reverse_dcf / CompaniesServer::normalize_price_for_financials
+#[tokio::test]
+async fn reverse_dcf_normalizes_gbx_quote_to_usd_statements() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        let endpoint = path.split('?').next().expect("endpoint");
+        if endpoint == "/fmp/profile" {
+            return (
+                200,
+                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"GBX"}]),
+            );
+        }
+        if endpoint == "/fmp/quote" {
+            return (
+                200,
+                json!({"symbol":"ACME","price":1603.0,"open":1600.0,"high":1620.0,"low":1580.0}),
+            );
+        }
+        if endpoint.starts_with("/eodhd/eod/USDGBP.FOREX") {
+            return (200, json!([{"date":"2026-09-11","close":0.7396}]));
+        }
+        if endpoint == "/fmp/income-statement" {
+            let (status, mut rows) = financial_fixture(path);
+            for row in rows.as_array_mut().expect("income rows") {
+                row["reportedCurrency"] = json!("USD");
+            }
+            return (status, rows);
+        }
+        financial_fixture(path)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ReverseDcfRequest>(json!({
+                "symbol": "ACME"
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .reverse_dcf(Parameters(request))
+                    .await
+                    .expect("reverse dcf tool"),
+            );
+            assert_eq!(
+                output["price_source"],
+                json!("stock_quote; currency_normalized:GBX->USD")
+            );
+            assert!(
+                output["current_price"]
+                    .as_f64()
+                    .is_some_and(|price| (price - 21.673_877_77).abs() < 1e-6),
+                "GBX quote must be converted into USD statement units: {output}"
             );
         })
         .await;

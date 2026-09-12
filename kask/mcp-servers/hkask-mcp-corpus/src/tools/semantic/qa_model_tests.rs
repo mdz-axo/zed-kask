@@ -67,7 +67,29 @@ impl InferencePort for RecordingPort {
         _: Option<&[ChatToolDefinition]>,
     ) -> Reply<'_> {
         assert_eq!(messages.len(), 2);
-        self.record(parameters, model)
+        assert!(!parameters.thinking_allowed, "QA must disable thinking");
+        assert_eq!(model, Some(MODEL));
+        self.0
+            .lock()
+            .expect("record model")
+            .push(model.expect("explicit model").into());
+        Box::pin(async {
+            Ok(InferenceResult {
+                text: json!([[
+                    "factual",
+                    "What is stated?",
+                    "The source states a fact.",
+                    [["p0", "The source states a fact."]]
+                ]])
+                .to_string(),
+                model: MODEL.into(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                tool_calls: vec![],
+                reasoning: None,
+                cost_usd: None,
+            })
+        })
     }
 }
 
@@ -96,8 +118,13 @@ async fn qa_generator_routing_is_independent_of_chat() -> anyhow::Result<()> {
                 model: model.clone(),
             }))
             .await;
-        let prompt = json!({"prompt_id":"prompt-1", "chunk_ref":"source-1", "source":"source.txt",
-            "concepts":[], "salience":0.5, "qa_type":"factual", "system":"Generate grounded QA.", "user":"The source states a fact."});
+        let prompt = json!({
+            "prompt_id":"prompt-1",
+            "protocol":crate::services::qa_pipeline::PREPARED_QA_PROTOCOL,
+            "passages":[{"local_id":"p0","chunk_ref":"source-1","source":"source.txt","text":"The source states a fact."}],
+            "candidate_terms":["stated fact"],
+            "qa_types":["factual"]
+        });
         std::fs::write("prompts.jsonl", format!("{prompt}\n"))?;
         let batch = server
             .corpus_generate_qa_batch(Parameters(GenerateQaBatchRequest {

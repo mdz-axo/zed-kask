@@ -1,15 +1,17 @@
 //! Canonical prepared QA records and completion/output accounting for both
 //! batch transports. Single-chunk generation retains its own prompt formatter.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
+use hkask_types::ChatMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
-use crate::tools::semantic::qa::{QaPair, parse_qa_response};
+use crate::tools::corpus::{QaType, qa_type_instruction};
+use crate::tools::semantic::qa::QaPair;
 use crate::{
     CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response, render_docproc_template,
 };
@@ -18,40 +20,41 @@ use crate::{
 /// quotes never confer semantic verification on ordinary answer prose.
 pub(crate) const QA_RESPONSE_CONTRACT: &str = r#"Respond only in JSON: {"qa_pairs":[{"question":"...","answer":"...","bloom_level":"factual|conceptual|analyze|evaluate|create","evidence_quotes":[{"chunk_ref":"exact supplied chunk ID","source":"exact supplied source ID","quote":"exact nonempty substring"}]}]}. Use only the requested Bloom levels. Question and answer must be nonblank; concise answers are valid. Cite only supplied source/chunk identities, never fabricate them. If source identity is unavailable, return evidence_quotes: []. No numeric passage citations or bare quoted-string arrays. A matching citation does not verify answer synthesis."#;
 
-/// The only prepared-prompt JSONL contract. Identity belongs to the prompt,
-/// not its source chunk: several prompts may refer to the same chunk.
+pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
+
+/// One server-owned passage identity. Only `local_id` and guarded `text` enter
+/// the model prompt; canonical identity is restored after quote verification.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreparedQaPassage {
+    pub local_id: String,
+    pub chunk_ref: String,
+    pub source: String,
+    pub text: String,
+}
+
+/// Compact prepared request. Deterministic rendering replaces repeated stored
+/// system/user messages; one request may produce several Bloom-level pairs.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreparedQaPrompt {
     pub prompt_id: String,
-    pub chunk_ref: String,
-    pub source: String,
-    pub concepts: Vec<String>,
-    pub salience: f64,
-    pub qa_type: String,
-    pub system: String,
-    pub user: String,
+    pub protocol: String,
+    pub passages: Vec<PreparedQaPassage>,
+    pub candidate_terms: Vec<String>,
+    pub qa_types: Vec<QaType>,
 }
 
 impl PreparedQaPrompt {
     pub fn validate(&self) -> Result<(), McpToolError> {
-        for (field, value) in [
-            ("prompt_id", &self.prompt_id),
-            ("chunk_ref", &self.chunk_ref),
-            ("source", &self.source),
-            ("qa_type", &self.qa_type),
-            ("system", &self.system),
-            ("user", &self.user),
-        ] {
-            if value.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Prepared QA prompt '{}': {field} must not be empty",
-                    self.prompt_id
-                )));
-            }
+        if self.protocol != PREPARED_QA_PROTOCOL {
+            return Err(McpToolError::invalid_argument(format!(
+                "Prepared QA prompt '{}' has unsupported protocol '{}'",
+                self.prompt_id, self.protocol
+            )));
         }
-        // Keep identities portable across the provider batch APIs.
-        if self.prompt_id.len() > 64
+        if self.prompt_id.is_empty()
+            || self.prompt_id.len() > 64
             || !self
                 .prompt_id
                 .bytes()
@@ -61,19 +64,150 @@ impl PreparedQaPrompt {
                 "prompt_id must be 1–64 ASCII letters, digits, hyphens or underscores",
             ));
         }
-        if !self.salience.is_finite()
-            || self
-                .concepts
-                .iter()
-                .any(|concept| concept.trim().is_empty())
+        if self.passages.is_empty() || self.qa_types.is_empty() {
+            return Err(McpToolError::invalid_argument(format!(
+                "Prepared QA prompt '{}' needs passages and qa_types",
+                self.prompt_id
+            )));
+        }
+        let mut local_ids = HashSet::new();
+        for (index, passage) in self.passages.iter().enumerate() {
+            if passage.local_id != format!("p{index}")
+                || passage.chunk_ref.trim().is_empty()
+                || passage.source.trim().is_empty()
+                || passage.text.trim().is_empty()
+                || !local_ids.insert(&passage.local_id)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Prepared QA prompt '{}' has invalid passage {index}",
+                    self.prompt_id
+                )));
+            }
+        }
+        if self
+            .candidate_terms
+            .iter()
+            .any(|term| term.trim().is_empty())
         {
             return Err(McpToolError::invalid_argument(format!(
-                "Prepared QA prompt '{}': salience must be finite and concepts must not contain empty strings",
+                "Prepared QA prompt '{}' has an empty candidate term",
                 self.prompt_id
             )));
         }
         Ok(())
     }
+
+    pub fn primary(&self) -> &PreparedQaPassage {
+        &self.passages[0]
+    }
+}
+
+/// Render the one canonical model request used by both QA transports.
+pub(crate) fn render_prepared_messages(
+    prompt: &PreparedQaPrompt,
+) -> Result<[ChatMessage; 2], McpToolError> {
+    prompt.validate()?;
+    let instructions = prompt
+        .qa_types
+        .iter()
+        .map(|qa_type| format!("{}: {}", qa_type.as_str(), qa_type_instruction(*qa_type)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let passages = prompt
+        .passages
+        .iter()
+        .map(|passage| {
+            json!({
+                "id": passage.local_id,
+                "text": crate::guard_content(&passage.text),
+            })
+        })
+        .collect::<Vec<_>>();
+    let user = serde_json::to_string(&json!({
+        "requested_levels": prompt.qa_types,
+        "candidate_terms": prompt.candidate_terms,
+        "passages": passages,
+    }))
+    .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
+    let system = format!(
+        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        prompt.qa_types.len(),
+        instructions
+    );
+    Ok([
+        ChatMessage {
+            role: "system".to_string(),
+            content: system,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user,
+        },
+    ])
+}
+
+#[derive(Deserialize)]
+struct PreparedQaPair(String, String, String, Vec<(String, String)>);
+
+fn parse_prepared_qa_response(
+    response: &str,
+    prompt: &PreparedQaPrompt,
+) -> Result<Vec<QaPair>, String> {
+    let raw: Vec<PreparedQaPair> = serde_json::from_str(response)
+        .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
+    if raw.len() != prompt.qa_types.len() {
+        return Err(format!(
+            "expected {} QA pairs, received {}",
+            prompt.qa_types.len(),
+            raw.len()
+        ));
+    }
+    let passages = prompt
+        .passages
+        .iter()
+        .map(|passage| (passage.local_id.as_str(), passage))
+        .collect::<HashMap<_, _>>();
+    raw.into_iter()
+        .zip(&prompt.qa_types)
+        .enumerate()
+        .map(
+            |(index, (PreparedQaPair(level, question, answer, citations), expected))| {
+                if level != expected.as_str() {
+                    return Err(format!(
+                        "pair {index} expected Bloom level '{}', received '{level}'",
+                        expected.as_str()
+                    ));
+                }
+                if question.trim().is_empty() || answer.trim().is_empty() || citations.is_empty() {
+                    return Err(format!(
+                        "pair {index} needs nonblank question, answer, and evidence"
+                    ));
+                }
+                let mut evidence_quotes = Vec::with_capacity(citations.len());
+                for (local_id, quote) in citations {
+                    let passage = passages.get(local_id.as_str()).ok_or_else(|| {
+                        format!("pair {index} cites unknown passage '{local_id}'")
+                    })?;
+                    if quote.trim().is_empty() || !passage.text.contains(&quote) {
+                        return Err(format!(
+                            "pair {index} quote is not an exact substring of '{local_id}'"
+                        ));
+                    }
+                    evidence_quotes.push(hkask_types::corpus::QaEvidence {
+                        chunk_ref: passage.chunk_ref.clone(),
+                        source: passage.source.clone(),
+                        quote,
+                    });
+                }
+                Ok(QaPair {
+                    question,
+                    answer,
+                    bloom_level: level,
+                    evidence_quotes,
+                })
+            },
+        )
+        .collect()
 }
 
 /// expect: Every prepared instruction is validated before any paid inference.
@@ -136,6 +270,7 @@ pub(crate) struct QaOutput<W: Write> {
     prompts_succeeded: usize,
     prompts_failed: usize,
     qa_rows_written: usize,
+    tokens_used: u64,
 }
 
 impl<W: Write> QaOutput<W> {
@@ -146,6 +281,7 @@ impl<W: Write> QaOutput<W> {
             prompts_succeeded: 0,
             prompts_failed: 0,
             qa_rows_written: 0,
+            tokens_used: 0,
         }
     }
 
@@ -172,19 +308,18 @@ impl<W: Write> QaOutput<W> {
         completion: Result<QaCompletion, QaCompletionError>,
         model: &str,
     ) -> Result<(), McpToolError> {
-        let parsed = completion.and_then(|completion| {
-            parse_qa_response(
-                &extract_json_from_response(&completion.text),
-                std::slice::from_ref(&prompt.qa_type),
-                None,
-            )
-            .map(|response| (response, completion.tokens_used))
-            .map_err(|error| QaCompletionError::Rejected(error.to_string()))
-        });
+        let parsed = match completion {
+            Ok(completion) => {
+                self.tokens_used += completion.tokens_used;
+                parse_prepared_qa_response(&extract_json_from_response(&completion.text), prompt)
+                    .map_err(QaCompletionError::Rejected)
+            }
+            Err(error) => Err(error),
+        };
         match parsed {
-            Ok((response, tokens_used)) => {
-                for pair in response.qa_pairs {
-                    self.write_record(&qa_result_envelope(prompt, pair, model, tokens_used))?;
+            Ok(pairs) => {
+                for pair in pairs {
+                    self.write_record(&qa_result_envelope(prompt, pair, model))?;
                     self.qa_rows_written += 1;
                 }
                 self.prompts_succeeded += 1;
@@ -192,8 +327,8 @@ impl<W: Write> QaOutput<W> {
             Err(error) => {
                 self.write_record(&json!({
                     "prompt_id": prompt.prompt_id,
-                    "chunk_ref": prompt.chunk_ref,
-                    "source": prompt.source,
+                    "chunk_ref": prompt.primary().chunk_ref,
+                    "source": prompt.primary().source,
                     "error": error.to_string(),
                 }))?;
                 self.prompts_failed += 1;
@@ -229,6 +364,7 @@ impl<W: Write> QaOutput<W> {
             "prompts_succeeded": self.prompts_succeeded,
             "prompts_failed": self.prompts_failed,
             "qa_rows_written": self.qa_rows_written,
+            "tokens_used": self.tokens_used,
             "output": output,
             "batch_api": batch_api,
             "degraded": BatchOutcome::is_degraded(self.prompts_failed, self.prompts_total),
@@ -334,28 +470,25 @@ pub(crate) fn qa_result_envelope(
     prompt: &PreparedQaPrompt,
     pair: QaPair,
     model: &str,
-    tokens_used: impl Into<u64>,
 ) -> serde_json::Value {
     json!({
         "prompt_id": prompt.prompt_id,
-        "chunk_ref": prompt.chunk_ref,
-        "salience": prompt.salience,
-        "source": prompt.source,
+        "chunk_ref": prompt.primary().chunk_ref,
+        "source": prompt.primary().source,
         "qa_type": pair.bloom_level,
         "response": {
             "instruction": pair.question,
             "output": pair.answer,
             "type": pair.bloom_level,
-            "concepts": prompt.concepts,
+            "concepts": prompt.candidate_terms,
             "evidence_quotes": pair.evidence_quotes,
         },
         "provenance": {
             "generator_model": model,
-            "prompt_template": "prepared-qa",
+            "prompt_protocol": PREPARED_QA_PROTOCOL,
             "prompt_id": prompt.prompt_id,
-            "source_chunk_ref": prompt.chunk_ref,
+            "source_chunk_ref": prompt.primary().chunk_ref,
         },
-        "tokens_used": tokens_used.into(),
     })
 }
 
@@ -366,18 +499,23 @@ mod tests {
     fn prepared() -> PreparedQaPrompt {
         PreparedQaPrompt {
             prompt_id: "qa-1".into(),
-            chunk_ref: "chunk-1".into(),
-            source: "source.txt".into(),
-            concepts: Vec::new(),
-            salience: 0.5,
-            qa_type: "factual".into(),
-            system: "system".into(),
-            user: "user".into(),
+            protocol: PREPARED_QA_PROTOCOL.into(),
+            passages: vec![PreparedQaPassage {
+                local_id: "p0".into(),
+                chunk_ref: "chunk-1".into(),
+                source: "source.txt".into(),
+                text: "The answer is grounded here.".into(),
+            }],
+            candidate_terms: vec!["grounded answer".into()],
+            qa_types: vec![QaType::Factual],
         }
     }
 
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
-        Ok(QaCompletion { text: json!({"qa_pairs": [{"question":"Question?", "answer":"Answer.", "bloom_level":"factual", "evidence_quotes":[]}]}).to_string(), tokens_used: 10 })
+        Ok(QaCompletion {
+            text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
+            tokens_used: 10,
+        })
     }
 
     enum Failure {
@@ -472,11 +610,13 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         for response in [
             "not JSON",
-            "{\"qa_pairs\":[]}",
-            r#"{"qa_pairs":[{"question":"", "answer":"answer", "bloom_level":"factual"}]}"#,
-            r#"{"qa_pairs":[{"question":"question", "answer":" ", "bloom_level":"factual"}]}"#,
-            r#"{"qa_pairs":[{"question":"question", "answer":"answer", "bloom_level":"create"}]}"#,
-            r#"{"qa_pairs":[{"question":"question", "answer":"answer", "bloom_level":"factual"}, {"question":"bad"}]}"#,
+            "[]",
+            r#"[["factual","","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question"," ",[["p0","grounded"]]]]"#,
+            r#"[["create","question","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p0","grounded"]]],["factual","extra","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p9","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p0","not in passage"]]]]"#,
         ] {
             let mut bytes = Vec::new();
             let mut output = QaOutput::new(&mut bytes, 1);
@@ -523,6 +663,43 @@ mod tests {
             levels,
             vec!["factual".to_string(), "conceptual".to_string()]
         );
+    }
+
+    #[test]
+    fn prepared_contract_fuses_levels_and_restores_verified_canonical_evidence() {
+        let mut prompt = prepared();
+        prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
+        let messages = render_prepared_messages(&prompt).expect("render");
+        let rendered = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("p0"));
+        assert!(!rendered.contains("chunk-1"));
+        assert!(!rendered.contains("source.txt"));
+
+        let response = json!([
+            [
+                "factual",
+                "What is grounded?",
+                "The answer.",
+                [["p0", "answer"]]
+            ],
+            [
+                "conceptual",
+                "How is it grounded?",
+                "By evidence.",
+                [["p0", "grounded"]]
+            ]
+        ])
+        .to_string();
+        let pairs = parse_prepared_qa_response(&response, &prompt).expect("parse");
+        assert_eq!(pairs.len(), 2);
+        for pair in pairs {
+            assert_eq!(pair.evidence_quotes[0].chunk_ref, "chunk-1");
+            assert_eq!(pair.evidence_quotes[0].source, "source.txt");
+        }
     }
 
     #[test]

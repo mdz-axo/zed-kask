@@ -10,6 +10,7 @@ use hkask_types::inference_ipc::BatchPromptEntry;
 use crate::McpToolError;
 use crate::services::qa_pipeline::{
     PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters,
+    render_prepared_messages,
 };
 
 /// Forward prepared instructions unchanged. The bridge holds credentials and
@@ -22,12 +23,15 @@ pub(crate) async fn generate_qa_via_batch_api<W: Write>(
 ) -> Result<(), McpToolError> {
     let batch_prompts: Vec<BatchPromptEntry> = prompts
         .iter()
-        .map(|prompt| BatchPromptEntry {
-            custom_id: prompt.prompt_id.clone(),
-            system: prompt.system.clone(),
-            user: prompt.user.clone(),
+        .map(|prompt| {
+            let [system, user] = render_prepared_messages(prompt)?;
+            Ok(BatchPromptEntry {
+                custom_id: prompt.prompt_id.clone(),
+                system: system.content,
+                user: user.content,
+            })
         })
-        .collect();
+        .collect::<Result<_, McpToolError>>()?;
     let batch_results = inference_router
         .generate_batch(model, &batch_prompts, 2000, qa_llm_parameters().temperature)
         .await

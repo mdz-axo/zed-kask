@@ -67,7 +67,7 @@ impl CompaniesServer {
 
             // ── 2. Price-implied expectations vs demonstrated capability ──
 
-            let mut price_source = "unavailable";
+            let mut price_source = "unavailable".to_string();
             let analysis = match (
                 &req_income,
                 &req_balance,
@@ -76,11 +76,33 @@ impl CompaniesServer {
                 &req_profile,
             ) {
                 (Ok(inc), Ok(bal), Ok(cf), Ok(met), Ok(prof)) => {
-                    let (current_price, source) =
-                        resolve_current_price(prof.raw(), req_quote.as_ref().ok())
-                            .unwrap_or((f64::NAN, "unavailable"));
-                    price_source = source;
-                    solve_expectations(inc, bal, cf, met.raw(), prof, current_price)
+                    match resolve_current_price(prof.raw(), req_quote.as_ref().ok()) {
+                        Some((raw_price, source)) => {
+                            match self
+                                .normalize_price_for_financials(raw_price, prof.raw(), inc)
+                                .await
+                            {
+                                Ok((current_price, normalization)) => {
+                                    price_source = format!("{source}; {normalization}");
+                                    solve_expectations(
+                                        inc,
+                                        bal,
+                                        cf,
+                                        met.raw(),
+                                        prof,
+                                        current_price,
+                                    )
+                                }
+                                Err(error) => {
+                                    price_source = format!(
+                                        "{source}; currency_normalization_failed: {error}"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        None => None,
+                    }
                 }
                 _ => None,
             };
@@ -132,7 +154,7 @@ impl CompaniesServer {
                 user_growth,
                 &management_narrative,
                 claims.claims.len(),
-                price_source,
+                &price_source,
             );
 
             Ok(fibo::enrich_with_ontology(

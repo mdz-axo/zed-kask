@@ -731,8 +731,12 @@ impl CompaniesServer {
         Ok(list)
     }
 
-    /// The latest USD→currency FOREX close, cached 24h.
-    async fn cached_forex_rate(&self, currency: &str) -> Result<(String, f64), McpToolError> {
+    /// The latest USD→currency FOREX close, cached 24h. Shared by the
+    /// screener's market-cap conversion and valuation price normalization.
+    pub(crate) async fn cached_forex_rate(
+        &self,
+        currency: &str,
+    ) -> Result<(String, f64), McpToolError> {
         const ENDPOINT: &str = "screener_forex_rate";
         let symbol = format!("USD{currency}.FOREX");
         if let Some(cache) = self.fibo_cache.as_ref()

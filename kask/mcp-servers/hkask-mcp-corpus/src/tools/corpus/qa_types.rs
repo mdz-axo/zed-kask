@@ -4,7 +4,8 @@
 //! consecutive Bloom levels.
 
 /// QA type corresponding to Bloom's taxonomy levels.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum QaType {
     Factual,
     Conceptual,
@@ -23,10 +24,6 @@ impl QaType {
             Self::Create => "create",
         }
     }
-}
-
-pub(crate) fn qa_type_str(qt: QaType) -> &'static str {
-    qt.as_str()
 }
 
 /// Parse a type distribution spec like "1,1,2,1,0" into a list of QaType

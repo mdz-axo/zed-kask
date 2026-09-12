@@ -13,7 +13,11 @@
 //! and the forecast-store logic concentrates next to its only test
 //! (`stored_forecast_snapshot_reconstructs_decomposition_model`).
 
-use crate::financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
+use crate::{
+    CompaniesServer,
+    financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions},
+};
+use hkask_mcp_server::server::McpToolError;
 use serde::{Deserialize, Serialize};
 
 /// A stored forecast model for later decomposition during `forecast_record`.
@@ -74,14 +78,14 @@ pub(crate) fn current_price_from_multiple(multiple: f64, hist: &HistoricalSnapsh
 
 /// Resolve the current price for valuation tools. FMP profiles carry a
 /// `price` field; EODHD-routed profiles (every exchange-qualified symbol,
-/// e.g. `DNB.OL`) do not — the stock quote's `close` is the fallback, in the
-/// listing currency, which is consistent with the local-currency financials
-/// the valuation models consume (live-observed 2026-09-10: `expectations_gap`
-/// and `reverse_dcf` returned no market-implied growth for every
-/// exchange-qualified symbol because the profile price was the only source).
+/// e.g. `DNB.OL`) do not — the stock quote's `close` is the fallback. This
+/// function resolves only the raw security price; callers must pass it through
+/// [`CompaniesServer::normalize_price_for_financials`] before valuation because
+/// listing and normalized-statement currencies can differ (for example, GBX
+/// quotes with USD statements).
 ///
-/// Returns the price and its source ("profile" or "stock_quote"), or `None`
-/// when neither surface has a positive price.
+/// Returns the raw price and its source ("profile" or "stock_quote"), or
+/// `None` when neither surface has a positive price.
 pub(crate) fn resolve_current_price(
     profile: &serde_json::Value,
     quote: Option<&serde_json::Value>,
@@ -96,6 +100,123 @@ pub(crate) fn resolve_current_price(
         return Some((price, "profile"));
     }
     quote_close(quote).map(|price| (price, "stock_quote"))
+}
+
+impl CompaniesServer {
+    /// Convert a security price into the currency used by its normalized
+    /// financial statements. Provider routing can pair a listing-currency
+    /// quote with statements reported in another currency (for example, a
+    /// London `GBX` quote with USD statements), so raw quote values are not
+    /// valuation-ready until this conversion succeeds.
+    pub(crate) async fn normalize_price_for_financials(
+        &self,
+        price: f64,
+        profile: &serde_json::Value,
+        income: &serde_json::Value,
+    ) -> Result<(f64, String), McpToolError> {
+        let quote_currency = profile_currency(profile).ok_or_else(|| {
+            McpToolError::unavailable(
+                "company profile has no currency; current price cannot be normalized",
+            )
+        })?;
+        let statement_currency = statement_currency(income).ok_or_else(|| {
+            McpToolError::unavailable(
+                "income statement has no reported currency; current price cannot be normalized",
+            )
+        })?;
+        let quote_unit = CurrencyUnit::from_code(quote_currency);
+        let statement_unit = CurrencyUnit::from_code(statement_currency);
+
+        let quote_rate = if quote_unit.major_code == "USD" {
+            1.0
+        } else {
+            self.cached_forex_rate(&quote_unit.major_code).await?.1
+        };
+        let statement_rate = if statement_unit.major_code == "USD" {
+            1.0
+        } else if statement_unit.major_code == quote_unit.major_code {
+            quote_rate
+        } else {
+            self.cached_forex_rate(&statement_unit.major_code).await?.1
+        };
+        let normalized = convert_price_currency(
+            price,
+            &quote_unit,
+            &statement_unit,
+            quote_rate,
+            statement_rate,
+        )
+        .ok_or_else(|| {
+            McpToolError::unavailable(format!(
+                "invalid currency conversion from {quote_currency} to {statement_currency}"
+            ))
+        })?;
+        Ok((
+            normalized,
+            format!("currency_normalized:{quote_currency}->{statement_currency}"),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct CurrencyUnit {
+    major_code: String,
+    major_per_unit: f64,
+}
+
+impl CurrencyUnit {
+    fn from_code(code: &str) -> Self {
+        let uppercase = code.trim().to_uppercase();
+        match uppercase.as_str() {
+            "GBX" => Self {
+                major_code: "GBP".to_string(),
+                major_per_unit: 0.01,
+            },
+            _ => Self {
+                major_code: uppercase,
+                major_per_unit: 1.0,
+            },
+        }
+    }
+}
+
+fn profile_currency(profile: &serde_json::Value) -> Option<&str> {
+    profile
+        .as_array()?
+        .first()?
+        .get("currency")
+        .or_else(|| profile.as_array()?.first()?.get("CurrencyCode"))?
+        .as_str()
+}
+
+fn statement_currency(income: &serde_json::Value) -> Option<&str> {
+    income
+        .as_array()?
+        .first()?
+        .get("reportedCurrency")
+        .or_else(|| income.as_array()?.first()?.get("currency_symbol"))?
+        .as_str()
+}
+
+fn convert_price_currency(
+    price: f64,
+    quote: &CurrencyUnit,
+    statement: &CurrencyUnit,
+    quote_units_per_usd: f64,
+    statement_units_per_usd: f64,
+) -> Option<f64> {
+    if !price.is_finite()
+        || price <= 0.0
+        || !quote_units_per_usd.is_finite()
+        || quote_units_per_usd <= 0.0
+        || !statement_units_per_usd.is_finite()
+        || statement_units_per_usd <= 0.0
+    {
+        return None;
+    }
+    let quote_major = price * quote.major_per_unit;
+    let price_usd = quote_major / quote_units_per_usd;
+    Some(price_usd * statement_units_per_usd / statement.major_per_unit)
 }
 
 /// The positive current price of a raw stock-quote payload (object or
@@ -165,5 +286,25 @@ mod tests {
         let profile = json!([{"marketCap": 1.0}]);
         let quote = json!({"close": -5.0});
         assert_eq!(resolve_current_price(&profile, Some(&quote)), None);
+    }
+
+    /// expect: a London quote in pence is converted through pounds into the
+    /// USD unit used by the normalized statements before valuation.
+    #[test]
+    fn converts_gbx_quote_to_usd_statement_currency() {
+        let quote = CurrencyUnit::from_code("GBX");
+        let statement = CurrencyUnit::from_code("USD");
+        let converted = convert_price_currency(1603.0, &quote, &statement, 0.7396, 1.0);
+        assert!(converted.is_some_and(|price| (price - 21.673_877_77).abs() < 1e-6));
+    }
+
+    #[test]
+    fn preserves_price_when_currency_units_match() {
+        let quote = CurrencyUnit::from_code("USD");
+        let statement = CurrencyUnit::from_code("USD");
+        assert_eq!(
+            convert_price_currency(86.63, &quote, &statement, 1.0, 1.0),
+            Some(86.63)
+        );
     }
 }

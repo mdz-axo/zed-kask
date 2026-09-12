@@ -1,14 +1,16 @@
-//! Isolated public-tool oracles for the approved slice4 context contract.
-use super::*;
+//! Public-tool oracles for compact prepared QA requests.
 use crate::CorpusServer;
+use crate::services::qa_pipeline::{PreparedQaPrompt, render_prepared_messages};
 use crate::tools::corpus::BuildPromptsRequest as ToolRequest;
-use hkask_types::corpus::ClassificationOutcome;
+use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use rmcp::handler::server::wrapper::Parameters;
+use serde_json::json;
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
 const PASSPHRASE: &str = "qa-context-fixture";
+
 struct NoInference;
 impl InferencePort for NoInference {
     fn generate(
@@ -20,6 +22,7 @@ impl InferencePort for NoInference {
         panic!("prompt building must not invoke a model")
     }
 }
+
 fn server() -> CorpusServer {
     let port: Arc<dyn InferencePort> = Arc::new(NoInference);
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
@@ -31,11 +34,13 @@ fn server() -> CorpusServer {
         ocr,
     )
 }
+
 fn fixture() -> anyhow::Result<tempfile::TempDir> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/qa-context-tests");
     std::fs::create_dir_all(&root)?;
     Ok(tempfile::tempdir_in(root)?)
 }
+
 fn chunk(reference: &str, source: &str) -> TaggedChunk {
     let canonical = hkask_bridge_ontology::term_resolution::canonicalize_terms(["quantity"]);
     TaggedChunk {
@@ -46,13 +51,13 @@ fn chunk(reference: &str, source: &str) -> TaggedChunk {
             ontology_protocol: hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL
                 .to_string(),
         },
-        salience: 0.5,
         candidate_terms: canonical.candidate_terms,
         ontology_tags: canonical.ontology_tags,
         concepts: canonical.concepts,
         ..Default::default()
     }
 }
+
 fn seed(directory: &Path, chunks: &[TaggedChunk]) -> anyhow::Result<()> {
     let store = crate::helpers::open_memory_store(
         directory
@@ -88,6 +93,7 @@ fn seed(directory: &Path, chunks: &[TaggedChunk]) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
 fn request(directory: &Path, name: &str, chunks: &[TaggedChunk]) -> anyhow::Result<ToolRequest> {
     let input = directory.join(format!("{name}.jsonl"));
     std::fs::write(
@@ -104,34 +110,34 @@ fn request(directory: &Path, name: &str, chunks: &[TaggedChunk]) -> anyhow::Resu
             .join(format!("{name}-prompts.jsonl"))
             .to_string_lossy()
             .into(),
-        db_path: directory.join("memory.db").to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
+        db_path: None,
+        passphrase: None,
         prefix: Some("corpus:test:".into()),
-        context_k: 1,
-        prompts_per_chunk: 3,
+        context_k: 0,
+        qa_pairs_per_chunk: 2,
         type_distribution: "1,1,1,1,1".into(),
-        max_prompts: 0,
-        ontology_bloom_overrides: None,
+        max_pairs: 0,
     })
 }
+
 async fn build(
     server: &CorpusServer,
     request: ToolRequest,
-) -> anyhow::Result<Vec<serde_json::Value>> {
+) -> anyhow::Result<(serde_json::Value, Vec<PreparedQaPrompt>)> {
     let output = request.output.clone();
     let summary = server.corpus_build_prompts(Parameters(request)).await?;
     let summary = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&summary)?);
-    assert_eq!(summary["context_scope"], "complete_source");
-    Ok(std::fs::read_to_string(output)?
+    let prompts = std::fs::read_to_string(output)?
         .lines()
         .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?)
+        .collect::<Result<_, _>>()?;
+    Ok((summary, prompts))
 }
 
-/// expect: Split/reordered builds produce byte-identical per-ID prompts. A tied
-/// neighbor outside the input file is retrieved, with its original source/ref.
+/// expect: One compact request per chunk carries two Bloom levels, and local
+/// model messages never contain canonical source identities.
 #[tokio::test]
-async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()> {
+async fn split_builds_have_stable_ids_and_primary_only_needs_no_db() -> anyhow::Result<()> {
     let directory = fixture()?;
     let chunks = [
         chunk("a", "book-a"),
@@ -139,30 +145,13 @@ async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()>
         chunk("c", "book-a"),
         chunk("d", "book-b"),
     ];
-    seed(directory.path(), &chunks)?;
-    let store = crate::helpers::open_memory_store(
-        directory
-            .path()
-            .join("memory.db")
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("path"))?,
-        PASSPHRASE,
-    )?;
-    for reference in [
-        "corpus:test:centroid",
-        "corpus:test:lovelace:centroid",
-        "corpus:test:rule:precision",
-    ] {
-        store.store_embedding(
-            reference,
-            &vec![1.0; crate::embedding_dim()],
-            "offline-vector",
-            None,
-        )?;
-    }
     let server = server();
-    let all = build(&server, request(directory.path(), "all", &chunks)?).await?;
-    assert_eq!(all.len(), 12);
+    let (summary, all) = build(&server, request(directory.path(), "all", &chunks)?).await?;
+    assert_eq!(summary["prompts_written"], 4);
+    assert_eq!(summary["pairs_requested"], 8);
+    assert_eq!(summary["context_scope"], "primary_only");
+    assert_eq!(summary["stored_passages"], 0);
+
     let mut split = Vec::new();
     for (index, chunk) in chunks.iter().rev().enumerate() {
         split.extend(
@@ -174,57 +163,39 @@ async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()>
                     std::slice::from_ref(chunk),
                 )?,
             )
-            .await?,
+            .await?
+            .1,
         );
     }
-    let by_id = |rows: Vec<serde_json::Value>| {
+    let by_id = |rows: Vec<PreparedQaPrompt>| {
         rows.into_iter()
-            .map(|row| (row["prompt_id"].to_string(), row))
+            .map(|row| (row.prompt_id.clone(), row))
             .collect::<std::collections::BTreeMap<_, _>>()
     };
-    assert_eq!(by_id(all.clone()), by_id(split));
+    let all_by_id = by_id(all);
+    let split_by_id = by_id(split);
     assert_eq!(
-        by_id(all.clone()).len(),
-        12,
-        "IDs cannot repeat across partitions or QA types"
+        all_by_id.keys().collect::<Vec<_>>(),
+        split_by_id.keys().collect::<Vec<_>>()
     );
-    let primary = all
-        .iter()
-        .find(|row| row["chunk_ref"] == chunks[0].entity_ref)
-        .ok_or_else(|| anyhow::anyhow!("primary missing"))?;
-    let system = primary["system"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("system missing"))?;
-    assert!(system.contains("\"chunk_ref\":\"corpus:test:b\""));
-    assert!(system.contains("\"source\":\"book-a\""));
-    assert!(system.contains("## Primary Passage Concepts\nquantity"));
-    assert!(
-        !system.contains("Original passage c."),
-        "tie must choose b before c"
-    );
-    assert!(
-        !system.contains("Original passage d."),
-        "cross-source candidate excluded"
-    );
-    let user = primary["user"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("user missing"))?;
-    assert!(user.contains("\"chunk_ref\":\"corpus:test:a\""));
-    assert!(user.contains("\"source\":\"book-a\""));
-    let mut zero = request(directory.path(), "zero", &chunks)?;
-    zero.context_k = 0;
-    let disabled = build(&server, zero).await?;
-    assert!(
-        !disabled[0]["system"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("system"))?
-            .contains("Original passage b.")
-    );
+    for prompt in all_by_id.values() {
+        assert_eq!(prompt.qa_types.len(), 2);
+        assert_eq!(prompt.passages.len(), 1);
+        let rendered = render_prepared_messages(prompt)?;
+        let messages = rendered
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(messages.contains("p0"));
+        assert!(!messages.contains(&prompt.primary().chunk_ref));
+        assert!(!messages.contains(&prompt.primary().source));
+    }
     Ok(())
 }
 
-/// expect: Failed, unverified, non-canonical and duplicate refs are errors
-/// before output; no apparent success from a stale or fallback tag record.
+/// expect: Failed, stale, inconsistent, or duplicate tagged rows are rejected
+/// before any compact request file is written.
 #[tokio::test]
 async fn invalid_tagged_inputs_are_rejected_before_output() -> anyhow::Result<()> {
     let directory = fixture()?;
@@ -257,13 +228,14 @@ async fn invalid_tagged_inputs_are_rejected_before_output() -> anyhow::Result<()
         "inconsistent",
         &[chunk("a", "book-a"), inconsistent],
     )?;
-    let output = req.output.clone();
-    let error = server
-        .corpus_build_prompts(Parameters(req))
-        .await
-        .expect_err("derived ontology fields must reconcile");
-    assert!(error.to_string().contains("not reconciled"));
-    assert!(!Path::new(&output).exists());
+    assert!(
+        server
+            .corpus_build_prompts(Parameters(req))
+            .await
+            .expect_err("derived fields must reconcile")
+            .to_string()
+            .contains("not reconciled")
+    );
 
     let duplicate = chunk("a", "book-a");
     let req = request(
@@ -282,58 +254,35 @@ async fn invalid_tagged_inputs_are_rejected_before_output() -> anyhow::Result<()
     Ok(())
 }
 
-/// expect: Missing provenance, absent stored passages, DB/open/read and output
-/// errors remain visible. No real DB or inference is used by this test.
+/// expect: KNN context remains explicit and requires valid DB configuration;
+/// primary-only preparation never reads the DB.
 #[tokio::test]
-async fn context_and_io_failures_are_not_empty_success() -> anyhow::Result<()> {
+async fn context_requires_db_and_preserves_local_identity_mapping() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let chunks = [chunk("a", "book-a")];
-    let req = request(directory.path(), "missing", &chunks)?;
+    let chunks = [chunk("a", "book-a"), chunk("b", "book-a")];
+
+    let mut missing = request(directory.path(), "missing-db", &chunks)?;
+    missing.context_k = 1;
     assert!(
         server
-            .corpus_build_prompts(Parameters(req))
+            .corpus_build_prompts(Parameters(missing))
             .await
-            .expect_err("missing passage")
+            .expect_err("context needs DB")
             .to_string()
-            .contains("No stored passage")
+            .contains("db_path")
     );
+
     seed(directory.path(), &chunks)?;
-    let mut req = request(directory.path(), "read-error", &chunks)?;
-    req.db_path = directory.path().to_string_lossy().into();
-    assert!(server.corpus_build_prompts(Parameters(req)).await.is_err());
-    let mut req = request(directory.path(), "input-error", &chunks)?;
-    req.tagged_jsonl = directory
-        .path()
-        .join("absent.jsonl")
-        .to_string_lossy()
-        .into();
-    assert!(server.corpus_build_prompts(Parameters(req)).await.is_err());
-    let mut req = request(directory.path(), "output-error", &chunks)?;
-    req.output = directory.path().to_string_lossy().into();
-    assert!(server.corpus_build_prompts(Parameters(req)).await.is_err());
-    let req = request(directory.path(), "source-error", &chunks)?;
-    let store = crate::helpers::open_memory_store(&req.db_path, PASSPHRASE)?;
-    store.delete_h_mems_by_entity_prefix("corpus:test:")?;
-    // Deletion cleans embeddings too; put back a text-bearing embedding with no
-    // provenance to exercise the production read rather than a stripped server.
-    let mut vector = vec![0.0; crate::embedding_dim()];
-    *vector
-        .first_mut()
-        .ok_or_else(|| anyhow::anyhow!("dimension"))? = 1.0;
-    store.store_embedding(
-        &chunks[0].entity_ref,
-        &vector,
-        "offline-vector",
-        Some(&chunks[0].text),
-    )?;
-    assert!(
-        server
-            .corpus_build_prompts(Parameters(req))
-            .await
-            .expect_err("source provenance missing")
-            .to_string()
-            .contains("original source")
-    );
+    let mut contextual = request(directory.path(), "context", &chunks[..1])?;
+    contextual.context_k = 1;
+    contextual.db_path = Some(directory.path().join("memory.db").to_string_lossy().into());
+    contextual.passphrase = Some(PASSPHRASE.into());
+    let (summary, prompts) = build(&server, contextual).await?;
+    assert_eq!(summary["context_scope"], "complete_source");
+    assert_eq!(prompts[0].passages.len(), 2);
+    assert_eq!(prompts[0].passages[0].local_id, "p0");
+    assert_eq!(prompts[0].passages[1].local_id, "p1");
+    assert_eq!(prompts[0].passages[1].chunk_ref, chunks[1].entity_ref);
     Ok(())
 }

@@ -64,10 +64,10 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `concurrency` | Bound tool concurrency to available capacity; AIMD starts at up to 2, grows by 1, halves on capacity failure |
 | requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
-| `prompts_per_chunk` | Caller-approved positive integer for QA runs; pass explicitly rather than silently inheriting the tool default of **5** |
-| `context_k` | Tool default **3**; `0` explicitly disables KNN, never a recovery from failed context reads |
+| `qa_pairs_per_chunk` | Caller-approved positive pair count produced in one request per chunk; default **2** |
+| `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB and authorized passphrase |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
-| `max_prompts` | Explicitly `classified_count × prompts_per_chunk`, or `0` for all; not a small fixed cap |
+| `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
 | `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split for QA exports; never inherit another corpus's defaults |
 | execution record | Caller-selected record of source identities/hashes, stage paths, parameters, counts, verification and unresolved issues; keep credentials out |
 | pilot and spend bounds | Measured input scope, selected models, request/time/retry limits and approved cost ceiling; changed source/model/volume invalidates old estimates |
@@ -290,34 +290,27 @@ or report the branch blocked. Independent QA may continue, not erase the blocker
 
 ## Stage 6 — Build complete-source QA prompts
 
-Call `corpus_build_prompts` with `tagged_jsonl`, `output`, the single `db_path`
-and `passphrase`, explicit `prefix` matching the chunk namespace, `context_k`,
-the approved `prompts_per_chunk`, `type_distribution`, and
-`max_prompts=classified_count*prompts_per_chunk`
-(or `0` for all). Pass `ontology_bloom_overrides` only when deliberately selected.
-No inference occurs in this stage.
+Call `corpus_build_prompts` with `tagged_jsonl`, `output`, explicit `prefix`,
+`context_k`, approved `qa_pairs_per_chunk`, `type_distribution`, and
+`max_pairs=classified_count*qa_pairs_per_chunk` (or `0` for all). Default
+`context_k=0` is primary-only and requires no DB credential. Positive context
+requires the single `db_path` and authorized `passphrase`. No inference occurs.
 
-The builder rejects nonclassified/duplicate refs, blank source/text, invalid
-salience, prefix mismatches and absent required templates. With KNN enabled it
-reads stored passages across the entire namespace, groups by original source,
-and selects nearest neighbors from the primary source even across input file
-splits. Context includes actual text, `chunk_ref` and `source`, not a display
-preview. Missing/ambiguous provenance, missing text, invalid vectors, primary
-text/source disagreement or failed DB reads are errors. `context_k=0` explicitly
-disables KNN only; DB/knowledge-graph reads still occur and must succeed.
+The builder rejects nonclassified/duplicate refs, blank source/text and prefix
+mismatches. Positive KNN context reads complete-source passages and provenance,
+selects same-source neighbors, and stores canonical mappings as `p0`, `p1`, etc.
+Canonical identities never enter rendered model messages.
 
-Builder IDs are deterministic `qa-<UUIDv5>` from source, chunk ref, QA type and
-within-type ordinal. Preserve them when splitting/merging; do not renumber files.
-The eight required `PreparedQaPrompt` fields are `prompt_id`, `chunk_ref`,
-`source`, `concepts`, `salience`, `qa_type`, `system`, `user`. Unknown fields fail.
+One compact `PreparedQaPrompt` per chunk contains `prompt_id`, protocol,
+`passages`, `candidate_terms`, and ordered `qa_types`. No rendered messages,
+salience or canonical concept cache is persisted. IDs are deterministic from
+source, chunk ref and the ordered level set.
 
-**Gate:** `prompts_written == classified_count*prompts_per_chunk`, unique prompt IDs, full primary
-source/chunk coverage, and expected `context_enabled`, `context_scope`,
-`stored_passages`, `context_links`. `context_links` counts neighbors per processed
-chunk, not per prompt. The type rotation restarts for each chunk: at two prompts
-and equal weights it selects factual/conceptual, not all five labels. Report the
-actual distribution and any gap against the requested mix; never claim even
-five-level coverage or increase prompts per chunk without operator approval.
+**Gate:** `prompts_written == classified_count` when uncapped,
+`pairs_requested == classified_count*qa_pairs_per_chunk`, unique prompt IDs, full
+primary coverage, sequential local passage IDs, and expected context metrics. At
+two pairs and equal weights each request selects factual/conceptual. Report actual
+pair distribution; do not increase pair count without operator approval.
 
 ## Stage 7 — Generate QA with owned outputs
 
@@ -334,22 +327,22 @@ is requested. Never race a timed-out/cancelled call with a replacement writer.
 Synchronous inference retries only typed Connection/Overloaded/Timeout failures,
 at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failures
 and rejected QA are not retried. Provider-batch submission is not retried because
-remote acceptance can be unknown. `:batch` selects that transport; prepared
-`system`/`user` messages and prompt IDs remain unchanged.
+remote acceptance can be unknown. `:batch` selects that transport; both
+transports render the same protocol-stamped compact request.
 
-Every pair must include nonblank `question`, `answer`, requested `bloom_level`
-and `evidence_quotes`, an array of structured `QaEvidence` objects. The array may
-be empty (no citation), never absent, a string array or numeric passage citations.
-Example model response:
+The model returns exactly one tuple per requested level, in order:
 
 ```json
-{"qa_pairs":[{"question":"What is the delay?","answer":"72 hours","bloom_level":"factual","evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
 
-Generated envelopes retain `prompt_id`, primary `chunk_ref`/`source`, `qa_type`,
-`salience`, `response.{instruction,output,type,concepts,evidence_quotes}`,
-`provenance` and `tokens_used`. Each citation has its own identity, including
-context citations. Matching quotation bytes does not validate answer synthesis.
+Every pair requires nonblank question, answer and local evidence. Local IDs must
+resolve and quotes must be exact passage substrings; otherwise the whole prompt
+fails. The server restores canonical `QaEvidence` only after this check. Generated
+envelopes retain primary identity, candidate terms, QA type, canonical evidence
+and protocol/model provenance. Prompt token usage is counted once in the summary,
+not repeated per pair. Matching quotation bytes still does not validate answer
+synthesis.
 Manual single/cross-reference `corpus_generate_qa` calls with only text have no
 source identity: they request empty evidence, not invented sources. They are not
 a cited replacement for this prepared pipeline or a failed stage.

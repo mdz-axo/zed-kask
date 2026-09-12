@@ -83,7 +83,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–9
 | `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded title/contents/index/bibliography/reference exclusions in `boilerplate_exclusion_reports`. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size` |
-| `corpus_build_prompts` | `tagged_jsonl`, `output`, `db_path`, `passphrase`; `prefix` defaults `corpus:researcher:`, `context_k=3`, `prompts_per_chunk=5`, `type_distribution="1,1,1,1,1"`, `max_prompts=0`, optional `ontology_bloom_overrides` |
+| `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 | `corpus_generate_qa` | `chunk_id`, `text` or `texts`, optional `bloom_levels`, optional QA `model` |
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ingest_qa` | `generated_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
@@ -144,23 +144,17 @@ candidate/anchor mismatch. Count actual classified rows and reconcile
 do not qualify.
 
 The prompt builder rejects nonclassified, stale, noncanonical or duplicate refs
-and invalid metadata.
-With KNN enabled, it reads full stored passage text and one original source from
-text h_mem `ontology.dc_source`, groups candidates by source and selects neighbors
-across the entire stored source, independent of tagged-file splits. Missing text,
-invalid vectors, source ambiguity, primary mismatch and read/template failures
-are errors. `context_k=0` is explicit KNN off, not fallback; DB and knowledge-graph
-reads remain required. Summary adds `context_enabled`, `context_scope=complete_source`,
-`stored_passages`, `context_links` to `total_chunks`, `prompts_written`, `output`.
-Links count neighbors per processed chunk, not per prompt
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:119–342`).
+and invalid metadata. Default `context_k=0` is primary-only and performs no DB or
+knowledge-graph read. With positive context, `db_path` and `passphrase` are
+required; complete-source embeddings and provenance select same-source neighbors.
+Canonical passage identities are stored with local `p0`, `p1`, etc. but withheld
+from rendered model messages.
 
-`max_prompts=0` means all `chunks × positive prompts_per_chunk`; positive values
-cap records. The five weights expand a rotation that restarts per chunk. Validate
-weight input: malformed/empty distributions can resolve to factual-only. Namespace
-overrides use `namespace:weights|namespace:weights`. For Brooks explicitly select
-**two prompts per chunk**; equal weights then select factual/conceptual, not an
-even five-level mix. Preserve every source and remeasure totals under real overlap;
+`max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
+pairs. One compact prepared request per chunk carries the selected level rotation,
+so two requested pairs produce one provider call with factual and conceptual
+levels. Summary separates `prompts_written` from `pairs_requested` and reports
+primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
 canonical rebuild from retained sources and verified obsolete-artifact deletion,
 without backups or a second Brooks corpus. Those are operator data operations,
@@ -168,34 +162,32 @@ not automatic behavior of a docs update.
 
 ## Canonical QA records
 
-`PreparedQaPrompt` requires exactly `prompt_id`, `chunk_ref`, `source`, `concepts`,
-`salience`, `qa_type`, `system`, `user`. Strings are nonblank, concepts may be an
-empty array, salience is finite. IDs are unique in the file, 1–64 ASCII
-letters/digits/`-`/`_`. Unknown fields fail. Builder IDs are `qa-<UUIDv5>` derived
-from source, chunk ref, QA type and within-type ordinal, stable across partitions.
-The whole input is validated before inference/output creation
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:23–103`;
-`kask/crates/hkask-types/src/corpus.rs:38–49`).
+`PreparedQaPrompt` requires exactly `prompt_id`, protocol
+`prepared-qa-local-evidence-v1`, ordered `passages`, `candidate_terms`, and
+`qa_types`. Passage records carry sequential local ID plus server-owned canonical
+identity and text. IDs are unique in the file and provider-safe. Unknown fields
+and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived from
+source, chunk ref, ordered level set and ordinal zero, stable across partitions.
+The whole input is validated before inference/output creation.
 
 Required model response shape:
 
 ```json
-{"qa_pairs":[{"question":"What is the delay?","answer":"72 hours","bloom_level":"factual","evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
 
-`QaEvidence { chunk_ref, source, quote }` contains exactly three nonblank strings.
-`evidence_quotes` is required, permits `[]` (no evidence), rejects string arrays
-and numeric citations, and survives generated envelopes, ingest and audit.
-Every citation identifies its own source/chunk, including context citations.
-Generation rejects malformed responses, empty pairs and wrong Bloom levels but
-**does not verify quotation truth or semantic entailment**.
+Pair count and ordered Bloom levels must exactly match the request. Every pair
+requires nonblank question, answer and local evidence. Each local ID must resolve
+and every quote must be an exact source substring; only then does the server
+restore canonical `QaEvidence {chunk_ref, source, quote}`. Semantic answer
+entailment remains a separate audit.
 
-Accepted pair rows carry primary identity, `prompt_id`, `salience`, `qa_type`,
-`response.{instruction,output,type,concepts,evidence_quotes}`, `provenance` and
-completion-level `tokens_used` (repeated per pair). Failed prompts carry identity
-and `error`, never an ingestible response. Both transports preserve prepared
-messages and source metadata unchanged; provider results match `custom_id` to
-prompt identity (`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:169–235,333–359`).
+Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
+canonical evidence and protocol/model provenance. Completion tokens are counted
+once in the batch summary, not repeated on pair rows. Failed prompts carry
+primary identity and `error`, never an ingestible response. Both transports render
+the same deterministic messages and provider batches match `custom_id` to prompt
+identity.
 
 ### Batch ownership, retries and accounting
 

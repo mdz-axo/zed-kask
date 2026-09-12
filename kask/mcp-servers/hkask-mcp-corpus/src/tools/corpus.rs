@@ -33,7 +33,7 @@ mod qa_types;
 pub(crate) use clustering::read_tagged_chunks;
 use lora_config::build_lora_config;
 use qa_parsing::{ParsedQa, QaRecordError, parse_qa_record};
-pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
+pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction};
 
 // Re-export helpers used by the service layer (services/consolidation.rs,
 // services/prompt_builder.rs) so the services don't depend on the private
@@ -130,7 +130,7 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build canonical prepared QA prompts from tagged chunks with KNN context, ontology context, and h_mem knowledge graph. Uses the entity-ref prefix (default corpus:researcher: — pass the prefix you chunked under). Each JSONL record contains prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user, with complete response instructions. prompt_id is deterministic from source, chunk, QA type and ordinal across partitioned builds; multiple prompts may share chunk_ref. max_prompts caps prompt records (0 means unlimited), not chunks. Output is consumed directly by corpus_generate_qa_batch; regenerate old prompt files."
+        description = "Build compact prepared QA requests from classified chunks. One request can produce several Bloom-level pairs; canonical passage identities remain server-side and the model receives only local IDs. context_k defaults to 0 (primary only); db_path/passphrase are required only when context_k > 0. qa_pairs_per_chunk defaults to 2, max_pairs caps requested pairs, and old rendered-message prompt files are rejected."
     )]
     pub async fn corpus_build_prompts(
         &self,
@@ -145,10 +145,9 @@ impl CorpusServer {
                     passphrase: req.passphrase,
                     prefix: req.prefix,
                     context_k: req.context_k,
-                    prompts_per_chunk: req.prompts_per_chunk,
+                    qa_pairs_per_chunk: req.qa_pairs_per_chunk,
                     type_distribution: req.type_distribution,
-                    max_prompts: req.max_prompts,
-                    ontology_bloom_overrides: req.ontology_bloom_overrides,
+                    max_pairs: req.max_pairs,
                 })
                 .await
         })
@@ -588,44 +587,34 @@ pub(crate) struct BuildPromptsRequest {
     pub tagged_jsonl: String,
     /// Output path for prompts JSONL (one JSON per line, consumed by generate_qa_batch).
     pub output: String,
-    /// Path to the SQLCipher memory DB for embedding retrieval + h_mem knowledge graph.
-    pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
+    /// SQLCipher memory DB used only when context_k > 0.
+    #[serde(default)]
+    pub db_path: Option<String>,
+    /// DB passphrase used only when context_k > 0.
+    #[serde(default)]
+    pub passphrase: Option<String>,
     /// Entity-ref prefix for the KNN embedding lookup (default
     /// "corpus:researcher:"). All input references must be under this prefix.
     /// KNN reads complete-source stored passages, not just the input partition.
     #[serde(default)]
     pub prefix: Option<String>,
-    /// Number of source-scoped KNN neighbors (default 3; 0 explicitly disables KNN).
-    /// Missing passage text/provenance or failed DB reads return an error.
-    #[serde(default = "default_context_k")]
+    /// Source-scoped KNN neighbors. Default 0 keeps factual/conceptual pairs
+    /// primary-only; positive values require db_path and passphrase.
+    #[serde(default)]
     pub context_k: usize,
-    /// Positive number of Bloom-level QA prompts per chunk (default 5 — one per level).
-    #[serde(default = "default_prompts_per_chunk")]
-    pub prompts_per_chunk: usize,
+    /// Positive number of QA pairs requested in one model call per chunk.
+    #[serde(default = "default_qa_pairs_per_chunk")]
+    pub qa_pairs_per_chunk: usize,
     /// Bloom's taxonomy weight distribution (e.g. "1,1,1,1,1" = equal).
     #[serde(default = "default_type_distribution")]
     pub type_distribution: String,
-    /// Maximum prompt records to output (0 = all chunks × prompts_per_chunk).
+    /// Maximum requested QA pairs (0 = all chunks × qa_pairs_per_chunk).
     #[serde(default)]
-    pub max_prompts: usize,
-    /// Per-ontology Bloom distribution overrides. Format:
-    /// "golem:0,1,2,1,1|fibo:2,2,1,0,0|pko:1,1,1,2,0|sepio:1,1,2,1,0"
-    /// When a chunk's ontology_tags contain the key, use the override
-    /// instead of the default type_distribution. Chunks without matching
-    /// ontology tags use type_distribution.
-    #[serde(default)]
-    pub ontology_bloom_overrides: Option<String>,
+    pub max_pairs: usize,
 }
 
-fn default_context_k() -> usize {
-    3
-}
-
-fn default_prompts_per_chunk() -> usize {
-    5
+fn default_qa_pairs_per_chunk() -> usize {
+    2
 }
 
 fn default_type_distribution() -> String {
