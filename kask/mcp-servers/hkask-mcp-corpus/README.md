@@ -115,13 +115,22 @@ caller verification.
 - Directory enumeration containment-checks **each child**, including symlink
   targets, before reading. It publishes JSONL from a temporary file only after
   all sources serialize. Indexing, if requested, is not part of that file's
-  publication transaction (`src/services/convert.rs:935–1113`).
+  publication transaction (`src/services/convert.rs`).
+- Before chunking, page-delimited text drops bounded blank, title, copyright,
+  contents and index pages. Form-feed-free books use conservative section
+  boundaries: front matter requires a metadata/contents signal followed by a
+  body heading; trailing bibliography, references and works-cited sections
+  require an exact heading after two-thirds of document words; a trailing index
+  additionally requires index-entry structure. Prose mentions do not trigger
+  removal (`hkask-memory/src/text_chunking.rs`).
 
 Directory results include `total_documents`, `total_chunks`, resolved
 `max_tokens`, `overlap_tokens`, `overlap_words`, `budget_basis`,
-`source_id_encoding`, `zero_chunk_files`, `indexed` and paths. Reconcile actual
-source/record identity and bounds, not just file lines. Nonempty `zero_chunk_files`
-is an explicit coverage failure for the pipeline.
+`source_id_encoding`, `zero_chunk_files`, `boilerplate_exclusion_reports`,
+`indexed` and paths. Every source has an exclusion report with input, retained
+and removed word counts plus each reason and page/line boundary. Reconcile actual
+source/record identity, exclusion totals and bounds, not just file lines.
+Nonempty `zero_chunk_files` is an explicit coverage failure for the pipeline.
 
 ## Classification contract
 

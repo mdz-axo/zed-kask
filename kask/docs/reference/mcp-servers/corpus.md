@@ -80,7 +80,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–9
 | `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`. Directory mode requires output. |
 | `corpus_is_complex` | PDF `path`; optional `target_pages`, `summary=false` |
 | `corpus_ocr` | `path`, optional `model` over the configured OCR model |
-| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true` |
+| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded title/contents/index/bibliography/reference exclusions in `boilerplate_exclusion_reports`. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size` |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`, `db_path`, `passphrase`; `prefix` defaults `corpus:researcher:`, `context_k=3`, `prompts_per_chunk=5`, `type_distribution="1,1,1,1,1"`, `max_prompts=0`, optional `ontology_bloom_overrides` |
