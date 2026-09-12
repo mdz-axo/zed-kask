@@ -327,26 +327,22 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             "subject": subject,
                             "object": object,
                         });
-                        // The predicate is offered as a descriptive candidate
-                        // only when its published family was present on the
-                        // chunk. The shared resolver, never the model or this
-                        // service, selects its namespace and canonical URI.
+                        // The predicate is always preserved as a descriptive
+                        // candidate and resolved by the shared authority. The
+                        // chunk-family check still governs confidence, but it
+                        // cannot suppress or privately classify the term.
                         //
                         // State-axis type: SEPIO's published `assertion`
                         // class — a statement that a proposition is true.
                         // (The former `dcterms:Assertion` was fabricated;
                         // Dublin Core publishes no such term.)
-                        let mut ontology = HMemOntology::state(
+                        let ontology = HMemOntology::state(
                             hkask_bridge_ontology::sepio::ASSERTION,
                             vec![subject.to_string()],
                             entity_ref.clone(),
                         )
-                        .with_dimension(dimension);
-                        if let Some(tag_key) = abstract_namespace_tag_key(&pred_ns) {
-                            if chunk_namespaces.contains(tag_key) {
-                                ontology = ontology.with_candidate_term(predicate);
-                            }
-                        }
+                        .with_dimension(dimension)
+                        .with_candidate_term(predicate);
 
                         let h_mem = hkask_storage::HMem::new(&entity_ref, predicate, value, webid)
                             .with_visibility(Visibility::Public)

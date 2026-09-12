@@ -169,3 +169,30 @@ impl HMemOntology {
         serde_json::from_str(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_terms_use_shared_resolution_and_preserve_coarse_inputs() {
+        let ontology =
+            HMemOntology::state(hkask_bridge_ontology::sepio::ASSERTION, Vec::new(), "test")
+                .with_candidate_term("assertion")
+                .with_candidate_term("unpublished relation");
+
+        assert_eq!(
+            ontology.candidate_terms,
+            ["assertion", "unpublished relation"]
+        );
+        assert_eq!(
+            ontology.ontology_tags["sepio"],
+            [hkask_bridge_ontology::sepio::ASSERTION]
+        );
+        assert_eq!(ontology.ontology_tags["core"], ["5w1h_core"]);
+        assert_eq!(
+            ontology.ontology_protocol.as_deref(),
+            Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL)
+        );
+    }
+}
