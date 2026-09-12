@@ -197,6 +197,7 @@ async fn split_unsplit_context_and_prompt_identity_agree() -> anyhow::Result<()>
         .ok_or_else(|| anyhow::anyhow!("system missing"))?;
     assert!(system.contains("\"chunk_ref\":\"corpus:test:b\""));
     assert!(system.contains("\"source\":\"book-a\""));
+    assert!(system.contains("## Primary Passage Concepts\nquantity"));
     assert!(
         !system.contains("Original passage c."),
         "tie must choose b before c"

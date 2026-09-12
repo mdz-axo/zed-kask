@@ -36,7 +36,7 @@ impl InferencePort for MockPort {
                 finish_reason: "stop".into(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: None,
+                cost_usd: Some(0.01),
             })
         })
     }
@@ -207,6 +207,11 @@ async fn public_tagging_identity_contract() {
     )
     .await;
     assert_eq!(summary["tagged"], 2);
+    assert_eq!(summary["planned_batches"], 1);
+    assert_eq!(summary["provider_responses"], 1);
+    assert_eq!(summary["successful_response_usage"]["total_tokens"], 2);
+    assert_eq!(summary["reported_cost_usd"], 0.01);
+    assert_eq!(summary["cost_reporting_complete"], true);
     assert_eq!(rows[0]["entity_ref"], long_ref);
     let prompt = port.prompts.lock().expect("prompts").join("\n");
     assert!(prompt.contains("correlation_id: item-0"));
@@ -289,6 +294,9 @@ async fn public_tagging_identity_contract() {
             .expect("reason")
             .contains("mock inference failure")
     }));
+    assert_eq!(summary["provider_responses"], 0);
+    assert_eq!(summary["reported_cost_usd"], Value::Null);
+    assert_eq!(summary["cost_reporting_complete"], false);
     assert_eq!(port.prompts.lock().expect("prompts").len(), 1);
 
     // Multibyte strings cross both former byte-slice panic boundaries.
@@ -311,6 +319,27 @@ async fn public_tagging_identity_contract() {
         assert_eq!(term, "界".repeat(26));
     }
     assert_eq!(rows[0]["ontology_tags"]["core"], json!(["5w1h_core"]));
+}
+
+#[test]
+fn salience_uses_descriptive_candidates_when_anchors_are_coarse() {
+    let tagged = [
+        vec!["alpha", "bridge"],
+        vec!["bridge", "gamma"],
+        vec!["gamma", "delta"],
+        vec!["isolated"],
+    ]
+    .map(|candidate_terms| TaggedChunk {
+        candidate_terms: candidate_terms.into_iter().map(String::from).collect(),
+        concepts: vec!["5w1h_core".to_string()],
+        ..Default::default()
+    });
+
+    let scores = compute_salience(&tagged);
+    assert!(scores[0] > 0.0);
+    assert!(scores[1] > 0.0);
+    assert!(scores[2] > 0.0);
+    assert_eq!(scores[3], 0.0);
 }
 
 /// expect: "A missing canonical template fails visibly without substituting an inline prompt."

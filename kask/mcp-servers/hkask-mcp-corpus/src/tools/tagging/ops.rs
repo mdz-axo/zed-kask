@@ -1,9 +1,9 @@
 //! Ontology tagging tools — multi-dimensional chunk annotation.
 //!
-//! `corpus_tag_chunks`: Tags each chunk with 5W1H interrogatory dimensions,
-//! Dublin Core metadata, PKO process concepts, FIBO/GOLEM domain concepts,
-//! and expertise level. Uses LLM-based extraction via a Jinja2 template.
-//! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
+//! `corpus_tag_chunks`: extracts 5W1H dimensions, Dublin Core metadata,
+//! descriptive candidate terms and expertise. The shared bridge—not the
+//! model—resolves candidates to published ontology anchors. Every classified
+//! chunk gets at least one 5W1H dimension.
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
@@ -184,19 +184,19 @@ fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
 // Compute graph-centrality salience via the memory service.
 //
 // Delegates to hkask_memory::salience::compute_salience_batch — the two-hop
-// connectedness × (1 − redundancy) graph-centrality core. Only ontology
-// concepts feed the graph; 5W1H dimensions are excluded (only six values with
-// "what" in most chunks → a near-complete clique whose redundancy the (1−r)
-// penalty suppresses, drowning the real shared-concept signal). Dimensions stay
-// on the TaggedChunk as metadata for downstream use.
+// connectedness × (1 − redundancy) graph-centrality core. Descriptive
+// candidate terms feed the graph; canonical ontology anchors are too coarse for
+// this purpose when exact resolution correctly reaches the shared 5W1H core.
+// Candidates remain semantic metadata, never namespace or URI authority. 5W1H
+// dimensions are excluded because their six-value clique drowns useful signal.
 //
 // Method signals are stored separately as numeric ontology metadata, not
 // mixed into this concept graph as if measurements were shared concepts.
 fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
     let all_tags: Vec<hkask_memory::salience::EntityTags> = tagged
         .iter()
-        .map(|c| hkask_memory::salience::EntityTags {
-            concepts: c.concepts.clone(),
+        .map(|chunk| hkask_memory::salience::EntityTags {
+            concepts: chunk.candidate_terms.clone(),
             ..Default::default()
         })
         .collect();
@@ -295,7 +295,7 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
 #[tool_router(router = tagging_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO process concepts, FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template. Computes graph-centrality salience. Every chunk gets at least one 5W1H dimension — no zero-salience chunks."
+        description = "Classify chunks with model-extracted 5W1H dimensions, Dublin Core metadata, descriptive candidate terms, and expertise. The server resolves candidates to published ontology anchors and computes candidate-term graph salience. Every classified chunk has at least one 5W1H dimension."
     )]
     pub async fn corpus_tag_chunks(
         &self,
@@ -310,7 +310,7 @@ impl CorpusServer {
                 return Ok(json!({
                     "total_chunks": total,
                     "dry_run": true,
-                    "note": "Would tag each chunk with 5W1H + Dublin Core + PKO + FIBO + GOLEM + expertise level"
+                    "note": "Would extract 5W1H + Dublin Core + descriptive candidate terms + expertise, then resolve published ontology anchors server-side"
                 }));
             }
 
@@ -449,7 +449,7 @@ impl CorpusServer {
                             "Tag response rejected — batch will get visible fallback outcomes"
                         );
                     }
-                    result
+                    Ok((result, response.usage, response.cost_usd))
 
                 });
                 handles.push((start_idx, batch_len, handle));
@@ -458,9 +458,26 @@ impl CorpusServer {
             // Only the owner records terminal outcomes. Batch identities survive
             // a panic because they are retained outside the spawned task.
             let mut results = Vec::with_capacity(total);
+            let mut provider_responses = 0usize;
+            let mut cost_reports = 0usize;
+            let mut prompt_tokens = 0u64;
+            let mut completion_tokens = 0u64;
+            let mut total_tokens = 0u64;
+            let mut reported_cost_usd = 0.0f64;
             for (start_idx, batch_len, handle) in handles {
                 let outcome = match handle.await {
-                    Ok(result) => result,
+                    Ok(Ok((result, usage, cost_usd))) => {
+                        provider_responses += 1;
+                        prompt_tokens += u64::from(usage.prompt_tokens);
+                        completion_tokens += u64::from(usage.completion_tokens);
+                        total_tokens += u64::from(usage.total_tokens);
+                        if let Some(cost_usd) = cost_usd {
+                            cost_reports += 1;
+                            reported_cost_usd += cost_usd;
+                        }
+                        result
+                    }
+                    Ok(Err(error)) => Err(error),
                     Err(error) => Err(format!("tagging batch task join failed: {error}")),
                 };
                 match outcome {
@@ -568,6 +585,9 @@ impl CorpusServer {
                 m
             };
 
+            let cost_reporting_complete =
+                provider_responses == num_batches && cost_reports == provider_responses;
+            let reported_cost = cost_reporting_complete.then_some(reported_cost_usd);
             let result = json!({
                 "total_chunks": total,
                 "tagged": c,
@@ -575,6 +595,15 @@ impl CorpusServer {
                 "dimensions": dim_counts,
                 "expertise_levels": exp_counts,
                 "time_seconds": elapsed,
+                "planned_batches": num_batches,
+                "provider_responses": provider_responses,
+                "successful_response_usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                "reported_cost_usd": reported_cost,
+                "cost_reporting_complete": cost_reporting_complete,
             });
 
             let outcome = BatchOutcome::from_counts(f, total);

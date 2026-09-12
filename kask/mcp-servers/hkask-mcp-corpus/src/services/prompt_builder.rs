@@ -304,7 +304,7 @@ impl PromptBuilderService {
                         .join(" | "),
                 );
                 vars.insert("context_passages", context_text.clone());
-                vars.insert("concept_graph", chunk.concepts.join(", "));
+                vars.insert("concept_graph", chunk.candidate_terms.join(", "));
                 vars.insert("knowledge_graph", assertions.join("\n"));
                 let system = render_docproc_template("build-prompts", &vars);
                 if system.is_empty() {

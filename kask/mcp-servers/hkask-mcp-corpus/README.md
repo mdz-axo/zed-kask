@@ -160,13 +160,18 @@ remain measurable but do not imply classification. The returned `tagged` count
 is **classified successes**; `tagged + failed = total_chunks`. Dry-run reports
 inputs only and writes no tagged artifact. A full-source QA pipeline requires all
 input identities classified, irrespective of the shared 10% degraded threshold.
+The summary reports planned batches, provider responses, successful-response token
+usage, `reported_cost_usd`, and whether cost reporting is complete. A null cost is
+unknown—not zero—and must not be used to justify expansion under a dollar ceiling.
 
 The classifier returns structural judgments plus raw `candidate_terms`; it never
 chooses an ontology namespace, prefix, URI or fallback tier. The shared
 `hkask-bridge-ontology` resolver preserves those candidates and deterministically
 derives `ontology_tags` and `concepts`. Downstream embedding, assertion and QA
 readers reject mismatched derived fields or the wrong protocol. Graph salience
-uses canonical concepts, not numeric method measurements. Tagging includes `how`
+and QA concept context use preserved descriptive candidates, because exact
+published resolution may honestly collapse many terms to the common core; they
+do not treat candidates as namespace/URI authority. Tagging includes `how`
 and stores measured signals in `ontology.method_signals`; consolidation recomputes
 signals from synthesized text but remains unverified.
 

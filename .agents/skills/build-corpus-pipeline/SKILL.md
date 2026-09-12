@@ -251,8 +251,13 @@ recompute anchors from every row's `candidate_terms`, require exact equality wit
 stored `ontology_tags`/`concepts`, reconcile returned `tagged`, `failed` and
 `total_chunks`, and require all chunk identities classified. Failed, unverified,
 stale or noncanonical rows block embedding-with-tags, assertions and QA; output
-line count and annotation presence are not substitutes. Re-run only after diagnosing the failure and
-replace affected terminal records by identity, never duplicate them in a merge.
+line count and annotation presence are not substitutes. Record planned batches, provider responses,
+successful-response token usage, reported cost and cost-reporting completeness at
+every checkpoint. A null or incomplete provider cost is unknown, never zero; do
+not expand under a dollar ceiling until the remaining bound is supportable from
+reported cost or an explicit conservative estimate. Re-run only after diagnosing
+the failure and replace affected terminal records by identity, never duplicate
+them in a merge.
 If neither QA nor another requested output requires tags, classification may be
 marked not requested.
 
