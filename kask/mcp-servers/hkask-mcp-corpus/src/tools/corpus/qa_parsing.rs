@@ -153,6 +153,7 @@ mod tests {
                 ]])
                 .to_string(),
                 tokens_used: 10,
+                cost_usd: Some(0.01),
             }),
             "offline-model",
         )?;

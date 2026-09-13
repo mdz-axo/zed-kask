@@ -84,8 +84,8 @@ impl QaBatchService {
         Self { inference_router }
     }
 
-    /// Validate the entire input and open output before inference. Prepared
-    /// messages are forwarded unchanged; completion accounting is transport-independent.
+    /// Validate the entire compact input and open output before inference. Both
+    /// transports render identical local-identity messages; accounting is shared.
     #[must_use = "result must be used"]
     pub async fn generate_qa_batch(
         &self,
@@ -190,6 +190,7 @@ impl QaBatchService {
                         Ok(response) => Ok(QaCompletion {
                             text: response.text,
                             tokens_used: u64::from(response.usage.total_tokens),
+                            cost_usd: response.cost_usd,
                         }),
                         Err(error) => {
                             Err(QaCompletionError::LlmFailed(attempts, error.to_string()))
@@ -423,7 +424,7 @@ mod tests {
                     finish_reason: "stop".into(),
                     tool_calls: Vec::new(),
                     reasoning: None,
-                    cost_usd: None,
+                    cost_usd: Some(0.01),
                 })
             })
         }
@@ -865,11 +866,15 @@ mod tests {
             assert_eq!(summary["prompts_succeeded"], 1);
             assert_eq!(summary["qa_rows_written"], 2);
             if model.ends_with(":batch") {
+                assert_eq!(summary["reported_cost_usd"], serde_json::Value::Null);
+                assert_eq!(summary["cost_reporting_complete"], false);
                 let calls = router.batches.lock().expect("batch calls");
                 let (_, entries) = calls.first().expect("batch call");
                 assert_eq!(entries[0].system, expected_messages[0].content);
                 assert_eq!(entries[0].user, expected_messages[1].content);
             } else {
+                assert_eq!(summary["reported_cost_usd"], 0.01);
+                assert_eq!(summary["cost_reporting_complete"], true);
                 let calls = router.messages.lock().expect("calls");
                 assert_eq!(calls[0].1.len(), expected_messages.len());
                 for (actual, expected) in calls[0].1.iter().zip(&expected_messages) {
@@ -1420,11 +1425,7 @@ mod tests {
     fn duplicate_prompt_ids_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let directory = fixture_directory()?;
         let path = directory.path().join("prompts.jsonl");
-        let record = json!({
-            "prompt_id": "qa-1", "chunk_ref": "chunk-1", "source": "source.txt",
-            "system": "Prepared system", "user": "Prepared user", "qa_type": "factual",
-            "concepts": [], "salience": 0.5
-        });
+        let record = serde_json::to_value(prepared("qa-1", "user"))?;
         std::fs::write(&path, format!("{record}\n{record}\n"))?;
         let result = read_prompts(&path.to_string_lossy());
         assert!(result.is_err(), "duplicate prompt IDs were accepted");

@@ -208,7 +208,9 @@ submission has no automatic retry because remote acceptance can be unknown
 `src/batch.rs:73–153` and `src/tools/semantic/batch_api.rs:31–38` in that crate).
 
 Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
-`qa_rows_written`, `output`, `batch_api`, `degraded`, with total = succeeded + failed.
+`qa_rows_written`, prompt-level `tokens_used`, `provider_responses`,
+`reported_cost_usd`, `cost_reporting_complete`, `output`, `batch_api`, `degraded`,
+with total = succeeded + failed. Null/incomplete cost is unknown, never zero.
 A prompt can emit multiple pairs; error rows are not QA rows. Missing/duplicate
 known provider IDs and joins fail identified prompts; unknown IDs and IPC failures
 are tool errors. Writes/flushes propagate errors; partial output and cancellation

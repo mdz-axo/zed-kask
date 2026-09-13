@@ -2401,9 +2401,11 @@ async fn screener_non_common_instruments_dropped() {
             );
             assert_eq!(output["non_common_dropped"], json!(4));
             assert_eq!(output["count"], json!(2));
-            let codes: Vec<&str> = output["results"]
-                .as_array()
-                .expect("results")
+            let results = output["results"].as_array().expect("results");
+            assert!(results.iter().all(|row| {
+                row["market_capitalization_usd"] == row["market_capitalization"]
+            }));
+            let codes: Vec<&str> = results
                 .iter()
                 .map(|row| row["code"].as_str().expect("code"))
                 .collect();

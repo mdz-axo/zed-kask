@@ -297,10 +297,12 @@ impl CompaniesServer {
                 .get("market_capitalization_max")
                 .and_then(|value| value.as_f64());
             let cap_bounds_present = cap_min.is_some() || cap_max.is_some();
-            let fx_context_needed =
-                cap_bounds_present && exchange_codes.iter().any(|code| code != "US");
-            let fx = if fx_context_needed {
-                Some(self.acquire_screener_fx(&exchange_codes).await)
+            let fx = if cap_bounds_present && !exchange_codes.is_empty() {
+                if exchange_codes.iter().all(|code| code == "US") {
+                    Some(Ok(ScreenerFx::usd_only(&exchange_codes)))
+                } else {
+                    Some(self.acquire_screener_fx(&exchange_codes).await)
+                }
             } else {
                 None
             };
@@ -489,7 +491,10 @@ impl CompaniesServer {
                                 cap_max,
                             )
                             .await;
-                        row_stats = stats;
+                        row_stats.foreign_lines_dropped += stats.foreign_lines_dropped;
+                        row_stats.out_of_band_dropped += stats.out_of_band_dropped;
+                        row_stats.unconverted_rows += stats.unconverted_rows;
+                        row_stats.non_common_dropped += stats.non_common_dropped;
                         extra_rates = rates;
                         kept
                     } else {
@@ -1084,6 +1089,20 @@ struct ScreenerFx {
 }
 
 impl ScreenerFx {
+    /// Build conversion context for a USD-only screen without an exchange-list
+    /// or FOREX request. The row pass still validates each row's currency
+    /// symbol before annotating its USD market capitalization.
+    fn usd_only(codes: &[String]) -> Self {
+        Self {
+            as_of: String::new(),
+            currency_by_exchange: codes
+                .iter()
+                .map(|code| (code.clone(), "USD".to_string()))
+                .collect(),
+            rate_by_currency: std::collections::HashMap::new(),
+        }
+    }
+
     /// USD→listing-currency rate for an exchange code (1.0 for USD).
     /// Errors name the reason: an unmapped code (not in the EODHD exchange
     /// list) or a missing rate for its currency.

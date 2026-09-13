@@ -239,6 +239,7 @@ pub(crate) fn read_prompts(path: &str) -> Result<Vec<PreparedQaPrompt>, McpToolE
 pub(crate) struct QaCompletion {
     pub text: String,
     pub tokens_used: u64,
+    pub cost_usd: Option<f64>,
 }
 
 /// Per-prompt inference failure to produce a QA completion. Recorded via
@@ -271,6 +272,9 @@ pub(crate) struct QaOutput<W: Write> {
     prompts_failed: usize,
     qa_rows_written: usize,
     tokens_used: u64,
+    provider_responses: usize,
+    cost_reports: usize,
+    reported_cost_usd: f64,
 }
 
 impl<W: Write> QaOutput<W> {
@@ -282,6 +286,9 @@ impl<W: Write> QaOutput<W> {
             prompts_failed: 0,
             qa_rows_written: 0,
             tokens_used: 0,
+            provider_responses: 0,
+            cost_reports: 0,
+            reported_cost_usd: 0.0,
         }
     }
 
@@ -311,6 +318,11 @@ impl<W: Write> QaOutput<W> {
         let parsed = match completion {
             Ok(completion) => {
                 self.tokens_used += completion.tokens_used;
+                self.provider_responses += 1;
+                if let Some(cost_usd) = completion.cost_usd {
+                    self.cost_reports += 1;
+                    self.reported_cost_usd += cost_usd;
+                }
                 parse_prepared_qa_response(&extract_json_from_response(&completion.text), prompt)
                     .map_err(QaCompletionError::Rejected)
             }
@@ -359,12 +371,18 @@ impl<W: Write> QaOutput<W> {
         }
         let outcome = BatchOutcome::from_counts(self.prompts_failed, self.prompts_total);
         outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
+        let cost_reporting_complete = self.provider_responses == self.prompts_total
+            && self.cost_reports == self.provider_responses;
+        let reported_cost_usd = cost_reporting_complete.then_some(self.reported_cost_usd);
         Ok(json!({
             "prompts_total": self.prompts_total,
             "prompts_succeeded": self.prompts_succeeded,
             "prompts_failed": self.prompts_failed,
             "qa_rows_written": self.qa_rows_written,
             "tokens_used": self.tokens_used,
+            "provider_responses": self.provider_responses,
+            "reported_cost_usd": reported_cost_usd,
+            "cost_reporting_complete": cost_reporting_complete,
             "output": output,
             "batch_api": batch_api,
             "degraded": BatchOutcome::is_degraded(self.prompts_failed, self.prompts_total),
@@ -464,8 +482,8 @@ pub(crate) fn format_cross_reference_prompt(
 /// Build the QA result envelope for one QA pair.
 ///
 /// The envelope format matches what `corpus_ingest_qa`'s `parse_qa_record`
-/// expects: `chunk_ref`, `source`, `qa_type`, `response`, `provenance`,
-/// `tokens_used`.
+/// expects: primary identity, QA type, response, canonical evidence and
+/// provenance. Prompt-level token usage stays in the batch summary.
 pub(crate) fn qa_result_envelope(
     prompt: &PreparedQaPrompt,
     pair: QaPair,
@@ -515,6 +533,7 @@ mod tests {
         Ok(QaCompletion {
             text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
             tokens_used: 10,
+            cost_usd: Some(0.01),
         })
     }
 
@@ -624,7 +643,8 @@ mod tests {
                 &prepared(),
                 Ok(QaCompletion {
                     text: response.into(),
-                    tokens_used: 0,
+                    tokens_used: 7,
+                    cost_usd: Some(0.02),
                 }),
                 "offline-model",
             )?;
@@ -633,6 +653,9 @@ mod tests {
             assert_eq!(summary["prompts_succeeded"], 0);
             assert_eq!(summary["prompts_failed"], 1);
             assert_eq!(summary["qa_rows_written"], 0);
+            assert_eq!(summary["tokens_used"], 7);
+            assert_eq!(summary["reported_cost_usd"], 0.02);
+            assert_eq!(summary["cost_reporting_complete"], true);
             let row: serde_json::Value = serde_json::from_slice(&bytes)?;
             assert_eq!(row["prompt_id"], "qa-1");
             assert!(row["error"].as_str().expect("error").contains("rejected"));

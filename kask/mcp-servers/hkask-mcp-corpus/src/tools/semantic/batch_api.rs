@@ -13,8 +13,8 @@ use crate::services::qa_pipeline::{
     render_prepared_messages,
 };
 
-/// Forward prepared instructions unchanged. The bridge holds credentials and
-/// resolves the original model routing prefix/suffix, never the corpus server.
+/// Render the compact prepared contract identically to the synchronous path.
+/// The bridge holds credentials and preserves the model routing prefix/suffix.
 pub(crate) async fn generate_qa_via_batch_api<W: Write>(
     inference_router: &Arc<dyn InferencePort>,
     prompts: &[PreparedQaPrompt],
@@ -64,6 +64,7 @@ pub(crate) async fn generate_qa_via_batch_api<W: Write>(
                 (Some(text), None) => Ok(QaCompletion {
                     text: text.clone(),
                     tokens_used: result.total_tokens,
+                    cost_usd: None,
                 }),
                 (None, Some(error)) => Err(QaCompletionError::BatchProvider(error.clone())),
                 _ => Err(QaCompletionError::BatchMalformed),

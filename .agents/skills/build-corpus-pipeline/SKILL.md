@@ -318,7 +318,9 @@ Start with an operator-authorized bounded pilot, keeping the full source/prompt
 inventory as the target. Run Stage 8 on that pilot before expanding to full
 production; a pilot is evidence for a gate, never a reduced completion scope.
 Call `corpus_generate_qa_batch(prompts_jsonl, output, concurrency, model)`.
-Preflight validates the whole prepared file/model before creating output.
+Preflight validates the whole prepared file/model before creating output. Record
+prompt-level tokens, provider responses, reported cost and cost completeness at
+every shard; null/incomplete cost is unknown and blocks paid expansion.
 Input/output aliases (including symlink and hard-link aliases) are rejected.
 A process-wide lease owns the canonical output across service instances and both
 transports. It remains owned until workers are destroyed, not merely until abort

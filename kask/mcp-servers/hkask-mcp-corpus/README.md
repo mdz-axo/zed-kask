@@ -285,6 +285,8 @@ errors. Join failures retain prompt identity for a failed-prompt row.
 | `prompts_succeeded` | Entire response accepted and rows written |
 | `prompts_failed` | Identified failed-prompt records |
 | `qa_rows_written` | Accepted pairs only; a prompt can yield multiple pairs |
+| `tokens_used` | Completion usage counted once per returned prompt, including rejected QA |
+| `provider_responses`, `reported_cost_usd`, `cost_reporting_complete` | Cost coverage; null/incomplete cost is unknown, never zero |
 | `output`, `batch_api` | Requested destination and selected transport |
 | `degraded` | Shared failure-rate classification, at least 10%; not completeness |
 

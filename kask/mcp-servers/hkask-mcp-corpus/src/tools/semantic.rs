@@ -129,7 +129,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Generate QA from canonical prepared prompts JSONL: prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user (all required). prompt_id is unique per file; repeated chunk_ref is valid. Validates all records before inference and forwards prepared instructions unchanged via AIMD concurrency or the provider Batch API. Legacy prompt formats must be regenerated with corpus_build_prompts. Output contains ingest-compatible QA rows and identified error rows. Summary: prompts_total, prompts_succeeded, prompts_failed, qa_rows_written, output, batch_api, degraded. Output write/flush failures return a tool error."
+        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. One provider call may produce several pairs. Both transports render identical local-ID messages; canonical identities are restored only after exact quote verification. Old rendered-message files are rejected. Output contains ingest-compatible QA or identified error rows; summary includes prompt outcomes, QA rows, and prompt-level token usage."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
