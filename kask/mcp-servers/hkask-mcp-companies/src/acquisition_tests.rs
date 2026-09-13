@@ -2346,6 +2346,152 @@ async fn screener_foreign_line_kept_when_home_bucket_empty() {
         .await;
 }
 
+/// expect: [P5] A cap-qualified EODHD listing survives the liquidity screen
+/// only when its exact trailing-window mean of daily close × volume meets the
+/// requested USD threshold; the result carries the calculation evidence.
+/// dcterms:identifier: CompaniesServer::company_screener / trailing_average_dollar_volume_usd
+#[tokio::test]
+async fn screener_applies_exact_usd_liquidity_filter() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({ "data": [{
+                    "code": "LIQ",
+                    "name": "Liquid Common Inc.",
+                    "exchange": "US",
+                    "currency_symbol": "$",
+                    "market_capitalization": 10_000_000_000.0
+                }] }),
+            );
+        }
+        if path.starts_with("/eodhd/eod/LIQ.US") {
+            return (
+                200,
+                json!([
+                    {"date":"2026-07-15","close":10.0,"adjusted_close":9.8,"volume":50_000},
+                    {"date":"2026-08-14","close":20.0,"adjusted_close":19.5,"volume":100_000},
+                    {"date":"2026-09-11","close":15.0,"adjusted_close":14.7,"volume":100_000}
+                ]),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US listed companies with market capitalization between 5 billion and 50 billion",
+                "limit": 10,
+                "criteria_overrides": {
+                    "liquidity_min_usd": 1_000_000.0,
+                    "liquidity_window_days": 60,
+                    "result_offset": 0
+                }
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["count"], json!(1));
+            assert_eq!(output["candidates_processed"], json!(1));
+            assert_eq!(output["next_result_offset"], serde_json::Value::Null);
+            let result = &output["results"][0];
+            assert_eq!(result["liquidity_observations"], json!(3));
+            assert_eq!(result["liquidity_window_days"], json!(60));
+            assert!(result["average_daily_dollar_volume_usd"]
+                .as_f64()
+                .is_some_and(|value| (value - 1_333_333.333_333_333_3).abs() < 1e-6));
+            assert_eq!(result["liquidity_eligible"], json!(true));
+            assert_eq!(result["liquidity_source"], json!("EODHD EOD close × volume"));
+        })
+        .await;
+}
+
+/// expect: [P5] Non-USD liquidity uses the EODHD USD cross-rate from each
+/// security's trading date; applying one current FX rate to the whole window
+/// cannot change pass/fail near the USD threshold.
+/// dcterms:identifier: CompaniesServer::company_screener / trailing_average_dollar_volume_usd
+#[tokio::test]
+async fn screener_liquidity_uses_date_matched_fx() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (200, json!([{ "Code": "TO", "Currency": "CAD" }]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({ "data": [{
+                    "code": "CADLIQ",
+                    "name": "Canadian Liquid Common Inc.",
+                    "exchange": "TO",
+                    "currency_symbol": "C$",
+                    "market_capitalization": 14_000_000_000.0
+                }] }),
+            );
+        }
+        if path.starts_with("/eodhd/eod/USDCAD.FOREX") {
+            if path.contains("from=") {
+                return (
+                    200,
+                    json!([
+                        {"date":"2026-07-15","close":1.4},
+                        {"date":"2026-09-11","close":1.5}
+                    ]),
+                );
+            }
+            return (200, json!([{"date":"2026-09-11","close":1.5}]));
+        }
+        if path.starts_with("/eodhd/eod/CADLIQ.TO") {
+            return (
+                200,
+                json!([
+                    {"date":"2026-07-15","close":14.0,"volume":100_000},
+                    {"date":"2026-09-11","close":15.0,"volume":100_000}
+                ]),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "Canada listed companies with market capitalization between 5 billion and 50 billion",
+                "limit": 10,
+                "criteria_overrides": {
+                    "liquidity_min_usd": 1_000_000.0,
+                    "liquidity_window_days": 60
+                }
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            assert_eq!(output["count"], json!(1));
+            let result = &output["results"][0];
+            assert!(result["average_daily_dollar_volume_usd"]
+                .as_f64()
+                .is_some_and(|value| (value - 1_000_000.0).abs() < 1e-6));
+            assert_eq!(result["liquidity_observations"], json!(2));
+            assert_eq!(
+                result["liquidity_source"],
+                json!("EODHD EOD close × volume; date-matched USDCAD.FOREX")
+            );
+        })
+        .await;
+}
+
 /// expect: [P5] Non-common instruments (ETFs, preferreds, notes, CDRs) are
 /// dropped client-side and counted — EODHD's screener has no type filter.
 /// ADRs and European dual-class tickers are deliberately kept.
