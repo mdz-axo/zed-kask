@@ -743,6 +743,26 @@ pub(crate) enum ScreenAction {
     Results,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScreenTemplateContext {
+    /// EODHD exchange codes included in the saved-screen universe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exchanges: Option<Vec<String>>,
+    /// Immutable screen observation date in ISO 8601 form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
+    /// Minimum issuer market capitalization in reporting currency.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub market_cap_min: Option<f64>,
+    /// Maximum issuer market capitalization in reporting currency.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub market_cap_max: Option<f64>,
+    /// Minimum average daily traded value in reporting currency.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub liquidity_min_usd: Option<f64>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ScreenerRequest {
     /// FactSet-shaped saved-screen lifecycle action. Omit for an immediate ad
@@ -750,8 +770,8 @@ pub(crate) struct ScreenerRequest {
     pub action: Option<ScreenAction>,
     /// Registered server-side Jinja screen template selected for calculate.
     pub template: Option<String>,
-    /// Variables rendered into the selected template.
-    pub template_context: Option<AnyJsonValue>,
+    /// Typed variables rendered into the selected registered template.
+    pub template_context: Option<ScreenTemplateContext>,
     /// Direct API representation of the same canonical ScreenDefinition.
     pub screen_definition: Option<AnyJsonValue>,
     /// Existing calculated screen job for status/results.
@@ -792,6 +812,32 @@ pub(crate) struct ScreenerRequest {
 
 fn default_screener_limit() -> u32 {
     20
+}
+
+#[cfg(test)]
+mod screener_schema_tests {
+    use super::*;
+
+    #[test]
+    fn template_context_schema_exposes_registered_parameters() {
+        let schema = schemars::schema_for!(ScreenerRequest);
+        let schema = match serde_json::to_string(&schema) {
+            Ok(schema) => schema,
+            Err(error) => panic!("screener request schema must serialize: {error}"),
+        };
+        for field in [
+            "exchanges",
+            "as_of",
+            "market_cap_min",
+            "market_cap_max",
+            "liquidity_min_usd",
+        ] {
+            assert!(
+                schema.contains(&format!("\"{field}\":{{")),
+                "template_context schema does not expose {field}: {schema}"
+            );
+        }
+    }
 }
 
 // ── Economic Profit valuation request ────────────────────────────────

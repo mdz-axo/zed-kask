@@ -1,7 +1,7 @@
 use crate::{
     CompaniesServer, providers,
     research_store::{ResearchStore, ScreenJobRecord},
-    types::{ScreenAction, ScreenerRequest},
+    types::{ScreenAction, ScreenTemplateContext, ScreenerRequest},
 };
 
 use futures::StreamExt as _;
@@ -740,7 +740,7 @@ fn resolve_definition(req: &ScreenerRequest) -> Result<ScreenDefinition, McpTool
 
 fn render_template(
     name: &str,
-    context: Option<&hkask_types::AnyJsonValue>,
+    context: Option<&ScreenTemplateContext>,
 ) -> Result<ScreenDefinition, McpToolError> {
     let source = match name {
         "universal_equity" => UNIVERSAL_EQUITY_TEMPLATE,
@@ -766,7 +766,14 @@ fn render_template(
             "screen template {name:?} has invalid metadata: {error}"
         ))
     })?;
-    let context = context.map_or_else(|| json!({}), |value| value.0.clone());
+    let context = match context {
+        Some(context) => serde_json::to_value(context).map_err(|error| {
+            McpToolError::internal(format!(
+                "screen template {name:?} context failed to serialize: {error}"
+            ))
+        })?,
+        None => json!({}),
+    };
     let missing_context_variables: Vec<&str> = metadata
         .contract
         .input
