@@ -54,9 +54,12 @@ const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);
-                CREATE TABLE IF NOT EXISTS company_screen_runs (
+                CREATE TABLE IF NOT EXISTS screen_jobs (
                     id TEXT PRIMARY KEY,
-                    state TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    definition TEXT NOT NULL,
+                    result TEXT,
+                    error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );";
@@ -88,6 +91,18 @@ fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
     Ok(path.join("master.db"))
 }
 
+/// Owner-scoped saved-screen calculation job and immutable result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ScreenJobRecord {
+    pub id: String,
+    pub status: String,
+    pub definition: serde_json::Value,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Owner-scoped forecast persisted as structured JSON for later reconstruction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PersistedForecast {
@@ -107,6 +122,20 @@ fn parse_forecast_json<T: DeserializeOwned>(value: String) -> rusqlite::Result<T
             rusqlite::types::Type::Text,
             Box::new(e),
         )
+    })
+}
+
+fn row_to_screen_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScreenJobRecord> {
+    let definition: String = row.get(2)?;
+    let result: Option<String> = row.get(3)?;
+    Ok(ScreenJobRecord {
+        id: row.get(0)?,
+        status: row.get(1)?,
+        definition: parse_forecast_json(definition)?,
+        result: result.map(parse_forecast_json).transpose()?,
+        error: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -209,46 +238,54 @@ impl ResearchStore {
         Ok(symbols)
     }
 
-    // ── Companies-specific: resumable expectations screens ─────────
+    // ── Companies-specific: screening jobs ─────────────────────────
 
-    pub fn save_company_screen(
-        &self,
-        id: &str,
-        state: &serde_json::Value,
-    ) -> Result<(), PortfolioError> {
+    pub fn insert_screen_job(&self, job: &ScreenJobRecord) -> Result<(), PortfolioError> {
         let conn = self.open()?;
-        let state = serde_json::to_string(state)
-            .map_err(|e| format!("serialize expectations screen: {e}"))?;
-        let now = now_rfc3339();
+        let definition = serde_json::to_string(&job.definition)
+            .map_err(|e| format!("serialize screen definition: {e}"))?;
         conn.execute(
-            "INSERT INTO company_screen_runs (id, state, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?3)
-             ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
-            params![id, state, now],
+            "INSERT INTO screen_jobs
+             (id, status, definition, result, error, created_at, updated_at)
+             VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?4)",
+            params![job.id, job.status, definition, job.created_at],
         )
-        .map_err(|e| format!("save expectations screen: {e}"))?;
+        .map_err(|e| format!("insert screen job: {e}"))?;
         Ok(())
     }
 
-    pub fn get_company_screen(
+    pub fn update_screen_job(
         &self,
         id: &str,
-    ) -> Result<Option<serde_json::Value>, PortfolioError> {
+        status: &str,
+        result: Option<&serde_json::Value>,
+        error: Option<&str>,
+    ) -> Result<(), PortfolioError> {
         let conn = self.open()?;
-        let state: Option<String> = conn
-            .query_row(
-                "SELECT state FROM company_screen_runs WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| format!("get expectations screen: {e}"))?;
-        state
-            .map(|value| {
-                serde_json::from_str(&value)
-                    .map_err(|e| format!("parse expectations screen state: {e}").into())
-            })
+        let result = result
+            .map(serde_json::to_string)
             .transpose()
+            .map_err(|e| format!("serialize screen result: {e}"))?;
+        conn.execute(
+            "UPDATE screen_jobs
+             SET status = ?2, result = ?3, error = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![id, status, result, error, now_rfc3339()],
+        )
+        .map_err(|e| format!("update screen job: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_screen_job(&self, id: &str) -> Result<Option<ScreenJobRecord>, PortfolioError> {
+        let conn = self.open()?;
+        conn.query_row(
+            "SELECT id, status, definition, result, error, created_at, updated_at
+             FROM screen_jobs WHERE id = ?1",
+            params![id],
+            row_to_screen_job,
+        )
+        .optional()
+        .map_err(|e| format!("get screen job: {e}").into())
     }
 
     // ── Companies-specific: forecasts ──────────────────────────────

@@ -18,6 +18,7 @@ hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
 hkask-bridge-ontology.workspace = true
+hkask-lisp.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true
 futures.workspace = true

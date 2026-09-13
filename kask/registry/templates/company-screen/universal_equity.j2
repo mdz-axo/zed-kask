@@ -1,0 +1,44 @@
+[inference]
+contract:
+  input:
+    exchanges: array
+    as_of: string
+    market_cap_min: number
+    market_cap_max: number
+  output:
+    screen_definition: object
+visibility: Public
+---
+{
+  "name": "universal_equity",
+  "kind": "provider_table",
+  "as_of": {{ as_of | tojson }},
+  "reporting_currency": "USD",
+  "universe": {
+    "asset_class": "equity",
+    "exchanges": {{ exchanges | tojson }},
+    "active_only": true,
+    "primary_only": true,
+    "security_types": ["common_stock", "adr"]
+  },
+  "filters": [
+    {"field": "market_capitalization", "operator": ">=", "value": {{ market_cap_min }}},
+    {"field": "market_capitalization", "operator": "<=", "value": {{ market_cap_max }}}
+  ],
+  "columns": [
+    {"id": "symbol", "label": "Symbol", "source": "symbol", "data_type": "string", "unit": null},
+    {"id": "company", "label": "Company", "source": "name", "data_type": "string", "unit": null},
+    {"id": "exchange", "label": "Exchange", "source": "exchange", "data_type": "string", "unit": null},
+    {"id": "market_capitalization", "label": "Market Capitalization", "source": "market_capitalization", "data_type": "number", "unit": "USD"}
+  ],
+  "ranking": [
+    {"column": "market_capitalization", "direction": "descending"}
+  ],
+  "logic_env": {
+    "market_cap_min": {{ market_cap_min }},
+    "market_cap_max": {{ market_cap_max }}
+  },
+  "assertions": [
+    {"name": "market_cap_bounds_ordered", "form": "(and (> market_cap_min 0) (>= market_cap_max market_cap_min))"}
+  ]
+}

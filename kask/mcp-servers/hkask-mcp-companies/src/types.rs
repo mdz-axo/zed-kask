@@ -112,7 +112,6 @@ pub(crate) struct CharacteristicsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
-
     /// Your estimate of sustainable revenue growth (0.0–1.0). Context
     /// annotation only — the gap axis is price-implied expectations vs
     /// demonstrated DuPont capability (operator ruling 2026-09-10).
@@ -736,18 +735,31 @@ fn default_corpus_max_results() -> u32 {
     5
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ScreenAction {
+    Calculate,
+    Status,
+    Results,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ScreenerRequest {
-    /// Natural language screening prompt for the generic composition. A named
-    /// composition may use an empty prompt and structured criteria overrides.
+    /// FactSet-shaped saved-screen lifecycle action. Omit for an immediate ad
+    /// hoc screen; calculate/status/results operate on an immutable job.
+    pub action: Option<ScreenAction>,
+    /// Registered server-side Jinja screen template selected for calculate.
+    pub template: Option<String>,
+    /// Variables rendered into the selected template.
+    pub template_context: Option<AnyJsonValue>,
+    /// Direct API representation of the same canonical ScreenDefinition.
+    pub screen_definition: Option<AnyJsonValue>,
+    /// Existing calculated screen job for status/results.
+    pub job_id: Option<String>,
+    /// Result-row offset for paginated results.
+    pub cursor: Option<u32>,
+    /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
     pub prompt: String,
-    /// Optional named screening composition rendered by a registry template.
-    /// `expectations_gap` runs the resumable issuer-level workflow.
-    pub composition: Option<String>,
-    /// Existing composed-screen run to advance. Omit to start a new run.
-    pub run_id: Option<String>,
-    /// Shared observation date for a new composed run (`YYYY-MM-DD`).
-    pub as_of: Option<String>,
     /// Maximum results (default 20). The EODHD screener paginates
     /// automatically to exhaust the full universe, so this is an upper
     /// bound on the returned row count, not a page size: the fetch runs to

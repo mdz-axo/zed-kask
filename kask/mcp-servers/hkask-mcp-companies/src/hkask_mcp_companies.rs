@@ -22,8 +22,8 @@
 //! - `tools/notes.rs` — note_add, note_list, note_delete,
 //!   file_attach, file_list, file_delete
 //! - `tools/transcript.rs` — earnings-call transcript tools
-//! - `tools/analysis.rs` — company_screener (a market-cap-only prompt
-//!   covers the former stock_universe listing),
+//! - `tools/analysis.rs` — company_screener (ad hoc criteria plus saved-screen
+//!   calculate/status/results over immutable columnar result sets),
 //!   company_research_search (multi-provider research claims)
 
 //!
@@ -57,9 +57,9 @@ mod financial_model;
 mod providers;
 pub(crate) mod research_store;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
-mod company_screen;
 mod forecast;
 pub(crate) mod learning;
+mod screening;
 
 #[cfg(test)]
 mod acquisition_tests;

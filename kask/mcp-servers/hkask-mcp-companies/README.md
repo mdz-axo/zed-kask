@@ -33,7 +33,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `moat_check` | Analyze competitive moat through gross-margin stability and working-capital market-power signals. |
 | `management_scorecard` | Score CEO capital allocation against returns on capital and invested capital. |
 | `working_capital_cycle` | Analyze days payable, days sales outstanding, and cash-conversion cycle. |
-| `company_screener` | Screen companies from natural-language criteria using the EODHD screener, fanning out one query per exchange for multi-geography prompts. |
+| `company_screener` | One universe-screening capability. Immediate mode parses ad hoc criteria; saved-screen mode renders a registered Jinja or direct API `ScreenDefinition`, submits an asynchronous calculate job, exposes status, and pages an immutable columnar result. |
 | `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims. |
 
 ### Portfolio analytics and DCF
@@ -127,7 +127,7 @@ src/
 
 ### Behavioral boundaries
 
-- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` parses natural-language prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts, sending USD market-cap bounds unconverted (EODHD's screener market_capitalization filter is USD-denominated) while annotating rows with `market_capitalization_usd` via cached EODHD FOREX daily closes; `research_search` uses its own research providers.
+- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` has one execution surface with two compositions: immediate ad hoc filtering, and FactSet-shaped saved screens (`calculate` → `status` → paginated `results`). Saved Jinja templates and direct API definitions deserialize to the same typed screen document; calculations freeze one EODHD universe snapshot, validate plan assertions with sandboxed `hkask-lisp`, store an immutable columnar result with per-column provenance, and never recalculate during pagination. The `expectations_gap` template applies USD-cap and exact exchange-session liquidity filters before fundamentals, groups qualifying securities by issuer/primary ticker, and computes price-implied growth/profitability columns as a set. `research_search` remains a later company-research capability, not a screening stage.
 - The DCF projection is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.
 - `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix.
 - DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition.

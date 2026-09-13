@@ -209,8 +209,21 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 | `moat_check` | Competitive moat: gross-margin stability + working-capital market-power signals |
 | `management_scorecard` | CEO capital allocation scorecard (ROIC vs invested capital) |
 | `working_capital_cycle` | Days payable, days sales outstanding, cash-conversion cycle |
-| `company_screener` | Screen companies from natural-language criteria using the EODHD screener with per-exchange fan-out (bypasses `fetch`) |
+| `company_screener` | Universe-first equity screening. Immediate mode parses ad hoc criteria; saved-screen mode renders a registered Jinja template or accepts a direct typed definition, submits an asynchronous calculate job, exposes status, and pages an immutable column-organized result without recalculation. Expectations-gap screens apply liquidity before fundamentals, group by issuer/primary security, and retain structured exclusions. |
 | `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims (bypasses `fetch`) |
+
+#### Saved-screen lifecycle
+
+`company_screener` follows the FactSet Universal Screening separation between a saved screen document, its calculation job, and its immutable result. Bloomberg EQS and GuruFocus corroborate the interaction pattern: select a security universe, apply simultaneous criteria and calculated fields, inspect survivor counts, then sort/export the resulting list before individual-company research.
+
+- `action: calculate` selects `template` plus `template_context`, or accepts the same canonical document through `screen_definition`. Server-side Jinja rendering uses strict undefined handling; both paths deserialize to one typed definition.
+- Sandboxed `hkask-lisp` assertions validate plan invariants before job submission. Lisp is used for bounded logical verification, not per-security provider orchestration.
+- The calculation freezes one EODHD listing result set, executes derived columns as a background job, and persists `queued`, `executing`, `completed`, or `failed` state.
+- `action: status` reads job state. `action: results` pages the stored column-organized table; it never recalculates or reorders the universe.
+- Result metadata carries candidate/passed/excluded counts, a reconciliation flag, source provenance, and Lisp verification evidence. Every calculated screen retains explicit exclusions rather than treating missing data as zero.
+- The `expectations_gap` template filters strict USD issuer capitalization and exact exchange-session average daily dollar volume before acquiring fundamentals, resolves EODHD primary-security identity, groups qualifying lines by issuer, and ranks complete two-legged negative gaps. Company research remains downstream of the screen.
+
+Primary reference: [FactSet Universal Screening API](https://developer.factset.com/api-catalog/universal-screening-api). Corroborating references: Bloomberg EQS and GuruFocus All-In-One Screener.
 
 ### Portfolio analytics and DCF (5)
 
