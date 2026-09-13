@@ -57,6 +57,7 @@ mod financial_model;
 mod providers;
 pub(crate) mod research_store;
 pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
+mod company_screen;
 mod forecast;
 pub(crate) mod learning;
 

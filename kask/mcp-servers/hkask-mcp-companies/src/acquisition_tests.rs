@@ -2916,6 +2916,161 @@ fn hand_built_capability() -> financial_model::DuPontAnalysis {
     }
 }
 
+/// expect: [P5] An expectations-screen run freezes the EODHD listing universe
+/// once; advancing the persisted run never rebuilds or reorders that snapshot.
+/// dcterms:identifier: CompaniesServer::expectations_screen / ResearchStore::save_expectations_screen
+#[tokio::test]
+async fn expectations_screen_continuation_reuses_frozen_snapshot() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({"data":[{
+                    "code":"RUN",
+                    "name":"Run Common Inc.",
+                    "exchange":"US",
+                    "currency_symbol":"$",
+                    "market_capitalization":10_000_000_000.0
+                }]}),
+            );
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let start = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+                "as_of":"2026-09-11",
+                "exchanges":["US"],
+                "market_cap_min_usd":5_000_000_000.0,
+                "market_cap_max_usd":50_000_000_000.0,
+                "liquidity_min_usd":1_000_000.0,
+                "liquidity_window_days":60,
+                "page_size":1
+            }))
+            .expect("start request");
+            let started = content(
+                &server
+                    .expectations_screen(Parameters(start))
+                    .await
+                    .expect("start expectations screen"),
+            );
+            let run_id = started["run_id"].as_str().expect("run id");
+            assert_eq!(started["phase"], json!("qualify_listings"));
+            let advance = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+                "run_id":run_id,
+                "page_size":1
+            }))
+            .expect("advance request");
+            server
+                .expectations_screen(Parameters(advance))
+                .await
+                .expect("advance expectations screen");
+            let screener_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/screener"))
+                .count();
+            assert_eq!(screener_calls, 1, "snapshot must be fetched exactly once");
+        })
+        .await;
+}
+
+/// expect: [P5] The two-month liquidity mean divides by every scheduled
+/// exchange session; a missing security bar contributes zero rather than
+/// disappearing from the denominator.
+/// dcterms:identifier: CompaniesServer::expectations_screen / exchange_sessions
+#[tokio::test]
+async fn expectations_screen_counts_missing_bars_as_zero_liquidity() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({"data":[{
+                    "code":"SPARSE",
+                    "name":"Sparse Common Inc.",
+                    "exchange":"US",
+                    "currency_symbol":"$",
+                    "market_capitalization":10_000_000_000.0
+                }]}),
+            );
+        }
+        if path.starts_with("/eodhd/v2/exchange-details/US") {
+            return (
+                200,
+                json!({"data":{
+                    "Code":"US",
+                    "TradingHours":{"WorkingDays":"Mon, Tue, Wed, Thu, Fri"},
+                    "ExchangeHolidays":{}
+                }}),
+            );
+        }
+        if path.starts_with("/eodhd/eod/SPARSE.US") {
+            return (
+                200,
+                json!([
+                    {"date":"2026-09-08","close":20.0,"volume":100_000}
+                ]),
+            );
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let start = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+                "as_of":"2026-09-11",
+                "exchanges":["US"],
+                "market_cap_min_usd":5_000_000_000.0,
+                "market_cap_max_usd":50_000_000_000.0,
+                "liquidity_min_usd":1_000_000.0,
+                "liquidity_window_days":4,
+                "page_size":1
+            }))
+            .expect("start request");
+            let started = content(
+                &server
+                    .expectations_screen(Parameters(start))
+                    .await
+                    .expect("start expectations screen"),
+            );
+            let run_id = started["run_id"].as_str().expect("run id");
+            let advance = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+                "run_id":run_id,
+                "page_size":1
+            }))
+            .expect("advance request");
+            let advanced = content(
+                &server
+                    .expectations_screen(Parameters(advance))
+                    .await
+                    .expect("advance expectations screen"),
+            );
+            assert_eq!(advanced["candidate_cursor"], json!(1));
+            assert_eq!(
+                advanced["qualified_listings"].as_array().map(Vec::len),
+                Some(0)
+            );
+            assert_eq!(
+                advanced["excluded_listings"].as_array().map(Vec::len),
+                Some(1)
+            );
+            let exclusion = &advanced["excluded_listings"][0];
+            assert_eq!(exclusion["reason"], json!("below_liquidity_minimum"));
+            assert_eq!(exclusion["scheduled_sessions"], json!(5));
+            assert!(
+                exclusion["average_daily_dollar_volume_usd"]
+                    .as_f64()
+                    .is_some_and(|value| (value - 400_000.0).abs() < 1e-6)
+            );
+        })
+        .await;
+}
+
 /// expect: [P5] An explicitly qualified primary security is acquired from
 /// EODHD throughout expectations analysis; the screening workflow never probes
 /// FMP before or after EODHD.

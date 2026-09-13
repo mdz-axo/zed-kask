@@ -741,8 +741,16 @@ fn default_corpus_max_results() -> u32 {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ScreenerRequest {
-    /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
+    /// Natural language screening prompt for the generic composition. A named
+    /// composition may use an empty prompt and structured criteria overrides.
     pub prompt: String,
+    /// Optional named screening composition rendered by a registry template.
+    /// `expectations_gap` runs the resumable issuer-level workflow.
+    pub composition: Option<String>,
+    /// Existing composed-screen run to advance. Omit to start a new run.
+    pub run_id: Option<String>,
+    /// Shared observation date for a new composed run (`YYYY-MM-DD`).
+    pub as_of: Option<String>,
     /// Maximum results (default 20). The EODHD screener paginates
     /// automatically to exhaust the full universe, so this is an upper
     /// bound on the returned row count, not a page size: the fetch runs to

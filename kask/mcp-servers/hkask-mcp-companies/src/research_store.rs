@@ -53,7 +53,13 @@ const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                     outcomes TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);";
+                CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);
+                CREATE TABLE IF NOT EXISTS expectations_screen_runs (
+                    id TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );";
 
 const MAX_ENCODED_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_DECODED_ATTACHMENT_BYTES: usize = 6 * 1024 * 1024;
@@ -201,6 +207,48 @@ impl ResearchStore {
             symbols.push(row.map_err(|e| format!("row: {e}"))?);
         }
         Ok(symbols)
+    }
+
+    // ── Companies-specific: resumable expectations screens ─────────
+
+    pub fn save_expectations_screen(
+        &self,
+        id: &str,
+        state: &serde_json::Value,
+    ) -> Result<(), PortfolioError> {
+        let conn = self.open()?;
+        let state = serde_json::to_string(state)
+            .map_err(|e| format!("serialize expectations screen: {e}"))?;
+        let now = now_rfc3339();
+        conn.execute(
+            "INSERT INTO expectations_screen_runs (id, state, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
+            params![id, state, now],
+        )
+        .map_err(|e| format!("save expectations screen: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_expectations_screen(
+        &self,
+        id: &str,
+    ) -> Result<Option<serde_json::Value>, PortfolioError> {
+        let conn = self.open()?;
+        let state: Option<String> = conn
+            .query_row(
+                "SELECT state FROM expectations_screen_runs WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("get expectations screen: {e}"))?;
+        state
+            .map(|value| {
+                serde_json::from_str(&value)
+                    .map_err(|e| format!("parse expectations screen state: {e}").into())
+            })
+            .transpose()
     }
 
     // ── Companies-specific: forecasts ──────────────────────────────
