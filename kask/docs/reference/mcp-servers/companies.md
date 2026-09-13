@@ -221,7 +221,7 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 - The calculation freezes one EODHD listing result set, executes derived columns as a background job, and persists `queued`, `executing`, `completed`, or `failed` state.
 - `action: status` reads job state. `action: results` pages the stored column-organized table; it never recalculates or reorders the universe.
 - Result metadata carries candidate/passed/excluded counts, a reconciliation flag, source provenance, and Lisp verification evidence. Every calculated screen retains explicit exclusions rather than treating missing data as zero.
-- The `expectations_gap` template filters strict USD issuer capitalization and exact exchange-session average daily dollar volume before acquiring fundamentals, resolves EODHD primary-security identity, groups qualifying lines by issuer, and ranks complete two-legged negative gaps. Company research remains downstream of the screen.
+- The `expectations_gap` template filters strict USD issuer capitalization and computes USD liquidity as `adjusted_close × avgvol_200d × listing-unit adjustment ÷ listing-currency-per-USD` before acquiring fundamentals. It joins EODHD's active common-stock ticker master, resolves EODHD primary-security identity, groups qualifying lines by issuer, and ranks complete two-legged negative gaps. Company research remains downstream of the screen.
 
 Primary reference: [FactSet Universal Screening API](https://developer.factset.com/api-catalog/universal-screening-api). Corroborating references: Bloomberg EQS and GuruFocus All-In-One Screener.
 

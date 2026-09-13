@@ -6,7 +6,7 @@ contract:
     market_cap_min: number
     market_cap_max: number
     liquidity_min_usd: number
-    liquidity_window_days: integer
+
   output:
     screen_definition: object
 visibility: Public
@@ -49,11 +49,11 @@ visibility: Public
     "market_cap_min": {{ market_cap_min }},
     "market_cap_max": {{ market_cap_max }},
     "liquidity_min_usd": {{ liquidity_min_usd }},
-    "liquidity_window_days": {{ liquidity_window_days }}
+    "avg_volume_days": 200
   },
   "assertions": [
     {"name":"market_cap_bounds_ordered","form":"(and (> market_cap_min 0) (>= market_cap_max market_cap_min))"},
     {"name":"liquidity_threshold_positive","form":"(> liquidity_min_usd 0)"},
-    {"name":"liquidity_window_positive","form":"(> liquidity_window_days 0)"}
+    {"name":"average_volume_period","form":"(= avg_volume_days 200)"}
   ]
 }

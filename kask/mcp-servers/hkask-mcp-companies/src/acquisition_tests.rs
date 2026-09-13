@@ -1758,9 +1758,8 @@ async fn screener_overrides_merge_over_parsed_criteria() {
                         .unwrap_or("")
                         .contains("No criteria parsed"))
             );
-            // The override bound reached the VN query unconverted — EODHD's
-            // market_capitalization filter is USD-denominated — while the
-            // VND rate annotates rows with market_capitalization_usd.
+            // The USD override is converted to VND before the provider query;
+            // row output is normalized back to market_capitalization_usd.
             let vn_bounds = fixture
                 .requests()
                 .iter()
@@ -1768,8 +1767,8 @@ async fn screener_overrides_merge_over_parsed_criteria() {
                 .map(|request| decode_screener_cap_bounds(request))
                 .unwrap_or_default();
             assert!(
-                vn_bounds.contains(&(">=".to_string(), 1_000_000_000.0)),
-                "VN lower bound unconverted: {vn_bounds:?}"
+                vn_bounds.contains(&(">=".to_string(), 25_000_000_000_000.0)),
+                "VN lower bound converted to VND: {vn_bounds:?}"
             );
             assert_eq!(output["fx"]["usd_rates"]["VND"], json!(25000.0));
             // exchanges-list + USDVND + the VN screener query
@@ -1793,16 +1792,19 @@ fn decode_screener_cap_bounds(path: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// expect: [P5] USD-stated market-cap bounds are sent UNCONVERTED on every
-/// exchange — EODHD's screener market_capitalization filter compares
-/// USD-denominated values while its returned field is listing-currency
-/// (verified live 2026-09-10: a converted NOK bound behaved as a USD
-/// threshold on Oslo) — while rows carry market_capitalization_usd, results
+/// expect: [P5] USD-stated market-cap bounds are converted into each
+/// single-currency exchange's listing currency before provider filtering;
+/// rows are then normalized back to USD and client-side checked.
+///
+/// Mixed-currency exchanges remain unbounded at the provider and are filtered
+/// entirely by their row currencies.
+///
+/// Results
 /// rank by USD cap, foreign lines whose home market is also screened are
 /// dropped, and the band is enforced client-side.
 /// dcterms:identifier: CompaniesServer::company_screener / ScreenerFx / screener_row_currency_pass
 #[tokio::test]
-async fn screener_sends_usd_bounds_unconverted_per_exchange() {
+async fn screener_converts_usd_bounds_for_each_exchange() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
         if path.starts_with("/eodhd/exchanges-list") {
@@ -1876,8 +1878,7 @@ async fn screener_sends_usd_bounds_unconverted_per_exchange() {
                     .expect("screener tool"),
             );
 
-            // Per-exchange queries carry the raw USD bounds: EODHD's filter
-            // is USD-denominated, so XETRA receives the same 2e9/2e11 as US.
+            // XETRA receives EUR bounds at 0.8 EUR/USD; US remains unchanged.
             let mut xetra_bounds = Vec::new();
             let mut us_bounds = Vec::new();
             for request_path in fixture.requests() {
@@ -1888,12 +1889,12 @@ async fn screener_sends_usd_bounds_unconverted_per_exchange() {
                 }
             }
             assert!(
-                xetra_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
-                "XETRA lower bound unconverted: {xetra_bounds:?}"
+                xetra_bounds.contains(&(">=".to_string(), 1_600_000_000.0)),
+                "XETRA lower bound converted to EUR: {xetra_bounds:?}"
             );
             assert!(
-                xetra_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
-                "XETRA upper bound unconverted: {xetra_bounds:?}"
+                xetra_bounds.contains(&("<".to_string(), 160_000_000_000.0)),
+                "XETRA upper bound converted to EUR: {xetra_bounds:?}"
             );
             assert!(
                 us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
@@ -2342,6 +2343,249 @@ async fn screener_foreign_line_kept_when_home_bucket_empty() {
                 json!(6_000_000_000_000.0 / 312.92)
             );
             assert_eq!(output["fx"]["usd_rates"]["HUF"], json!(312.92));
+        })
+        .await;
+}
+
+/// expect: [P5] A saved screen calculates one immutable universe result, exposes
+/// job status, and pages the stored columnar table without provider recalculation.
+/// dcterms:identifier: CompaniesServer::company_screener / screening::execute
+#[tokio::test]
+async fn saved_screen_calculates_and_pages_one_universe_result() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({"data":[
+                {"code":"SEC-A","name":"Issuer A","exchange":"US","market_capitalization":9_000_000_000.0},
+                {"code":"SEC-B","name":"Issuer B","exchange":"US","market_capitalization":7_000_000_000.0},
+                {"code":"SEC-C","name":"Issuer C","exchange":"US","market_capitalization":6_000_000_000.0}
+            ]}));
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"calculate",
+                "template":"universal_equity",
+                "template_context":{
+                    "exchanges":["US"],
+                    "as_of":"2026-09-11",
+                    "market_cap_min":5_000_000_000.0,
+                    "market_cap_max":10_000_000_000.0
+                },
+                "prompt":"",
+                "limit":2,
+                "criteria_overrides":{}
+            }))
+            .expect("calculate request");
+            let submitted = content(
+                &server
+                    .company_screener(Parameters(calculate))
+                    .await
+                    .expect("submit screen"),
+            );
+            let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+
+            let mut completed = false;
+            for _ in 0..100 {
+                let status_request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "action":"status","job_id":job_id,"prompt":"","limit":2,
+                    "criteria_overrides":{}
+                }))
+                .expect("status request");
+                let status = content(
+                    &server
+                        .company_screener(Parameters(status_request))
+                        .await
+                        .expect("screen status"),
+                );
+                if status["status"] == json!("completed") {
+                    completed = true;
+                    break;
+                }
+                assert_ne!(
+                    status["status"],
+                    json!("failed"),
+                    "screen job failed: {status}"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            assert!(completed, "screen job must complete");
+
+            let first_request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"results","job_id":job_id,"cursor":0,"prompt":"","limit":2,
+                "criteria_overrides":{}
+            }))
+            .expect("first page request");
+            let first = content(
+                &server
+                    .company_screener(Parameters(first_request))
+                    .await
+                    .expect("first page"),
+            );
+            assert_eq!(first["metadata"]["candidate_count"], json!(3));
+            assert_eq!(first["metadata"]["passed_count"], json!(3));
+            assert_eq!(first["metadata"]["excluded_count"], json!(0));
+            assert_eq!(first["metadata"]["reconciled"], json!(true));
+            assert_eq!(first["table"]["row_count"], json!(3));
+            assert_eq!(first["table"]["page_count"], json!(2));
+            assert_eq!(first["table"]["next_cursor"], json!(2));
+            assert_eq!(
+                first["table"]["columns"]["symbol"]["values"],
+                json!(["SEC-A.US", "SEC-B.US"])
+            );
+            assert_eq!(
+                first["metadata"]["logic_verification"][0]["result"],
+                json!(true)
+            );
+
+            let second_request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"results","job_id":job_id,"cursor":2,"prompt":"","limit":2,
+                "criteria_overrides":{}
+            }))
+            .expect("second page request");
+            let second = content(
+                &server
+                    .company_screener(Parameters(second_request))
+                    .await
+                    .expect("second page"),
+            );
+            assert_eq!(second["table"]["page_count"], json!(1));
+            assert!(second["table"]["next_cursor"].is_null());
+            let screener_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/screener"))
+                .count();
+            assert_eq!(screener_calls, 1, "result pagination must not recalculate");
+        })
+        .await;
+}
+
+/// expect: [P5] The expectations-gap template reduces an immutable universe as
+/// a set: liquidity filters rows before fundamentals, issuer projection emits
+/// one result row, and every candidate reconciles to result or exclusion.
+/// dcterms:identifier: CompaniesServer::company_screener / screening::calculate_expectations_gap
+#[tokio::test]
+async fn expectations_template_reduces_and_reconciles_the_universe() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({"data":[
+                {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
+                {"code":"ILL","name":"Illiquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":8_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":1_000.0}
+            ]}));
+        }
+        if path.starts_with("/eodhd/exchange-symbol-list/US") {
+            return (200, json!([
+                {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
+                {"Code":"ILL","Name":"Illiquid Issuer","Exchange":"NASDAQ","Currency":"USD","Type":"Common Stock","Isin":"US0000000002"}
+            ]));
+        }
+        if path.starts_with("/eodhd/fundamentals/LIQ.US") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("LIQ");
+            value["General"]["Name"] = json!("Liquid Issuer");
+            value["General"]["Type"] = json!("Common Stock");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["LEI"] = json!("549300LIQUIDSET01");
+            value["General"]["PrimaryTicker"] = json!("LIQ.US");
+            value["General"]["IsDelisted"] = json!(false);
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Cash_Flow"] = json!({
+                "currency_symbol":"USD","yearly":{
+                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+                }
+            });
+            return (200, value);
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    }).await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"calculate","template":"expectations_gap",
+                "template_context":{
+                    "exchanges":["US"],"as_of":"2026-09-11",
+                    "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
+                    "liquidity_min_usd":1_000_000.0
+                },
+                "prompt":"","limit":10,"criteria_overrides":{}
+            }))
+            .expect("calculate request");
+            let submitted = content(
+                &server
+                    .company_screener(Parameters(calculate))
+                    .await
+                    .expect("submit"),
+            );
+            let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+            let mut completed = false;
+            for _ in 0..150 {
+                let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "action":"status","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
+                }))
+                .expect("status request");
+                let status = content(
+                    &server
+                        .company_screener(Parameters(request))
+                        .await
+                        .expect("status"),
+                );
+                assert_ne!(status["status"], json!("failed"), "screen failed: {status}");
+                if status["status"] == json!("completed") {
+                    completed = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            assert!(completed, "expectations screen must complete");
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"results","job_id":job_id,"cursor":0,"prompt":"","limit":10,
+                "criteria_overrides":{}
+            }))
+            .expect("results request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("results"),
+            );
+            assert_eq!(output["metadata"]["candidate_count"], json!(2));
+            assert_eq!(output["metadata"]["passed_count"], json!(1));
+            assert_eq!(output["metadata"]["excluded_count"], json!(1));
+            assert_eq!(output["metadata"]["reconciled"], json!(true));
+            assert_eq!(output["table"]["row_count"], json!(1));
+            assert_eq!(output["table"]["row_ids"], json!(["LIQ.US"]));
+            assert_eq!(
+                output["table"]["columns"]["actionable_symbol"]["values"],
+                json!(["LIQ.US"])
+            );
+            assert_eq!(output["exclusions"][0]["symbol"], json!("ILL.US"));
+            let fundamental_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+                .count();
+            assert_eq!(
+                fundamental_calls, 1,
+                "illiquid rows must not fetch fundamentals"
+            );
+            let history_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/eod/"))
+                .count();
+            assert_eq!(
+                history_calls, 0,
+                "avgvol_200d screening must not fetch history"
+            );
         })
         .await;
 }

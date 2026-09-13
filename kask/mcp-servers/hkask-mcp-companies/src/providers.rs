@@ -1807,12 +1807,19 @@ pub async fn fetch_eodhd_exchanges(
     eodhd_get(client, "/exchanges-list", eodhd_api_key, "", &[]).await
 }
 
-pub async fn fetch_eodhd_exchange_details(
+pub async fn fetch_eodhd_common_stocks(
     client: &reqwest::Client,
     eodhd_api_key: &str,
     exchange: &str,
 ) -> Result<Value, McpToolError> {
-    eodhd_get(client, "/v2/exchange-details", eodhd_api_key, exchange, &[]).await
+    eodhd_get(
+        client,
+        "/exchange-symbol-list",
+        eodhd_api_key,
+        exchange,
+        &[("type", "common_stock")],
+    )
+    .await
 }
 
 pub async fn fetch_eodhd_fundamentals(
@@ -1823,21 +1830,12 @@ pub async fn fetch_eodhd_fundamentals(
     eodhd_get(client, "/fundamentals", eodhd_api_key, symbol, &[]).await
 }
 
-pub async fn fetch_eodhd_eod_history(
+pub async fn fetch_eodhd_realtime(
     client: &reqwest::Client,
     eodhd_api_key: &str,
     symbol: &str,
-    from: &str,
-    to: &str,
 ) -> Result<Value, McpToolError> {
-    eodhd_get(
-        client,
-        "/eod",
-        eodhd_api_key,
-        symbol,
-        &[("from", from), ("to", to), ("period", "d")],
-    )
-    .await
+    eodhd_get(client, "/real-time", eodhd_api_key, symbol, &[]).await
 }
 
 /// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
