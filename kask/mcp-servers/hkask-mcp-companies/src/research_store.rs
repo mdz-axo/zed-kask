@@ -66,6 +66,8 @@ const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
 
 const MAX_ENCODED_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_DECODED_ATTACHMENT_BYTES: usize = 6 * 1024 * 1024;
+const SCREEN_JOB_RESTART_ERROR: &str =
+    "screen calculation interrupted by companies server restart; submit calculate again";
 
 /// Resolve the SQLite DB path for an owner, mirroring the portfolio crate's
 /// `PortfolioStore::new` path resolution. The companies module opens its
@@ -175,6 +177,7 @@ impl ResearchStore {
         let db_path = resolve_db_path(&owner)?;
         let manager = Self { store, db_path };
         manager.ensure_companies_schema()?;
+        manager.fail_interrupted_screen_jobs()?;
         Ok(manager)
     }
 
@@ -185,6 +188,7 @@ impl ResearchStore {
             db_path: directory.join("master.db"),
         };
         manager.ensure_companies_schema()?;
+        manager.fail_interrupted_screen_jobs()?;
         Ok(manager)
     }
 
@@ -198,6 +202,25 @@ impl ResearchStore {
         let conn = self.open()?;
         conn.execute_batch(COMPANIES_SCHEMA_DDL)
             .map_err(|e| format!("failed to initialize companies schema: {e}"))?;
+        Ok(())
+    }
+
+    fn fail_interrupted_screen_jobs(&self) -> Result<(), PortfolioError> {
+        let conn = self.open()?;
+        let interrupted = conn
+            .execute(
+                "UPDATE screen_jobs
+                 SET status = 'failed', result = NULL, error = ?1, updated_at = ?2
+                 WHERE status IN ('queued', 'executing')",
+                params![SCREEN_JOB_RESTART_ERROR, now_rfc3339()],
+            )
+            .map_err(|error| format!("recover interrupted screen jobs: {error}"))?;
+        if interrupted > 0 {
+            tracing::warn!(
+                interrupted,
+                "marked interrupted saved-screen jobs failed after companies server restart"
+            );
+        }
         Ok(())
     }
 
@@ -587,6 +610,63 @@ impl ResearchStore {
             format!("delete_file: metadata removed but failed to delete file '{path}': {e}")
         })?;
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reopening_store_fails_only_interrupted_screen_jobs() -> Result<(), PortfolioError> {
+        let directory = tempfile::tempdir()
+            .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
+        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
+        let definition = json!({"name":"restart-contract"});
+
+        for (id, status) in [("queued-job", "queued"), ("executing-job", "executing")] {
+            store.insert_screen_job(&ScreenJobRecord {
+                id: id.to_string(),
+                status: status.to_string(),
+                definition: definition.clone(),
+                result: None,
+                error: None,
+                created_at: "2026-09-13T00:00:00Z".to_string(),
+                updated_at: "2026-09-13T00:00:00Z".to_string(),
+            })?;
+        }
+
+        store.insert_screen_job(&ScreenJobRecord {
+            id: "completed-job".to_string(),
+            status: "queued".to_string(),
+            definition,
+            result: None,
+            error: None,
+            created_at: "2026-09-13T00:00:00Z".to_string(),
+            updated_at: "2026-09-13T00:00:00Z".to_string(),
+        })?;
+        let completed_result = json!({"rows":[{"symbol":"TEST.US"}]});
+        store.update_screen_job("completed-job", "completed", Some(&completed_result), None)?;
+        drop(store);
+
+        let reopened = ResearchStore::with_dir(directory.path().to_path_buf())?;
+        for id in ["queued-job", "executing-job"] {
+            let job = reopened
+                .get_screen_job(id)?
+                .ok_or_else(|| PortfolioError::from(format!("missing screen job {id}")))?;
+            assert_eq!(job.status, "failed");
+            assert_eq!(job.result, None);
+            assert_eq!(job.error.as_deref(), Some(SCREEN_JOB_RESTART_ERROR));
+        }
+
+        let completed = reopened
+            .get_screen_job("completed-job")?
+            .ok_or_else(|| PortfolioError::from("missing completed screen job".to_string()))?;
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.result, Some(completed_result));
+        assert_eq!(completed.error, None);
         Ok(())
     }
 }
