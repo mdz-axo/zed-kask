@@ -908,6 +908,27 @@ impl CompaniesServer {
         .map_err(|error| error.to_string())?;
         let (average_usd, observations) =
             trailing_average_dollar_volume_usd(&history, currency_symbol, fx_history)?;
+        if average_usd < minimum_usd {
+            return Ok(None);
+        }
+        let fundamentals =
+            providers::fetch_eodhd_fundamentals(&self.client, &self.eodhd_api_key, &symbol)
+                .await
+                .map_err(|error| error.to_string())?;
+        let general = fundamentals
+            .get("General")
+            .and_then(|value| value.as_object())
+            .ok_or_else(|| "EODHD fundamentals has no General object".to_string())?;
+        let instrument_type = general
+            .get("Type")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "EODHD General.Type is missing".to_string())?;
+        if instrument_type != "Common Stock" {
+            return Err(format!(
+                "EODHD General.Type {instrument_type:?} is not an eligible common share or ADR"
+            ));
+        }
+
         let Some(object) = row.as_object_mut() else {
             return Err("screener row is not an object".to_string());
         };
@@ -923,17 +944,34 @@ impl CompaniesServer {
             "liquidity_window_days".to_string(),
             serde_json::json!(window_days),
         );
-        object.insert(
-            "liquidity_eligible".to_string(),
-            serde_json::json!(average_usd >= minimum_usd),
-        );
+        object.insert("liquidity_eligible".to_string(), serde_json::json!(true));
         let source = if currency == "USD" {
             "EODHD EOD close × volume".to_string()
         } else {
             format!("EODHD EOD close × volume; date-matched USD{currency}.FOREX")
         };
         object.insert("liquidity_source".to_string(), serde_json::json!(source));
-        Ok((average_usd >= minimum_usd).then_some(row))
+        for (output_key, general_key) in [
+            ("instrument_type", "Type"),
+            ("issuer_lei", "LEI"),
+            ("security_isin", "ISIN"),
+            ("primary_ticker", "PrimaryTicker"),
+            ("home_category", "HomeCategory"),
+            ("other_listings", "Listings"),
+        ] {
+            object.insert(
+                output_key.to_string(),
+                general
+                    .get(general_key)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        object.insert(
+            "identity_source".to_string(),
+            serde_json::json!("EODHD General"),
+        );
+        Ok(Some(row))
     }
 
     /// The EODHD exchange inventory, cached 24h.

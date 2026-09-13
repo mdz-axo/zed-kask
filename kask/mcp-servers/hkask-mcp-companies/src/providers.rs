@@ -489,6 +489,39 @@ pub async fn companies_get(
     }
 }
 
+/// Acquire one normalized endpoint from EODHD without fallback. Screening
+/// primary-security analysis uses this path so one issuer cannot mix FMP and
+/// EODHD statements, prices, or identity.
+pub async fn companies_get_eodhd_only(
+    client: &reqwest::Client,
+    tool: &str,
+    symbol: &str,
+    eodhd_api_key: &str,
+    extra_params: &[(&str, &str)],
+) -> Result<ProviderResponse, McpToolError> {
+    let mapping = endpoint_mapping(tool)
+        .ok_or_else(|| McpToolError::invalid_argument(format!("unknown tool: {tool}")))?;
+    let value = eodhd_get(
+        client,
+        mapping.eodhd_path,
+        eodhd_api_key,
+        symbol,
+        extra_params,
+    )
+    .await?;
+    let value = if mapping.normalize_eodhd {
+        emit_provider_reg(tool, symbol, "EODHD", true);
+        truncate_to_limit(normalize_eodhd(tool, &value, symbol), extra_params)
+    } else {
+        value
+    };
+    Ok(ProviderResponse {
+        value,
+        provider: Provider::Eodhd,
+        warnings: Vec::new(),
+    })
+}
+
 /// Acquire canonical metrics while retaining the actual provider. FMP stable
 /// splits metrics across three endpoints; EODHD derives them from fundamentals
 /// and is never mixed with FMP data.
@@ -1810,6 +1843,17 @@ pub async fn fetch_eodhd_exchanges(
 /// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
 /// max-by-date row's close of `USD{currency}.FOREX`. Returns the rate's
 /// as-of date alongside the value.
+/// Fetch raw EODHD General/fundamentals for one explicitly qualified
+/// security. This path is EODHD-only so issuer and primary-security identity
+/// cannot silently switch providers inside a screen.
+pub async fn fetch_eodhd_fundamentals(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+    symbol: &str,
+) -> Result<Value, McpToolError> {
+    eodhd_get(client, "/fundamentals", eodhd_api_key, symbol, &[]).await
+}
+
 /// Fetch raw EODHD daily bars for one explicitly qualified security over a
 /// bounded date range. This path is EODHD-only: screening liquidity must not
 /// silently mix providers.

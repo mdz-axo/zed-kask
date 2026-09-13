@@ -112,6 +112,10 @@ pub(crate) struct CharacteristicsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
+    /// Include management-guidance web research. Defaults to true for the
+    /// interactive single-company report; exhaustive screening sets false so
+    /// optional search credentials and cost cannot block the financial solve.
+    pub include_research: Option<bool>,
     /// Your estimate of sustainable revenue growth (0.0–1.0). Context
     /// annotation only — the gap axis is price-implied expectations vs
     /// demonstrated DuPont capability (operator ruling 2026-09-10).

@@ -133,6 +133,10 @@ fn acquisition_cache_key(extra: &[(&str, &str)]) -> String {
     format!("normalized-v3:{}", fibo_cache::hash_params(extra))
 }
 
+fn eodhd_acquisition_cache_key(extra: &[(&str, &str)]) -> String {
+    format!("eodhd-normalized-v1:{}", fibo_cache::hash_params(extra))
+}
+
 impl CompaniesServer {
     /// expect: [P5] Every reader sees the same normalized data and actual source.
     /// pre: logical provider endpoint; post: cache hits retain provenance and warnings.
@@ -198,6 +202,45 @@ impl CompaniesServer {
         Ok(response)
     }
 
+    async fn fetch_eodhd_response(
+        &self,
+        tool: &str,
+        symbol: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<providers::ProviderResponse, McpToolError> {
+        let params_hash = eodhd_acquisition_cache_key(extra);
+        if let Some(cache) = &self.fibo_cache
+            && let Some(cached) = cache.get_raw(symbol, tool, &params_hash)
+        {
+            match serde_json::from_value::<providers::ProviderResponse>(cached) {
+                Ok(response) if response.provider == Provider::Eodhd => return Ok(response),
+                Ok(_) => tracing::warn!(symbol, tool, "non-EODHD response in EODHD-only cache"),
+                Err(error) => {
+                    tracing::warn!(
+                        symbol,
+                        tool,
+                        "invalid EODHD acquisition cache entry: {error}"
+                    )
+                }
+            }
+        }
+        let response = providers::companies_get_eodhd_only(
+            &self.client,
+            tool,
+            symbol,
+            &self.eodhd_api_key,
+            extra,
+        )
+        .await?;
+        if let Some(cache) = &self.fibo_cache {
+            let cached = serde_json::to_value(&response).map_err(|error| {
+                McpToolError::internal(format!("serialize EODHD acquisition: {error}"))
+            })?;
+            cache.store_raw(symbol, tool, &params_hash, &cached, "EODHD");
+        }
+        Ok(response)
+    }
+
     async fn fetch(
         &self,
         tool: &str,
@@ -207,12 +250,28 @@ impl CompaniesServer {
         Ok(self.fetch_response(tool, symbol, extra).await?.value)
     }
 
+    async fn fetch_eodhd(
+        &self,
+        tool: &str,
+        symbol: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<serde_json::Value, McpToolError> {
+        Ok(self.fetch_eodhd_response(tool, symbol, extra).await?.value)
+    }
+
     /// Fetch a company profile as a typed `CompanyProfile` view. Concentrates
     /// field-name knowledge so tool handlers read `profile.market_cap()`
     /// instead of `v.get("mktCap").and_then(|v| v.as_f64())`.
     async fn fetch_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
         Ok(CompanyProfile::from_response(
             self.fetch_response("company_profile", symbol, &[]).await?,
+        ))
+    }
+
+    async fn fetch_eodhd_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
+        Ok(CompanyProfile::from_response(
+            self.fetch_eodhd_response("company_profile", symbol, &[])
+                .await?,
         ))
     }
 
@@ -225,6 +284,18 @@ impl CompaniesServer {
         let limit = limit.to_string();
         Ok(KeyMetrics::from_raw(
             self.fetch("key_metrics", symbol, &[("limit", &limit)])
+                .await?,
+        ))
+    }
+
+    async fn fetch_eodhd_key_metrics(
+        &self,
+        symbol: &str,
+        limit: usize,
+    ) -> Result<KeyMetrics, McpToolError> {
+        let limit = limit.to_string();
+        Ok(KeyMetrics::from_raw(
+            self.fetch_eodhd("key_metrics", symbol, &[("limit", &limit)])
                 .await?,
         ))
     }

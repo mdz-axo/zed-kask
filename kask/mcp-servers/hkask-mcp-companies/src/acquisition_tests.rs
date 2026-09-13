@@ -2376,6 +2376,23 @@ async fn screener_applies_exact_usd_liquidity_filter() {
                 ]),
             );
         }
+        if path.starts_with("/eodhd/fundamentals/LIQ.US") {
+            return (
+                200,
+                json!({"General": {
+                    "Code":"LIQ",
+                    "Type":"Common Stock",
+                    "Name":"Liquid Common Inc.",
+                    "Exchange":"US",
+                    "CurrencyCode":"USD",
+                    "LEI":"549300LIQUIDISSUER01",
+                    "ISIN":"US0000000001",
+                    "PrimaryTicker":"LIQ.US",
+                    "HomeCategory":"Domestic",
+                    "Listings":{"0":{"Code":"LIQ","Exchange":"LSE","Name":"Liquid Common Inc."}}
+                }}),
+            );
+        }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
     })
     .await;
@@ -2409,6 +2426,13 @@ async fn screener_applies_exact_usd_liquidity_filter() {
                 .is_some_and(|value| (value - 1_333_333.333_333_333_3).abs() < 1e-6));
             assert_eq!(result["liquidity_eligible"], json!(true));
             assert_eq!(result["liquidity_source"], json!("EODHD EOD close × volume"));
+            assert_eq!(result["instrument_type"], json!("Common Stock"));
+            assert_eq!(result["issuer_lei"], json!("549300LIQUIDISSUER01"));
+            assert_eq!(result["security_isin"], json!("US0000000001"));
+            assert_eq!(result["primary_ticker"], json!("LIQ.US"));
+            assert_eq!(result["home_category"], json!("Domestic"));
+            assert_eq!(result["identity_source"], json!("EODHD General"));
+            assert!(result["other_listings"].is_object());
         })
         .await;
 }
@@ -2455,6 +2479,22 @@ async fn screener_liquidity_uses_date_matched_fx() {
                     {"date":"2026-07-15","close":14.0,"volume":100_000},
                     {"date":"2026-09-11","close":15.0,"volume":100_000}
                 ]),
+            );
+        }
+        if path.starts_with("/eodhd/fundamentals/CADLIQ.TO") {
+            return (
+                200,
+                json!({"General": {
+                    "Type":"Common Stock",
+                    "Name":"Canadian Liquid Common Inc.",
+                    "Exchange":"TO",
+                    "CurrencyCode":"CAD",
+                    "LEI":"549300CADLIQUID001",
+                    "ISIN":"CA0000000001",
+                    "PrimaryTicker":"CADLIQ.TO",
+                    "HomeCategory":"Domestic",
+                    "Listings":{}
+                }}),
             );
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
@@ -2874,6 +2914,52 @@ fn hand_built_capability() -> financial_model::DuPontAnalysis {
         sustainable_growth_rate: 0.06864,
         years: 5,
     }
+}
+
+/// expect: [P5] An explicitly qualified primary security is acquired from
+/// EODHD throughout expectations analysis; the screening workflow never probes
+/// FMP before or after EODHD.
+/// dcterms:identifier: CompaniesServer::expectations_gap / CompaniesServer::fetch_eodhd
+#[tokio::test]
+async fn expectations_qualified_primary_uses_eodhd_only() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/fundamentals/PRIMARY.US") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("PRIMARY");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            return (200, value);
+        }
+        if path.starts_with("/eodhd/real-time/PRIMARY.US") {
+            return (200, json!({"code":"PRIMARY","close":30.0}));
+        }
+        if path.starts_with("/fmp/") {
+            return (500, json!({"error":"FMP must not be called"}));
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
+                "symbol":"PRIMARY.US",
+                "include_research":false
+            }))
+            .expect("request");
+            server
+                .expectations_gap(Parameters(request))
+                .await
+                .expect("expectations gap tool");
+            let requests = fixture.requests();
+            assert!(!requests.is_empty());
+            assert!(
+                requests.iter().all(|path| path.starts_with("/eodhd/")),
+                "qualified primary must be EODHD-only: {requests:?}"
+            );
+        })
+        .await;
 }
 
 /// expect: [P1] The gap axis is price-implied vs demonstrated DuPont

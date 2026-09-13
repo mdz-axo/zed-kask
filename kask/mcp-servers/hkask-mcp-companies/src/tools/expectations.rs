@@ -55,14 +55,26 @@ impl CompaniesServer {
             // fetch timeout, not sum of all fetch timeouts). The stock
             // quote is the price fallback: EODHD-routed profiles (every
             // exchange-qualified symbol) carry no `price` field.
+            let eodhd_primary = req.symbol.contains('.');
             let (req_income, req_balance, req_cf, req_metrics, req_profile, req_quote) =
-                tokio::join! {
-                    self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
-                    self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch_key_metrics(&req.symbol, 5),
-                    self.fetch_profile(&req.symbol),
-                    self.fetch("stock_quote", &req.symbol, &[]),
+                if eodhd_primary {
+                    tokio::join! {
+                        self.fetch_eodhd("income_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch_eodhd("balance_sheet", &req.symbol, &[("limit", "5")]),
+                        self.fetch_eodhd("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch_eodhd_key_metrics(&req.symbol, 5),
+                        self.fetch_eodhd_profile(&req.symbol),
+                        self.fetch_eodhd("stock_quote", &req.symbol, &[]),
+                    }
+                } else {
+                    tokio::join! {
+                        self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
+                        self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch_key_metrics(&req.symbol, 5),
+                        self.fetch_profile(&req.symbol),
+                        self.fetch("stock_quote", &req.symbol, &[]),
+                    }
                 };
 
             // ── 2. Price-implied expectations vs demonstrated capability ──
@@ -84,19 +96,11 @@ impl CompaniesServer {
                             {
                                 Ok((current_price, normalization)) => {
                                     price_source = format!("{source}; {normalization}");
-                                    solve_expectations(
-                                        inc,
-                                        bal,
-                                        cf,
-                                        met.raw(),
-                                        prof,
-                                        current_price,
-                                    )
+                                    solve_expectations(inc, bal, cf, met.raw(), prof, current_price)
                                 }
                                 Err(error) => {
-                                    price_source = format!(
-                                        "{source}; currency_normalization_failed: {error}"
-                                    );
+                                    price_source =
+                                        format!("{source}; currency_normalization_failed: {error}");
                                     None
                                 }
                             }
@@ -114,16 +118,30 @@ impl CompaniesServer {
                 _ => req.symbol.clone(),
             };
 
-            let research = research::search_fundamental(
-                &self.client,
-                &req.symbol,
-                &company_name,
-                "revenue guidance forecast growth outlook",
-                self.exa_api_key.as_deref(),
-                self.tavily_api_key.as_deref(),
-                self.brave_api_key.as_deref(),
-            )
-            .await?;
+            let (research, research_status) = if req.include_research.unwrap_or(true) {
+                (
+                    research::search_fundamental(
+                        &self.client,
+                        &req.symbol,
+                        &company_name,
+                        "revenue guidance forecast growth outlook",
+                        self.exa_api_key.as_deref(),
+                        self.tavily_api_key.as_deref(),
+                        self.brave_api_key.as_deref(),
+                    )
+                    .await?,
+                    "included",
+                )
+            } else {
+                (
+                    research::ResearchResult {
+                        query: String::new(),
+                        claims: Vec::new(),
+                        provider_summary: Vec::new(),
+                    },
+                    "skipped_by_request",
+                )
+            };
 
             let claims = research::ResearchClaimClassifier::classify_all(&research);
 
@@ -147,7 +165,7 @@ impl CompaniesServer {
 
             // ── 5. Assemble the report ─────────────────────────────────
 
-            let output = build_gap_report(
+            let mut output = build_gap_report(
                 &req.symbol,
                 &analysis,
                 &management_growth,
@@ -156,6 +174,12 @@ impl CompaniesServer {
                 claims.claims.len(),
                 &price_source,
             );
+            output["data_quality"]["research_status"] = serde_json::json!(research_status);
+            output["data_quality"]["financial_source"] = serde_json::json!(if eodhd_primary {
+                "EODHD only (qualified primary security)"
+            } else {
+                "provider-routed interactive symbol"
+            });
 
             Ok(fibo::enrich_with_ontology(
                 serde_json::json!(output),
