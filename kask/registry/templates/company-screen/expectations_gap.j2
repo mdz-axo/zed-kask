@@ -1,0 +1,33 @@
+[inference]
+contract:
+  input:
+    as_of: string
+    page_size: integer
+    criteria: object
+  output:
+    as_of: string
+    exchanges: array
+    market_cap_min_usd: number
+    market_cap_max_usd: number
+    liquidity_min_usd: number
+    liquidity_window_days: integer
+    page_size: integer
+    stages: array
+visibility: Public
+---
+{
+  "as_of": {{ as_of | tojson }},
+  "exchanges": {{ criteria.exchanges | tojson }},
+  "market_cap_min_usd": {{ criteria.market_capitalization_min }},
+  "market_cap_max_usd": {{ criteria.market_capitalization_max }},
+  "liquidity_min_usd": {{ criteria.liquidity_min_usd }},
+  "liquidity_window_days": {{ criteria.liquidity_window_days }},
+  "page_size": {{ page_size }},
+  "stages": [
+    "freeze_listing_snapshot",
+    "qualify_exact_usd_liquidity",
+    "resolve_issuer_primary_security",
+    "calculate_expectations_gap",
+    "deduplicate_and_rank"
+  ]
+}

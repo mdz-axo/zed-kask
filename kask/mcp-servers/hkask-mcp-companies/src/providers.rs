@@ -489,39 +489,6 @@ pub async fn companies_get(
     }
 }
 
-/// Acquire one normalized endpoint from EODHD without fallback. Screening
-/// primary-security analysis uses this path so one issuer cannot mix FMP and
-/// EODHD statements, prices, or identity.
-pub async fn companies_get_eodhd_only(
-    client: &reqwest::Client,
-    tool: &str,
-    symbol: &str,
-    eodhd_api_key: &str,
-    extra_params: &[(&str, &str)],
-) -> Result<ProviderResponse, McpToolError> {
-    let mapping = endpoint_mapping(tool)
-        .ok_or_else(|| McpToolError::invalid_argument(format!("unknown tool: {tool}")))?;
-    let value = eodhd_get(
-        client,
-        mapping.eodhd_path,
-        eodhd_api_key,
-        symbol,
-        extra_params,
-    )
-    .await?;
-    let value = if mapping.normalize_eodhd {
-        emit_provider_reg(tool, symbol, "EODHD", true);
-        truncate_to_limit(normalize_eodhd(tool, &value, symbol), extra_params)
-    } else {
-        value
-    };
-    Ok(ProviderResponse {
-        value,
-        provider: Provider::Eodhd,
-        warnings: Vec::new(),
-    })
-}
-
 /// Acquire canonical metrics while retaining the actual provider. FMP stable
 /// splits metrics across three endpoints; EODHD derives them from fundamentals
 /// and is never mixed with FMP data.
@@ -899,7 +866,7 @@ fn truncate_to_limit(value: Value, extra_params: &[(&str, &str)]) -> Value {
 }
 
 /// Normalize EODHD response based on which logical tool endpoint was requested.
-fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> Value {
+pub(crate) fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> Value {
     let eodhd_value = &coerce_eodhd_numeric_strings(eodhd_value);
     match tool {
         "company_profile" => normalize_eodhd_profile(eodhd_value),
@@ -1848,12 +1815,6 @@ pub async fn fetch_eodhd_exchange_details(
     eodhd_get(client, "/v2/exchange-details", eodhd_api_key, exchange, &[]).await
 }
 
-/// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
-/// max-by-date row's close of `USD{currency}.FOREX`. Returns the rate's
-/// as-of date alongside the value.
-/// Fetch raw EODHD General/fundamentals for one explicitly qualified
-/// security. This path is EODHD-only so issuer and primary-security identity
-/// cannot silently switch providers inside a screen.
 pub async fn fetch_eodhd_fundamentals(
     client: &reqwest::Client,
     eodhd_api_key: &str,
@@ -1862,9 +1823,6 @@ pub async fn fetch_eodhd_fundamentals(
     eodhd_get(client, "/fundamentals", eodhd_api_key, symbol, &[]).await
 }
 
-/// Fetch raw EODHD daily bars for one explicitly qualified security over a
-/// bounded date range. This path is EODHD-only: screening liquidity must not
-/// silently mix providers.
 pub async fn fetch_eodhd_eod_history(
     client: &reqwest::Client,
     eodhd_api_key: &str,
@@ -1882,6 +1840,9 @@ pub async fn fetch_eodhd_eod_history(
     .await
 }
 
+/// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
+/// max-by-date row's close of `USD{currency}.FOREX`. Returns the rate's
+/// as-of date alongside the value.
 pub async fn fetch_eodhd_forex_rate(
     client: &reqwest::Client,
     eodhd_api_key: &str,

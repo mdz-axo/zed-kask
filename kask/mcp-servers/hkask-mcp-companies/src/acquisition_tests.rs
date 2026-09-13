@@ -2346,97 +2346,6 @@ async fn screener_foreign_line_kept_when_home_bucket_empty() {
         .await;
 }
 
-/// expect: [P5] A cap-qualified EODHD listing survives the liquidity screen
-/// only when its exact trailing-window mean of daily close × volume meets the
-/// requested USD threshold; the result carries the calculation evidence.
-/// dcterms:identifier: CompaniesServer::company_screener / trailing_average_dollar_volume_usd
-#[tokio::test]
-async fn screener_applies_exact_usd_liquidity_filter() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (
-                200,
-                json!({ "data": [{
-                    "code": "LIQ",
-                    "name": "Liquid Common Inc.",
-                    "exchange": "US",
-                    "currency_symbol": "$",
-                    "market_capitalization": 10_000_000_000.0
-                }] }),
-            );
-        }
-        if path.starts_with("/eodhd/eod/LIQ.US") {
-            return (
-                200,
-                json!([
-                    {"date":"2026-07-15","close":10.0,"adjusted_close":9.8,"volume":50_000},
-                    {"date":"2026-08-14","close":20.0,"adjusted_close":19.5,"volume":100_000},
-                    {"date":"2026-09-11","close":15.0,"adjusted_close":14.7,"volume":100_000}
-                ]),
-            );
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQ.US") {
-            return (
-                200,
-                json!({"General": {
-                    "Code":"LIQ",
-                    "Type":"Common Stock",
-                    "Name":"Liquid Common Inc.",
-                    "Exchange":"US",
-                    "CurrencyCode":"USD",
-                    "LEI":"549300LIQUIDISSUER01",
-                    "ISIN":"US0000000001",
-                    "PrimaryTicker":"LIQ.US",
-                    "HomeCategory":"Domestic",
-                    "Listings":{"0":{"Code":"LIQ","Exchange":"LSE","Name":"Liquid Common Inc."}}
-                }}),
-            );
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
-                "prompt": "US listed companies with market capitalization between 5 billion and 50 billion",
-                "limit": 10,
-                "criteria_overrides": {
-                    "liquidity_min_usd": 1_000_000.0,
-                    "liquidity_window_days": 60,
-                    "result_offset": 0
-                }
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["count"], json!(1));
-            assert_eq!(output["candidates_processed"], json!(1));
-            assert_eq!(output["next_result_offset"], serde_json::Value::Null);
-            let result = &output["results"][0];
-            assert_eq!(result["liquidity_observations"], json!(3));
-            assert_eq!(result["liquidity_window_days"], json!(60));
-            assert!(result["average_daily_dollar_volume_usd"]
-                .as_f64()
-                .is_some_and(|value| (value - 1_333_333.333_333_333_3).abs() < 1e-6));
-            assert_eq!(result["liquidity_eligible"], json!(true));
-            assert_eq!(result["liquidity_source"], json!("EODHD EOD close × volume"));
-            assert_eq!(result["instrument_type"], json!("Common Stock"));
-            assert_eq!(result["issuer_lei"], json!("549300LIQUIDISSUER01"));
-            assert_eq!(result["security_isin"], json!("US0000000001"));
-            assert_eq!(result["primary_ticker"], json!("LIQ.US"));
-            assert_eq!(result["home_category"], json!("Domestic"));
-            assert_eq!(result["identity_source"], json!("EODHD General"));
-            assert!(result["other_listings"].is_object());
-        })
-        .await;
-}
-
 /// expect: [P5] Non-USD liquidity uses the EODHD USD cross-rate from each
 /// security's trading date; applying one current FX rate to the whole window
 /// cannot change pass/fail near the USD threshold.
@@ -2460,12 +2369,22 @@ async fn screener_liquidity_uses_date_matched_fx() {
                 }] }),
             );
         }
+        if path.starts_with("/eodhd/v2/exchange-details/TO") {
+            return (
+                200,
+                json!({"data":{
+                    "Code":"TO",
+                    "TradingHours":{"WorkingDays":"Mon, Tue, Wed, Thu, Fri"},
+                    "ExchangeHolidays":{}
+                }}),
+            );
+        }
         if path.starts_with("/eodhd/eod/USDCAD.FOREX") {
             if path.contains("from=") {
                 return (
                     200,
                     json!([
-                        {"date":"2026-07-15","close":1.4},
+                        {"date":"2026-09-08","close":1.4},
                         {"date":"2026-09-11","close":1.5}
                     ]),
                 );
@@ -2476,8 +2395,8 @@ async fn screener_liquidity_uses_date_matched_fx() {
             return (
                 200,
                 json!([
-                    {"date":"2026-07-15","close":14.0,"volume":100_000},
-                    {"date":"2026-09-11","close":15.0,"volume":100_000}
+                    {"date":"2026-09-08","close":14.0,"volume":250_000},
+                    {"date":"2026-09-11","close":15.0,"volume":250_000}
                 ]),
             );
         }
@@ -2504,26 +2423,47 @@ async fn screener_liquidity_uses_date_matched_fx() {
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
             let request = serde_json::from_value::<types::ScreenerRequest>(json!({
-                "prompt": "Canada listed companies with market capitalization between 5 billion and 50 billion",
-                "limit": 10,
+                "prompt":"",
+                "composition":"expectations_gap",
+                "as_of":"2026-09-11",
+                "limit":10,
                 "criteria_overrides": {
-                    "liquidity_min_usd": 1_000_000.0,
-                    "liquidity_window_days": 60
+                    "exchanges":["TO"],
+                    "market_capitalization_min":5_000_000_000.0,
+                    "market_capitalization_max":50_000_000_000.0,
+                    "liquidity_min_usd":1_000_000.0,
+                    "liquidity_window_days":4
                 }
             }))
             .expect("request");
-            let output = content(
+            let started = content(
                 &server
                     .company_screener(Parameters(request))
                     .await
-                    .expect("screener tool"),
+                    .expect("start composed screen"),
             );
-            assert_eq!(output["count"], json!(1));
-            let result = &output["results"][0];
-            assert!(result["average_daily_dollar_volume_usd"]
-                .as_f64()
-                .is_some_and(|value| (value - 1_000_000.0).abs() < 1e-6));
-            assert_eq!(result["liquidity_observations"], json!(2));
+            let run_id = started["run_id"].as_str().expect("run id");
+            let advance = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"",
+                "run_id":run_id,
+                "limit":10,
+                "criteria_overrides":{}
+            }))
+            .expect("advance request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(advance))
+                    .await
+                    .expect("advance composed screen"),
+            );
+            let result = &output["latest_qualified_listings"][0];
+            assert!(
+                result["average_daily_dollar_volume_usd"]
+                    .as_f64()
+                    .is_some_and(|value| (value - 1_000_000.0).abs() < 1e-6)
+            );
+            assert_eq!(result["scheduled_sessions"], json!(5));
+            assert_eq!(result["observed_sessions"], json!(2));
             assert_eq!(
                 result["liquidity_source"],
                 json!("EODHD EOD close × volume; date-matched USDCAD.FOREX")
@@ -2918,9 +2858,9 @@ fn hand_built_capability() -> financial_model::DuPontAnalysis {
 
 /// expect: [P5] An expectations-screen run freezes the EODHD listing universe
 /// once; advancing the persisted run never rebuilds or reorders that snapshot.
-/// dcterms:identifier: CompaniesServer::expectations_screen / ResearchStore::save_expectations_screen
+/// dcterms:identifier: CompaniesServer::company_screener / ResearchStore::save_company_screen
 #[tokio::test]
-async fn expectations_screen_continuation_reuses_frozen_snapshot() {
+async fn company_screen_continuation_reuses_frozen_snapshot() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
         if path.starts_with("/eodhd/screener") {
@@ -2935,37 +2875,56 @@ async fn expectations_screen_continuation_reuses_frozen_snapshot() {
                 }]}),
             );
         }
+        if path.starts_with("/eodhd/v2/exchange-details/US") {
+            return (
+                200,
+                json!({"data":{
+                    "Code":"US",
+                    "TradingHours":{"WorkingDays":"Mon, Tue, Wed, Thu, Fri"},
+                    "ExchangeHolidays":{}
+                }}),
+            );
+        }
+        if path.starts_with("/eodhd/eod/RUN.US") {
+            return (200, json!([]));
+        }
         (404, json!({"error":"unexpected endpoint","path":path}))
     })
     .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let start = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+            let start = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"",
+                "composition":"expectations_gap",
                 "as_of":"2026-09-11",
-                "exchanges":["US"],
-                "market_cap_min_usd":5_000_000_000.0,
-                "market_cap_max_usd":50_000_000_000.0,
-                "liquidity_min_usd":1_000_000.0,
-                "liquidity_window_days":60,
-                "page_size":1
+                "limit":1,
+                "criteria_overrides":{
+                    "exchanges":["US"],
+                    "market_capitalization_min":5_000_000_000.0,
+                    "market_capitalization_max":50_000_000_000.0,
+                    "liquidity_min_usd":1_000_000.0,
+                    "liquidity_window_days":60
+                }
             }))
             .expect("start request");
             let started = content(
                 &server
-                    .expectations_screen(Parameters(start))
+                    .company_screener(Parameters(start))
                     .await
                     .expect("start expectations screen"),
             );
             let run_id = started["run_id"].as_str().expect("run id");
             assert_eq!(started["phase"], json!("qualify_listings"));
-            let advance = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+            let advance = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"",
                 "run_id":run_id,
-                "page_size":1
+                "limit":1,
+                "criteria_overrides":{}
             }))
             .expect("advance request");
             server
-                .expectations_screen(Parameters(advance))
+                .company_screener(Parameters(advance))
                 .await
                 .expect("advance expectations screen");
             let screener_calls = fixture
@@ -2981,9 +2940,9 @@ async fn expectations_screen_continuation_reuses_frozen_snapshot() {
 /// expect: [P5] The two-month liquidity mean divides by every scheduled
 /// exchange session; a missing security bar contributes zero rather than
 /// disappearing from the denominator.
-/// dcterms:identifier: CompaniesServer::expectations_screen / exchange_sessions
+/// dcterms:identifier: CompaniesServer::company_screener / company_screen::exchange_sessions
 #[tokio::test]
-async fn expectations_screen_counts_missing_bars_as_zero_liquidity() {
+async fn company_screen_counts_missing_bars_as_zero_liquidity() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
         if path.starts_with("/eodhd/screener") {
@@ -3022,44 +2981,44 @@ async fn expectations_screen_counts_missing_bars_as_zero_liquidity() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let start = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+            let start = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"",
+                "composition":"expectations_gap",
                 "as_of":"2026-09-11",
-                "exchanges":["US"],
-                "market_cap_min_usd":5_000_000_000.0,
-                "market_cap_max_usd":50_000_000_000.0,
-                "liquidity_min_usd":1_000_000.0,
-                "liquidity_window_days":4,
-                "page_size":1
+                "limit":1,
+                "criteria_overrides":{
+                    "exchanges":["US"],
+                    "market_capitalization_min":5_000_000_000.0,
+                    "market_capitalization_max":50_000_000_000.0,
+                    "liquidity_min_usd":1_000_000.0,
+                    "liquidity_window_days":4
+                }
             }))
             .expect("start request");
             let started = content(
                 &server
-                    .expectations_screen(Parameters(start))
+                    .company_screener(Parameters(start))
                     .await
                     .expect("start expectations screen"),
             );
             let run_id = started["run_id"].as_str().expect("run id");
-            let advance = serde_json::from_value::<types::ExpectationsScreenRequest>(json!({
+            let advance = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"",
                 "run_id":run_id,
-                "page_size":1
+                "limit":1,
+                "criteria_overrides":{}
             }))
             .expect("advance request");
             let advanced = content(
                 &server
-                    .expectations_screen(Parameters(advance))
+                    .company_screener(Parameters(advance))
                     .await
                     .expect("advance expectations screen"),
             );
             assert_eq!(advanced["candidate_cursor"], json!(1));
-            assert_eq!(
-                advanced["qualified_listings"].as_array().map(Vec::len),
-                Some(0)
-            );
-            assert_eq!(
-                advanced["excluded_listings"].as_array().map(Vec::len),
-                Some(1)
-            );
-            let exclusion = &advanced["excluded_listings"][0];
+            assert_eq!(advanced["qualified_listing_count"], json!(0));
+            assert_eq!(advanced["excluded_listing_count"], json!(1));
+            let exclusion = &advanced["latest_excluded_listings"][0];
             assert_eq!(exclusion["reason"], json!("below_liquidity_minimum"));
             assert_eq!(exclusion["scheduled_sessions"], json!(5));
             assert!(
@@ -3071,26 +3030,89 @@ async fn expectations_screen_counts_missing_bars_as_zero_liquidity() {
         .await;
 }
 
-/// expect: [P5] An explicitly qualified primary security is acquired from
-/// EODHD throughout expectations analysis; the screening workflow never probes
-/// FMP before or after EODHD.
-/// dcterms:identifier: CompaniesServer::expectations_gap / CompaniesServer::fetch_eodhd
+/// expect: [P5] EODHD listing identity forms one issuer graph: a US ADR and
+/// London common share linked by LEI, PrimaryTicker, or Listings emit one
+/// issuer whose primary is DGE.LSE and whose eligible-line set retains both.
+/// dcterms:identifier: company_screen::build_issuers
+#[test]
+fn company_screen_deduplicates_diageo_at_issuer_level() {
+    let listings = vec![
+        json!({
+            "symbol":"DEO.US",
+            "name":"Diageo plc",
+            "issuer_lei":"213800ZVIELEA55JMJ32",
+            "primary_ticker":"DGE.LSE",
+            "home_category":"ADR",
+            "other_listings":{}
+        }),
+        json!({
+            "symbol":"DGE.LSE",
+            "name":"Diageo PLC",
+            "issuer_lei":"213800ZVIELEA55JMJ32",
+            "primary_ticker":"DGE.LSE",
+            "home_category":"Domestic",
+            "other_listings":{"0":{"Code":"DEO","Exchange":"US","Name":"Diageo PLC ADR"}}
+        }),
+    ];
+    let issuers = crate::company_screen::build_issuers(&listings);
+    assert_eq!(issuers.len(), 1);
+    let issuer = &issuers[0];
+    assert_eq!(issuer["issuer_key"], json!("lei:213800ZVIELEA55JMJ32"));
+    assert_eq!(issuer["identity_basis"], json!("LEI"));
+    assert_eq!(issuer["primary_ticker"], json!("DGE.LSE"));
+    assert_eq!(issuer["eligible_lines"].as_array().map(Vec::len), Some(2));
+}
+
+/// expect: [P5] Qualification and issuer analysis reuse one full EODHD
+/// fundamentals payload; profile, statements, cash flow, and metrics are local
+/// projections, not five provider requests.
+/// dcterms:identifier: CompaniesServer::company_screener / company_screen::load_fundamentals
 #[tokio::test]
-async fn expectations_qualified_primary_uses_eodhd_only() {
+async fn company_screen_reuses_one_fundamentals_payload_per_security() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({"data":[{
+                "code":"PRIMARY","name":"Primary Common Inc.","exchange":"US",
+                "currency_symbol":"$","market_capitalization":10_000_000_000.0
+            }]}));
+        }
+        if path.starts_with("/eodhd/v2/exchange-details/US") {
+            return (200, json!({"data":{
+                "Code":"US","TradingHours":{"WorkingDays":"Mon, Tue, Wed, Thu, Fri"},
+                "ExchangeHolidays":{}
+            }}));
+        }
+        if path.starts_with("/eodhd/eod/PRIMARY.US") {
+            return (200, json!([
+                {"date":"2026-09-07","close":30.0,"volume":100_000},
+                {"date":"2026-09-08","close":30.0,"volume":100_000},
+                {"date":"2026-09-09","close":30.0,"volume":100_000},
+                {"date":"2026-09-10","close":30.0,"volume":100_000},
+                {"date":"2026-09-11","close":30.0,"volume":100_000}
+            ]));
+        }
         if path.starts_with("/eodhd/fundamentals/PRIMARY.US") {
             let mut value = eodhd_fixture();
             value["General"]["Code"] = json!("PRIMARY");
+            value["General"]["Name"] = json!("Primary Common Inc.");
+            value["General"]["Type"] = json!("Common Stock");
             value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["LEI"] = json!("549300PRIMARY0001");
+            value["General"]["ISIN"] = json!("US0000000002");
+            value["General"]["PrimaryTicker"] = json!("PRIMARY.US");
+            value["General"]["HomeCategory"] = json!("Domestic");
+            value["General"]["Listings"] = json!({});
             value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Cash_Flow"] = json!({
+                "currency_symbol":"USD",
+                "yearly":{
+                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+                }
+            });
             return (200, value);
-        }
-        if path.starts_with("/eodhd/real-time/PRIMARY.US") {
-            return (200, json!({"code":"PRIMARY","close":30.0}));
-        }
-        if path.starts_with("/fmp/") {
-            return (500, json!({"error":"FMP must not be called"}));
         }
         (404, json!({"error":"unexpected endpoint","path":path}))
     })
@@ -3098,21 +3120,63 @@ async fn expectations_qualified_primary_uses_eodhd_only() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
-                "symbol":"PRIMARY.US",
-                "include_research":false
+            let start = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"","composition":"expectations_gap","as_of":"2026-09-11","limit":10,
+                "criteria_overrides":{
+                    "exchanges":["US"],"market_capitalization_min":5_000_000_000.0,
+                    "market_capitalization_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0,
+                    "liquidity_window_days":4
+                }
             }))
-            .expect("request");
-            server
-                .expectations_gap(Parameters(request))
-                .await
-                .expect("expectations gap tool");
-            let requests = fixture.requests();
-            assert!(!requests.is_empty());
-            assert!(
-                requests.iter().all(|path| path.starts_with("/eodhd/")),
-                "qualified primary must be EODHD-only: {requests:?}"
+            .expect("start request");
+            let started = content(
+                &server
+                    .company_screener(Parameters(start))
+                    .await
+                    .expect("start"),
             );
+            let run_id = started["run_id"].as_str().expect("run id");
+            for _ in 0..2 {
+                let advance = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "prompt":"","run_id":run_id,"limit":10,"criteria_overrides":{}
+                }))
+                .expect("advance request");
+                server
+                    .company_screener(Parameters(advance))
+                    .await
+                    .expect("advance");
+            }
+            let final_request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt":"","run_id":run_id,"limit":10,"criteria_overrides":{}
+            }))
+            .expect("final request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(final_request))
+                    .await
+                    .expect("final"),
+            );
+            assert_eq!(output["phase"], json!("complete"));
+            assert_eq!(output["issuer_result_count"], json!(1));
+            let result = output["ranked_companies"]
+                .as_array()
+                .and_then(|rows| rows.first())
+                .or_else(|| {
+                    output["partial_companies"]
+                        .as_array()
+                        .and_then(|rows| rows.first())
+                })
+                .expect("ranked or partial result");
+            assert_eq!(
+                result["expectations"]["data_quality"]["financial_source"],
+                json!("EODHD single fundamentals payload")
+            );
+            let fundamentals_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/fundamentals/PRIMARY.US"))
+                .count();
+            assert_eq!(fundamentals_calls, 1);
         })
         .await;
 }

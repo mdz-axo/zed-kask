@@ -42,7 +42,7 @@ fn ttl_for_endpoint(endpoint: &str) -> u64 {
     match endpoint {
         "income_statement" | "balance_sheet" | "cash_flow_statement" => TTL_FINANCIAL_STATEMENT,
         "key_metrics" => TTL_KEY_METRICS,
-        "company_profile" => TTL_COMPANY_PROFILE,
+        "company_profile" | "screen_fundamentals" => TTL_COMPANY_PROFILE,
         "historical_price" => TTL_HISTORICAL_PRICE,
         "stock_quote" => TTL_STOCK_QUOTE,
         "screener_exchanges_list" => TTL_SCREENER_EXCHANGES_LIST,

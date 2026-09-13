@@ -8797,6 +8797,7 @@ dependencies = [
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
  "hkask-types",
+ "minijinja",
  "rand 0.9.4",
  "regex",
  "rmcp",

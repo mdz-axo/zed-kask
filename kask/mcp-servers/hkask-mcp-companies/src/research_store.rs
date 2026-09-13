@@ -54,7 +54,7 @@ const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);
-                CREATE TABLE IF NOT EXISTS expectations_screen_runs (
+                CREATE TABLE IF NOT EXISTS company_screen_runs (
                     id TEXT PRIMARY KEY,
                     state TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -211,7 +211,7 @@ impl ResearchStore {
 
     // ── Companies-specific: resumable expectations screens ─────────
 
-    pub fn save_expectations_screen(
+    pub fn save_company_screen(
         &self,
         id: &str,
         state: &serde_json::Value,
@@ -221,7 +221,7 @@ impl ResearchStore {
             .map_err(|e| format!("serialize expectations screen: {e}"))?;
         let now = now_rfc3339();
         conn.execute(
-            "INSERT INTO expectations_screen_runs (id, state, created_at, updated_at)
+            "INSERT INTO company_screen_runs (id, state, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?3)
              ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
             params![id, state, now],
@@ -230,14 +230,14 @@ impl ResearchStore {
         Ok(())
     }
 
-    pub fn get_expectations_screen(
+    pub fn get_company_screen(
         &self,
         id: &str,
     ) -> Result<Option<serde_json::Value>, PortfolioError> {
         let conn = self.open()?;
         let state: Option<String> = conn
             .query_row(
-                "SELECT state FROM expectations_screen_runs WHERE id = ?1",
+                "SELECT state FROM company_screen_runs WHERE id = ?1",
                 params![id],
                 |row| row.get(0),
             )

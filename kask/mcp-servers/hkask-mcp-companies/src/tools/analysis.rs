@@ -252,7 +252,16 @@ impl CompaniesServer {
         Parameters(req): Parameters<types::ScreenerRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "company_screener", async {
-            // Parse the natural language prompt into structured criteria
+            if req.composition.as_deref() == Some("expectations_gap") || req.run_id.is_some() {
+                let output = crate::company_screen::advance(self, req).await?;
+                return Ok(fibo::enrich_with_ontology(output, "company_screener"));
+            }
+            if let Some(composition) = req.composition.as_deref() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown company screening composition {composition:?}"
+                )));
+            }
+            // Parse the natural language prompt into structured criteria.
             let mut criteria = screener::parse_screening_prompt(&req.prompt);
             let parsed_count = criteria.as_object().map(|object| object.len()).unwrap_or(0);
 
@@ -269,44 +278,14 @@ impl CompaniesServer {
                 overrides_applied = true;
             }
 
-            // Exchange and enrichment controls are handler-owned. They never
-            // enter EODHD screener filter triples.
+            // Exchange criteria are handler-owned: one EODHD query per
+            // exchange code. Filter triples never carry the exchange
+            // dimension.
             let exchange_codes = screener::extract_exchange_codes(&criteria);
-            let liquidity_min_usd = criteria
-                .get("liquidity_min_usd")
-                .and_then(|value| value.as_f64());
-            if liquidity_min_usd.is_some_and(|value| !value.is_finite() || value <= 0.0) {
-                return Err(McpToolError::invalid_argument(
-                    "liquidity_min_usd must be a positive finite number",
-                ));
-            }
-            let liquidity_window_days = criteria
-                .get("liquidity_window_days")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(60);
-            if liquidity_window_days == 0 {
-                return Err(McpToolError::invalid_argument(
-                    "liquidity_window_days must be greater than zero",
-                ));
-            }
-            let result_offset = criteria
-                .get("result_offset")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0);
-            let result_offset = usize::try_from(result_offset).map_err(|_| {
-                McpToolError::invalid_argument("result_offset exceeds the platform range")
-            })?;
             let mut filter_criteria = criteria.clone();
             if let Some(filter_object) = filter_criteria.as_object_mut() {
-                for key in [
-                    "exchange",
-                    "exchanges",
-                    "liquidity_min_usd",
-                    "liquidity_window_days",
-                    "result_offset",
-                ] {
-                    filter_object.remove(key);
-                }
+                filter_object.remove("exchange");
+                filter_object.remove("exchanges");
             }
             let (screener_filters, post_screen_filters) =
                 screener::split_criteria(&filter_criteria);
@@ -626,32 +605,16 @@ impl CompaniesServer {
                 );
             }
 
-            // The cap-qualified universe is stable and sorted before paging.
-            // Liquidity enrichment runs only over this bounded page so callers
-            // can exhaust large screens without exceeding the MCP timeout.
+            // Enforce the advertised `limit` — an upper bound on the returned
+            // row count, not a page size (the fetch exhausts the universe
+            // sorted by market cap, so truncation keeps the largest-cap
+            // matches). `total_matches` preserves the untruncated count.
             let total_matches = merged_rows.len();
-            let page_size = usize::try_from(req.limit)
-                .map_err(|_| McpToolError::invalid_argument("limit exceeds the platform range"))?;
-            let candidate_rows: Vec<serde_json::Value> = merged_rows
-                .into_iter()
-                .skip(result_offset)
-                .take(page_size)
-                .collect();
-            let candidates_processed = candidate_rows.len();
-            let next_result_offset = result_offset
-                .checked_add(candidates_processed)
-                .filter(|next| *next < total_matches);
-            let (rows, liquidity_excluded, liquidity_errors) =
-                if let Some(minimum_usd) = liquidity_min_usd {
-                    self.screen_liquidity_page(
-                        candidate_rows,
-                        minimum_usd,
-                        liquidity_window_days,
-                    )
-                    .await?
-                } else {
-                    (candidate_rows, 0, serde_json::Map::new())
-                };
+            let rows: Vec<serde_json::Value> = if (total_matches as u32) > req.limit {
+                merged_rows.into_iter().take(req.limit as usize).collect()
+            } else {
+                merged_rows
+            };
             let count = rows.len();
 
             let mut output = serde_json::json!({
@@ -668,11 +631,6 @@ impl CompaniesServer {
                 "warnings": warnings,
                 "count": count,
                 "total_matches": total_matches,
-                "result_offset": result_offset,
-                "candidates_processed": candidates_processed,
-                "next_result_offset": next_result_offset,
-                "liquidity_excluded": liquidity_excluded,
-                "liquidity_errors": serde_json::Value::Object(liquidity_errors),
                 "results": rows,
                 "fibo": {
                     "market_capitalization": fibo::MARKET_CAPITALIZATION,
@@ -770,208 +728,6 @@ impl CompaniesServer {
             currency_by_exchange,
             rate_by_currency,
         })
-    }
-
-    /// expect: [P5] A liquidity-qualified listing carries the exact EODHD
-    /// trailing-window mean of daily close × volume in USD; unavailable data
-    /// is surfaced per symbol and never treated as zero or as passing.
-    /// dcterms:identifier: CompaniesServer::screen_liquidity_page
-    async fn screen_liquidity_page(
-        &self,
-        rows: Vec<serde_json::Value>,
-        minimum_usd: f64,
-        window_days: u64,
-    ) -> Result<
-        (
-            Vec<serde_json::Value>,
-            u64,
-            serde_json::Map<String, serde_json::Value>,
-        ),
-        McpToolError,
-    > {
-        let window_days_i64 = i64::try_from(window_days).map_err(|_| {
-            McpToolError::invalid_argument("liquidity_window_days exceeds the calendar range")
-        })?;
-        let to = chrono::Utc::now().date_naive();
-        let from = to
-            .checked_sub_signed(chrono::Duration::days(window_days_i64))
-            .ok_or_else(|| {
-                McpToolError::invalid_argument("liquidity window underflows the calendar")
-            })?;
-        let from = from.format("%Y-%m-%d").to_string();
-        let to = to.format("%Y-%m-%d").to_string();
-
-        let mut currencies: Vec<String> = rows
-            .iter()
-            .filter_map(|row| {
-                row.get("currency_symbol")
-                    .and_then(|value| value.as_str())
-                    .and_then(currency_for_symbol)
-            })
-            .filter(|currency| *currency != "USD")
-            .map(str::to_string)
-            .collect();
-        currencies.sort();
-        currencies.dedup();
-        let fx_fetches = currencies.iter().cloned().map(|currency| {
-            let from = &from;
-            let to = &to;
-            async move {
-                let symbol = format!("USD{currency}.FOREX");
-                let outcome = providers::fetch_eodhd_eod_history(
-                    &self.client,
-                    &self.eodhd_api_key,
-                    &symbol,
-                    from,
-                    to,
-                )
-                .await
-                .map_err(|error| error.to_string());
-                (currency, outcome)
-            }
-        });
-        let fx_histories: std::collections::HashMap<_, _> = futures::future::join_all(fx_fetches)
-            .await
-            .into_iter()
-            .collect();
-
-        use futures::StreamExt as _;
-        const LIQUIDITY_CONCURRENCY: usize = 8;
-        let measurements = futures::stream::iter(rows.into_iter().map(|row| {
-            let from = from.clone();
-            let to = to.clone();
-            let fx_histories = &fx_histories;
-            async move {
-                let symbol = listing_symbol(&row);
-                let measurement = self
-                    .measure_usd_liquidity(row, minimum_usd, window_days, &from, &to, fx_histories)
-                    .await;
-                (symbol, measurement)
-            }
-        }))
-        .buffered(LIQUIDITY_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
-
-        let mut eligible = Vec::new();
-        let mut excluded = 0_u64;
-        let mut errors = serde_json::Map::new();
-        for (symbol, measurement) in measurements {
-            match measurement {
-                Ok(Some(row)) => eligible.push(row),
-                Ok(None) => excluded += 1,
-                Err(reason) => {
-                    excluded += 1;
-                    errors.insert(symbol, serde_json::Value::String(reason));
-                }
-            }
-        }
-        Ok((eligible, excluded, errors))
-    }
-
-    async fn measure_usd_liquidity(
-        &self,
-        mut row: serde_json::Value,
-        minimum_usd: f64,
-        window_days: u64,
-        from: &str,
-        to: &str,
-        fx_histories: &std::collections::HashMap<String, Result<serde_json::Value, String>>,
-    ) -> Result<Option<serde_json::Value>, String> {
-        let symbol = listing_symbol(&row);
-        let currency_symbol = row
-            .get("currency_symbol")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let currency = currency_for_symbol(currency_symbol).ok_or_else(|| {
-            format!("currency symbol {currency_symbol:?} has no unique USD conversion")
-        })?;
-        let fx_history = if currency == "USD" {
-            None
-        } else {
-            Some(
-                fx_histories
-                    .get(currency)
-                    .ok_or_else(|| format!("USD{currency}.FOREX history was not requested"))?
-                    .as_ref()
-                    .map_err(|reason| reason.clone())?,
-            )
-        };
-        let history = providers::fetch_eodhd_eod_history(
-            &self.client,
-            &self.eodhd_api_key,
-            &symbol,
-            from,
-            to,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        let (average_usd, observations) =
-            trailing_average_dollar_volume_usd(&history, currency_symbol, fx_history)?;
-        if average_usd < minimum_usd {
-            return Ok(None);
-        }
-        let fundamentals =
-            providers::fetch_eodhd_fundamentals(&self.client, &self.eodhd_api_key, &symbol)
-                .await
-                .map_err(|error| error.to_string())?;
-        let general = fundamentals
-            .get("General")
-            .and_then(|value| value.as_object())
-            .ok_or_else(|| "EODHD fundamentals has no General object".to_string())?;
-        let instrument_type = general
-            .get("Type")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| "EODHD General.Type is missing".to_string())?;
-        if instrument_type != "Common Stock" {
-            return Err(format!(
-                "EODHD General.Type {instrument_type:?} is not an eligible common share or ADR"
-            ));
-        }
-
-        let Some(object) = row.as_object_mut() else {
-            return Err("screener row is not an object".to_string());
-        };
-        object.insert(
-            "average_daily_dollar_volume_usd".to_string(),
-            serde_json::json!(average_usd),
-        );
-        object.insert(
-            "liquidity_observations".to_string(),
-            serde_json::json!(observations),
-        );
-        object.insert(
-            "liquidity_window_days".to_string(),
-            serde_json::json!(window_days),
-        );
-        object.insert("liquidity_eligible".to_string(), serde_json::json!(true));
-        let source = if currency == "USD" {
-            "EODHD EOD close × volume".to_string()
-        } else {
-            format!("EODHD EOD close × volume; date-matched USD{currency}.FOREX")
-        };
-        object.insert("liquidity_source".to_string(), serde_json::json!(source));
-        for (output_key, general_key) in [
-            ("instrument_type", "Type"),
-            ("issuer_lei", "LEI"),
-            ("security_isin", "ISIN"),
-            ("primary_ticker", "PrimaryTicker"),
-            ("home_category", "HomeCategory"),
-            ("other_listings", "Listings"),
-        ] {
-            object.insert(
-                output_key.to_string(),
-                general
-                    .get(general_key)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-            );
-        }
-        object.insert(
-            "identity_source".to_string(),
-            serde_json::json!("EODHD General"),
-        );
-        Ok(Some(row))
     }
 
     /// The EODHD exchange inventory, cached 24h.
@@ -1432,85 +1188,6 @@ const AMBIGUOUS_SYMBOLS: &[(&str, &[&str])] = &[("kr", &["SEK", "NOK", "DKK"])];
 /// row-currency pass plus client-side band enforcement. Verified live
 /// 2026-09-09: the bounded LSE query returned zero ¥ rows.
 const MIXED_CURRENCY_EXCHANGES: &[&str] = &["LSE"];
-
-fn listing_symbol(row: &serde_json::Value) -> String {
-    let code = row
-        .get("code")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    let exchange = row
-        .get("exchange")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    format!("{code}.{exchange}")
-}
-
-fn trailing_average_dollar_volume_usd(
-    history: &serde_json::Value,
-    currency_symbol: &str,
-    fx_history: Option<&serde_json::Value>,
-) -> Result<(f64, u64), String> {
-    let rows = history
-        .as_array()
-        .ok_or_else(|| "EODHD EOD history is not an array".to_string())?;
-    let major_per_price_unit = if currency_symbol == "p" { 0.01 } else { 1.0 };
-    let fx_by_date = match fx_history {
-        Some(history) => {
-            let fx_rows = history
-                .as_array()
-                .ok_or_else(|| "EODHD FOREX history is not an array".to_string())?;
-            let mut rates = std::collections::HashMap::new();
-            for row in fx_rows {
-                if let (Some(date), Some(rate)) = (
-                    row.get("date").and_then(|value| value.as_str()),
-                    row.get("close").and_then(|value| value.as_f64()),
-                ) && rate.is_finite()
-                    && rate > 0.0
-                {
-                    rates.insert(date.to_string(), rate);
-                }
-            }
-            Some(rates)
-        }
-        None => None,
-    };
-
-    let mut total = 0.0;
-    let mut observations = 0_u64;
-    for row in rows {
-        let Some(close) = row.get("close").and_then(|value| value.as_f64()) else {
-            continue;
-        };
-        let Some(volume) = row.get("volume").and_then(|value| value.as_f64()) else {
-            continue;
-        };
-        if !close.is_finite() || close <= 0.0 || !volume.is_finite() || volume < 0.0 {
-            continue;
-        }
-        let units_per_usd = match &fx_by_date {
-            Some(rates) => {
-                let date = row
-                    .get("date")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| "non-USD EOD row has no date for FX matching".to_string())?;
-                *rates
-                    .get(date)
-                    .ok_or_else(|| format!("no date-matched EODHD FOREX close for {date}"))?
-            }
-            None => 1.0,
-        };
-        let dollar_volume = close * major_per_price_unit * volume / units_per_usd;
-        if !dollar_volume.is_finite() {
-            continue;
-        }
-        total += dollar_volume;
-        observations += 1;
-    }
-    if observations == 0 {
-        return Err("EODHD EOD history has no valid close-volume observations".to_string());
-    }
-    Ok((total / observations as f64, observations))
-}
 
 /// Row-currency pass counters, surfaced in the tool output.
 #[derive(Default)]
