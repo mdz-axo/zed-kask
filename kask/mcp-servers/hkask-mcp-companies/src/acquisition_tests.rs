@@ -2664,9 +2664,9 @@ async fn screener_non_common_instruments_dropped() {
         .await;
 }
 
-/// expect: [P9] A failed exchanges-list fetch degrades the whole conversion
-/// loudly — bounds apply unconverted (warned), results still return, and
-/// the round-robin interleave is preserved.
+/// expect: [P9] A failed exchanges-list fetch degrades loudly: provider cap
+/// bounds are omitted rather than misapplied in local currency, returned rows
+/// remain unconverted, and round-robin interleave is preserved.
 #[tokio::test]
 async fn screener_fx_list_failure_degrades_loudly() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -2718,7 +2718,7 @@ async fn screener_fx_list_failure_degrades_loudly() {
                         .unwrap_or("")
                         .contains("USD conversion unavailable"))
             );
-            // Bounds passed through unconverted.
+            // Incorrect local-currency bounds are never sent in degraded mode.
             let lse_bounds = fixture
                 .requests()
                 .iter()
@@ -2726,8 +2726,8 @@ async fn screener_fx_list_failure_degrades_loudly() {
                 .map(|request| decode_screener_cap_bounds(request))
                 .unwrap_or_default();
             assert!(
-                lse_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
-                "LSE lower bound unconverted in degraded mode: {lse_bounds:?}"
+                lse_bounds.is_empty(),
+                "LSE cap bounds must be omitted in degraded mode: {lse_bounds:?}"
             );
             // Round-robin preserved (no USD ranking without conversion).
             let results = output["results"].as_array().expect("results");
