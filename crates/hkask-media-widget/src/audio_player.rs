@@ -20,7 +20,6 @@ struct AudioInner {
     player: Option<rodio::Player>,
     duration: Duration,
     volume: f32,
-    is_playing: bool,
 }
 
 impl AudioPlayer {
@@ -31,48 +30,8 @@ impl AudioPlayer {
                 player: None,
                 duration: Duration::ZERO,
                 volume: 1.0,
-                is_playing: false,
             }),
         }
-    }
-
-    /// Play audio from raw bytes. Stops any current playback.
-    pub fn play_bytes(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        let mut inner = self.inner.lock();
-
-        // Lazily initialize the audio output device.
-        if inner.device_sink.is_none() {
-            let mut device_sink = DeviceSinkBuilder::open_default_sink()
-                .map_err(|error| anyhow::anyhow!("failed to open audio output stream: {error}"))?;
-            device_sink.log_on_drop(false);
-            inner.device_sink = Some(device_sink);
-        }
-
-        let device_sink = inner
-            .device_sink
-            .as_ref()
-            .context("audio device not initialized")?;
-        let mixer = device_sink.mixer();
-
-        // Decode the audio source.
-        let cursor = Cursor::new(bytes);
-        let source = Decoder::try_from(cursor)
-            .map_err(|error| anyhow::anyhow!("failed to decode audio: {error}"))?;
-
-        let duration = source.total_duration().unwrap_or(Duration::ZERO);
-
-        // Create a new player on the mixer and start playback.
-        let player = rodio::Player::connect_new(mixer);
-        player.set_volume(inner.volume);
-        player.append(source);
-        player.play();
-
-        inner.player = Some(player);
-        inner.duration = duration;
-        inner.is_playing = true;
-        drop(inner);
-
-        Ok(())
     }
 
     /// Load audio from raw bytes WITHOUT starting playback — the widget's
@@ -112,7 +71,6 @@ impl AudioPlayer {
 
         inner.player = Some(player);
         inner.duration = duration;
-        inner.is_playing = false;
         drop(inner);
 
         Ok(())
@@ -148,7 +106,6 @@ impl AudioPlayer {
         if let Some(player) = inner.player.take() {
             player.stop();
         }
-        inner.is_playing = false;
         inner.duration = Duration::ZERO;
     }
 

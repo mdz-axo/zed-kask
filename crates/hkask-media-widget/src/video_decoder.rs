@@ -31,6 +31,15 @@ pub enum PlaybackState {
     Stopped,
     Playing,
     Paused,
+    Finished,
+}
+
+/// One decoder observation. End-of-stream is a normal terminal outcome, not
+/// an error; callers use it to close the playback loop without warning.
+enum DecodeOutcome {
+    Frame(DecodedFrame),
+    Pending,
+    EndOfStream,
 }
 
 /// How far ahead of the playback clock audio is queued. Rodio consumes at
@@ -75,19 +84,33 @@ impl VideoPlayer {
         }
     }
 
-    /// Open a local video file for playback. Sets up both the video decoder
-    /// and, when the file has an audio stream, the audio decode + output
-    /// pipeline (as a second FFmpeg input on the same file).
-    pub fn open(&mut self, path: &Path) -> anyhow::Result<()> {
+    /// Open a local video file and decode its poster frame without playing.
+    ///
+    /// expect: Opening a video makes its first frame available while playback
+    /// remains stopped.
+    /// [P1] Motivating: the operator can inspect media before choosing Play.
+    /// pre: `path` names a source with a decodable video stream.
+    /// post: returns the first frame and leaves `is_playing() == false`.
+    /// [P2] Constraining: opening never starts unsolicited audio.
+    pub fn open(&mut self, path: &Path) -> anyhow::Result<DecodedFrame> {
         #[cfg(feature = "video")]
         {
-            let decoder = VideoDecoderInner::open(path, None)?;
+            let mut decoder = VideoDecoderInner::open(path, None)?;
+            let first_frame = match decoder.decode_frame_at(Duration::ZERO)? {
+                DecodeOutcome::Frame(frame) => frame,
+                DecodeOutcome::Pending => {
+                    return Err(anyhow::anyhow!("video source produced no initial frame"));
+                }
+                DecodeOutcome::EndOfStream => {
+                    return Err(anyhow::anyhow!("video source ended before its first frame"));
+                }
+            };
             self.duration = decoder.duration();
             self.decoder = Some(decoder);
             self.state = PlaybackState::Stopped;
             self.playing_since = None;
             self.position_at_play = Duration::ZERO;
-            Ok(())
+            Ok(first_frame)
         }
         #[cfg(not(feature = "video"))]
         {
@@ -104,19 +127,32 @@ impl VideoPlayer {
     /// URL (FFmpeg's http/https handlers stream it); `audio_url` carries the
     /// separate audio-only URL for DASH sources — `None` means the video URL
     /// already contains audio (progressive format or direct file).
-    pub fn open_stream(&mut self, video_url: &str, audio_url: Option<&str>) -> anyhow::Result<()> {
+    pub fn open_stream(
+        &mut self,
+        video_url: &str,
+        audio_url: Option<&str>,
+    ) -> anyhow::Result<DecodedFrame> {
         #[cfg(feature = "video")]
         {
-            let decoder = VideoDecoderInner::open(
+            let mut decoder = VideoDecoderInner::open(
                 std::path::Path::new(video_url),
                 audio_url.map(std::path::Path::new),
             )?;
+            let first_frame = match decoder.decode_frame_at(Duration::ZERO)? {
+                DecodeOutcome::Frame(frame) => frame,
+                DecodeOutcome::Pending => {
+                    return Err(anyhow::anyhow!("video stream produced no initial frame"));
+                }
+                DecodeOutcome::EndOfStream => {
+                    return Err(anyhow::anyhow!("video stream ended before its first frame"));
+                }
+            };
             self.duration = decoder.duration();
             self.decoder = Some(decoder);
             self.state = PlaybackState::Stopped;
             self.playing_since = None;
             self.position_at_play = Duration::ZERO;
-            Ok(())
+            Ok(first_frame)
         }
         #[cfg(not(feature = "video"))]
         {
@@ -163,19 +199,17 @@ impl VideoPlayer {
         }
     }
 
-    /// Open a remote URL for streaming playback. FFmpeg's format input accepts
-    /// URL strings — its http/https protocol handlers stream directly. For
-    /// platform URLs (YouTube, Vimeo, etc.), the caller should resolve the
-    /// direct stream URL(s) via `streaming::resolve_stream_urls` first and
-    /// use [`VideoPlayer::open_stream`] so DASH audio is not lost.
-    pub fn open_url(&mut self, url: &str) -> anyhow::Result<()> {
-        self.open_stream(url, None)
-    }
-
     /// Start playback. Transitions from any state (including Stopped after
     /// `open`) to Playing — video clock and audio output together. The
     /// clock rebases: audio-master when audio is live, wall time otherwise.
     pub fn play(&mut self) {
+        if self.state == PlaybackState::Finished {
+            self.position_at_play = Duration::ZERO;
+            #[cfg(feature = "video")]
+            if let Some(decoder) = &mut self.decoder {
+                decoder.reset_after_seek(Duration::ZERO, false);
+            }
+        }
         self.playing_since = Some(std::time::Instant::now());
         #[cfg(feature = "video")]
         {
@@ -228,6 +262,9 @@ impl VideoPlayer {
     /// the player was already Playing because rodio's `clear()` leaves its
     /// player paused.
     pub fn seek(&mut self, position: Duration) {
+        if self.state == PlaybackState::Finished {
+            self.state = PlaybackState::Paused;
+        }
         self.position_at_play = position;
         if self.playing_since.is_some() {
             self.playing_since = Some(std::time::Instant::now());
@@ -301,37 +338,42 @@ impl VideoPlayer {
     /// Decode the video frame for the current master-clock position and
     /// queue audio ahead of it.
     ///
-    /// Called from the GPUI render loop (or a background `cx.spawn` timer)
-    /// at ~30fps while playing. The `delta` argument is unused for the
-    /// clock (position is wall-time-derived) but kept for signature
-    /// stability. Returns the decoded BGRA frame for display via
-    /// `img(RenderImage)`.
+    /// Called by the dedicated playback worker at ~30fps while playing.
+    /// The `delta` argument is unused for the clock because position is
+    /// audio-consumption-derived when audio exists and wall-time-derived
+    /// otherwise. Returns a decoded BGRA frame for the widget.
     pub fn advance_and_decode(&mut self, _delta: Duration) -> anyhow::Result<Option<DecodedFrame>> {
         if self.state != PlaybackState::Playing {
             return Ok(None);
         }
 
         let position = self.position();
-        if self.duration > Duration::ZERO && position >= self.duration {
-            self.position_at_play = self.duration;
-            self.playing_since = None;
-            self.state = PlaybackState::Stopped;
-            #[cfg(feature = "video")]
-            {
-                if let Some(decoder) = &mut self.decoder {
-                    decoder.pause_audio();
-                }
-            }
-            return Ok(None);
-        }
 
         #[cfg(feature = "video")]
         {
             if let Some(decoder) = &mut self.decoder {
-                // Audio first: an audio failure must not kill the video —
-                // log it and keep the picture moving.
-                decoder.pump_audio_until(position + AUDIO_LEAD);
-                return Ok(Some(decoder.decode_frame_at(position)?));
+                decoder.pump_audio_until(position + AUDIO_LEAD)?;
+                let outcome = if decoder.video_finished() {
+                    DecodeOutcome::EndOfStream
+                } else {
+                    decoder.decode_frame_at(position)?
+                };
+                if matches!(outcome, DecodeOutcome::EndOfStream) && decoder.presentation_finished()
+                {
+                    self.position_at_play = if self.duration > Duration::ZERO {
+                        self.duration
+                    } else {
+                        position
+                    };
+                    self.playing_since = None;
+                    self.state = PlaybackState::Finished;
+                    decoder.pause_audio();
+                    return Ok(None);
+                }
+                return match outcome {
+                    DecodeOutcome::Frame(frame) => Ok(Some(frame)),
+                    DecodeOutcome::Pending | DecodeOutcome::EndOfStream => Ok(None),
+                };
             }
         }
 
@@ -345,11 +387,316 @@ impl Default for VideoPlayer {
     }
 }
 
+/// Non-blocking widget adapter. A dedicated thread owns the FFmpeg/rodio
+/// engine; GPUI sends controls and drains already-produced updates.
+pub(crate) struct WidgetVideoPlayer {
+    commands: std::sync::mpsc::Sender<VideoCommand>,
+    updates: std::sync::mpsc::Receiver<VideoWorkerUpdate>,
+    state: PlaybackState,
+    position: Duration,
+    duration: Duration,
+    volume: f32,
+    pending_error: Option<String>,
+}
+
+pub(crate) struct WidgetVideoPoll {
+    pub frame: Option<DecodedFrame>,
+    pub opened: bool,
+    pub error: Option<String>,
+}
+
+enum VideoCommand {
+    OpenLocal(std::path::PathBuf),
+    OpenStream {
+        video_url: String,
+        audio_url: Option<String>,
+    },
+    Play,
+    Pause,
+    Stop,
+    Seek(Duration),
+    SetVolume(f32),
+    Shutdown,
+}
+
+enum VideoWorkerUpdate {
+    Opened {
+        frame: DecodedFrame,
+        snapshot: VideoSnapshot,
+    },
+    Advanced {
+        frame: Option<DecodedFrame>,
+        snapshot: VideoSnapshot,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Copy)]
+struct VideoSnapshot {
+    state: PlaybackState,
+    position: Duration,
+    duration: Duration,
+    volume: f32,
+}
+
+impl VideoSnapshot {
+    fn from_player(player: &VideoPlayer) -> Self {
+        Self {
+            state: player.state(),
+            position: player.position(),
+            duration: player.duration(),
+            volume: player.volume(),
+        }
+    }
+}
+
+impl WidgetVideoPlayer {
+    pub fn new() -> anyhow::Result<Self> {
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let (update_tx, update_rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("hkask-video-playback".to_string())
+            .spawn(move || run_video_worker(command_rx, update_tx))
+            .map_err(|error| anyhow::anyhow!("failed to start video playback worker: {error}"))?;
+        Ok(Self {
+            commands: command_tx,
+            updates: update_rx,
+            state: PlaybackState::Stopped,
+            position: Duration::ZERO,
+            duration: Duration::ZERO,
+            volume: 1.0,
+            pending_error: None,
+        })
+    }
+
+    pub fn open(&mut self, path: &Path) {
+        self.reset_for_open();
+        self.send(VideoCommand::OpenLocal(path.to_path_buf()));
+    }
+
+    pub fn open_stream(&mut self, video_url: &str, audio_url: Option<&str>) {
+        self.reset_for_open();
+        self.send(VideoCommand::OpenStream {
+            video_url: video_url.to_string(),
+            audio_url: audio_url.map(str::to_string),
+        });
+    }
+
+    pub fn play(&mut self) {
+        self.state = PlaybackState::Playing;
+        self.send(VideoCommand::Play);
+    }
+
+    pub fn pause(&mut self) {
+        self.state = PlaybackState::Paused;
+        self.send(VideoCommand::Pause);
+    }
+
+    pub fn stop(&mut self) {
+        self.state = PlaybackState::Stopped;
+        self.position = Duration::ZERO;
+        self.send(VideoCommand::Stop);
+    }
+
+    pub fn seek(&mut self, position: Duration) {
+        self.position = position;
+        if self.state == PlaybackState::Finished {
+            self.state = PlaybackState::Paused;
+        }
+        self.send(VideoCommand::Seek(position));
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        self.volume = volume.clamp(0.0, 2.0);
+        self.send(VideoCommand::SetVolume(self.volume));
+    }
+
+    #[must_use]
+    pub fn is_playing(&self) -> bool {
+        self.state == PlaybackState::Playing
+    }
+
+    #[must_use]
+    pub fn position(&self) -> Duration {
+        self.position
+    }
+
+    #[must_use]
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    #[must_use]
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    pub fn poll(&mut self) -> WidgetVideoPoll {
+        let mut poll = WidgetVideoPoll {
+            frame: None,
+            opened: false,
+            error: self.pending_error.take(),
+        };
+        while let Ok(update) = self.updates.try_recv() {
+            match update {
+                VideoWorkerUpdate::Opened { frame, snapshot } => {
+                    self.apply_snapshot(snapshot);
+                    poll.frame = Some(frame);
+                    poll.opened = true;
+                }
+                VideoWorkerUpdate::Advanced { frame, snapshot } => {
+                    self.apply_snapshot(snapshot);
+                    if frame.is_some() {
+                        poll.frame = frame;
+                    }
+                }
+                VideoWorkerUpdate::Failed(error) => {
+                    self.state = PlaybackState::Stopped;
+                    poll.error = Some(error);
+                }
+            }
+        }
+        poll
+    }
+
+    fn reset_for_open(&mut self) {
+        self.state = PlaybackState::Stopped;
+        self.position = Duration::ZERO;
+        self.duration = Duration::ZERO;
+        self.pending_error = None;
+    }
+
+    fn apply_snapshot(&mut self, snapshot: VideoSnapshot) {
+        self.state = snapshot.state;
+        self.position = snapshot.position;
+        self.duration = snapshot.duration;
+        self.volume = snapshot.volume;
+    }
+
+    fn send(&mut self, command: VideoCommand) {
+        if self.commands.send(command).is_err() {
+            self.state = PlaybackState::Stopped;
+            self.pending_error = Some("video playback worker stopped unexpectedly".to_string());
+        }
+    }
+}
+
+impl Drop for WidgetVideoPlayer {
+    fn drop(&mut self) {
+        if self.commands.send(VideoCommand::Shutdown).is_err() {
+            log::debug!("hkask-media-widget: video worker already stopped");
+        }
+    }
+}
+
+fn run_video_worker(
+    commands: std::sync::mpsc::Receiver<VideoCommand>,
+    updates: std::sync::mpsc::Sender<VideoWorkerUpdate>,
+) {
+    let mut player = VideoPlayer::new();
+    loop {
+        let command = if player.is_playing() {
+            match commands.recv_timeout(Duration::from_millis(33)) {
+                Ok(command) => Some(command),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match commands.recv() {
+                Ok(command) => Some(command),
+                Err(_) => break,
+            }
+        };
+
+        match command {
+            Some(VideoCommand::OpenLocal(path)) => {
+                player = VideoPlayer::new();
+                match player.open(&path) {
+                    Ok(frame) => {
+                        if updates
+                            .send(VideoWorkerUpdate::Opened {
+                                frame,
+                                snapshot: VideoSnapshot::from_player(&player),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        if updates
+                            .send(VideoWorkerUpdate::Failed(error.to_string()))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(VideoCommand::OpenStream {
+                video_url,
+                audio_url,
+            }) => {
+                player = VideoPlayer::new();
+                match player.open_stream(&video_url, audio_url.as_deref()) {
+                    Ok(frame) => {
+                        if updates
+                            .send(VideoWorkerUpdate::Opened {
+                                frame,
+                                snapshot: VideoSnapshot::from_player(&player),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        if updates
+                            .send(VideoWorkerUpdate::Failed(error.to_string()))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(VideoCommand::Play) => player.play(),
+            Some(VideoCommand::Pause) => player.pause(),
+            Some(VideoCommand::Stop) => player.stop(),
+            Some(VideoCommand::Seek(position)) => player.seek(position),
+            Some(VideoCommand::SetVolume(volume)) => player.set_volume(volume),
+            Some(VideoCommand::Shutdown) => break,
+            None => match player.advance_and_decode(Duration::from_millis(33)) {
+                Ok(frame) => {
+                    if updates
+                        .send(VideoWorkerUpdate::Advanced {
+                            frame,
+                            snapshot: VideoSnapshot::from_player(&player),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    player.pause();
+                    if updates
+                        .send(VideoWorkerUpdate::Failed(error.to_string()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            },
+        }
+    }
+}
+
 // ── FFmpeg-backed implementation ──────────────────────────────────────────
 
 #[cfg(feature = "video")]
 mod ffmpeg_impl {
-    use super::DecodedFrame;
+    use super::{DecodeOutcome, DecodedFrame};
     use std::path::Path;
     use std::time::Duration;
 
@@ -389,6 +736,8 @@ mod ffmpeg_impl {
         scaler: ffmpeg::software::scaling::Context,
         time_base: ffmpeg::Rational,
         duration_ms: u64,
+        video_input_eof: bool,
+        video_decoder_eof: bool,
         audio: Option<AudioPipeline>,
     }
 
@@ -406,12 +755,17 @@ mod ffmpeg_impl {
         /// Playback-ms covered by the samples queued so far; pumping stops
         /// once this passes the target.
         queued_until_ms: u64,
-        /// Samples buffered toward the next player append. Appending one
-        /// rodio source per resampled frame (~20ms) would queue dozens of
+        /// After a seek, demuxers may resume at an earlier keyframe. Audio
+        /// frames before this media timestamp are discarded instead of replayed.
+        discard_before_ms: u64,
+        /// Samples buffered toward the next player append. Appending one rodio
+        /// source per resampled frame (~20ms) would queue dozens of
         /// tiny sources, and rodio's `clear()` blocks ~5ms per queued source
-        /// — a seek would stall the foreground thread. Buffering to
+        /// — a seek would stall the playback worker. Buffering to
         /// `APPEND_CHUNK_SAMPLES` keeps the queue at a couple of sources.
         pending_samples: Vec<f32>,
+        input_eof: bool,
+        decoder_eof: bool,
         /// Media-time duration of each appended chunk, in append order. With
         /// rodio's `len()` (sources still queued) and `get_pos()` (position in
         /// the current source), this yields the consumed-audio time — the
@@ -506,6 +860,8 @@ mod ffmpeg_impl {
                 scaler,
                 time_base,
                 duration_ms,
+                video_input_eof: false,
+                video_decoder_eof: false,
                 audio,
             })
         }
@@ -543,6 +899,8 @@ mod ffmpeg_impl {
                 log::warn!("video seek to {target:?} failed: {error}");
             }
             self.decoder.flush();
+            self.video_input_eof = false;
+            self.video_decoder_eof = false;
             if let Some(audio) = &mut self.audio {
                 audio.reset_after_seek(target);
                 if resume_audio {
@@ -569,71 +927,128 @@ mod ffmpeg_impl {
             }
         }
 
-        /// Queue audio up to `target` on the playback clock. Audio failures
-        /// are logged, not propagated — a broken audio stream must not stop
-        /// the video.
-        pub fn pump_audio_until(&mut self, target: Duration) {
+        /// Queue audio up to `target` on the playback clock.
+        pub fn pump_audio_until(&mut self, target: Duration) -> anyhow::Result<()> {
             if let Some(audio) = &mut self.audio {
-                if let Err(error) = audio.pump_until(target) {
-                    log::warn!("hkask-media-widget: audio pump failed: {error}");
+                audio.pump_until(target)?;
+            }
+            Ok(())
+        }
+
+        #[must_use]
+        pub fn video_finished(&self) -> bool {
+            self.video_decoder_eof
+        }
+
+        #[must_use]
+        pub fn presentation_finished(&self) -> bool {
+            self.video_decoder_eof && self.audio.as_ref().is_none_or(AudioPipeline::is_finished)
+        }
+
+        /// Decode the video frame closest to `target` time.
+        ///
+        /// Decoder output is always drained before another packet is sent.
+        /// Packet EOF is flushed through the decoder so delayed frames remain
+        /// visible; temporary `EAGAIN` is a pending observation, not failure.
+        pub fn decode_frame_at(&mut self, target: Duration) -> anyhow::Result<DecodeOutcome> {
+            let target_ms = target.as_millis() as u64;
+            let mut best_frame: Option<DecodedFrame> = None;
+
+            loop {
+                let mut decoded = ffmpeg::util::frame::video::Video::empty();
+                loop {
+                    match self.decoder.receive_frame(&mut decoded) {
+                        Ok(()) => {
+                            let pts = decoded.timestamp().or_else(|| decoded.pts()).unwrap_or(0);
+                            if pts < 0 {
+                                continue;
+                            }
+                            let frame_ms = pts.rescale(self.time_base, (1, 1000)).max(0) as u64;
+                            let frame = self.scale_frame(&decoded)?;
+                            if frame_ms >= target_ms {
+                                return Ok(DecodeOutcome::Frame(frame));
+                            }
+                            best_frame = Some(frame);
+                        }
+                        Err(ffmpeg::Error::Eof) => {
+                            self.video_decoder_eof = true;
+                            return Ok(match best_frame {
+                                Some(frame) => DecodeOutcome::Frame(frame),
+                                None => DecodeOutcome::EndOfStream,
+                            });
+                        }
+                        Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(anyhow::anyhow!("video receive error: {error}"));
+                        }
+                    }
+                }
+
+                if self.video_decoder_eof {
+                    return Ok(match best_frame {
+                        Some(frame) => DecodeOutcome::Frame(frame),
+                        None => DecodeOutcome::EndOfStream,
+                    });
+                }
+                if self.video_input_eof {
+                    return Ok(match best_frame {
+                        Some(frame) => DecodeOutcome::Frame(frame),
+                        None => DecodeOutcome::Pending,
+                    });
+                }
+
+                let mut packet = ffmpeg::Packet::empty();
+                match packet.read(&mut self.input) {
+                    Ok(()) if packet.stream() != self.video_stream_index => continue,
+                    Ok(()) => {
+                        self.decoder
+                            .send_packet(&packet)
+                            .map_err(|error| anyhow::anyhow!("video send error: {error}"))?;
+                    }
+                    Err(ffmpeg::Error::Eof) => {
+                        self.video_input_eof = true;
+                        self.decoder
+                            .send_eof()
+                            .map_err(|error| anyhow::anyhow!("video EOF flush error: {error}"))?;
+                    }
+                    Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
+                        return Ok(match best_frame {
+                            Some(frame) => DecodeOutcome::Frame(frame),
+                            None => DecodeOutcome::Pending,
+                        });
+                    }
+                    Err(error) => {
+                        return Err(anyhow::anyhow!("video packet read error: {error}"));
+                    }
                 }
             }
         }
 
-        /// Decode the video frame closest to `target` time.
-        pub fn decode_frame_at(&mut self, target: Duration) -> anyhow::Result<DecodedFrame> {
-            let target_ms = target.as_millis() as u64;
+        fn scale_frame(
+            &mut self,
+            decoded: &ffmpeg::util::frame::video::Video,
+        ) -> anyhow::Result<DecodedFrame> {
+            let mut bgra_frame = ffmpeg::util::frame::video::Video::empty();
+            self.scaler
+                .run(decoded, &mut bgra_frame)
+                .map_err(|error| anyhow::anyhow!("scale error: {error}"))?;
 
-            let mut best_frame: Option<DecodedFrame> = None;
-
-            for (stream, packet) in self.input.packets() {
-                if stream.index() != self.video_stream_index {
-                    continue;
-                }
-
-                self.decoder
-                    .send_packet(&packet)
-                    .map_err(|error| anyhow::anyhow!("decode error: {error}"))?;
-
-                let mut decoded = ffmpeg::util::frame::video::Video::empty();
-                while self.decoder.receive_frame(&mut decoded).is_ok() {
-                    let pts = decoded.timestamp().or_else(|| decoded.pts()).unwrap_or(0);
-                    if pts < 0 {
-                        continue;
-                    }
-                    let frame_ms = pts.rescale(self.time_base, (1, 1000)).max(0) as u64;
-
-                    let mut bgra_frame = ffmpeg::util::frame::video::Video::empty();
-                    self.scaler
-                        .run(&decoded, &mut bgra_frame)
-                        .map_err(|error| anyhow::anyhow!("scale error: {error}"))?;
-
-                    let width = bgra_frame.width();
-                    let height = bgra_frame.height();
-                    let stride = bgra_frame.stride(0);
-                    let mut bgra_bytes = Vec::with_capacity((width * height * 4) as usize);
-                    for row in 0..height as usize {
-                        let start = row * stride;
-                        let end = start + (width as usize * 4);
-                        bgra_bytes.extend_from_slice(&bgra_frame.data(0)[start..end]);
-                    }
-
-                    if frame_ms >= target_ms {
-                        return Ok(DecodedFrame {
-                            width,
-                            height,
-                            bgra: bgra_bytes,
-                        });
-                    }
-                    best_frame = Some(DecodedFrame {
-                        width,
-                        height,
-                        bgra: bgra_bytes,
-                    });
-                }
+            let width = bgra_frame.width();
+            let height = bgra_frame.height();
+            let stride = bgra_frame.stride(0);
+            let mut bgra = Vec::with_capacity((width * height * 4) as usize);
+            for row in 0..height as usize {
+                let start = row * stride;
+                let end = start + (width as usize * 4);
+                bgra.extend_from_slice(&bgra_frame.data(0)[start..end]);
             }
-
-            best_frame.ok_or_else(|| anyhow::anyhow!("no video frame decoded"))
+            Ok(DecodedFrame {
+                width,
+                height,
+                bgra,
+            })
         }
     }
 
@@ -669,8 +1084,8 @@ mod ffmpeg_impl {
             device_sink.log_on_drop(false);
             let mixer = device_sink.mixer();
             let player = rodio::Player::connect_new(mixer);
-            // Start paused: audio must not sound until the operator (or
-            // autoplay) transitions the player to Playing.
+            // Start paused: audio must not sound until the operator presses
+            // Play.
             player.pause();
 
             Ok(Self {
@@ -682,7 +1097,10 @@ mod ffmpeg_impl {
                 _device_sink: device_sink,
                 player,
                 queued_until_ms: 0,
+                discard_before_ms: 0,
                 pending_samples: Vec::new(),
+                input_eof: false,
+                decoder_eof: false,
                 appended_durations: std::collections::VecDeque::new(),
             })
         }
@@ -723,7 +1141,10 @@ mod ffmpeg_impl {
             self.decoder.flush();
             self.player.clear();
             self.queued_until_ms = target.as_millis() as u64;
+            self.discard_before_ms = target.as_millis() as u64;
             self.pending_samples.clear();
+            self.input_eof = false;
+            self.decoder_eof = false;
             self.appended_durations.clear();
             // Rebuild the resampler from the decoder's (unchanged)
             // parameters — swr has no reset, and stale buffered samples
@@ -734,66 +1155,110 @@ mod ffmpeg_impl {
         }
 
         /// Demux, decode, resample, and queue audio until the queued samples
-        /// cover `target` on the playback clock. The demuxer position
-        /// persists across calls, so each pump resumes where the last left
-        /// off — the same property the video decode loop relies on.
+        /// cover `target` on the playback clock. EOF flushes both the decoder
+        /// and the final partial sample chunk.
         fn pump_until(&mut self, target: Duration) -> anyhow::Result<()> {
             let target_ms = target.as_millis() as u64;
-            if self.queued_until_ms >= target_ms {
+            if self.decoder_eof || self.queued_until_ms >= target_ms {
                 return Ok(());
             }
 
-            for (stream, packet) in self.input.packets() {
-                if stream.index() != self.stream_index {
-                    continue;
-                }
-
-                self.decoder
-                    .send_packet(&packet)
-                    .map_err(|error| anyhow::anyhow!("audio decode error: {error}"))?;
-
+            loop {
                 let mut decoded = ffmpeg::frame::Audio::empty();
-                while self.decoder.receive_frame(&mut decoded).is_ok() {
-                    let pts = decoded.timestamp().or_else(|| decoded.pts()).unwrap_or(0);
-                    if pts >= 0 {
-                        let frame_ms = pts.rescale(self.time_base, (1, 1000)).max(0) as u64;
-                        self.queued_until_ms = self.queued_until_ms.max(frame_ms);
-                    }
-
-                    let mut resampled = ffmpeg::frame::Audio::empty();
-                    let mut delay = self
-                        .resampler
-                        .run(&decoded, &mut resampled)
-                        .map_err(|error| anyhow::anyhow!("audio resample error: {error}"))?;
-                    append_frame(
-                        &mut self.pending_samples,
-                        &mut self.appended_durations,
-                        &self.player,
-                        &resampled,
-                    );
-
-                    // Drain the resampler's internal frames.
-                    let mut guard = 0;
-                    while delay.is_some() && guard < 64 {
-                        let mut drained = ffmpeg::frame::Audio::empty();
-                        delay = self.resampler.flush(&mut drained).map_err(|error| {
-                            anyhow::anyhow!("audio resample flush error: {error}")
-                        })?;
-                        append_frame(
-                            &mut self.pending_samples,
-                            &mut self.appended_durations,
-                            &self.player,
-                            &drained,
-                        );
-                        guard += 1;
+                loop {
+                    match self.decoder.receive_frame(&mut decoded) {
+                        Ok(()) => self.queue_decoded_frame(&decoded)?,
+                        Err(ffmpeg::Error::Eof) => {
+                            self.decoder_eof = true;
+                            flush_pending_samples(
+                                &mut self.pending_samples,
+                                &mut self.appended_durations,
+                                &self.player,
+                            );
+                            return Ok(());
+                        }
+                        Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(anyhow::anyhow!("audio receive error: {error}"));
+                        }
                     }
                 }
 
                 if self.queued_until_ms >= target_ms {
-                    break;
+                    return Ok(());
+                }
+                if self.input_eof {
+                    return Ok(());
+                }
+
+                let mut packet = ffmpeg::Packet::empty();
+                match packet.read(&mut self.input) {
+                    Ok(()) if packet.stream() != self.stream_index => continue,
+                    Ok(()) => self
+                        .decoder
+                        .send_packet(&packet)
+                        .map_err(|error| anyhow::anyhow!("audio send error: {error}"))?,
+                    Err(ffmpeg::Error::Eof) => {
+                        self.input_eof = true;
+                        self.decoder
+                            .send_eof()
+                            .map_err(|error| anyhow::anyhow!("audio EOF flush error: {error}"))?;
+                    }
+                    Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        return Err(anyhow::anyhow!("audio packet read error: {error}"));
+                    }
                 }
             }
+        }
+
+        fn queue_decoded_frame(&mut self, decoded: &ffmpeg::frame::Audio) -> anyhow::Result<()> {
+            let pts = decoded.timestamp().or_else(|| decoded.pts()).unwrap_or(0);
+            if pts >= 0 {
+                let frame_ms = pts.rescale(self.time_base, (1, 1000)).max(0) as u64;
+                self.queued_until_ms = self.queued_until_ms.max(frame_ms);
+                if frame_ms < self.discard_before_ms {
+                    return Ok(());
+                }
+                self.discard_before_ms = 0;
+            }
+
+            let mut resampled = ffmpeg::frame::Audio::empty();
+            let mut delay = self
+                .resampler
+                .run(decoded, &mut resampled)
+                .map_err(|error| anyhow::anyhow!("audio resample error: {error}"))?;
+            append_frame(
+                &mut self.pending_samples,
+                &mut self.appended_durations,
+                &self.player,
+                &resampled,
+            );
+
+            let mut guard = 0;
+            while delay.is_some() && guard < 64 {
+                let mut drained = ffmpeg::frame::Audio::empty();
+                delay = self
+                    .resampler
+                    .flush(&mut drained)
+                    .map_err(|error| anyhow::anyhow!("audio resample flush error: {error}"))?;
+                append_frame(
+                    &mut self.pending_samples,
+                    &mut self.appended_durations,
+                    &self.player,
+                    &drained,
+                );
+                guard += 1;
+            }
             Ok(())
+        }
+
+        fn is_finished(&self) -> bool {
+            self.decoder_eof && self.pending_samples.is_empty() && self.player.empty()
         }
     }
 
@@ -816,22 +1281,30 @@ mod ffmpeg_impl {
         for chunk in bytes.chunks_exact(4) {
             pending_samples.push(f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
-        if pending_samples.len() >= APPEND_CHUNK_SAMPLES || player.empty() {
-            // Also flush on an empty queue: the chunk threshold alone would
-            // strand up to half a second of buffered audio while rodio's
-            // queue drains dry (audible gap).
-            if pending_samples.is_empty() {
-                return;
-            }
-            let samples = std::mem::take(pending_samples);
-            let duration = Duration::from_secs_f64(samples.len() as f64 / 2.0 / AUDIO_RATE as f64);
-            appended_durations.push_back(duration);
-            player.append(rodio::buffer::SamplesBuffer::new(
-                std::num::NonZero::new(2).expect("nonzero channel count"),
-                std::num::NonZero::new(AUDIO_RATE).expect("nonzero sample rate"),
-                samples,
-            ));
+        if pending_samples.len() >= APPEND_CHUNK_SAMPLES || player.len() == 0 {
+            // Also flush when no source is queued: `Player::empty()` remains
+            // true until playback starts and would split a fast decode burst
+            // into dozens of tiny sources.
+            flush_pending_samples(pending_samples, appended_durations, player);
         }
+    }
+
+    fn flush_pending_samples(
+        pending_samples: &mut Vec<f32>,
+        appended_durations: &mut std::collections::VecDeque<Duration>,
+        player: &rodio::Player,
+    ) {
+        if pending_samples.is_empty() {
+            return;
+        }
+        let samples = std::mem::take(pending_samples);
+        let duration = Duration::from_secs_f64(samples.len() as f64 / 2.0 / AUDIO_RATE as f64);
+        appended_durations.push_back(duration);
+        player.append(rodio::buffer::SamplesBuffer::new(
+            std::num::NonZero::new(2).expect("nonzero channel count"),
+            std::num::NonZero::new(AUDIO_RATE).expect("nonzero sample rate"),
+            samples,
+        ));
     }
 }
 
@@ -855,6 +1328,10 @@ mod tests {
     /// machine that has the file.
     const FIXTURE: &str =
         "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+
+    fn playback_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-lifecycle.mp4")
+    }
 
     /// Channel order regression: our decoded frame must match the ffmpeg
     /// CLI's BGRA extraction of the same frame pixel-for-pixel. This pins the
@@ -928,6 +1405,76 @@ mod tests {
         }
     }
 
+    /// expect: Opening a video shows its first frame without starting playback.
+    /// [P1] Motivating: the operator can inspect media before choosing to play it.
+    /// pre: the source contains at least one decodable video frame.
+    /// post: `open` returns that frame and the player remains non-playing.
+    /// [P2] Constraining: opening media never starts unsolicited audio.
+    #[test]
+    fn opening_video_returns_first_frame_while_paused() {
+        let path = playback_fixture();
+        let mut player = VideoPlayer::new();
+        let frame = player.open(&path).expect("open returns the poster frame");
+
+        assert!(frame.width > 0 && frame.height > 0);
+        assert!(!player.is_playing(), "opening a video must not autoplay");
+    }
+
+    /// expect: A failed replacement open cannot revive frames from the prior
+    /// source, and the worker remains reusable for a later valid open.
+    /// [P1] Motivating: media widgets never display or play a stale asset after
+    /// reporting that a new asset failed to load.
+    /// pre: one valid source is followed by one missing source.
+    /// post: the failed source emits no stale frame; reopening succeeds.
+    #[test]
+    fn worker_discards_prior_media_when_replacement_open_fails() {
+        let path = playback_fixture();
+        let mut player = WidgetVideoPlayer::new().expect("worker starts");
+        player.open(&path);
+        let open_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut initially_opened = false;
+        while std::time::Instant::now() < open_deadline {
+            if player.poll().opened {
+                initially_opened = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(initially_opened, "initial source opens");
+
+        player.open(std::path::Path::new("/definitely/missing/replacement.mp4"));
+        let failure_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut failed = false;
+        while std::time::Instant::now() < failure_deadline {
+            if player.poll().error.is_some() {
+                failed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(failed, "replacement failure is surfaced");
+
+        player.play();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            player.poll().frame.is_none(),
+            "the prior source cannot emit frames after replacement failure"
+        );
+        player.stop();
+
+        player.open(&path);
+        let reopen_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut reopened = false;
+        while std::time::Instant::now() < reopen_deadline {
+            if player.poll().opened {
+                reopened = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(reopened, "worker accepts a valid source after failure");
+    }
+
     /// The fixture carries an opus audio track — opening it must set up the
     /// audio pipeline (a video player without audio is not a video player).
     #[test]
@@ -965,6 +1512,9 @@ mod tests {
                 .advance_and_decode(Duration::from_millis(33))
                 .expect("advance");
         }
+        // The audio-master clock advances only when the output device consumes
+        // real samples; immediate decode calls alone do not advance time.
+        std::thread::sleep(Duration::from_millis(50));
         let position_before_starvation = player.position();
         assert!(position_before_starvation > Duration::ZERO);
 
@@ -1044,6 +1594,63 @@ mod tests {
             "clock must freeze on pause (drifted {drift_after_pause:?} — rodio updates every 5ms)"
         );
         assert_ne!(player.state(), PlaybackState::Playing);
+    }
+
+    /// expect: Packet exhaustion finishes playback even when duration metadata
+    /// is unavailable, and later ticks remain quiet.
+    /// [P1] Motivating: completed media never becomes an unbounded error loop.
+    /// pre: a playable source is positioned near its final packets.
+    /// post: state becomes Finished without an error from repeated advances.
+    /// [P9] Constraining: terminal feedback must reduce, not reinforce, polling.
+    #[test]
+    fn packet_exhaustion_finishes_unknown_duration_playback_once() {
+        let path = playback_fixture();
+        let mut player = VideoPlayer::new();
+        player.open(&path).expect("open");
+        let actual_duration = player.duration();
+        player.duration = Duration::ZERO;
+        player.seek(actual_duration.saturating_sub(Duration::from_millis(100)));
+        player.play();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while player.state() != PlaybackState::Finished && std::time::Instant::now() < deadline {
+            player
+                .advance_and_decode(Duration::from_millis(10))
+                .expect("normal end-of-stream is not a decode failure");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            player.state(),
+            PlaybackState::Finished,
+            "position={:?}, queued_audio_sources={}",
+            player.position(),
+            player.audio_queue_len()
+        );
+        for _ in 0..3 {
+            assert!(
+                player
+                    .advance_and_decode(Duration::from_millis(10))
+                    .expect("finished playback stays quiet")
+                    .is_none()
+            );
+        }
+
+        player.seek(Duration::from_millis(500));
+        assert_eq!(
+            player.state(),
+            PlaybackState::Paused,
+            "seeking after EOF clears the terminal state"
+        );
+        player.play();
+        assert!(player.position() >= Duration::from_millis(500));
+        assert!(
+            player
+                .advance_and_decode(Duration::from_millis(10))
+                .expect("decode after terminal seek")
+                .is_some(),
+            "seeking after EOF makes frames decodable again"
+        );
     }
 
     /// End-to-end streaming against the live source the requirement names:

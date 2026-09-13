@@ -1,8 +1,8 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-09-04
-version: "1.1.0"
+last_updated: 2026-09-13
+version: "1.2.0"
 status: "Active"
 domain: "Media"
 mds_categories: [domain, composition]
@@ -37,9 +37,14 @@ classDiagram
         +render_detail()
     }
     class MediaWidget {
-        +video_player: VideoPlayer
+        +video_player: WidgetVideoPlayer
         +current_frame: RenderImage
         +mark_in() mark_out() clear_marks()
+    }
+    class PlaybackWorker {
+        +VideoPlayer engine
+        +commands
+        +updates
     }
     class TransportBar {
         +seek_slider: SimpleSlider
@@ -48,6 +53,7 @@ classDiagram
     MediaPanel --> MediaViewer : top pane (flex_1, min_h_0, min_w_0)
     MediaPanel --> MediaViewer : split divider (1px, draggable)
     MediaViewer --> MediaWidget : shared via viz-core cache
+    MediaWidget --> PlaybackWorker : non-blocking commands and updates
     MediaWidget --> TransportBar : emits TransportEvent
 ```
 
@@ -65,10 +71,13 @@ state; the media widget is the same entity the conversation renders inline
 | --- | --- | --- |
 | Playback: play/pause | supplied | `transport.rs:163` → `media_widget.rs:606` |
 | Playback: seek/position | supplied | `transport.rs:78` → `media_widget.rs:618` |
-| Playback: stop | supplied | `transport.rs:175` → `media_widget.rs:636` |
+| Playback: stop | supplied | `TransportEvent::Stop` stops the worker player and cancels widget polling |
+| Playback: first-frame paused | supplied | opening runs on the playback worker and returns a poster frame without entering `Playing` |
+| Playback: completion | supplied | FFmpeg EOF is drained into `PlaybackState::Finished`; normal completion is not an error and closes polling |
+| Playback: loading/failure feedback | supplied | transport renders `Loading…`; worker failures become one visible widget error and close polling |
 | Playback: rate control | missing | no rate/set-speed surface anywhere in `hkask-media-widget` or `media_panel` |
-| Audio: volume | supplied | `transport.rs:92` (logarithmic slider, `:44`) → `media_widget.rs:628` |
-| Audio: mute | missing | no mute toggle; autoplay starts muted with a "Muted" transport label (`transport.rs:187-194`), volume slider floor is 0.001 (`transport.rs:44`) |
+| Audio: volume | supplied | `TransportEvent::VolumeChange` updates audio or worker-owned video playback |
+| Audio: mute | missing | no mute toggle; video and audio both load paused, so neither produces unsolicited sound |
 | Display: fit-to-pane, aspect preserved | supplied | `media_widget.rs:911-912` (video `img` `size_full` + `ObjectFit::Contain`), `media_widget.rs:854` (image path); pinned by layout tests (below) |
 | Display: frame size adjustment | missing | no zoom / scale control |
 | Display: fullscreen | missing | zero hits in `media_panel` / `hkask-media-widget` |
@@ -82,9 +91,10 @@ state; the media widget is the same entity the conversation renders inline
 
 ### Degraded register
 
-None at 2026-08-31. (The horizontal-fit defect — video content rendering
-wider than the pane's available width, clipped and unviewable — was fixed
-the same day; see Layout invariants.)
+None at 2026-09-13. Video decoding and remote packet reads run on a dedicated
+playback thread; the GPUI foreground only drains ready updates. EOF, loading,
+and fatal failure are distinct outcomes. The horizontal-fit defect remains
+fixed as described under Layout invariants.
 
 ## Layout invariants
 

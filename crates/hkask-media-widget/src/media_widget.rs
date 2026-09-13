@@ -31,7 +31,7 @@ use crate::media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, PathMediaStorage, ResolvedMedia,
 };
 use crate::transport::{TransportBar, TransportEvent, TransportState};
-use crate::video_decoder::VideoPlayer;
+use crate::video_decoder::{DecodedFrame, WidgetVideoPlayer};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -43,23 +43,14 @@ const DEFAULT_SERVER: &str = "hkask-mcp-media";
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
 const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
 
-/// The widget's autoplay policy — pins the no-unsolicited-audio contract
-/// (the ghost-audio bug, 2026-09-04: a fetched video started playing with
-/// sound while the window was not visible, and the operator could not see
-/// what was sounding).
-///
-/// Video autoplays MUTED because frames only decode while Playing —
-/// without play() the widget renders an empty placeholder. Audio never
-/// autoplays: it has no visual placeholder to preserve, so nothing sounds
-/// until the operator presses play (`AudioPlayer::load_bytes_paused`).
-///
-/// Returns the volume to start playback at, or `None` when the kind must
-/// not autoplay.
-fn autoplay_volume(kind: MediaKind) -> Option<f32> {
-    match kind {
-        MediaKind::Video => Some(0.0),
-        MediaKind::Audio | MediaKind::Image | MediaKind::Svg => None,
-    }
+/// Convert a decoder-owned BGRA frame into GPUI's render-image container.
+/// GPUI uploads this byte buffer as BGRA; the image crate supplies storage,
+/// not channel-order conversion.
+fn render_video_frame(frame: DecodedFrame) -> Arc<RenderImage> {
+    let buffer = image::ImageBuffer::from_raw(frame.width, frame.height, frame.bgra)
+        .unwrap_or_else(|| image::ImageBuffer::new(frame.width, frame.height));
+    let image_frame = image::Frame::new(buffer);
+    Arc::new(RenderImage::new(SmallVec::from_elem(image_frame, 1)))
 }
 
 /// The media widget view. Renders inline in markdown (via the D18 seam)
@@ -69,10 +60,11 @@ pub struct MediaWidget {
     storage: Arc<dyn MediaStorage>,
     focus_handle: FocusHandle,
     audio_player: Option<Arc<AudioPlayer>>,
-    video_player: Option<VideoPlayer>,
+    video_player: Option<WidgetVideoPlayer>,
     transport: Option<Entity<TransportBar>>,
     current_frame: Option<Arc<RenderImage>>,
     playback_task: Option<Task<()>>,
+    playback_loop_active: bool,
     /// Edit marks for interactive trimming: the in/out points the operator
     /// set on the transport, in playback-clock seconds. `None` until set.
     mark_in_secs: Option<f64>,
@@ -125,7 +117,7 @@ pub struct MediaWidget {
 
 // Stat + read an audio file with the 256 MiB size guard. Pure (no `self`), so it
 // is safe to move into a background task; the bytes are handed back to the
-// foreground thread where `play_bytes` (rodio device + decode) runs. See SF-1.
+// foreground thread where `load_bytes_paused` initializes rodio. See SF-1.
 fn read_audio_file(path: &std::path::Path) -> Result<Vec<u8>, SharedString> {
     const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
     let metadata = match std::fs::metadata(path) {
@@ -198,6 +190,7 @@ impl MediaWidget {
             transport: None,
             current_frame: None,
             playback_task: None,
+            playback_loop_active: false,
             mark_in_secs: None,
             mark_out_secs: None,
             last_transport: None,
@@ -250,7 +243,13 @@ impl MediaWidget {
                 self.transport = Some(transport);
             }
             MediaKind::Video => {
-                self.video_player = Some(VideoPlayer::new());
+                match WidgetVideoPlayer::new() {
+                    Ok(player) => self.video_player = Some(player),
+                    Err(error) => {
+                        self.error = Some(SharedString::from(error.to_string()));
+                        return;
+                    }
+                }
                 let transport = cx.new(TransportBar::new);
                 self._subscriptions.push(cx.subscribe(
                     &transport,
@@ -274,7 +273,7 @@ impl MediaWidget {
                 self.load_direct(cx);
             }
         }
-        cx.notify();
+        self.sync_transport_state(cx);
     }
 
     fn load_resolved(&mut self, resolved: ResolvedMedia, cx: &mut Context<Self>) {
@@ -282,7 +281,7 @@ impl MediaWidget {
             MediaKind::Audio => {
                 if let Some(bytes) = resolved.bytes {
                     if let Some(player) = &self.audio_player {
-                        // No unsolicited audio: load paused (autoplay_policy).
+                        // No unsolicited audio: load paused.
                         if let Err(error) = player.load_bytes_paused(bytes) {
                             self.error = Some(SharedString::from(error.to_string()));
                         }
@@ -295,35 +294,21 @@ impl MediaWidget {
                         self.load_audio_data_uri(&player, url.as_str());
                     }
                 }
-                self.start_playback_loop(cx);
             }
             MediaKind::Video => {
                 if let Some(path) = &resolved.path {
                     if let Some(player) = &mut self.video_player {
-                        match player.open(path) {
-                            // Autoplay MUTED (autoplay_volume): frames only
-                            // decode while Playing — without play() the widget
-                            // renders an empty placeholder — but unsolicited
-                            // sound is never OK. The transport's volume
-                            // control unmutes.
-                            Ok(()) => {
-                                if let Some(volume) = autoplay_volume(MediaKind::Video) {
-                                    player.set_volume(volume);
-                                    player.play();
-                                }
-                            }
-                            Err(error) => self.error = Some(SharedString::from(error.to_string())),
-                        }
+                        self.video_loading = true;
+                        player.open(path);
+                        self.start_playback_loop(cx);
                     }
-                    self.start_playback_loop(cx);
                 } else if let Some(url) = &resolved.url {
                     if let Some(path) = url.as_str().strip_prefix("file://") {
                         if let Some(player) = &mut self.video_player {
-                            if let Err(error) = player.open(std::path::Path::new(path)) {
-                                self.error = Some(SharedString::from(error.to_string()));
-                            }
+                            self.video_loading = true;
+                            player.open(std::path::Path::new(path));
+                            self.start_playback_loop(cx);
                         }
-                        self.start_playback_loop(cx);
                     } else if url.as_str().starts_with("http://")
                         || url.as_str().starts_with("https://")
                     {
@@ -335,8 +320,7 @@ impl MediaWidget {
                         self.load_video_stream_async(url.as_str(), cx);
                     }
                 } else {
-                    // No path or URL — nothing to load.
-                    self.start_playback_loop(cx);
+                    self.error = Some(SharedString::from("resolved video has no path or URL"));
                 }
             }
             _ => {}
@@ -344,12 +328,12 @@ impl MediaWidget {
     }
 
     // Read + stat an audio file off the foreground thread. The blocking I/O
-    // (stat + read up to 256 MiB) runs on a background worker; `play_bytes`
-    // (rodio device + decode) stays on the foreground thread where the
+    // (stat + read up to 256 MiB) runs on a background worker;
+    // `load_bytes_paused` initializes rodio on the foreground thread where the
     // AudioPlayer was constructed. See SF-1 in tasks/widget-interactivity/plan.md.
     fn load_audio_file_async(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         self.audio_loading = true;
-        cx.notify();
+        self.sync_transport_state(cx);
         self.audio_load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move { read_audio_file(&path) })
@@ -359,7 +343,7 @@ impl MediaWidget {
                 match result {
                     Ok(bytes) => {
                         if let Some(player) = &widget.audio_player {
-                            // No unsolicited audio: load paused (autoplay_policy).
+                            // No unsolicited audio: load paused.
                             if let Err(error) = player.load_bytes_paused(bytes) {
                                 widget.error = Some(SharedString::from(error.to_string()));
                             }
@@ -369,61 +353,41 @@ impl MediaWidget {
                         widget.error = Some(message);
                     }
                 }
-                cx.notify();
+                widget.sync_transport_state(cx);
             })
             .ok();
         }));
     }
 
-    /// Resolve a remote video URL on a background thread, then open it in
-    /// the video player on the foreground thread. For direct video file URLs
-    /// (mp4, webm, etc.), FFmpeg streams directly. For platform URLs
+    /// Resolve a remote video URL off the foreground thread, then hand the
+    /// direct stream URL(s) to the dedicated playback worker. For direct video
+    /// file URLs (mp4, webm, etc.), FFmpeg streams directly. For platform URLs
     /// (YouTube, Vimeo, etc.), `yt-dlp -g` resolves the direct stream URL(s)
     /// first — DASH sources yield separate video and audio URLs, and the
     /// player opens both so streamed video is not silent. The loading state
-    /// flows into the transport bar so the user sees a spinner during
-    /// resolution.
+    /// remains visible until the worker returns the poster frame or an error.
     fn load_video_stream_async(&mut self, url: &str, cx: &mut Context<Self>) {
         self.video_loading = true;
-        cx.notify();
+        self.sync_transport_state(cx);
         let url = url.to_string();
         self.video_load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move { crate::streaming::resolve_stream_urls(&url).await })
                 .await;
             this.update(cx, |widget, cx| {
-                widget.video_loading = false;
                 match result {
                     Ok(stream_urls) => {
                         if let Some(player) = &mut widget.video_player {
-                            match player
-                                .open_stream(&stream_urls.video, stream_urls.audio.as_deref())
-                            {
-                                // Autoplay MUTED (autoplay_volume): frames
-                                // only decode while Playing — without play()
-                                // the widget renders an empty placeholder —
-                                // but unsolicited sound is never OK. The
-                                // transport's volume control unmutes.
-                                Ok(()) => {
-                                    if let Some(volume) = autoplay_volume(MediaKind::Video) {
-                                        player.set_volume(volume);
-                                        player.play();
-                                    }
-                                }
-                                Err(error) => {
-                                    widget.error = Some(SharedString::from(format!(
-                                        "failed to open video stream: {error}"
-                                    )));
-                                }
-                            }
+                            player.open_stream(&stream_urls.video, stream_urls.audio.as_deref());
+                            widget.start_playback_loop(cx);
                         }
-                        widget.start_playback_loop(cx);
                     }
                     Err(error) => {
+                        widget.video_loading = false;
                         widget.error = Some(SharedString::from(error));
                     }
                 }
-                cx.notify();
+                widget.sync_transport_state(cx);
             })
             .ok();
         }));
@@ -435,7 +399,7 @@ impl MediaWidget {
         {
             match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data) {
                 Ok(bytes) => {
-                    // No unsolicited audio: load paused (autoplay_policy).
+                    // No unsolicited audio: load paused.
                     if let Err(error) = player.load_bytes_paused(bytes) {
                         self.error = Some(SharedString::from(error.to_string()));
                     }
@@ -461,8 +425,7 @@ impl MediaWidget {
                                 data,
                             ) {
                                 Ok(bytes) => {
-                                    // No unsolicited audio: load paused
-                                    // (autoplay_policy).
+                                    // No unsolicited audio: load paused.
                                     if let Err(error) = player.load_bytes_paused(bytes) {
                                         self.error = Some(SharedString::from(error.to_string()));
                                     }
@@ -479,33 +442,55 @@ impl MediaWidget {
                     // Filesystem path — offload the read off the foreground thread.
                     self.load_audio_file_async(std::path::PathBuf::from(&src), cx);
                 }
-                self.start_playback_loop(cx);
             }
             Some(MediaKind::Video) => {
                 if let Some(player) = &mut self.video_player {
-                    let path = std::path::PathBuf::from(&src);
-                    match player.open(&path) {
-                        // Autoplay MUTED (autoplay_volume) — same as the
-                        // resolved-path branch: without play() no frames
-                        // decode and the widget renders an empty placeholder.
-                        Ok(()) => {
-                            if let Some(volume) = autoplay_volume(MediaKind::Video) {
-                                player.set_volume(volume);
-                                player.play();
-                            }
-                        }
-                        Err(error) => {
-                            self.error = Some(SharedString::from(error.to_string()));
-                        }
-                    }
+                    self.video_loading = true;
+                    player.open(std::path::Path::new(&src));
+                    self.start_playback_loop(cx);
                 }
-                self.start_playback_loop(cx);
             }
             _ => {}
         }
     }
 
+    fn current_transport_state(&self) -> TransportState {
+        let mut state = TransportState {
+            is_playing: false,
+            position: Duration::ZERO,
+            duration: Duration::ZERO,
+            volume: 1.0,
+            is_loading: self.audio_loading || self.video_loading,
+        };
+        if let Some(player) = &self.audio_player {
+            state.is_playing = player.is_playing();
+            state.position = player.position();
+            state.duration = player.duration();
+            state.volume = player.volume();
+        }
+        if let Some(player) = &self.video_player {
+            state.is_playing = player.is_playing();
+            state.position = player.position();
+            state.duration = player.duration();
+            state.volume = player.volume();
+        }
+        state
+    }
+
+    fn sync_transport_state(&mut self, cx: &mut Context<Self>) {
+        let state = self.current_transport_state();
+        self.last_transport = Some(state);
+        if let Some(transport) = &self.transport {
+            transport.update(cx, |transport, cx| transport.set_state(state, cx));
+        }
+        cx.notify();
+    }
+
     fn start_playback_loop(&mut self, cx: &mut Context<Self>) {
+        if self.playback_loop_active {
+            return;
+        }
+        self.playback_loop_active = true;
         let entity = cx.entity().downgrade();
         self.playback_task = Some(cx.spawn(async move |_this, cx| {
             let mut last_tick = Instant::now();
@@ -526,20 +511,19 @@ impl MediaWidget {
                     break;
                 }
             }
+            if let Some(entity) = entity.upgrade() {
+                entity.update(cx, |widget, _cx| {
+                    widget.playback_loop_active = false;
+                });
+            }
         }));
     }
 
-    /// Advance playback one tick. Returns `false` when there is no loaded
-    /// player to keep alive (both `audio_player` and `video_player` are
-    /// `None`); the caller stops the loop in that case.
-    ///
-    /// To avoid re-rendering every visible media widget at 30 fps forever —
-    /// even when paused, stopped, or finished — the transport state is
-    /// compared against the last tick: `set_state` and `cx.notify()` fire
-    /// only when the state changed or a new video frame was decoded. While
-    /// idle the loop stays alive (so pause/resume/seek keep working) but
-    /// performs no re-render.
-    fn tick_playback(&mut self, delta: Duration, cx: &mut Context<Self>) -> bool {
+    /// Drain one non-blocking playback update. Returns `true` only while media
+    /// is loading or playing; pause, stop, finish, and failure close the timer
+    /// loop. Rendering occurs only when transport state changes or a new frame
+    /// arrives.
+    fn tick_playback(&mut self, _delta: Duration, cx: &mut Context<Self>) -> bool {
         let mut transport_state = TransportState {
             is_playing: false,
             position: Duration::ZERO,
@@ -557,29 +541,21 @@ impl MediaWidget {
         }
 
         if let Some(player) = &mut self.video_player {
-            if player.is_playing() {
-                match player.advance_and_decode(delta) {
-                    Ok(Some(frame)) => {
-                        // BGRA bytes in an Rgba-typed buffer: GPUI's RenderImage
-                        // upload expects BGRA (see video_decoder's scaler) —
-                        // the image-crate type is just the byte container.
-                        let buffer =
-                            image::ImageBuffer::from_raw(frame.width, frame.height, frame.bgra)
-                                .unwrap_or_else(|| {
-                                    image::ImageBuffer::new(frame.width, frame.height)
-                                });
-                        let image_frame = image::Frame::new(buffer);
-                        let render_image =
-                            Arc::new(RenderImage::new(SmallVec::from_elem(image_frame, 1)));
-                        self.current_frame = Some(render_image);
-                        frame_decoded = true;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        log::warn!("hkask-media-widget: video decode error: {error}");
-                    }
-                }
+            let poll = player.poll();
+            if poll.opened {
+                self.video_loading = false;
             }
+            if let Some(frame) = poll.frame {
+                self.current_frame = Some(render_video_frame(frame));
+                frame_decoded = true;
+            }
+            if let Some(error) = poll.error {
+                self.video_loading = false;
+                self.error = Some(SharedString::from(format!(
+                    "video playback failed: {error}"
+                )));
+            }
+            transport_state.is_loading = self.audio_loading || self.video_loading;
             transport_state.is_playing = player.is_playing();
             transport_state.position = player.position();
             transport_state.duration = player.duration();
@@ -604,7 +580,7 @@ impl MediaWidget {
             cx.notify();
         }
 
-        true
+        transport_state.is_loading || transport_state.is_playing
     }
 
     fn handle_transport_event(&mut self, event: &TransportEvent, cx: &mut Context<Self>) {
@@ -619,6 +595,20 @@ impl MediaWidget {
                     } else {
                         player.play();
                     }
+                }
+                let is_playing = self
+                    .audio_player
+                    .as_ref()
+                    .is_some_and(|player| player.is_playing())
+                    || self
+                        .video_player
+                        .as_ref()
+                        .is_some_and(WidgetVideoPlayer::is_playing);
+                if is_playing {
+                    self.start_playback_loop(cx);
+                } else {
+                    self.playback_task = None;
+                    self.playback_loop_active = false;
                 }
             }
             TransportEvent::Seek(fraction) => {
@@ -646,6 +636,8 @@ impl MediaWidget {
                 if let Some(player) = &mut self.video_player {
                     player.stop();
                 }
+                self.playback_task = None;
+                self.playback_loop_active = false;
             }
         }
         cx.notify();
@@ -1207,6 +1199,111 @@ mod tests {
         }
     }
 
+    fn video_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-lifecycle.mp4")
+    }
+
+    /// expect: A loaded video displays a poster frame without polling until
+    /// the operator presses Play, and Pause cancels that polling task.
+    /// [P1] Motivating: media is inspectable without autoplay or idle work.
+    /// pre: the video fixture is present and decodable.
+    /// post: load is paused with a frame; play owns one task; pause owns none.
+    /// [P2] Constraining: loading never produces unsolicited audio.
+    #[gpui::test]
+    async fn video_loads_first_frame_paused_and_polls_only_while_playing(cx: &mut TestAppContext) {
+        let path = video_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        let poster_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !widget.read_with(cx, |widget, _cx| widget.current_frame.is_some())
+            && std::time::Instant::now() < poster_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        let (has_frame, is_playing, has_task) = widget.read_with(cx, |widget, _cx| {
+            (
+                widget.current_frame.is_some(),
+                widget
+                    .video_player
+                    .as_ref()
+                    .is_some_and(WidgetVideoPlayer::is_playing),
+                widget.playback_loop_active,
+            )
+        });
+        assert!(has_frame, "load installs the poster frame");
+        assert!(!is_playing, "load remains paused");
+        assert!(!has_task, "paused media has no polling task");
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        assert!(
+            widget.read_with(cx, |widget, _cx| widget.playback_loop_active),
+            "Play starts polling"
+        );
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        assert!(
+            !widget.read_with(cx, |widget, _cx| widget.playback_loop_active),
+            "Pause cancels polling"
+        );
+    }
+
+    /// expect: A fatal video-open failure is visible once and closes polling.
+    /// [P1] Motivating: broken media is diagnosable without a warning storm.
+    /// pre: the source cannot be opened as video.
+    /// post: one stable widget error remains and playback polling is inactive.
+    #[gpui::test]
+    async fn fatal_video_failure_surfaces_once_and_stops_polling(cx: &mut TestAppContext) {
+        let reference = MediaRef::new(
+            SharedString::from("/definitely/missing/hkask-video.mp4"),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+
+        let error_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.error.is_none())
+            && std::time::Instant::now() < error_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+
+        let first_error = widget
+            .read_with(cx, |widget, _cx| widget.error.clone())
+            .expect("fatal open failure is visible");
+        assert!(first_error.contains("video playback failed"));
+        assert!(!widget.read_with(cx, |widget, _cx| widget.playback_loop_active));
+
+        for _ in 0..3 {
+            let keep_polling = cx.update(|cx| {
+                widget.update(cx, |widget, cx| {
+                    widget.tick_playback(Duration::from_millis(33), cx)
+                })
+            });
+            assert!(!keep_polling, "fatal playback remains terminal");
+            assert_eq!(
+                widget.read_with(cx, |widget, _cx| widget.error.clone()),
+                Some(first_error.clone())
+            );
+        }
+    }
+
     /// Build a `MediaBlockBody` carrying ontology + dispatchable provenance.
     fn block_with_provenance(ontology: &str, tool: &str, prompt: &str) -> MediaBlockBody {
         MediaBlockBody {
@@ -1635,24 +1732,5 @@ mod layout_tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
-    }
-
-    /// The no-unsolicited-audio contract (the ghost-audio bug, 2026-09-04):
-    /// video autoplays (frames only decode while Playing — an empty
-    /// placeholder otherwise) but MUTED; audio never autoplays (it loads
-    /// paused via `AudioPlayer::load_bytes_paused`). A regression that
-    /// flips either arm re-introduces sound the operator never asked for.
-    #[test]
-    fn autoplay_policy_never_sounds_unsolicited() {
-        assert_eq!(
-            autoplay_volume(MediaKind::Video),
-            Some(0.0),
-            "video autoplays muted"
-        );
-        assert_eq!(
-            autoplay_volume(MediaKind::Audio),
-            None,
-            "audio never autoplays — it loads paused"
-        );
     }
 }

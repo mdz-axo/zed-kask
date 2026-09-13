@@ -18,10 +18,9 @@
 //! mirror that logic here — the two crates cannot share a dependency, so
 //! the probing is deliberately duplicated and must stay in sync).
 //!
-//! The format selector picks a **progressive** (combined audio+video)
-//! format: the widget streams a single URL into FFmpeg, so a DASH
-//! video-only URL would play silent video. `b[height<=720]/b` takes the
-//! best combined format at or below 720p.
+//! The format selector prefers a best-video + best-audio pair capped at
+//! 720p, then falls back to a progressive stream. DASH pairs are returned
+//! separately so the playback worker can open both inputs.
 
 use smol::process::Command;
 
@@ -52,9 +51,8 @@ pub struct StreamUrls {
 /// - For DASH-only sources (most modern YouTube), yt-dlp prints TWO URLs —
 ///   video-only then audio-only — and the player must open both; a single
 ///   video-only URL would play silent video.
-/// - If yt-dlp is not installed or fails → the original URL is returned as
-///   a fallback (FFmpeg will try to open it directly, which works for
-///   direct media URLs but not for platform pages).
+/// - If yt-dlp is not installed or fails → the resolution error is returned;
+///   platform HTML must not be mislabeled as a direct media stream.
 pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, String> {
     if is_direct_video_url(url) {
         return Ok(StreamUrls {
@@ -63,22 +61,7 @@ pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, String> {
         });
     }
 
-    match resolve_with_yt_dlp(url).await {
-        Ok(resolved) => Ok(resolved),
-        Err(error) => {
-            log::warn!(
-                "hkask-media-widget: yt-dlp resolution failed for {url}: {error}. \
-                 Falling back to direct URL — this will fail for platform pages."
-            );
-            // Return the original URL as a last resort. FFmpeg will try to
-            // open it directly. For direct media URLs this works; for
-            // platform pages it will fail with a clear error.
-            Ok(StreamUrls {
-                video: url.to_string(),
-                audio: None,
-            })
-        }
-    }
+    resolve_with_yt_dlp(url).await
 }
 
 /// Check whether a URL points directly to a video file (has a known video
@@ -130,16 +113,17 @@ async fn newest_yt_dlp_binary() -> Option<String> {
             .collect();
         let is_newer = best
             .as_ref()
-            .map(|(_, current)| {
-                version.iter().zip(current.iter()).all(|(v, c)| v >= c)
-                    && version.len() >= current.len()
-            })
+            .map(|(_, current)| version_is_newer(&version, current))
             .unwrap_or(true);
         if is_newer {
             best = Some((candidate, version));
         }
     }
     best.map(|(path, _)| path)
+}
+
+fn version_is_newer(candidate: &[u64], current: &[u64]) -> bool {
+    candidate > current
 }
 
 /// Run `yt-dlp -g` to resolve the direct stream URL(s) for a video page.
@@ -245,16 +229,28 @@ mod tests {
         );
     }
 
+    /// expect: A platform-resolution failure remains the surfaced cause.
+    /// [P1] Motivating: users see why a stream cannot open, not a secondary
+    /// FFmpeg error from attempting to decode an HTML page.
+    /// pre: the platform URL cannot resolve to a media stream.
+    /// post: resolution returns the yt-dlp failure instead of the input URL.
     #[test]
-    fn falls_back_to_original_url_when_yt_dlp_missing() {
-        // A URL that is NOT a direct video file, so yt-dlp will be attempted.
-        // If yt-dlp is not installed, the fallback returns the original URL.
+    fn platform_resolution_failure_is_not_a_silent_direct_url_fallback() {
         let url = "https://www.youtube.com/watch?v=nonexistent_video_id_xyz";
-        let resolved =
-            smol::block_on(async { resolve_stream_urls(url).await }).expect("fallback returns URL");
-        // Either yt-dlp resolved it (unlikely for a fake ID) or we got the
-        // original URL back as fallback.
-        assert!(resolved.video == url || resolved.video.starts_with("https://"));
+        let error = smol::block_on(async { resolve_stream_urls(url).await })
+            .expect_err("an invalid platform page must not become a direct media URL");
+        assert!(
+            error.contains("yt-dlp"),
+            "resolution cause is preserved: {error}"
+        );
+    }
+
+    #[test]
+    fn version_comparison_is_lexicographic() {
+        assert!(version_is_newer(&[2026, 1, 1], &[2025, 12, 31]));
+        assert!(version_is_newer(&[2025, 10, 1], &[2025, 9, 30]));
+        assert!(!version_is_newer(&[2025, 9], &[2025, 9, 1]));
+        assert!(!version_is_newer(&[2025, 9], &[2025, 9]));
     }
 
     /// The binary probe must find a yt-dlp on this machine (the environment

@@ -126,6 +126,16 @@ impl Focusable for TransportBar {
     }
 }
 
+fn play_label(state: &TransportState) -> &'static str {
+    if state.is_loading {
+        "Loading…"
+    } else if state.is_playing {
+        "Pause"
+    } else {
+        "Play"
+    }
+}
+
 impl gpui::Render for TransportBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_dragging_seek {
@@ -135,11 +145,7 @@ impl gpui::Render for TransportBar {
         self.volume_slider
             .update(cx, |slider, cx| slider.set_value(self.state.volume, cx));
 
-        let play_label = if self.state.is_playing {
-            "Pause"
-        } else {
-            "Play"
-        };
+        let play_label = play_label(&self.state);
         let time_text = Self::format_time(self.state.position);
         let duration_text = Self::format_time(self.state.duration);
         let entity = cx.entity().downgrade();
@@ -160,7 +166,11 @@ impl gpui::Render for TransportBar {
                     .child(SharedString::from(play_label))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         if let Some(entity) = entity.upgrade() {
-                            entity.update(cx, |_, cx| cx.emit(TransportEvent::TogglePlay));
+                            entity.update(cx, |transport, cx| {
+                                if !transport.state.is_loading {
+                                    cx.emit(TransportEvent::TogglePlay);
+                                }
+                            });
                         }
                     }),
             )
@@ -184,17 +194,27 @@ impl gpui::Render for TransportBar {
                     .text_color(cx.theme().colors().text_muted)
                     .child(duration_text),
             )
-            // A muted-autoplaying video is silent by design (the widget's
-            // autoplay_policy); without this label the operator sees a
-            // playing video with no sound and no explanation.
-            .child(if self.state.volume < 0.001 && self.state.is_playing {
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().colors().text_muted)
-                    .child(SharedString::from("Muted"))
-            } else {
-                div()
-            })
             .child(div().w(px(80.0)).child(self.volume_slider.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: Loading media is visibly distinct from a ready Play control.
+    /// [P1] Motivating: users can distinguish slow loading from an idle player.
+    /// pre: transport state reports loading.
+    /// post: the control label reports Loading rather than Play or Pause.
+    #[test]
+    fn loading_state_has_a_visible_transport_label() {
+        let state = TransportState {
+            is_playing: false,
+            position: Duration::ZERO,
+            duration: Duration::ZERO,
+            volume: 1.0,
+            is_loading: true,
+        };
+        assert_eq!(play_label(&state), "Loading…");
     }
 }
