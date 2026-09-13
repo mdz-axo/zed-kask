@@ -697,7 +697,7 @@ mod tests {
 
 /// Classify an action's impact decision using Fermi's three-tier gate.
 ///
-/// - `worsening`: absolute value of the negative delta (0.0 if improved).
+/// - `worsening`: relative adverse movement from the baseline (0.0 if improved or unchanged).
 /// - `stage_ratio`: below this → Accept (noise).
 /// - `block_ratio`: at or above this → Block (hard reject).
 /// - Between → Stage (escalate for review).
@@ -755,6 +755,7 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::ConsolidationCandidates
         | SignalMetric::PendingEscalations
         | SignalMetric::ToolReliability
+        | SignalMetric::PassRate
         | SignalMetric::TestCoverage
         | SignalMetric::MutationScore => &[],
     }

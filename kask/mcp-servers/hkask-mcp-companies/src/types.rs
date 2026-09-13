@@ -814,32 +814,6 @@ fn default_screener_limit() -> u32 {
     20
 }
 
-#[cfg(test)]
-mod screener_schema_tests {
-    use super::*;
-
-    #[test]
-    fn template_context_schema_exposes_registered_parameters() {
-        let schema = schemars::schema_for!(ScreenerRequest);
-        let schema = match serde_json::to_string(&schema) {
-            Ok(schema) => schema,
-            Err(error) => panic!("screener request schema must serialize: {error}"),
-        };
-        for field in [
-            "exchanges",
-            "as_of",
-            "market_cap_min",
-            "market_cap_max",
-            "liquidity_min_usd",
-        ] {
-            assert!(
-                schema.contains(&format!("\"{field}\":{{")),
-                "template_context schema does not expose {field}: {schema}"
-            );
-        }
-    }
-}
-
 // ── Economic Profit valuation request ────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -47,6 +47,9 @@ vendored = [
     "video",
 ]
 video = ["dep:ffmpeg-next"]
+# Narrow production-faithful observation/control surface for GPUI benchmarks.
+# Must not enable `test-support` directly or transitively.
+bench-support = []
 
 [lints]
 workspace = true

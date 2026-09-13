@@ -747,14 +747,13 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Verify whether the previous cycle's actions improved their targeted
-    /// metrics (Fermi impact-gate pattern).
+    /// Verify evidence-bearing impact checks (Fermi impact-gate pattern).
     ///
-    /// Re-senses energy ratios and variety deficit, comparing post-action
-    /// values against the pre-action values. Classifies each action as
-    /// Accept / Stage / Block using per-metric worsening thresholds.
-    /// Blocked actions are prevented from re-use until Curation intervenes.
-    /// Actions that repeatedly fail to improve trigger stagnation detection.
+    /// Production callers submit rollout checks whose event source supplies
+    /// comparable before/after observations. Computed advisories do not enter
+    /// this path: routing advice is not an intervention. Verified checks are
+    /// classified as Accept / Stage / Block using relative worsening
+    /// thresholds; repeated lack of improvement triggers stagnation detection.
     pub(super) async fn verify_impact(
         &self,
         previous_actions: &[RegulatoryAction],
@@ -986,8 +985,24 @@ impl super::CyberneticsLoop {
                 None => false,
             };
 
-            // Classify the decision using per-metric worsening thresholds.
-            let worsening = if improved { 0.0 } else { delta.abs() };
+            // Classify against relative worsening thresholds. Absolute deltas
+            // are not comparable across ratios, counts, and other metric
+            // scales. A non-zero movement from a zero baseline has no defined
+            // relative magnitude, so it remains unassessed rather than being
+            // laundered into a verdict.
+            let worsening = if improved || delta.abs() <= f64::EPSILON {
+                0.0
+            } else if before_val.abs() <= f64::EPSILON {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    metric = metric.as_str(),
+                    after = after_val,
+                    "verify_impact: zero baseline cannot establish relative worsening — verdict not computed"
+                );
+                continue;
+            } else {
+                delta.abs() / before_val.abs()
+            };
             let block_worsening_ratio = self
                 .calibrated_thresholds
                 .read()
@@ -1000,7 +1015,7 @@ impl super::CyberneticsLoop {
             );
 
             // Tolerated noise is acceptable, but only observed improvement
-            // resets stagnation. Recommendations are not proof of intervention.
+            // resets stagnation. An accepted noise-band verdict is not progress.
             let action_type_str = action.action_type.as_str();
             let plateau = self.stagnation_detector.record_and_check(
                 metric.as_str(),
@@ -1104,8 +1119,7 @@ impl super::CyberneticsLoop {
                     escalated: true,
                     timestamp: chrono::Utc::now(),
                     message: format!(
-                        "ActionDecision::Block: {} on {} caused {:.1}% worsening (threshold: {:.1}%)",
-                        action.action_type.as_str(),
+                        "ActionDecision::Block: impact check for {} observed {:.1}% relative worsening (threshold: {:.1}%)",
                         metric.as_str(),
                         worsening * 100.0,
                         block_worsening_ratio * 100.0,
@@ -1416,11 +1430,8 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
-            // OcrSilentFailuresExceeded carries the storm count so
-            // verify_impact can re-sense and compare as entries age out of
-            // the window, and auto_resolve_cleared can close the escalation
-            // when the storm ends — the same typed-data pattern as
-            // ContextServerFleetDegraded below.
+            // Carry the observed storm count into the advisory so review sees
+            // the quantitative trigger instead of an ungrounded warning.
             RegulationReason::OcrSilentFailuresExceeded => {
                 let at = self
                     .try_substitute(dev.signal.metric, proposed.action_type)
@@ -1438,9 +1449,8 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
-            // ContextServerFleetDegraded carries typed fleet-health data so
-            // verify_impact can re-sense and compare, and extract_deficit_threshold
-            // can populate the error_context with real counts instead of (0, 0).
+            // Carry typed fleet-health data so extract_deficit_threshold can
+            // populate the advisory context with real counts instead of (0, 0).
             RegulationReason::ContextServerFleetDegraded => {
                 let at = self
                     .try_substitute(dev.signal.metric, proposed.action_type)
@@ -1575,6 +1585,18 @@ mod tests {
         CyberneticsLoop::new(ledger).with_rollout_event_source(source)
     }
 
+    struct ChangingOcrHealthSource {
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::OcrHealthSource for ChangingOcrHealthSource {
+        async fn recent_silent_failures(&self) -> Result<u64, crate::OcrHealthError> {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(if read == 0 { 1 } else { 2 })
+        }
+    }
+
     /// A recording `AlertEscalationSink` — captures the exact strings the
     /// loop persisted and auto-resolved so the two message-format sites
     /// can be asserted byte-identical.
@@ -1647,6 +1669,49 @@ mod tests {
         fn has_pending_alert(&self, _output: &str) -> bool {
             *self.pending.lock().expect("pending lock")
         }
+    }
+
+    /// A computed action is advice until an operator applies it. Routing that
+    /// advice must not immediately re-read the metric and attribute concurrent
+    /// movement to an intervention that did not occur.
+    #[tokio::test]
+    async fn tick_does_not_verify_unapplied_ocr_advice() {
+        let ocr = Arc::new(ChangingOcrHealthSource {
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_ocr_health_source(ocr.clone())
+                .with_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_alert_escalation_sink(Some(escalation.clone()));
+
+        regulation.tick().await;
+
+        assert_eq!(
+            ocr.reads.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the tick may sense the condition once but must not re-sense advice as intervention"
+        );
+        assert!(
+            escalation
+                .persisted
+                .lock()
+                .expect("persisted lock")
+                .iter()
+                .any(|message| message.starts_with("ocr_silent_failures_exceeded")),
+            "the detected OCR condition must still produce an actionable advisory"
+        );
+        let spans = archive.0.lock().expect("archive lock");
+        assert!(
+            !spans.iter().any(|(path, _)| path == "impact_verified"),
+            "unapplied advice has no impact verdict"
+        );
+        assert!(
+            !spans.iter().any(|(path, _)| path == "action_blocked"),
+            "unapplied advice cannot be classified as harmful"
+        );
     }
 
     /// T12: call-cap exhaustion is detected BEFORE the per-tick reset —
@@ -1996,6 +2061,33 @@ mod tests {
                 .stagnation_detector
                 .ineffective_count("tool_reliability", action.action_type.as_str()),
             0
+        );
+    }
+
+    /// Worsening thresholds are ratios, not raw metric units. A pass-rate
+    /// decline from 0.10 to 0.07 is 30% relative worsening and must cross the
+    /// default 20% block threshold even though the absolute delta is only 0.03.
+    #[tokio::test]
+    async fn verify_impact_classifies_relative_worsening() {
+        let source = Arc::new(MockRolloutEventSource::answering(0.10, 0.07));
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation = loop_with_source(source);
+        regulation.set_alert_escalation_sink(Some(escalation.clone()));
+
+        let reports = regulation
+            .verify_impact(&[rollout_impact_check("relative", "pass_rate")])
+            .await;
+
+        assert_eq!(
+            reports.first().expect("impact report").decision,
+            ActionDecision::Block
+        );
+        let messages = escalation.persisted.lock().expect("persisted lock");
+        assert_eq!(messages.len(), 1, "one block alert is persisted");
+        assert_eq!(
+            messages.first().expect("block alert"),
+            "ActionDecision::Block: impact check for pass_rate observed 30.0% relative worsening (threshold: 20.0%)",
+            "the alert reports an observation, not unsupported causation"
         );
     }
 

@@ -4,17 +4,27 @@ use crate::{
     types::{ScreenAction, ScreenTemplateContext, ScreenerRequest},
 };
 
-use futures::StreamExt as _;
+use futures::{FutureExt as _, StreamExt as _};
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    future::Future,
+    panic::AssertUnwindSafe,
+};
 
-const UNIVERSAL_EQUITY_TEMPLATE: &str =
-    include_str!("../../../registry/templates/company-screen/universal_equity.j2");
-const EXPECTATIONS_GAP_TEMPLATE: &str =
-    include_str!("../../../registry/templates/company-screen/expectations_gap.j2");
+const SCREEN_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "universal_equity",
+        include_str!("../../../registry/templates/company-screen/universal_equity.j2"),
+    ),
+    (
+        "expectations_gap",
+        include_str!("../../../registry/templates/company-screen/expectations_gap.j2"),
+    ),
+];
 const LISP_MAX_STEPS: u64 = 100_000;
 const LISP_MAX_DEPTH: u64 = 256;
 
@@ -125,6 +135,8 @@ pub(crate) async fn execute(
 
 async fn submit(server: &CompaniesServer, req: ScreenerRequest) -> Result<Value, McpToolError> {
     let definition = resolve_definition(&req)?;
+    let acquisition_date = chrono::Utc::now().date_naive().to_string();
+    validate_definition(&definition, &acquisition_date)?;
     let verification = verify_assertions(&definition)?;
     let universe_snapshot = acquire_universe(server, &definition).await?;
     let definition_value = serde_json::to_value(&definition)
@@ -229,35 +241,50 @@ async fn calculate_job(
     verification: Value,
     universe_snapshot: Vec<Value>,
 ) {
-    if let Err(error) = store.update_screen_job(&job_id, "executing", None, None) {
-        tracing::error!(job_id, "failed to mark screen job executing: {error}");
-        return;
-    }
-    match calculate(
+    let calculation = calculate(
         &client,
         &eodhd_api_key,
         &definition,
         verification,
         universe_snapshot,
-    )
-    .await
+    );
+    persist_screen_calculation(store, job_id, calculation).await;
+}
+
+async fn persist_screen_calculation<F>(store: ResearchStore, job_id: String, calculation: F)
+where
+    F: Future<Output = Result<Value, McpToolError>>,
+{
+    if let Err(error) = store.update_screen_job(&job_id, "executing", None, None) {
+        tracing::error!(job_id, "failed to mark screen job executing: {error}");
+        return;
+    }
+    let outcome = AssertUnwindSafe(calculation).catch_unwind().await;
+    let (status, result, error) = match outcome {
+        Ok(Ok(result)) => ("completed", Some(result), None),
+        Ok(Err(error)) => ("failed", None, Some(error.to_string())),
+        Err(payload) => {
+            let panic_message = payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic payload".to_string());
+            tracing::error!(job_id, panic_message, "screen calculation panicked");
+            (
+                "failed",
+                None,
+                Some(format!("screen calculation panicked: {panic_message}")),
+            )
+        }
+    };
+    if let Err(store_error) =
+        store.update_screen_job(&job_id, status, result.as_ref(), error.as_deref())
     {
-        Ok(result) => {
-            if let Err(error) = store.update_screen_job(&job_id, "completed", Some(&result), None) {
-                tracing::error!(job_id, "failed to persist completed screen job: {error}");
-            }
-        }
-        Err(error) => {
-            let message = error.to_string();
-            if let Err(store_error) =
-                store.update_screen_job(&job_id, "failed", None, Some(&message))
-            {
-                tracing::error!(
-                    job_id,
-                    "failed to persist screen job failure: {store_error}"
-                );
-            }
-        }
+        tracing::error!(
+            job_id,
+            status,
+            "failed to persist terminal screen job state: {store_error}"
+        );
     }
 }
 
@@ -738,19 +765,28 @@ fn resolve_definition(req: &ScreenerRequest) -> Result<ScreenDefinition, McpTool
     }
 }
 
-fn render_template(
+fn validate_definition(
+    definition: &ScreenDefinition,
+    acquisition_date: &str,
+) -> Result<(), McpToolError> {
+    if definition.universe.exchanges.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "screen universe requires at least one exchange",
+        ));
+    }
+    if definition.as_of != acquisition_date {
+        return Err(McpToolError::invalid_argument(format!(
+            "screen as_of {:?} does not match current acquisition date {acquisition_date:?}",
+            definition.as_of
+        )));
+    }
+    Ok(())
+}
+
+fn parse_template_source<'a>(
     name: &str,
-    context: Option<&ScreenTemplateContext>,
-) -> Result<ScreenDefinition, McpToolError> {
-    let source = match name {
-        "universal_equity" => UNIVERSAL_EQUITY_TEMPLATE,
-        "expectations_gap" => EXPECTATIONS_GAP_TEMPLATE,
-        _ => {
-            return Err(McpToolError::invalid_argument(format!(
-                "unknown screen template {name:?}"
-            )));
-        }
-    };
+    source: &'a str,
+) -> Result<(ScreenTemplateMetadata, &'a str), McpToolError> {
     let (metadata, body) = source.split_once("\n---\n").ok_or_else(|| {
         McpToolError::internal(format!(
             "screen template {name:?} has no metadata delimiter"
@@ -761,11 +797,25 @@ fn render_template(
             "screen template {name:?} has no inference metadata header"
         ))
     })?;
-    let metadata: ScreenTemplateMetadata = serde_yaml_neo::from_str(metadata).map_err(|error| {
+    let metadata = serde_yaml_neo::from_str(metadata).map_err(|error| {
         McpToolError::internal(format!(
             "screen template {name:?} has invalid metadata: {error}"
         ))
     })?;
+    Ok((metadata, body))
+}
+
+fn render_template(
+    name: &str,
+    context: Option<&ScreenTemplateContext>,
+) -> Result<ScreenDefinition, McpToolError> {
+    let source = SCREEN_TEMPLATES
+        .iter()
+        .find_map(|(registered_name, source)| (*registered_name == name).then_some(*source))
+        .ok_or_else(|| {
+            McpToolError::invalid_argument(format!("unknown screen template {name:?}"))
+        })?;
+    let (metadata, body) = parse_template_source(name, source)?;
     let context = match context {
         Some(context) => serde_json::to_value(context).map_err(|error| {
             McpToolError::internal(format!(
@@ -1045,21 +1095,72 @@ fn paginate_result(mut result: Value, cursor: u32, limit: u32) -> Result<Value, 
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| McpToolError::internal("screen result has invalid row_count"))?;
+    let row_ids = table
+        .get("row_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpToolError::internal("screen result has invalid row_ids"))?;
+    if row_ids.len() != row_count {
+        return Err(McpToolError::internal(format!(
+            "screen result row_ids length {} does not match row_count {row_count}",
+            row_ids.len()
+        )));
+    }
+    let columns = table
+        .get("columns")
+        .and_then(Value::as_object)
+        .ok_or_else(|| McpToolError::internal("screen result has invalid columns"))?;
+    for (column_id, column) in columns {
+        let values = column
+            .get("values")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                McpToolError::internal(format!(
+                    "screen result column {column_id:?} has invalid values"
+                ))
+            })?;
+        if values.len() != row_count {
+            return Err(McpToolError::internal(format!(
+                "screen result column {column_id:?} length {} does not match row_count {row_count}",
+                values.len()
+            )));
+        }
+    }
+
     let start = usize::try_from(cursor)
         .map_err(|_| McpToolError::invalid_argument("cursor exceeds platform range"))?
         .min(row_count);
-    let end = start
-        .saturating_add(usize::try_from(limit).unwrap_or(usize::MAX))
-        .min(row_count);
-    if let Some(row_ids) = table.get_mut("row_ids").and_then(Value::as_array_mut) {
-        *row_ids = row_ids[start..end].to_vec();
-    }
-    if let Some(columns) = table.get_mut("columns").and_then(Value::as_object_mut) {
-        for column in columns.values_mut() {
-            if let Some(values) = column.get_mut("values").and_then(Value::as_array_mut) {
-                *values = values[start..end].to_vec();
-            }
-        }
+    let page_limit = usize::try_from(limit)
+        .map_err(|_| McpToolError::invalid_argument("result limit exceeds platform range"))?;
+    let end = start.saturating_add(page_limit).min(row_count);
+    let row_ids = table
+        .get_mut("row_ids")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| McpToolError::internal("screen result has invalid row_ids"))?;
+    *row_ids = row_ids
+        .get(start..end)
+        .ok_or_else(|| McpToolError::internal("screen result row_ids page is out of bounds"))?
+        .to_vec();
+    let columns = table
+        .get_mut("columns")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| McpToolError::internal("screen result has invalid columns"))?;
+    for (column_id, column) in columns {
+        let values = column
+            .get_mut("values")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| {
+                McpToolError::internal(format!(
+                    "screen result column {column_id:?} has invalid values"
+                ))
+            })?;
+        *values = values
+            .get(start..end)
+            .ok_or_else(|| {
+                McpToolError::internal(format!(
+                    "screen result column {column_id:?} page is out of bounds"
+                ))
+            })?
+            .to_vec();
     }
     table.insert("page_start".to_string(), json!(start));
     table.insert("page_count".to_string(), json!(end - start));
@@ -1084,6 +1185,123 @@ fn required_job_id(req: &ScreenerRequest) -> Result<&str, McpToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn expectations_definition(as_of: &str, exchanges: Vec<String>) -> ScreenDefinition {
+        let context = ScreenTemplateContext {
+            exchanges: Some(exchanges),
+            as_of: Some(as_of.to_string()),
+            market_cap_min: Some(5_000_000_000.0),
+            market_cap_max: Some(50_000_000_000.0),
+            liquidity_min_usd: Some(1_000_000.0),
+        };
+        match render_template("expectations_gap", Some(&context)) {
+            Ok(definition) => definition,
+            Err(error) => panic!("expectations template must render: {error}"),
+        }
+    }
+
+    #[test]
+    fn definition_validation_rejects_empty_exchange_universe() {
+        let definition = expectations_definition("2026-09-13", Vec::new());
+        let error = match validate_definition(&definition, "2026-09-13") {
+            Ok(()) => panic!("empty exchange universe must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.message,
+            "screen universe requires at least one exchange"
+        );
+    }
+
+    #[test]
+    fn definition_validation_rejects_historical_label_for_current_data() {
+        let definition = expectations_definition("2026-09-12", vec!["US".to_string()]);
+        let error = match validate_definition(&definition, "2026-09-13") {
+            Ok(()) => panic!("historical as_of must be rejected for current-only acquisition"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.message,
+            "screen as_of \"2026-09-12\" does not match current acquisition date \"2026-09-13\""
+        );
+    }
+
+    #[test]
+    fn pagination_rejects_inconsistent_stored_column_lengths() {
+        let result = json!({
+            "table": {
+                "row_count": 2,
+                "row_ids": ["only-one"],
+                "columns": {
+                    "company": {"values": ["only-one"]}
+                }
+            }
+        });
+        let error = match paginate_result(result, 0, 1) {
+            Ok(_) => panic!("inconsistent stored result must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.message,
+            "screen result row_ids length 1 does not match row_count 2"
+        );
+    }
+
+    #[tokio::test]
+    async fn calculation_panic_is_persisted_as_failed() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
+        store.insert_screen_job(&ScreenJobRecord {
+            id: "panic-job".to_string(),
+            status: "queued".to_string(),
+            definition: json!({"name":"panic-contract"}),
+            result: None,
+            error: None,
+            created_at: "2026-09-13T00:00:00Z".to_string(),
+            updated_at: "2026-09-13T00:00:00Z".to_string(),
+        })?;
+
+        persist_screen_calculation(store.clone(), "panic-job".to_string(), async {
+            panic!("calculation exploded");
+            #[allow(unreachable_code)]
+            Ok(json!({}))
+        })
+        .await;
+
+        let job = store
+            .get_screen_job("panic-job")?
+            .ok_or_else(|| std::io::Error::other("panic job was not persisted"))?;
+        assert_eq!(job.status, "failed");
+        assert_eq!(job.result, None);
+        assert_eq!(
+            job.error.as_deref(),
+            Some("screen calculation panicked: calculation exploded")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn registered_template_inputs_match_public_context_schema() {
+        let schema = schemars::schema_for!(ScreenTemplateContext);
+        let schema = match serde_json::to_value(schema) {
+            Ok(schema) => schema,
+            Err(error) => panic!("template context schema must serialize: {error}"),
+        };
+        let schema_fields: std::collections::BTreeSet<String> =
+            match schema.get("properties").and_then(Value::as_object) {
+                Some(properties) => properties.keys().cloned().collect(),
+                None => panic!("template context schema has no properties: {schema}"),
+            };
+        let mut contract_fields = std::collections::BTreeSet::new();
+        for (name, source) in SCREEN_TEMPLATES {
+            let metadata = match parse_template_source(name, source) {
+                Ok((metadata, _)) => metadata,
+                Err(error) => panic!("registered template metadata must parse: {error}"),
+            };
+            contract_fields.extend(metadata.contract.input.into_keys());
+        }
+        assert_eq!(schema_fields, contract_fields);
+    }
 
     #[test]
     fn template_preflight_reports_all_missing_context_variables() {

@@ -23,6 +23,7 @@ pub struct DecodedFrame {
     pub width: u32,
     pub height: u32,
     pub bgra: Vec<u8>,
+    pub presentation_time: Duration,
 }
 
 /// Playback state for the transport bar.
@@ -391,17 +392,21 @@ impl Default for VideoPlayer {
 /// engine; GPUI sends controls and drains already-produced updates.
 pub(crate) struct WidgetVideoPlayer {
     commands: std::sync::mpsc::Sender<VideoCommand>,
-    updates: std::sync::mpsc::Receiver<VideoWorkerUpdate>,
+    events: std::sync::mpsc::Receiver<VideoWorkerEvent>,
+    frames: LatestFrameMailbox,
     state: PlaybackState,
     position: Duration,
     duration: Duration,
     volume: f32,
     pending_error: Option<String>,
+    last_sequence: u64,
+    worker_disconnected_reported: bool,
 }
 
 pub(crate) struct WidgetVideoPoll {
     pub frame: Option<DecodedFrame>,
     pub opened: bool,
+    pub completed: bool,
     pub error: Option<String>,
 }
 
@@ -419,16 +424,19 @@ enum VideoCommand {
     Shutdown,
 }
 
-enum VideoWorkerUpdate {
+enum VideoWorkerEvent {
     Opened {
-        frame: DecodedFrame,
+        sequence: u64,
         snapshot: VideoSnapshot,
     },
-    Advanced {
-        frame: Option<DecodedFrame>,
+    Completed {
+        sequence: u64,
         snapshot: VideoSnapshot,
     },
-    Failed(String),
+    Failed {
+        sequence: u64,
+        error: String,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -450,22 +458,107 @@ impl VideoSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VideoDeliveryStats {
+    pub published_frames: u64,
+    pub replaced_frames: u64,
+    pub consumed_frames: u64,
+    pub pending_frames: usize,
+    pub max_pending_frames: usize,
+    pub last_consumed_pts_ms: Option<u64>,
+    pub out_of_order_frames: u64,
+}
+
+#[derive(Clone, Default)]
+struct LatestFrameMailbox {
+    state: std::sync::Arc<parking_lot::Mutex<LatestFrameState>>,
+}
+
+#[derive(Default)]
+struct LatestFrameState {
+    frame: Option<DecodedFrame>,
+    snapshot: Option<VideoSnapshot>,
+    sequence: u64,
+    stats: VideoDeliveryStats,
+}
+
+struct LatestFrameUpdate {
+    frame: Option<DecodedFrame>,
+    snapshot: VideoSnapshot,
+    sequence: u64,
+}
+
+impl LatestFrameMailbox {
+    /// expect: Publishing frames faster than the foreground consumes them keeps
+    /// only the newest full frame while preserving the latest playback state.
+    /// [P9] Motivating: delayed GPUI work cannot create unbounded frame memory.
+    /// pre: `sequence` is monotonically increasing for one worker.
+    /// post: pending frame count is at most one; a newer frame replaces an older one.
+    /// [P1] Constraining: replacement never duplicates a frame.
+    fn publish(&self, frame: Option<DecodedFrame>, snapshot: VideoSnapshot, sequence: u64) {
+        let mut state = self.state.lock();
+        state.snapshot = Some(snapshot);
+        state.sequence = sequence;
+        if let Some(frame) = frame {
+            state.stats.published_frames = state.stats.published_frames.saturating_add(1);
+            if state.frame.replace(frame).is_some() {
+                state.stats.replaced_frames = state.stats.replaced_frames.saturating_add(1);
+            }
+            state.stats.pending_frames = 1;
+            state.stats.max_pending_frames = state.stats.max_pending_frames.max(1);
+        }
+    }
+
+    fn take(&self) -> Option<LatestFrameUpdate> {
+        let mut state = self.state.lock();
+        let snapshot = state.snapshot.take()?;
+        let frame = state.frame.take();
+        if let Some(frame) = frame.as_ref() {
+            let pts_ms = frame.presentation_time.as_millis() as u64;
+            if state
+                .stats
+                .last_consumed_pts_ms
+                .is_some_and(|last_pts_ms| pts_ms <= last_pts_ms)
+            {
+                state.stats.out_of_order_frames = state.stats.out_of_order_frames.saturating_add(1);
+            }
+            state.stats.last_consumed_pts_ms = Some(pts_ms);
+            state.stats.consumed_frames = state.stats.consumed_frames.saturating_add(1);
+            state.stats.pending_frames = 0;
+        }
+        Some(LatestFrameUpdate {
+            frame,
+            snapshot,
+            sequence: state.sequence,
+        })
+    }
+
+    fn stats(&self) -> VideoDeliveryStats {
+        self.state.lock().stats
+    }
+}
+
 impl WidgetVideoPlayer {
     pub fn new() -> anyhow::Result<Self> {
         let (command_tx, command_rx) = std::sync::mpsc::channel();
-        let (update_tx, update_rx) = std::sync::mpsc::channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let frames = LatestFrameMailbox::default();
+        let worker_frames = frames.clone();
         std::thread::Builder::new()
             .name("hkask-video-playback".to_string())
-            .spawn(move || run_video_worker(command_rx, update_tx))
+            .spawn(move || run_video_worker(command_rx, event_tx, worker_frames))
             .map_err(|error| anyhow::anyhow!("failed to start video playback worker: {error}"))?;
         Ok(Self {
             commands: command_tx,
-            updates: update_rx,
+            events: event_rx,
+            frames,
             state: PlaybackState::Stopped,
             position: Duration::ZERO,
             duration: Duration::ZERO,
             volume: 1.0,
             pending_error: None,
+            last_sequence: 0,
+            worker_disconnected_reported: false,
         })
     }
 
@@ -535,28 +628,65 @@ impl WidgetVideoPlayer {
         let mut poll = WidgetVideoPoll {
             frame: None,
             opened: false,
+            completed: false,
             error: self.pending_error.take(),
         };
-        while let Ok(update) = self.updates.try_recv() {
-            match update {
-                VideoWorkerUpdate::Opened { frame, snapshot } => {
-                    self.apply_snapshot(snapshot);
-                    poll.frame = Some(frame);
+
+        if let Some(update) = self.frames.take()
+            && update.sequence >= self.last_sequence
+        {
+            self.last_sequence = update.sequence;
+            self.apply_snapshot(update.snapshot);
+            poll.frame = update.frame;
+        }
+
+        loop {
+            match self.events.try_recv() {
+                Ok(VideoWorkerEvent::Opened { sequence, snapshot }) => {
                     poll.opened = true;
-                }
-                VideoWorkerUpdate::Advanced { frame, snapshot } => {
-                    self.apply_snapshot(snapshot);
-                    if frame.is_some() {
-                        poll.frame = frame;
+                    if sequence >= self.last_sequence {
+                        self.last_sequence = sequence;
+                        self.apply_snapshot(snapshot);
                     }
                 }
-                VideoWorkerUpdate::Failed(error) => {
-                    self.state = PlaybackState::Stopped;
-                    poll.error = Some(error);
+                Ok(VideoWorkerEvent::Completed { sequence, snapshot }) => {
+                    if sequence >= self.last_sequence {
+                        self.last_sequence = sequence;
+                        self.apply_snapshot(snapshot);
+                        poll.completed = true;
+                    }
+                }
+                Ok(VideoWorkerEvent::Failed { sequence, error }) => {
+                    if sequence >= self.last_sequence {
+                        self.last_sequence = sequence;
+                        self.state = PlaybackState::Stopped;
+                        poll.error = Some(error);
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if !self.worker_disconnected_reported {
+                        self.worker_disconnected_reported = true;
+                        self.state = PlaybackState::Stopped;
+                        poll.error = Some("video playback worker stopped unexpectedly".to_string());
+                    }
+                    break;
                 }
             }
         }
         poll
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    #[must_use]
+    pub fn delivery_stats(&self) -> VideoDeliveryStats {
+        self.frames.stats()
+    }
+
+    #[cfg(feature = "bench-support")]
+    #[must_use]
+    pub fn playback_state(&self) -> PlaybackState {
+        self.state
     }
 
     fn reset_for_open(&mut self) {
@@ -576,6 +706,7 @@ impl WidgetVideoPlayer {
     fn send(&mut self, command: VideoCommand) {
         if self.commands.send(command).is_err() {
             self.state = PlaybackState::Stopped;
+            self.worker_disconnected_reported = true;
             self.pending_error = Some("video playback worker stopped unexpectedly".to_string());
         }
     }
@@ -591,9 +722,11 @@ impl Drop for WidgetVideoPlayer {
 
 fn run_video_worker(
     commands: std::sync::mpsc::Receiver<VideoCommand>,
-    updates: std::sync::mpsc::Sender<VideoWorkerUpdate>,
+    events: std::sync::mpsc::Sender<VideoWorkerEvent>,
+    frames: LatestFrameMailbox,
 ) {
     let mut player = VideoPlayer::new();
+    let mut sequence = 0_u64;
     loop {
         let command = if player.is_playing() {
             match commands.recv_timeout(Duration::from_millis(33)) {
@@ -613,19 +746,23 @@ fn run_video_worker(
                 player = VideoPlayer::new();
                 match player.open(&path) {
                     Ok(frame) => {
-                        if updates
-                            .send(VideoWorkerUpdate::Opened {
-                                frame,
-                                snapshot: VideoSnapshot::from_player(&player),
-                            })
+                        sequence = sequence.saturating_add(1);
+                        let snapshot = VideoSnapshot::from_player(&player);
+                        frames.publish(Some(frame), snapshot, sequence);
+                        if events
+                            .send(VideoWorkerEvent::Opened { sequence, snapshot })
                             .is_err()
                         {
                             break;
                         }
                     }
                     Err(error) => {
-                        if updates
-                            .send(VideoWorkerUpdate::Failed(error.to_string()))
+                        sequence = sequence.saturating_add(1);
+                        if events
+                            .send(VideoWorkerEvent::Failed {
+                                sequence,
+                                error: error.to_string(),
+                            })
                             .is_err()
                         {
                             break;
@@ -640,19 +777,23 @@ fn run_video_worker(
                 player = VideoPlayer::new();
                 match player.open_stream(&video_url, audio_url.as_deref()) {
                     Ok(frame) => {
-                        if updates
-                            .send(VideoWorkerUpdate::Opened {
-                                frame,
-                                snapshot: VideoSnapshot::from_player(&player),
-                            })
+                        sequence = sequence.saturating_add(1);
+                        let snapshot = VideoSnapshot::from_player(&player);
+                        frames.publish(Some(frame), snapshot, sequence);
+                        if events
+                            .send(VideoWorkerEvent::Opened { sequence, snapshot })
                             .is_err()
                         {
                             break;
                         }
                     }
                     Err(error) => {
-                        if updates
-                            .send(VideoWorkerUpdate::Failed(error.to_string()))
+                        sequence = sequence.saturating_add(1);
+                        if events
+                            .send(VideoWorkerEvent::Failed {
+                                sequence,
+                                error: error.to_string(),
+                            })
                             .is_err()
                         {
                             break;
@@ -668,20 +809,27 @@ fn run_video_worker(
             Some(VideoCommand::Shutdown) => break,
             None => match player.advance_and_decode(Duration::from_millis(33)) {
                 Ok(frame) => {
-                    if updates
-                        .send(VideoWorkerUpdate::Advanced {
-                            frame,
-                            snapshot: VideoSnapshot::from_player(&player),
-                        })
-                        .is_err()
-                    {
-                        break;
+                    sequence = sequence.saturating_add(1);
+                    let snapshot = VideoSnapshot::from_player(&player);
+                    if snapshot.state == PlaybackState::Finished {
+                        if events
+                            .send(VideoWorkerEvent::Completed { sequence, snapshot })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    } else {
+                        frames.publish(frame, snapshot, sequence);
                     }
                 }
                 Err(error) => {
                     player.pause();
-                    if updates
-                        .send(VideoWorkerUpdate::Failed(error.to_string()))
+                    sequence = sequence.saturating_add(1);
+                    if events
+                        .send(VideoWorkerEvent::Failed {
+                            sequence,
+                            error: error.to_string(),
+                        })
                         .is_err()
                     {
                         break;
@@ -738,7 +886,13 @@ mod ffmpeg_impl {
         duration_ms: u64,
         video_input_eof: bool,
         video_decoder_eof: bool,
+        pending_video_frame: Option<TimedVideoFrame>,
         audio: Option<AudioPipeline>,
+    }
+
+    struct TimedVideoFrame {
+        pts_ms: u64,
+        frame: DecodedFrame,
     }
 
     /// The audio half of the decoder — its own demuxer, decoder, resampler,
@@ -862,6 +1016,7 @@ mod ffmpeg_impl {
                 duration_ms,
                 video_input_eof: false,
                 video_decoder_eof: false,
+                pending_video_frame: None,
                 audio,
             })
         }
@@ -901,6 +1056,7 @@ mod ffmpeg_impl {
             self.decoder.flush();
             self.video_input_eof = false;
             self.video_decoder_eof = false;
+            self.pending_video_frame = None;
             if let Some(audio) = &mut self.audio {
                 audio.reset_after_seek(target);
                 if resume_audio {
@@ -954,6 +1110,14 @@ mod ffmpeg_impl {
             let target_ms = target.as_millis() as u64;
             let mut best_frame: Option<DecodedFrame> = None;
 
+            if let Some(pending) = self.pending_video_frame.take() {
+                if pending.pts_ms > target_ms {
+                    self.pending_video_frame = Some(pending);
+                    return Ok(DecodeOutcome::Pending);
+                }
+                best_frame = Some(pending.frame);
+            }
+
             loop {
                 let mut decoded = ffmpeg::util::frame::video::Video::empty();
                 loop {
@@ -964,9 +1128,17 @@ mod ffmpeg_impl {
                                 continue;
                             }
                             let frame_ms = pts.rescale(self.time_base, (1, 1000)).max(0) as u64;
-                            let frame = self.scale_frame(&decoded)?;
-                            if frame_ms >= target_ms {
-                                return Ok(DecodeOutcome::Frame(frame));
+                            let frame =
+                                self.scale_frame(&decoded, Duration::from_millis(frame_ms))?;
+                            if frame_ms > target_ms {
+                                self.pending_video_frame = Some(TimedVideoFrame {
+                                    pts_ms: frame_ms,
+                                    frame,
+                                });
+                                return Ok(match best_frame {
+                                    Some(frame) => DecodeOutcome::Frame(frame),
+                                    None => DecodeOutcome::Pending,
+                                });
                             }
                             best_frame = Some(frame);
                         }
@@ -1029,6 +1201,7 @@ mod ffmpeg_impl {
         fn scale_frame(
             &mut self,
             decoded: &ffmpeg::util::frame::video::Video,
+            presentation_time: Duration,
         ) -> anyhow::Result<DecodedFrame> {
             let mut bgra_frame = ffmpeg::util::frame::video::Video::empty();
             self.scaler
@@ -1048,6 +1221,7 @@ mod ffmpeg_impl {
                 width,
                 height,
                 bgra,
+                presentation_time,
             })
         }
     }
@@ -1418,6 +1592,126 @@ mod tests {
 
         assert!(frame.width > 0 && frame.height > 0);
         assert!(!player.is_playing(), "opening a video must not autoplay");
+    }
+
+    /// expect: Playback presents each frame only when the media clock reaches
+    /// that frame's presentation timestamp.
+    /// [P1] Motivating: video motion follows the source timeline instead of
+    /// racing ahead while the transport position remains unchanged.
+    /// pre: the source has a poster at 0ms and its next frame at 100ms.
+    /// post: an immediate playback tick emits no post-poster frame.
+    /// [P9] Constraining: decoder throughput cannot advance presentation time.
+    #[test]
+    fn future_frame_waits_for_its_presentation_timestamp() {
+        let path = playback_fixture();
+        let mut player = VideoPlayer::new();
+        player.open(&path).expect("open returns the poster frame");
+        player.play();
+
+        let frame = player
+            .advance_and_decode(Duration::ZERO)
+            .expect("early playback tick is not a decode failure");
+
+        assert!(
+            frame.is_none(),
+            "the 100ms frame must remain pending while the media clock is before 100ms"
+        );
+    }
+
+    /// expect: Foreground starvation cannot accumulate more than one full
+    /// decoded frame per video player.
+    /// [P9] Motivating: busy editor frames cannot turn video decoding into an
+    /// unbounded memory or foreground-drain queue.
+    /// pre: playback advances while the foreground does not poll for 450ms.
+    /// post: pending-frame high-water is one and one poll drains the latest frame.
+    /// [P1] Constraining: coalescing may replace stale frames but never duplicate them.
+    #[test]
+    fn worker_frame_backlog_is_bounded_to_latest_frame() {
+        let path = playback_fixture();
+        let mut player = WidgetVideoPlayer::new().expect("worker starts");
+        player.open(&path);
+        let open_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < open_deadline {
+            if player.poll().opened {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        player.play();
+        std::thread::sleep(Duration::from_millis(450));
+        let stats = player.delivery_stats();
+        assert_eq!(stats.max_pending_frames, 1);
+        assert_eq!(stats.pending_frames, 1);
+        assert!(
+            stats.replaced_frames > 0,
+            "later due frames should replace an unconsumed earlier frame"
+        );
+        assert!(player.poll().frame.is_some(), "latest frame is delivered");
+        assert!(
+            player.poll().frame.is_none(),
+            "the mailbox contains no stale frame backlog"
+        );
+    }
+
+    /// expect: Frame coalescing never discards playback lifecycle outcomes.
+    /// [P1] Motivating: a delayed foreground still observes that media opened
+    /// and completed instead of seeing an unexplained final frame.
+    /// pre: a complete short video plays without foreground polling.
+    /// post: the next poll reports both Opened and Completed exactly once.
+    /// [P9] Constraining: terminal outcomes close rather than reinforce polling.
+    #[test]
+    fn lifecycle_events_survive_frame_coalescing() {
+        let path = playback_fixture();
+        let mut player = WidgetVideoPlayer::new().expect("worker starts");
+        player.open(&path);
+        player.play();
+        std::thread::sleep(Duration::from_secs(1));
+
+        let poll = player.poll();
+        assert!(poll.opened, "opened event remains observable");
+        assert!(poll.completed, "completed event remains observable");
+        let second_poll = player.poll();
+        assert!(!second_poll.opened, "opened is delivered exactly once");
+        assert!(
+            !second_poll.completed,
+            "completed is delivered exactly once"
+        );
+    }
+
+    /// expect: Unexpected worker disconnection is a visible fatal outcome
+    /// delivered once rather than an endless empty poll.
+    /// [P1] Motivating: a broken playback worker explains why video stopped.
+    /// pre: the lifecycle sender disconnects while the player remains alive.
+    /// post: the first poll reports failure and later polls do not repeat it.
+    /// [P9] Constraining: terminal feedback closes the polling loop.
+    #[test]
+    fn worker_disconnection_surfaces_one_fatal_event() {
+        let (commands, _command_receiver) = std::sync::mpsc::channel();
+        let (event_sender, events) = std::sync::mpsc::channel();
+        drop(event_sender);
+        let mut player = WidgetVideoPlayer {
+            commands,
+            events,
+            frames: LatestFrameMailbox::default(),
+            state: PlaybackState::Playing,
+            position: Duration::ZERO,
+            duration: Duration::ZERO,
+            volume: 1.0,
+            pending_error: None,
+            last_sequence: 0,
+            worker_disconnected_reported: false,
+        };
+
+        assert_eq!(
+            player.poll().error.as_deref(),
+            Some("video playback worker stopped unexpectedly")
+        );
+        assert!(
+            player.poll().error.is_none(),
+            "fatal event is delivered once"
+        );
+        assert!(!player.is_playing(), "disconnection is terminal");
     }
 
     /// expect: A failed replacement open cannot revive frames from the prior

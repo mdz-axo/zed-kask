@@ -2367,12 +2367,13 @@ async fn saved_screen_calculates_and_pages_one_universe_result() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
+            let acquisition_date = chrono::Utc::now().date_naive().to_string();
             let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
                 "action":"calculate",
                 "template":"universal_equity",
                 "template_context":{
                     "exchanges":["US"],
-                    "as_of":"2026-09-11",
+                    "as_of":acquisition_date,
                     "market_cap_min":5_000_000_000.0,
                     "market_cap_max":10_000_000_000.0
                 },
@@ -2509,10 +2510,11 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
+            let acquisition_date = chrono::Utc::now().date_naive().to_string();
             let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
                 "action":"calculate","template":"expectations_gap",
                 "template_context":{
-                    "exchanges":["US"],"as_of":"2026-09-11",
+                    "exchanges":["US"],"as_of":acquisition_date,
                     "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
                     "liquidity_min_usd":1_000_000.0
                 },

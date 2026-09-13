@@ -542,7 +542,7 @@ impl MediaWidget {
 
         if let Some(player) = &mut self.video_player {
             let poll = player.poll();
-            if poll.opened {
+            if poll.opened || poll.completed {
                 self.video_loading = false;
             }
             if let Some(frame) = poll.frame {

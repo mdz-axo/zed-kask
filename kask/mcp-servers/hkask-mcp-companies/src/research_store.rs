@@ -289,13 +289,17 @@ impl ResearchStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| format!("serialize screen result: {e}"))?;
-        conn.execute(
-            "UPDATE screen_jobs
-             SET status = ?2, result = ?3, error = ?4, updated_at = ?5
-             WHERE id = ?1",
-            params![id, status, result, error, now_rfc3339()],
-        )
-        .map_err(|e| format!("update screen job: {e}"))?;
+        let updated = conn
+            .execute(
+                "UPDATE screen_jobs
+                 SET status = ?2, result = ?3, error = ?4, updated_at = ?5
+                 WHERE id = ?1",
+                params![id, status, result, error, now_rfc3339()],
+            )
+            .map_err(|e| format!("update screen job: {e}"))?;
+        if updated == 0 {
+            return Err(format!("update screen job: job {id:?} was not found").into());
+        }
         Ok(())
     }
 
@@ -618,6 +622,22 @@ impl ResearchStore {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn updating_missing_screen_job_surfaces_lost_transition() -> Result<(), PortfolioError> {
+        let directory = tempfile::tempdir()
+            .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
+        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
+        let error = match store.update_screen_job("missing-job", "failed", None, Some("failure")) {
+            Ok(()) => return Err("missing screen job update must fail".into()),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            "update screen job: job \"missing-job\" was not found"
+        );
+        Ok(())
+    }
 
     #[test]
     fn reopening_store_fails_only_interrupted_screen_jobs() -> Result<(), PortfolioError> {

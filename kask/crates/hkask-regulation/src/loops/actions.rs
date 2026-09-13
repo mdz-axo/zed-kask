@@ -53,9 +53,9 @@ pub enum RegulationData {
     /// Context-server fleet health degraded — some registered servers are
     /// stuck in `Starting` or `Error` instead of `Running`.
     ///
-    /// Carries the snapshot at escalation time so `verify_impact` can re-sense
-    /// and compare. `healthy_count` / `total_count` are the fleet counts from
-    /// `ContextServerHealthSource` at the moment the action was built.
+    /// Carries the fleet snapshot at escalation time as reviewable trigger
+    /// evidence. `healthy_count` / `total_count` come from
+    /// `ContextServerHealthSource` when the advisory is built.
     ContextServerFleetHealth {
         healthy_count: u64,
         total_count: u64,
@@ -63,11 +63,9 @@ pub enum RegulationData {
     /// OCR silent failures exceeded the set-point (0) — the corpus OCR
     /// endpoint returned empty output on page(s) within the recent window.
     ///
-    /// Carries the count at escalation time so `verify_impact` can re-sense
-    /// and compare: as the storm's entries age out of the window the count
-    /// declines, the re-sensed delta turns negative (improvement for a
-    /// ceiling metric), and `auto_resolve_cleared` closes the escalation
-    /// without operator action.
+    /// Carries the count at escalation time as quantitative trigger evidence
+    /// for the advisory. Subsequent sensing may show that the condition
+    /// recovered, but recovery alone does not establish that advice worked.
     OcrSilentFailuresExceeded { count: f64, threshold: f64 },
     /// Curator (metacognition) budget override directed at a named agent.
     ///

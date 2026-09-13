@@ -746,8 +746,9 @@ impl CyberneticsLoop {
     /// Full regulation cycle with loop-quality telemetry.
     ///
     /// Measures elapsed time and computes `LoopMetrics` metrics (delay_ms,
-    /// gain, fidelity_score, observed_progress_score) after each cycle. Calls
-    /// `verify_impact` to close the feedback loop.
+    /// gain, fidelity_score, observed_progress_score) after each cycle.
+    /// Computed advisories are routed for operator action; only externally
+    /// submitted checks with before/after evidence enter `verify_impact`.
     pub async fn tick(&self) {
         let start = std::time::Instant::now();
         self.tick_count
@@ -762,25 +763,26 @@ impl CyberneticsLoop {
             sink.reconcile_conditions(&signals);
         }
         let deviations = self.compare(&signals).await;
-        let mut actions = self.compute(&deviations).await;
-        // Drain externally-submitted rollout impact checks into this tick's
-        // verification pass — the producer side of the phase 6 seam.
-        let submitted: Vec<RegulatoryAction> =
+        let actions = self.compute(&deviations).await;
+        // Drain externally submitted checks separately from computed advice.
+        // Computed actions are routed to the operator and have no causal
+        // impact to verify until an intervention is confirmed. Rollout checks
+        // already carry an evidence-bearing before/after query contract.
+        let impact_checks: Vec<RegulatoryAction> =
             std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
-        if !submitted.is_empty() {
+        if !impact_checks.is_empty() {
             tracing::debug!(
                 target: "reg.cybernetics",
-                count = submitted.len(),
+                count = impact_checks.len(),
                 "drained submitted rollout impact checks into verify_impact"
             );
-            actions.extend(submitted);
         }
         self.act(&actions).await;
 
-        // Fermi impact-gate: verify whether actions improved their targets.
-        let impact_reports = self.verify_impact(&actions).await;
+        // Fermi impact-gate: verify only evidence-bearing submitted checks.
+        let impact_reports = self.verify_impact(&impact_checks).await;
 
-        // Check regulation coherence.
+        // Check coherence among the advisories produced by this cycle.
         self.check_coherence(&actions).await;
 
         // Feed per-metric outcomes into strategy evaluator.

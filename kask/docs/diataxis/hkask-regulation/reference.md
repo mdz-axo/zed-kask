@@ -328,10 +328,12 @@ status: VERIFIED
 
 The Cybernetics Loop is a sensor+advisor, not an actuator. Every computed
 `RegulatoryAction` is converted to an `Escalate` alert by
-`route_action_as_alert` (`cybernetics_loop/cycle.rs:510`) and routed
-through a three-tier path. This preserves user sovereignty: the human (via
-the Curator) decides whether to apply the recommended action; the loop does
-not act autonomously.
+`route_action_as_alert` and routed through a three-tier path. The advisory
+is not passed to `verify_impact`: routing a recommendation is not an
+intervention and cannot establish effectiveness or harm. The human (via the
+Curator) decides whether to apply it; confirmed interventions use the advice
+review lifecycle. Independently submitted rollout checks carry their own
+before/after evidence and remain eligible for immediate impact verification.
 
 The `efferent_action` field in the alert's `error_context` JSON carries
 the original `ActionType` (e.g., `Throttle`, `CircuitBreak`) so the Curator
@@ -398,8 +400,9 @@ with a **minimum-sample floor** (`TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES` = 5,
 matching `check_outcome`'s alert minimum): a domain below the floor is
 excluded — the live-observed 0.5/0.6667/0.75 deviations all came from
 quiet windows where a couple of failures were the entire sample. The
-aggregation lives in `aggregate_tool_reliability`, shared with
-`verify_impact`'s after-value re-sense so before/after stay comparable.
+aggregation lives in `aggregate_tool_reliability`. Advisory sensing uses
+that single aggregation path; routing the resulting recommendation does not
+immediately re-sense it as though an intervention occurred.
 
 Failures whose error kind is **not the tool's fault**
 (`hkask_types::tool_response::is_not_tool_fault_kind`: environment gaps

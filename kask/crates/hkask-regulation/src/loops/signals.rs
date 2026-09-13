@@ -87,6 +87,9 @@ pub enum SignalMetric {
     /// 0.0 = 0% success rate, 1.0 = 100% success rate.
     /// Set-point: reliability_threshold (default 0.80).
     ToolReliability,
+    /// Fraction of successful evaluations in an externally observed rollout.
+    /// This metric is supplied by `RolloutEventSource`, not a periodic sensor.
+    PassRate,
     /// Test coverage fraction (Cybernetics Loop 6).
     /// Read from the latest trace run's `metrics.json` `coverage_pct`.
     /// Set-point: coverage_floor (default 0.70).
@@ -133,6 +136,7 @@ impl SignalMetric {
             SignalMetric::GoalExpiredCount => "goal_expired_count",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
             SignalMetric::ToolReliability => "tool_reliability",
+            SignalMetric::PassRate => "pass_rate",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
         }
@@ -164,6 +168,7 @@ impl SignalMetric {
             SignalMetric::GoalExpiredCount,
             SignalMetric::MetacognitionCriticalAlerts,
             SignalMetric::ToolReliability,
+            SignalMetric::PassRate,
             SignalMetric::TestCoverage,
             SignalMetric::MutationScore,
         ]
@@ -182,7 +187,8 @@ impl SignalMetric {
         match self {
             SignalMetric::EnergyRemaining
             | SignalMetric::ContextServerHealth
-            | SignalMetric::ToolReliability => Some(true),
+            | SignalMetric::ToolReliability
+            | SignalMetric::PassRate => Some(true),
             SignalMetric::VarietyDeficit | SignalMetric::OcrSilentFailures => Some(false),
             _ => None,
         }
@@ -252,6 +258,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(SignalMetric::ToolReliability.impact_direction(), Some(true));
+        assert_eq!(SignalMetric::PassRate.impact_direction(), Some(true));
         assert_eq!(SignalMetric::VarietyDeficit.impact_direction(), Some(false));
         assert_eq!(
             SignalMetric::OcrSilentFailures.impact_direction(),
@@ -307,6 +314,7 @@ mod tests {
             "goal_expired_count",
             "metacognition_critical_alerts",
             "tool_reliability",
+            "pass_rate",
             "test_coverage",
             "mutation_score",
         ];
