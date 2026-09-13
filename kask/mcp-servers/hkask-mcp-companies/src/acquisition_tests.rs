@@ -2347,6 +2347,71 @@ async fn screener_foreign_line_kept_when_home_bucket_empty() {
         .await;
 }
 
+/// expect: [P5] Saved-screen submission persists and returns a job before provider
+/// acquisition completes; a later acquisition failure becomes durable failed state.
+#[tokio::test]
+async fn saved_screen_returns_job_before_slow_acquisition_and_persists_failure() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start_async(|_path| async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        (503, json!({"error":"delayed provider failure"}))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let acquisition_date = chrono::Utc::now().date_naive().to_string();
+            let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"calculate",
+                "template":"universal_equity",
+                "template_context":{
+                    "exchanges":["US"],
+                    "as_of":acquisition_date,
+                    "market_cap_min":5_000_000_000.0,
+                    "market_cap_max":10_000_000_000.0
+                },
+                "prompt":"",
+                "limit":2,
+                "criteria_overrides":{}
+            }))
+            .expect("calculate request");
+            let submitted = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                server.company_screener(Parameters(calculate)),
+            )
+            .await
+            .expect("calculate must return before delayed acquisition")
+            .expect("submit screen");
+            let submitted = content(&submitted);
+            let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+
+            let mut failed = None;
+            for _ in 0..100 {
+                let status_request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "action":"status","job_id":job_id,"prompt":"","limit":2,
+                    "criteria_overrides":{}
+                }))
+                .expect("status request");
+                let status = content(
+                    &server
+                        .company_screener(Parameters(status_request))
+                        .await
+                        .expect("screen status"),
+                );
+                if status["status"] == json!("failed") {
+                    failed = status["error"].as_str().map(str::to_string);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            assert!(
+                failed.as_deref().is_some_and(|error| error.contains("503")),
+                "acquisition failure must be persisted: {failed:?}"
+            );
+        })
+        .await;
+}
+
 /// expect: [P5] A saved screen calculates one immutable universe result, exposes
 /// job status, and pages the stored columnar table without provider recalculation.
 /// dcterms:identifier: CompaniesServer::company_screener / screening::execute

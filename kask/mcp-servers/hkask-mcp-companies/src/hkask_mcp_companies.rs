@@ -109,6 +109,7 @@ fn parse_symbol_from_query(query: &str) -> Option<String> {
 use learning::LearningState;
 
 hkask_mcp_server::mcp_server!(
+    #[derive(Clone)]
     pub struct CompaniesServer {
         pub client: reqwest::Client,
         pub fmp_api_key: String,

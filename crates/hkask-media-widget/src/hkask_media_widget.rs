@@ -37,6 +37,8 @@ pub use media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, is_truncated_json,
 };
 pub use media_widget::MediaWidget;
+#[cfg(feature = "bench-support")]
+pub use media_widget::PlaybackBenchmarkSnapshot;
 
 use gpui::{App, AppContext, Entity, Window};
 

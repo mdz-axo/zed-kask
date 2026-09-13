@@ -9106,6 +9106,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-media-benchmarks"
+version = "0.40.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "gpui",
+ "gpui_platform",
+ "hkask-media-widget",
+ "hkask-viz-core",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+]
+
+[[package]]
 name = "hkask-media-widget"
 version = "0.40.0"
 dependencies = [

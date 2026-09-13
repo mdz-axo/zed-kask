@@ -32,6 +32,8 @@ use crate::media_ref::{
 };
 use crate::transport::{TransportBar, TransportEvent, TransportState};
 use crate::video_decoder::{DecodedFrame, WidgetVideoPlayer};
+#[cfg(feature = "bench-support")]
+use crate::video_decoder::{PlaybackState, VideoDeliveryStats};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -55,6 +57,17 @@ fn render_video_frame(frame: DecodedFrame) -> Arc<RenderImage> {
 
 /// The media widget view. Renders inline in markdown (via the D18 seam)
 /// or as a standalone panel item.
+#[cfg(feature = "bench-support")]
+#[derive(Clone, Debug)]
+pub struct PlaybackBenchmarkSnapshot {
+    pub state: PlaybackState,
+    pub position: Duration,
+    pub duration: Duration,
+    pub has_frame: bool,
+    pub error: Option<String>,
+    pub delivery: VideoDeliveryStats,
+}
+
 pub struct MediaWidget {
     reference: MediaRef,
     storage: Arc<dyn MediaStorage>,
@@ -786,6 +799,31 @@ impl MediaWidget {
             self.disagree_draft = Some(body);
         }
         cx.notify();
+    }
+
+    #[cfg(feature = "bench-support")]
+    pub fn benchmark_start_playback(&mut self, cx: &mut Context<Self>) {
+        if self
+            .video_player
+            .as_ref()
+            .is_some_and(|player| !player.is_playing())
+        {
+            self.handle_transport_event(&TransportEvent::TogglePlay, cx);
+        }
+    }
+
+    #[cfg(feature = "bench-support")]
+    #[must_use]
+    pub fn benchmark_snapshot(&self) -> Option<PlaybackBenchmarkSnapshot> {
+        let player = self.video_player.as_ref()?;
+        Some(PlaybackBenchmarkSnapshot {
+            state: player.playback_state(),
+            position: player.position(),
+            duration: player.duration(),
+            has_frame: self.current_frame.is_some(),
+            error: self.error.as_ref().map(ToString::to_string),
+            delivery: player.delivery_stats(),
+        })
     }
 }
 

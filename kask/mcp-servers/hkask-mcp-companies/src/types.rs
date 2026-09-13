@@ -749,9 +749,7 @@ pub(crate) struct ScreenTemplateContext {
     /// EODHD exchange codes included in the saved-screen universe.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exchanges: Option<Vec<String>>,
-    /// Immutable screen observation date in ISO 8601 form.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub as_of: Option<String>,
+
     /// Minimum issuer market capitalization in reporting currency.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub market_cap_min: Option<f64>,

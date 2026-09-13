@@ -22,7 +22,7 @@
 //! outputs go to the visible artifacts dir under {server}-mcp/).
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, params};
 use serde_json::Value;
@@ -76,8 +76,9 @@ DROP TABLE IF EXISTS fibo_concept_store;";
 /// the lock. This is acceptable because the cache is a local SQLite file
 /// and queries are sub-millisecond; the bottleneck is the network call to
 /// FMP/EODHD that the cache avoids.
+#[derive(Clone)]
 pub(crate) struct FiboDataCache {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 /// A raw cache entry — the stored JSON response and its fetch timestamp.
@@ -119,7 +120,7 @@ impl FiboDataCache {
         conn.execute_batch(SCHEMA_DDL)
             .map_err(|e| FiboCacheError::InitSchema { source: e })?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -262,6 +263,18 @@ mod tests {
     fn temp_cache() -> FiboDataCache {
         let dir = std::env::temp_dir().join(format!("fibo-cache-test-{}", uuid::Uuid::new_v4()));
         FiboDataCache::open(&dir.join("test.db")).expect("open temp cache")
+    }
+
+    #[test]
+    fn cloned_cache_shares_connection_and_entries() {
+        let cache = temp_cache();
+        let cloned = cache.clone();
+        let response = json!({"close": 42.0});
+        cache.store_raw("SHARED", "stock_quote", "none", &response, "EODHD");
+        assert_eq!(
+            cloned.get_raw("SHARED", "stock_quote", "none"),
+            Some(response)
+        );
     }
 
     #[test]

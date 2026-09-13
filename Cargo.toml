@@ -300,6 +300,7 @@ members = [
     "crates/hkask-scenarios-widget",
     "crates/hkask-swarm-widget",
     "crates/hkask-media-widget",
+    "crates/hkask-media-benchmarks",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
