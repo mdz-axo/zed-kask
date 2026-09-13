@@ -9,7 +9,7 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const UNIVERSAL_EQUITY_TEMPLATE: &str =
     include_str!("../../../registry/templates/company-screen/universal_equity.j2");
@@ -17,6 +17,16 @@ const EXPECTATIONS_GAP_TEMPLATE: &str =
     include_str!("../../../registry/templates/company-screen/expectations_gap.j2");
 const LISP_MAX_STEPS: u64 = 100_000;
 const LISP_MAX_DEPTH: u64 = 256;
+
+#[derive(Deserialize)]
+struct ScreenTemplateMetadata {
+    contract: ScreenTemplateContract,
+}
+
+#[derive(Deserialize)]
+struct ScreenTemplateContract {
+    input: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScreenDefinition {
@@ -741,11 +751,43 @@ fn render_template(
             )));
         }
     };
-    let (_, body) = source.split_once("\n---\n").ok_or_else(|| {
+    let (metadata, body) = source.split_once("\n---\n").ok_or_else(|| {
         McpToolError::internal(format!(
             "screen template {name:?} has no metadata delimiter"
         ))
     })?;
+    let metadata = metadata.strip_prefix("[inference]\n").ok_or_else(|| {
+        McpToolError::internal(format!(
+            "screen template {name:?} has no inference metadata header"
+        ))
+    })?;
+    let metadata: ScreenTemplateMetadata = serde_yaml_neo::from_str(metadata).map_err(|error| {
+        McpToolError::internal(format!(
+            "screen template {name:?} has invalid metadata: {error}"
+        ))
+    })?;
+    let context = context.map_or_else(|| json!({}), |value| value.0.clone());
+    let missing_context_variables: Vec<&str> = metadata
+        .contract
+        .input
+        .keys()
+        .filter(|field| {
+            !context
+                .as_object()
+                .is_some_and(|object| object.contains_key(field.as_str()))
+        })
+        .map(String::as_str)
+        .collect();
+    if !missing_context_variables.is_empty() {
+        let details = json!({
+            "template": name,
+            "missing_context_variables": missing_context_variables,
+        });
+        return Err(McpToolError::invalid_argument(format!(
+            "screen template context is incomplete: {details}"
+        )));
+    }
+
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
     env.add_template(name, body).map_err(|error| {
@@ -753,7 +795,6 @@ fn render_template(
             "screen template {name:?} failed to compile: {error}"
         ))
     })?;
-    let context = context.map_or_else(|| json!({}), |value| value.0.clone());
     let rendered = env
         .get_template(name)
         .and_then(|template| template.render(minijinja::Value::from_serialize(&context)))
@@ -1036,6 +1077,51 @@ fn required_job_id(req: &ScreenerRequest) -> Result<&str, McpToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_preflight_reports_all_missing_context_variables() {
+        let request = serde_json::from_value(json!({
+            "action":"calculate",
+            "template":"expectations_gap",
+            "template_context":{},
+            "prompt":"",
+            "limit":100,
+            "criteria_overrides":{}
+        }));
+        let request: ScreenerRequest = match request {
+            Ok(request) => request,
+            Err(error) => panic!("template request must deserialize: {error}"),
+        };
+        let error = match resolve_definition(&request) {
+            Ok(_) => panic!("missing template context must be rejected"),
+            Err(error) => error,
+        };
+        let details = match error
+            .message
+            .strip_prefix("screen template context is incomplete: ")
+        {
+            Some(details) => details,
+            None => panic!(
+                "missing structured template-context detail: {}",
+                error.message
+            ),
+        };
+        let details: Value = match serde_json::from_str(details) {
+            Ok(details) => details,
+            Err(parse_error) => panic!("template-context detail must be JSON: {parse_error}"),
+        };
+        assert_eq!(details.get("template"), Some(&json!("expectations_gap")));
+        assert_eq!(
+            details.get("missing_context_variables"),
+            Some(&json!([
+                "as_of",
+                "exchanges",
+                "liquidity_min_usd",
+                "market_cap_max",
+                "market_cap_min"
+            ]))
+        );
+    }
 
     #[test]
     fn jinja_and_api_inputs_resolve_to_the_same_screen_definition() {
