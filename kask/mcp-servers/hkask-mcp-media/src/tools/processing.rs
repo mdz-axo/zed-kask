@@ -867,8 +867,8 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
             let requested_format = format.as_deref().unwrap_or("mp4");
-            let format = crate::assets::LocalMediaFormat::parse_video_output(requested_format)
-                .ok_or_else(|| {
+            let format =
+                crate::assets::LocalVideoFormat::parse(requested_format).ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
                         "Unsupported video format {requested_format:?}; expected mp4 or gif"
                     ))
@@ -895,16 +895,16 @@ impl MediaServer {
                 fps,
             };
             let effective_params = match format {
-                crate::assets::LocalMediaFormat::Mp4 => {
+                crate::assets::LocalVideoFormat::Mp4 => {
                     LocalVideoEffectiveParams::ImagesMp4(params)
                 }
-                crate::assets::LocalMediaFormat::Gif => {
+                crate::assets::LocalVideoFormat::Gif => {
                     LocalVideoEffectiveParams::ImagesGif(params)
                 }
             };
             let output = self
                 .ffmpeg
-                .images_to_video(&paths, fps, effective_params.format())
+                .images_to_video(&paths, fps, format)
                 .await
                 .map_err(map_media_error)?;
 

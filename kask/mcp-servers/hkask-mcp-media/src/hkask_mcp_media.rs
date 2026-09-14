@@ -1649,6 +1649,278 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::audio_concat`
+    /// expect: My concatenated recordings remain one durable, traceable gallery asset.
+    /// [P1] Motivating: completed audio work survives processor and server teardown.
+    /// pre: two real WAV sources and an active file-backed gallery exist.
+    /// post: the durable WAV, gallery row, provenance, lineage, and stable identity agree.
+    /// [P1] Constraining: ordered source paths never become one fabricated parent identity.
+    #[tokio::test]
+    async fn audio_concat_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let first = gallery_root.path().join("first.wav");
+        let second = gallery_root.path().join("second.wav");
+        create_real_audio(&first).await?;
+        create_real_audio(&second).await?;
+        let sources = vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+        ];
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .audio_concat(Parameters(AudioConcatRequest {
+                    audio_urls: sources.clone(),
+                }))
+                .await?,
+        );
+        drop(server);
+
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing audio display hint")?,
+        )?;
+        let expected = serde_json::json!({"sources": sources, "format": "wav"});
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
+        assert!(output.is_file());
+        assert_eq!(hint["kind"], "audio");
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
+        assert_eq!(hint["provenance"]["args"], expected);
+        assert_eq!(content["effective_params"], expected);
+        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        assert_eq!(asset.format, "wav");
+        assert_eq!(asset.media_type, "audio");
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("audio_concat lineage missing")?;
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(params, expected);
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::audio_capture`
+    /// expect: My microphone recording is published canonically without a caller-selected output path.
+    /// [P1] Motivating: captured audio has the same durable identity contract as processed media.
+    /// pre: a capture-capable FFmpeg runner and active file-backed gallery exist.
+    /// post: one canonical WAV, gallery row, provenance, lineage, and stable identity agree.
+    /// [P1] Constraining: the temporary device-capture file is consumed by publication.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn audio_capture_publishes_canonical_asset_without_output_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery.id),
+        })));
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state,
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        );
+        let content = content_of(
+            &server
+                .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
+                .await?,
+        );
+        drop(server);
+
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing audio display hint")?,
+        )?;
+        let expected = serde_json::json!({
+            "duration_secs": 1.0,
+            "sample_rate": 16000,
+            "channels": 1,
+            "format": "wav",
+        });
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
+        assert!(output.is_file());
+        assert_eq!(hint["kind"], "audio");
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
+        assert_eq!(hint["provenance"]["args"], expected);
+        assert_eq!(content["effective_params"], expected);
+        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        assert_eq!(asset.format, "wav");
+        assert_eq!(asset.media_type, "audio");
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("audio_capture lineage missing")?;
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(params, expected);
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::audio_capture`
+    /// expect: A capture admitted in Gallery A cannot be redirected by activating Gallery B.
+    /// [P1] Motivating: in-flight user work stays in the gallery where it began.
+    /// pre: Gallery A is active and capture is paused immediately after admission.
+    /// post: after switching to B, the durable recording exists only in A.
+    /// [P1] Constraining: the immutable gallery snapshot crosses the FFmpeg await.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn audio_capture_preserves_admission_gallery_across_root_switch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_a_root = tempfile::tempdir()?;
+        let gallery_b_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery_a = store.open(
+            gallery_a_root
+                .path()
+                .to_str()
+                .ok_or("gallery A root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_b = store.open(
+            gallery_b_root
+                .path()
+                .to_str()
+                .ok_or("gallery B root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_a_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_a.id.clone()),
+        })));
+        let server = Arc::new(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state.clone(),
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        ));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let _gate = crate::tools::audio::install_audio_admission_gate(
+            crate::tools::audio::AudioAdmissionGate {
+                entered: entered.clone(),
+                resume: resume.clone(),
+            },
+        )?;
+        let operation = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
+            path: gallery_b_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_b.id.clone()),
+        });
+        resume.notify_one();
+        let content = content_of(&operation.await??);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery asset id")?;
+
+        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
+        assert_eq!(store.count_assets(&gallery_b.id)?, 0);
+        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
+        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `assets::publish_local_media`
+    /// expect: An audio lineage failure removes the WAV and gallery identity while preserving the cause.
+    /// [P1] Motivating: provenance failure cannot leave partially published user work.
+    /// pre: real FFmpeg and gallery insertion succeed before audio lineage is rejected.
+    /// post: the database cause is returned and file, row, and lineage are absent.
+    /// [P1] Constraining: publication commits only after lineage is durable.
+    #[tokio::test]
+    async fn audio_lineage_failure_rolls_back_file_gallery_and_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.wav");
+        create_real_audio(&source).await?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        driver.execute(
+            "CREATE TRIGGER fail_audio_lineage BEFORE INSERT ON gallery_generation \
+             WHEN NEW.op = 'audio_trim' BEGIN SELECT RAISE(ABORT, 'injected audio lineage failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let error = server
+            .audio_trim(Parameters(AudioTrimRequest {
+                audio_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+            }))
+            .await
+            .expect_err("audio lineage publication must fail");
+
+        assert!(
+            error.to_string().contains("injected audio lineage failure"),
+            "original lineage cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            0
+        );
+        Ok(())
+    }
+
     /// dcterms:identifier: `MediaServer::video_clip`
     /// expect: My clipped video remains addressable by one stable gallery identity after restart.
     /// [P1] Motivating: user work survives processor and server teardown.

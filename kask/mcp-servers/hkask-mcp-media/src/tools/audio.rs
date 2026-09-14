@@ -4,6 +4,59 @@ use crate::*;
 const CAPTURE_SAMPLE_RATE: u32 = 16_000;
 const CAPTURE_CHANNELS: u32 = 1;
 
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct AudioAdmissionGate {
+    pub(crate) entered: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) resume: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+static AUDIO_ADMISSION_GATE: std::sync::LazyLock<std::sync::Mutex<Option<AudioAdmissionGate>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) struct AudioAdmissionGateGuard;
+
+#[cfg(test)]
+impl Drop for AudioAdmissionGateGuard {
+    fn drop(&mut self) {
+        match AUDIO_ADMISSION_GATE.lock() {
+            Ok(mut gate) => *gate = None,
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media",
+                %error,
+                "Failed to clear audio admission test gate"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_audio_admission_gate(
+    gate: AudioAdmissionGate,
+) -> Result<AudioAdmissionGateGuard, MediaError> {
+    let mut installed = AUDIO_ADMISSION_GATE
+        .lock()
+        .map_err(|error| MediaError::Io(format!("audio admission gate lock: {error}")))?;
+    *installed = Some(gate);
+    Ok(AudioAdmissionGateGuard)
+}
+
+#[cfg(test)]
+async fn pause_after_audio_admission() -> Result<(), McpToolError> {
+    let gate = AUDIO_ADMISSION_GATE
+        .lock()
+        .map_err(|error| McpToolError::internal(format!("audio admission gate lock: {error}")))?
+        .clone();
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    gate.entered.notify_one();
+    gate.resume.notified().await;
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 struct AudioTrimEffectiveParams<'a> {
     source: &'a str,
@@ -315,6 +368,8 @@ impl MediaServer {
             }
 
             let gallery = self.capture_required_gallery()?;
+            #[cfg(test)]
+            pause_after_audio_admission().await?;
             self.require_ffmpeg()?;
             let effective_params = AudioCaptureEffectiveParams {
                 duration_secs,
@@ -457,6 +512,8 @@ impl MediaServer {
                 ));
             }
             let gallery = self.capture_required_gallery()?;
+            #[cfg(test)]
+            pause_after_audio_admission().await?;
             if !crate::is_local_media_path(&audio_url) {
                 validate_tool_url_with_dns(&audio_url).await?;
             }
@@ -505,6 +562,8 @@ impl MediaServer {
                 ));
             }
             let gallery = self.capture_required_gallery()?;
+            #[cfg(test)]
+            pause_after_audio_admission().await?;
             for url in &audio_urls {
                 if !crate::is_local_media_path(url) {
                     validate_tool_url_with_dns(url).await?;

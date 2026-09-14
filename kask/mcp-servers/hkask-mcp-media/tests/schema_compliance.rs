@@ -54,6 +54,18 @@ schema_clean_test!(voice_design_request_schema, VoiceDesignRequest);
 schema_clean_test!(generate_speech_request_schema, GenerateSpeechRequest);
 schema_clean_test!(transcribe_request_schema, TranscribeBundleRequest);
 schema_clean_test!(audio_capture_request_schema, AudioCaptureRequest);
+
+#[test]
+fn audio_capture_schema_has_no_caller_selected_output_path() {
+    let schema =
+        serde_json::to_value(&schema_for!(AudioCaptureRequest)).expect("schema serializes");
+    assert!(schema.pointer("/properties/duration_secs").is_some());
+    assert!(
+        schema.pointer("/properties/output_path").is_none(),
+        "audio_capture must publish only to canonical generated storage"
+    );
+}
+
 schema_clean_test!(
     record_and_transcribe_request_schema,
     RecordAndTranscribeRequest

@@ -473,6 +473,29 @@ async fn stage_job_asset(
     stage_job_asset_in_dir(result, kind, &generated_assets_dir()).await
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalVideoFormat {
+    Mp4,
+    Gif,
+}
+
+impl LocalVideoFormat {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mp4" => Some(Self::Mp4),
+            "gif" => Some(Self::Gif),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn extension(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Gif => "gif",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum LocalMediaFormat {
@@ -481,15 +504,16 @@ pub(crate) enum LocalMediaFormat {
     Wav,
 }
 
-impl LocalMediaFormat {
-    pub(crate) fn parse_video_output(value: &str) -> Option<Self> {
-        match value {
-            "mp4" => Some(Self::Mp4),
-            "gif" => Some(Self::Gif),
-            _ => None,
+impl From<LocalVideoFormat> for LocalMediaFormat {
+    fn from(format: LocalVideoFormat) -> Self {
+        match format {
+            LocalVideoFormat::Mp4 => Self::Mp4,
+            LocalVideoFormat::Gif => Self::Gif,
         }
     }
+}
 
+impl LocalMediaFormat {
     pub(crate) const fn extension(self) -> &'static str {
         match self {
             Self::Mp4 => "mp4",

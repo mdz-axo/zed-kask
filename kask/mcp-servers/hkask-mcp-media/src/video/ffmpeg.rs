@@ -433,7 +433,7 @@ impl FfmpegRunner {
         &self,
         image_paths: &[PathBuf],
         fps: u32,
-        format: crate::assets::LocalMediaFormat,
+        format: crate::assets::LocalVideoFormat,
     ) -> Result<PathBuf, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
@@ -468,14 +468,14 @@ impl FfmpegRunner {
             .arg("-i")
             .arg(list_path.path());
         match format {
-            crate::assets::LocalMediaFormat::Mp4 => {
+            crate::assets::LocalVideoFormat::Mp4 => {
                 command
                     .arg("-c:v")
                     .arg("libx264")
                     .arg("-pix_fmt")
                     .arg("yuv420p");
             }
-            crate::assets::LocalMediaFormat::Gif => {
+            crate::assets::LocalVideoFormat::Gif => {
                 command.arg("-c:v").arg("gif");
             }
         }
@@ -613,46 +613,41 @@ impl FfmpegRunner {
                 "audio_concat requires at least one file".to_string(),
             ));
         }
-        if audio_paths.len() == 1 {
-            // Single file — just copy it.
-            self.ensure_temp_dir()?;
-            let output = self.output_path("wav");
-            std::fs::copy(&audio_paths[0], &output)
-                .map_err(|e| crate::MediaError::Io(format!("copy single audio: {e}")))?;
-            return Ok(output);
-        }
         self.ensure_temp_dir()?;
-        let output = self.output_path("wav");
-        // Build the concat demuxer list file.
-        let list_path = self.temp_dir.join("concat_list.txt");
+        let output = RollbackOwnedOutput::new(self.output_path("wav"));
+        if audio_paths.len() == 1 {
+            std::fs::copy(&audio_paths[0], output.path())
+                .map_err(|e| crate::MediaError::Io(format!("copy single audio: {e}")))?;
+            return Ok(output.commit());
+        }
+
+        let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
         let list_content: String = audio_paths
             .iter()
-            .map(|p| format!("file '{}'\n", p))
+            .map(|p| {
+                format!(
+                    "file '{}'
+",
+                    p
+                )
+            })
             .collect();
-        std::fs::write(&list_path, &list_content)
+        std::fs::write(list_path.path(), &list_content)
             .map_err(|e| crate::MediaError::Io(format!("write concat list: {e}")))?;
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-f")
             .arg("concat")
             .arg("-safe")
             .arg("0")
             .arg("-i")
-            .arg(&list_path)
+            .arg(list_path.path())
             .arg("-c")
             .arg("copy")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map_err(|e| crate::MediaError::Io(format!("ffmpeg audio_concat: {e}")))?;
-        let _ = std::fs::remove_file(&list_path);
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg audio_concat failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(output.path());
+        Self::run_to_completion(command, "audio concat").await?;
+
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = audio_paths.len(), output = %output.display(), "Audio concatenated");
         Ok(output)
     }
@@ -805,7 +800,7 @@ mod tests {
                 .images_to_video(
                     &[std::path::PathBuf::from("frame.png")],
                     24,
-                    crate::assets::LocalMediaFormat::Mp4,
+                    crate::assets::LocalVideoFormat::Mp4,
                 )
                 .await
                 .expect_err("image sequence must surface injected failure"),
@@ -815,6 +810,24 @@ mod tests {
                 .concat(&["first.mp4".to_string(), "second.mp4".to_string()])
                 .await
                 .expect_err("concat must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .capture_audio(1.0)
+                .await
+                .expect_err("audio capture must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .audio_trim("input.wav", 0.0, 1.0)
+                .await
+                .expect_err("audio trim must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .audio_concat(&["first.wav".to_string(), "second.wav".to_string()])
+                .await
+                .expect_err("audio concat must surface injected failure"),
         )?;
         Ok(())
     }
