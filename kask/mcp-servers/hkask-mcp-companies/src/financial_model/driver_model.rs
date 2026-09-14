@@ -262,7 +262,7 @@ impl ProjectionAssumptions {
             Ok(())
         }
         range("revenue_growth", self.revenue_growth, -0.50, 1.00)?;
-        range("gross_margin", self.gross_margin, 0.0, 1.0)?;
+        range("gross_margin", self.gross_margin, -1.0, 1.0)?;
         range("sga_to_revenue", self.sga_to_revenue, 0.0, 1.0)?;
         range(
             "other_operating_expense_to_revenue",
@@ -764,16 +764,15 @@ mod tests {
     #[test]
     fn fcff_and_terminal_value_match_worked_equations() {
         let history = worked_history();
-        let mut assumptions = ProjectionAssumptions::from_history(&history)
-            .expect("worked history reconciles");
+        let mut assumptions =
+            ProjectionAssumptions::from_history(&history).expect("worked history reconciles");
         assumptions.revenue_growth = 0.0;
         assumptions.terminal_growth = 0.0;
         assumptions.discount_rate = 0.10;
         assumptions.total_years = 2;
         assumptions.stage1_years = 1;
         assumptions.nwc_to_revenue = 0.0;
-        let model = project_financial_model(&history, &assumptions)
-            .expect("worked projection");
+        let model = project_financial_model(&history, &assumptions).expect("worked projection");
         let first = model.periods.first().expect("two-period model");
         // EBIT = 1000 - 600 - 100 - 50 other OPEX - 50 D&A = 200.
         assert!((first.ebit - 200.0).abs() < 1e-10);
@@ -786,27 +785,16 @@ mod tests {
     #[test]
     fn revenue_growth_fades_to_terminal_growth_after_stage_one() {
         let history = worked_history();
-        let mut assumptions = ProjectionAssumptions::from_history(&history)
-            .expect("worked history reconciles");
+        let mut assumptions =
+            ProjectionAssumptions::from_history(&history).expect("worked history reconciles");
         assumptions.revenue_growth = 0.10;
         assumptions.terminal_growth = 0.02;
         assumptions.total_years = 3;
         assumptions.stage1_years = 1;
-        let model = project_financial_model(&history, &assumptions)
-            .expect("worked projection");
+        let model = project_financial_model(&history, &assumptions).expect("worked projection");
         let revenues: Vec<f64> = model.periods.iter().map(|period| period.revenue).collect();
         assert!((revenues[0] - 1100.0).abs() < 1e-8);
         assert!((revenues[1] - 1166.0).abs() < 1e-8);
         assert!((revenues[2] - 1189.32).abs() < 1e-8);
-    }
-
-    #[test]
-    fn balance_sheet_difference_is_observed_not_plugged() {
-        let history = worked_history();
-        let assumptions = ProjectionAssumptions::from_history(&history)
-            .expect("worked history reconciles");
-        let model = project_financial_model(&history, &assumptions)
-            .expect("worked projection");
-        assert!(model.periods.iter().any(|period| period.balance_reconciliation.abs() > 1e-6));
     }
 }

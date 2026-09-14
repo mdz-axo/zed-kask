@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (43) — portfolio ledger/CRUD/returns live in the portfolio MCP server
+//! ## Tools (42) — portfolio ledger/CRUD/returns live in the portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -477,9 +477,9 @@ mod tool_behavior_tests {
     // this pin is what makes a re-introduction (or a silent registration drop)
     // fail CI instead of shipping as an undocumented duplicate.
     #[test]
-    fn tool_surface_is_exactly_43_registered_tools() {
+    fn tool_surface_is_exactly_42_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 43, "companies registered tool surface changed; got {n}");
+        assert_eq!(n, 42, "companies registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an ontology concept for

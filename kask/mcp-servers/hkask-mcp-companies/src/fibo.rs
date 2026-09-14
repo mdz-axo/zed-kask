@@ -163,7 +163,6 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         | "sensitivity_analysis"
         | "equity_duration"
         | "calibrate_forecast"
-        | "driver_forecast"
         | "moat_check"
         | "management_scorecard"
         | "working_capital_cycle" => Some(dc_bibo::REPORT),

@@ -279,7 +279,7 @@ fn rollback_local_publication_error(
 /// pre: FFmpeg produced a final MP4 or GIF and an admission-time gallery was captured.
 /// post: file, gallery row, lineage, result id, and media-block id commit together or roll back together.
 /// [P1] Constraining: source paths and indices never become parent identities.
-fn publish_local_video_result(
+fn publish_local_video(
     server: &MediaServer,
     gallery: &GalleryState,
     output: &std::path::Path,
@@ -709,7 +709,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Clip(params);
-            publish_local_video_result(self, &gallery, &output, &effective_params)
+            publish_local_video(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -773,7 +773,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Gif(params);
-            publish_local_video_result(self, &gallery, &output, &effective_params)
+            publish_local_video(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -875,7 +875,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Caption(params);
-            publish_local_video_result(self, &gallery, &output, &effective_params)
+            publish_local_video(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -960,7 +960,7 @@ impl MediaServer {
             intermediates.cleanup().map_err(map_media_error)?;
 
             let effective_params = LocalVideoEffectiveParams::Remix(params);
-            publish_local_video_result(self, &gallery, &gif, &effective_params)
+            publish_local_video(self, &gallery, &gif, &effective_params)
         })
         .await
     }
@@ -1027,7 +1027,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            publish_local_video_result(self, &gallery, &output, &effective_params)
+            publish_local_video(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -1065,7 +1065,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Concat(params);
-            publish_local_video_result(self, &gallery, &output, &effective_params)
+            publish_local_video(self, &gallery, &output, &effective_params)
         })
         .await
     }

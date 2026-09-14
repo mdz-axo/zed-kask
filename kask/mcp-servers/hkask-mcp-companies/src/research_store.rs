@@ -1086,64 +1086,51 @@ mod tests {
         Ok(())
     }
 
+    /// expect: Restarted calculations return to the durable queue while completed results remain immutable.
     #[test]
-    fn reopening_store_fails_only_interrupted_screen_jobs() -> Result<(), PortfolioError> {
+    fn reopening_store_requeues_interrupted_screen_jobs() -> Result<(), PortfolioError> {
         let directory = tempfile::tempdir()
             .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
         let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
-        let definition = json!({"name":"restart-contract"});
-
-        for (id, status) in [("queued-job", "queued"), ("executing-job", "executing")] {
-            store.insert_screen_job(&ScreenJobRecord {
-                id: id.to_string(),
-                status: status.to_string(),
-                definition: definition.clone(),
-                result: None,
-                error: None,
-                created_at: "2026-09-13T00:00:00Z".to_string(),
-                updated_at: "2026-09-13T00:00:00Z".to_string(),
-            })?;
-        }
-
-        store.insert_screen_job(&ScreenJobRecord {
-            id: "completed-job".to_string(),
-            status: "queued".to_string(),
-            definition,
+        let make_job = |id: &str, status: &str| ScreenJobRecord {
+            id: id.to_string(),
+            status: status.to_string(),
+            definition: json!({"name":"restart-contract"}),
             result: None,
             error: None,
             created_at: "2026-09-13T00:00:00Z".to_string(),
             updated_at: "2026-09-13T00:00:00Z".to_string(),
-        })?;
+            stage: "enrichment".to_string(),
+            processed: 0,
+            total: 1,
+            complete_count: 0,
+            partial_count: 0,
+            unavailable_count: 0,
+            model_sensitive_count: 0,
+            heartbeat_at: None,
+            cancel_requested: false,
+            checkpoint: Some(json!({"candidate_count": 1})),
+            artifact_path: None,
+        };
+        store.insert_screen_job(&make_job("executing-job", "executing"))?;
+        store.insert_screen_job(&make_job("completed-job", "queued"))?;
         let completed_result = json!({"rows":[{"symbol":"TEST.US"}]});
         store.update_screen_job("completed-job", "completed", Some(&completed_result), None)?;
         drop(store);
 
         let reopened = ResearchStore::with_dir(directory.path().to_path_buf())?;
-        for id in ["queued-job", "executing-job"] {
-            let job = reopened
-                .get_screen_job(id)?
-                .ok_or_else(|| PortfolioError::from(format!("missing screen job {id}")))?;
-            assert_eq!(job.status, "failed");
-            assert_eq!(job.result, None);
-            assert_eq!(job.error.as_deref(), Some(SCREEN_JOB_RESTART_ERROR));
-        }
+        let resumed = reopened
+            .get_screen_job("executing-job")?
+            .ok_or_else(|| PortfolioError::from("missing executing job".to_string()))?;
+        assert_eq!(resumed.status, "queued");
+        assert_eq!(resumed.stage, "enrichment");
+        assert!(resumed.checkpoint.is_some());
 
         let completed = reopened
             .get_screen_job("completed-job")?
             .ok_or_else(|| PortfolioError::from("missing completed screen job".to_string()))?;
         assert_eq!(completed.status, "completed");
         assert_eq!(completed.result, Some(completed_result));
-        assert!(
-            store
-                .persist_screen_pass_set("atomic-job", &json!({"candidate_count":2}), &duplicate)
-                .is_err()
-        );
-        let job = store
-            .get_screen_job("atomic-job")?
-            .ok_or_else(|| PortfolioError::from("missing atomic screen job".to_string()))?;
-        assert_eq!(job.stage, "queued");
-        assert_eq!(job.total, 0);
-        assert!(store.pending_screen_items("atomic-job")?.is_empty());
         Ok(())
     }
 

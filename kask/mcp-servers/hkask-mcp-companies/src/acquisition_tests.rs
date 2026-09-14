@@ -302,7 +302,7 @@ fn financial_fixture(path: &str) -> (u16, Value) {
     ) {
         let rows: Vec<_> = [("2025", 1000000000.0), ("2024", 1000000000.0 / 1.1), ("2023", 1000000000.0 / 1.1 / 1.08)].into_iter().map(|(year, revenue)| {
             match endpoint {
-                "/fmp/income-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"revenue":revenue,"costOfRevenue":revenue*0.6,"grossProfit":revenue*0.4,"depreciationAndAmortization":revenue*0.03,"sellingGeneralAndAdministrativeExpenses":revenue*0.1375,"interestExpense":revenue*0.045,"incomeTaxExpense":revenue*0.0375,"incomeBeforeTax":revenue*0.1875,"netIncome":revenue*0.15,"ebitda":revenue*0.2625,"weightedAverageShsOutDil":100000000.0}),
+                "/fmp/income-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"revenue":revenue,"costOfRevenue":revenue*0.6,"grossProfit":revenue*0.4,"depreciationAndAmortization":revenue*0.03,"sellingGeneralAndAdministrativeExpenses":revenue*0.1375,"operatingIncome":revenue*0.2325,"interestExpense":revenue*0.045,"incomeTaxExpense":revenue*0.0375,"incomeBeforeTax":revenue*0.1875,"netIncome":revenue*0.15,"ebitda":revenue*0.2625,"weightedAverageShsOutDil":100000000.0}),
                 "/fmp/balance-sheet-statement" => json!({"date":format!("{year}-12-31"),"calendarYear":year,"totalCurrentAssets":revenue*0.3,"totalCurrentLiabilities":revenue*0.15,"cashAndCashEquivalents":revenue*0.05,"longTermDebt":revenue*0.2,"totalStockholdersEquity":revenue*0.75,"totalAssets":revenue*1.1,"totalLiabilities":revenue*0.35}),
                 _ => json!({"date":format!("{year}-12-31"),"calendarYear":year,"capitalExpenditure":-revenue*0.04}),
             }
@@ -3062,7 +3062,7 @@ fn implied_net_margin_solve_carries_all_modeled_expenses() {
         &financial_model::ProjectionAssumptions {
             revenue_growth: 0.05,
             gross_margin: 0.25,
-            ..assumptions
+            ..assumptions.clone()
         },
     )
     .expect("canonical projection")

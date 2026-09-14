@@ -1600,13 +1600,17 @@ mod tool_behavior_tests {
             assert_eq!(hint["src"], content["output"]);
             assert_eq!(hint["gallery_asset_id"], asset_id);
             assert_eq!(hint["ontology"], "omc:Sequence");
+            assert_eq!(hint["kind"], "video");
             assert_eq!(hint["provenance"]["tool"], "video_clip");
-            assert_eq!(
-                hint["provenance"]["args"]["video_url"],
-                source.to_string_lossy().as_ref()
-            );
-            assert_eq!(hint["provenance"]["args"]["start_sec"], 0.25);
-            assert_eq!(hint["provenance"]["args"]["end_sec"], 1.25);
+            let effective_params = serde_json::json!({
+                "source": source.to_string_lossy(),
+                "start_sec": 0.25,
+                "end_sec": 1.25,
+                "duration_sec": 1.0,
+                "format": "mp4",
+            });
+            assert_eq!(content["effective_params"], effective_params);
+            assert_eq!(hint["provenance"]["args"], effective_params);
             (output_path, asset_id, gallery_id)
         };
 
@@ -1614,6 +1618,8 @@ mod tool_behavior_tests {
         let asset = reopened.get_by_id(&gallery_id, &asset_id)?;
         assert_eq!(asset.id, asset_id);
         assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
+        assert_eq!(asset.format, "mp4");
+        assert_eq!(asset.media_type, "video");
         assert!(
             output_path.is_file(),
             "runner/server drop must not delete publication"
@@ -2235,7 +2241,7 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// dcterms:identifier: `publish_local_video_result`
+    /// dcterms:identifier: `publish_local_video`
     /// expect: A lineage failure removes the migrated operation's final file and gallery identity.
     /// [P1] Motivating: provenance failure cannot leave partially published user work.
     /// pre: real FFmpeg, durable GIF staging, and gallery insertion succeed before lineage is rejected.
