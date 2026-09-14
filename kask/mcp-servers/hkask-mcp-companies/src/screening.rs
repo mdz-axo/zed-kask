@@ -1131,12 +1131,13 @@ async fn analyze_issuer_group(
         .unwrap_or_else(|| json!([]));
     let capability_model_sensitive = capability_status == "model_sensitive";
     let gap_status = gap_data_status(&growth_gap, &profitability_gap);
+    let unavailable_reason = (gap_status == "unavailable").then_some(
+        "neither requested gap leg could be solved within validated model bounds or available inputs",
+    );
     let data_quality_status = if capability_model_sensitive {
         "model_sensitive"
-    } else if gap_status == "partial" {
-        "partial"
     } else {
-        "complete"
+        gap_status
     };
     Ok(json!({
         "company": actionable.name,
@@ -1169,6 +1170,7 @@ async fn analyze_issuer_group(
         "profitability_gap_pp": profitability_gap,
         "gap_data_status": gap_status,
         "data_quality_status": data_quality_status,
+        "unavailable_reason": unavailable_reason,
         "capability_quality_flags": capability_flags,
         "price_currency_normalization_provenance": price_currency_normalization_provenance,
         "expectations_report": report,
@@ -1750,10 +1752,10 @@ fn currency_code_unit(code: &str) -> (String, f64) {
 }
 
 fn gap_data_status(growth_gap: &Value, profitability_gap: &Value) -> &'static str {
-    if growth_gap.is_number() && profitability_gap.is_number() {
-        "complete"
-    } else {
-        "partial"
+    match (growth_gap.is_number(), profitability_gap.is_number()) {
+        (true, true) => "complete",
+        (true, false) | (false, true) => "partial",
+        (false, false) => "unavailable",
     }
 }
 
@@ -2033,6 +2035,7 @@ mod tests {
         assert_eq!(gap_data_status(&json!(4.0), &json!(-2.0)), "complete");
         assert_eq!(gap_data_status(&json!(-4.0), &json!(-2.0)), "complete");
         assert_eq!(gap_data_status(&Value::Null, &json!(-2.0)), "partial");
+        assert_eq!(gap_data_status(&Value::Null, &Value::Null), "unavailable");
     }
 
     /// expect: [P1] The production template exposes raw gap dimensions and
