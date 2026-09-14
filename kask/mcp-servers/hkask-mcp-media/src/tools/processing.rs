@@ -1006,12 +1006,14 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal( // rr0044-ok: keyframe-extraction-empty
+                return Err(McpToolError::internal(
+                    // rr0044-ok: keyframe-extraction-empty
                     "No keyframes extracted from video.",
                 ));
             }
 
             let mut image_urls = Vec::new();
+            let mut frame_read_failures = Vec::new();
             for frame in &frames {
                 match std::fs::read(frame) {
                     Ok(data) => {
@@ -1019,12 +1021,18 @@ impl MediaServer {
                             &base64::engine::general_purpose::STANDARD,
                             &data,
                         );
-                        image_urls.push(format!("data:image/jpeg;base64,{}", b64));
+                        image_urls.push(format!("data:image/jpeg;base64,{b64}"));
                     }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.media", frame = %frame.display(), error = %e, "Failed to read keyframe");
-                    }
+                    Err(error) => frame_read_failures.push(format!("{}: {error}", frame.display())),
                 }
+            }
+            if !frame_read_failures.is_empty() {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    failure_count = frame_read_failures.len(),
+                    causes = %frame_read_failures.join("; "),
+                    "Some extracted keyframes could not be read"
+                );
             }
 
             let mut vars = HashMap::new();
@@ -1047,10 +1055,6 @@ impl MediaServer {
                 .vision_port
                 .generate_vision(&prompt, &image_b64s, &params, Some(vision_model.as_str()))
                 .await;
-
-            for frame in &frames {
-                let _ = std::fs::remove_file(frame);
-            }
 
             match result {
                 Ok(r) => Ok(serde_json::json!({
@@ -1103,56 +1107,73 @@ impl MediaServer {
                 return Err(McpToolError::internal("No keyframes extracted from video.")); // rr0044-ok: ffmpeg-succeeded-no-output
             }
 
-            // Promote each temp frame into a gallery asset so it gets an
-            // image ID, lineage, and is retrievable via gallery_search. This
-            // is the gallery-asset promotion that distinguishes this tool from
-            // a raw ffmpeg call.
+            // Promote each scratch frame into a durable gallery asset. The
+            // extraction batch owns all scratch cleanup; failed durable copies
+            // are removed here while successful imports remain published.
+            let durable_directory = crate::assets::generated_assets_dir();
+            std::fs::create_dir_all(&durable_directory).map_err(|error| {
+                map_media_error(MediaError::Io(format!(
+                    "Failed to create generated assets directory {}: {error}",
+                    durable_directory.display()
+                )))
+            })?;
             let mut imported = Vec::new();
-            let mut errors = Vec::new();
-            for frame in &frames {
-                let durable_path = crate::assets::generated_assets_dir()
-                    .join(format!("{}.jpg", uuid::Uuid::new_v4()));
-                std::fs::copy(frame, &durable_path)
-                    .map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
-                match self.import_reference_image(&gallery, &durable_path) {
-                    Ok((image_id, image_url)) => {
-                        imported.push(serde_json::json!({
-                            "image_id": image_id,
-                            "image_url": image_url,
+            let mut failures = Vec::new();
+            for (frame_index, frame) in (&frames).into_iter().enumerate() {
+                let durable_path = durable_directory.join(format!("{}.jpg", uuid::Uuid::new_v4()));
+                let import_result = std::fs::copy(frame, &durable_path)
+                    .map_err(|error| MediaError::Io(format!("durable copy failed: {error}")))
+                    .and_then(|_| self.import_reference_image(&gallery, &durable_path));
+                match import_result {
+                    Ok((image_id, image_url)) => imported.push(serde_json::json!({
+                        "frame_index": frame_index,
+                        "image_id": image_id,
+                        "image_url": image_url,
+                    })),
+                    Err(error) => {
+                        let mut cause = error.to_string();
+                        match std::fs::remove_file(&durable_path) {
+                            Ok(()) => {}
+                            Err(cleanup_error)
+                                if cleanup_error.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(cleanup_error) => {
+                                cause.push_str(&format!(
+                                    "; failed durable-copy cleanup: {cleanup_error}"
+                                ));
+                            }
+                        }
+                        failures.push(serde_json::json!({
+                            "frame_index": frame_index,
+                            "scratch_file": frame.file_name().and_then(|name| name.to_str()),
+                            "cause": cause,
                         }));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.media",
-                            frame = %frame.display(),
-                            error = %e,
-                            "Failed to import extracted frame into gallery"
-                        );
-                        errors.push(format!("{}", frame.display()));
                     }
                 }
             }
 
-            // The indexed copies are durable; only the extraction scratch files are removed.
-            for frame in &frames {
-                std::fs::remove_file(frame)
-                    .map_err(|error| map_media_error(MediaError::Io(error.to_string())))?;
-            }
-
-            if imported.is_empty() {
-                let msg = format!(
-                    "Extracted {} frames but failed to import any into the gallery",
-                    frames.len(),
+            if !failures.is_empty() {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    extracted = frames.len(),
+                    imported = imported.len(),
+                    failed = failures.len(),
+                    "Some extracted keyframes could not be imported"
                 );
-                return Err(McpToolError::internal(msg)); // rr0044-ok: pipeline-import-failure
             }
+            let status = if failures.is_empty() {
+                "completed"
+            } else if imported.is_empty() {
+                "failed"
+            } else {
+                "partial"
+            };
 
             Ok(serde_json::json!({
-                "status": "complete",
+                "status": status,
                 "frames_extracted": frames.len(),
                 "frames_imported": imported.len(),
                 "frames": imported,
-                "errors": errors,
+                "failures": failures,
             }))
         })
         .await

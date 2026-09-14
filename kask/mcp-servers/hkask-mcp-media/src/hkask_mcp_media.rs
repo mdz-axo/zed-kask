@@ -1215,6 +1215,178 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::generate_image`
+    /// expect: Multi-variant generation preserves valid outputs and explicitly reports partial
+    /// or failed completion with one original cause per failed variant.
+    /// [P3] Motivating: useful generated work survives sibling failures.
+    /// pre: a provider returns two requested variant payloads with mixed validity.
+    /// post: partial and failed responses retain requested/returned counts and causal failures;
+    /// only valid outputs remain durable.
+    #[tokio::test]
+    async fn multi_variant_generation_preserves_partial_successes_and_causes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct BatchMedia {
+            items: Vec<serde_json::Value>,
+        }
+        impl hkask_types::InferencePort for BatchMedia {
+            fn generate(
+                &self,
+                _: &str,
+                _: &hkask_types::template::LLMParameters,
+                _: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                panic!("generation test must use media_generate")
+            }
+
+            fn media_generate<'a>(
+                &'a self,
+                _: &str,
+                _: &hkask_types::MediaGenerateParams,
+            ) -> hkask_types::MediaFuture<'a> {
+                let items = self.items.clone();
+                Box::pin(async move { Ok(serde_json::json!({"data": items})) })
+            }
+        }
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let request = || {
+            Parameters(GenerateImageRequest {
+                prompt: "two variants".to_string(),
+                image_size: None,
+                num_images: Some(2),
+                style: None,
+            })
+        };
+        let valid = serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="});
+        let invalid = serde_json::json!({"b64_json": "%%% invalid base64 %%%"});
+
+        let partial_server = make_server_with_port(Arc::new(BatchMedia {
+            items: vec![valid, invalid.clone()],
+        }));
+        let partial = content_of(&partial_server.generate_image(request()).await?);
+        assert_eq!(partial["status"], "partial");
+        assert_eq!(partial["count_requested"], 2);
+        assert_eq!(partial["count_returned"], 1);
+        assert_eq!(partial["failures"].as_array().map(Vec::len), Some(1));
+        assert_eq!(partial["failures"][0]["variant_index"], 1);
+        assert!(
+            partial["failures"][0]["cause"]
+                .as_str()
+                .is_some_and(|cause| cause.contains("base64"))
+        );
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            1
+        );
+
+        let failed_server = make_server_with_port(Arc::new(BatchMedia {
+            items: vec![invalid.clone(), invalid],
+        }));
+        let failed = content_of(&failed_server.generate_image(request()).await?);
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["count_requested"], 2);
+        assert_eq!(failed["count_returned"], 0);
+        assert_eq!(failed["failures"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            1,
+            "failed variants left durable files"
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_extract_frames`
+    /// expect: Valid extracted frames remain available when a sibling frame import fails, and
+    /// the response preserves that frame's original cause without leaving failed copies.
+    /// [P1] Motivating: one bad frame cannot erase useful extracted media.
+    /// pre: FFmpeg emits one valid JPEG and one invalid JPEG.
+    /// post: status is partial, one asset remains, one causal failure is reported, and scratch
+    /// plus the failed durable copy are removed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn video_extract_frames_reports_partial_and_cleans_failed_copies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let template = artifacts.path().join("valid.jpg");
+        image::RgbImage::new(2, 2).save(&template)?;
+        let fake_ffmpeg = artifacts.path().join("extract-mixed.sh");
+        let template_path = template.to_string_lossy().replace('\'', "'\\''");
+        std::fs::write(
+            &fake_ffmpeg,
+            format!(
+                "#!/bin/sh\nfor arg do pattern=$arg; done\nfirst=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nsecond=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/002/')\ncp '{template_path}' \"$first\"\nprintf invalid > \"$second\"\n"
+            ),
+        )?;
+        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
+        let scratch = artifacts.path().join("scratch");
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = Arc::new(GalleryStore::from_driver(driver)?);
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let source = gallery_root.path().join("source.mp4");
+        std::fs::write(&source, b"fake video")?;
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            Arc::new(Mutex::new(Some(GalleryState {
+                path: gallery_root.path().to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery.id.clone()),
+            }))),
+            store.clone(),
+            templates::create_env()?,
+            FfmpegRunner::with_binary(fake_ffmpeg.to_string_lossy().into_owned(), scratch.clone()),
+            YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        );
+
+        let response = server
+            .video_extract_frames(Parameters(VideoExtractFramesRequest {
+                video_url: source.display().to_string(),
+                interval_sec: 2.0,
+                max_frames: 2,
+            }))
+            .await?;
+        let payload = content_of(&response);
+        assert_eq!(payload["status"], "partial");
+        assert_eq!(payload["frames_imported"], 1);
+        assert_eq!(payload["failures"].as_array().map(Vec::len), Some(1));
+        assert!(
+            payload["failures"][0]["cause"]
+                .as_str()
+                .is_some_and(|cause| !cause.is_empty())
+        );
+        assert_eq!(store.count_assets(&gallery.id)?, 1);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            1,
+            "failed durable frame copy survived"
+        );
+        assert_eq!(std::fs::read_dir(&scratch)?.count(), 0);
+        Ok(())
+    }
+
     /// expect: Reopening my gallery after restart restores its original identity. [P1]
     #[tokio::test]
     async fn gallery_reopen_restores_requested_root() -> Result<(), Box<dyn std::error::Error>> {

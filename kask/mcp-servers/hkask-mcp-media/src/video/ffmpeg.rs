@@ -12,6 +12,48 @@ struct RollbackOwnedOutput {
     armed: bool,
 }
 
+/// Cleanup-owning keyframe scratch batch. The operation directory and every
+/// file FFmpeg creates inside it are removed together on success or failure.
+#[derive(Debug)]
+pub(crate) struct ExtractedFrames {
+    directory: PathBuf,
+    paths: Vec<PathBuf>,
+}
+
+impl ExtractedFrames {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.paths.len()
+    }
+}
+
+impl<'a> IntoIterator for &'a ExtractedFrames {
+    type Item = &'a PathBuf;
+    type IntoIter = std::slice::Iter<'a, PathBuf>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.paths.iter()
+    }
+}
+
+impl Drop for ExtractedFrames {
+    fn drop(&mut self) {
+        match std::fs::remove_dir_all(&self.directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media.ffmpeg",
+                path = %self.directory.display(),
+                %error,
+                "Failed to remove keyframe scratch directory"
+            ),
+        }
+    }
+}
+
 impl RollbackOwnedOutput {
     fn new(path: PathBuf) -> Self {
         Self { path, armed: true }
@@ -66,8 +108,17 @@ pub struct FfmpegRunner {
 
 impl Drop for FfmpegRunner {
     fn drop(&mut self) {
-        // Clean up accumulated temp files on server shutdown
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        // Clean up accumulated temp files on server shutdown.
+        match std::fs::remove_dir_all(&self.temp_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media.ffmpeg",
+                path = %self.temp_dir.display(),
+                %error,
+                "Failed to remove FFmpeg runner temp directory"
+            ),
+        }
     }
 }
 
@@ -532,39 +583,57 @@ impl FfmpegRunner {
 
     /// Extract keyframes from a video at regular intervals.
     /// Returns paths to extracted frame images for vision LLM analysis.
-    pub async fn extract_keyframes(
+    pub(crate) async fn extract_keyframes(
         &self,
         input: &str,
         interval_sec: f32,
         max_frames: u32,
-    ) -> Result<Vec<PathBuf>, crate::MediaError> {
+    ) -> Result<ExtractedFrames, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
         self.ensure_temp_dir()?;
 
-        let prefix = uuid::Uuid::new_v4().to_string();
-        let pattern = self.temp_dir.join(format!("{}_%03d.jpg", prefix));
+        let directory = self.temp_dir.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&directory).map_err(|error| {
+            crate::MediaError::Io(format!(
+                "Failed to create keyframe scratch directory {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let mut frames = ExtractedFrames {
+            directory,
+            paths: Vec::new(),
+        };
+        let pattern = frames.directory.join("frame_%03d.jpg");
 
         let mut command = Command::new(&self.ffmpeg_path);
         command
             .arg("-i")
             .arg(input)
             .arg("-vf")
-            .arg(format!("fps=1/{},scale=640:-1", interval_sec))
+            .arg(format!("fps=1/{interval_sec},scale=640:-1"))
             .arg("-vframes")
             .arg(max_frames.to_string())
             .arg(&pattern);
         Self::run_to_completion(command, "keyframe extraction").await?;
 
-        // Collect generated frame files
-        let mut frames = Vec::new();
-        for i in 1..=max_frames {
-            let path = self.temp_dir.join(format!("{}_ {:03}.jpg", prefix, i));
-            if path.exists() {
-                frames.push(path);
+        for entry in std::fs::read_dir(&frames.directory).map_err(|error| {
+            crate::MediaError::Io(format!(
+                "Failed to read keyframe scratch directory {}: {error}",
+                frames.directory.display()
+            ))
+        })? {
+            let path = entry
+                .map_err(|error| {
+                    crate::MediaError::Io(format!("Failed to read extracted frame entry: {error}"))
+                })?
+                .path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("jpg") {
+                frames.paths.push(path);
             }
         }
+        frames.paths.sort();
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, frame_count = frames.len(), "Keyframes extracted");
         Ok(frames)
@@ -735,6 +804,76 @@ mod tests {
             .expect("concat must run ffmpeg to completion");
         let size = concatenated.metadata().map(|m| m.len()).unwrap_or(0);
         assert!(size > 0, "concatenated output is empty");
+    }
+
+    /// expect: Keyframe filenames produced from FFmpeg's `%03d` pattern are discovered, and the
+    /// entire scratch batch is removed when its owner is dropped.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extracted_keyframes_match_pattern_and_are_cleanup_owned()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir()?;
+        let fake_ffmpeg = root.path().join("extract-one.sh");
+        std::fs::write(
+            &fake_ffmpeg,
+            "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf frame > \"$output\"\n",
+        )?;
+        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
+        let output_dir = root.path().join("outputs");
+        let runner = FfmpegRunner::with_binary(
+            fake_ffmpeg.to_string_lossy().into_owned(),
+            output_dir.clone(),
+        );
+
+        let frames = runner.extract_keyframes("input.mp4", 2.0, 1).await?;
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            (&frames)
+                .into_iter()
+                .next()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str()),
+            Some("frame_001.jpg")
+        );
+        drop(frames);
+        assert_eq!(std::fs::read_dir(&output_dir)?.count(), 0);
+        Ok(())
+    }
+
+    /// expect: A failed keyframe subprocess removes every scratch frame while preserving the
+    /// original FFmpeg cause.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_keyframe_extraction_removes_partial_scratch_batch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir()?;
+        let fake_ffmpeg = root.path().join("extract-then-fail.sh");
+        std::fs::write(
+            &fake_ffmpeg,
+            "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf partial > \"$output\"\nprintf 'keyframe sentinel failure' >&2\nexit 23\n",
+        )?;
+        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
+        let output_dir = root.path().join("outputs");
+        let runner = FfmpegRunner::with_binary(
+            fake_ffmpeg.to_string_lossy().into_owned(),
+            output_dir.clone(),
+        );
+
+        let error = runner
+            .extract_keyframes("input.mp4", 2.0, 1)
+            .await
+            .expect_err("injected keyframe failure must surface");
+        assert!(error.to_string().contains("keyframe sentinel failure"));
+        assert_eq!(std::fs::read_dir(&output_dir)?.count(), 0);
+        Ok(())
     }
 
     /// expect: A failed FFmpeg process cannot leave a partial output or concat-list file behind.

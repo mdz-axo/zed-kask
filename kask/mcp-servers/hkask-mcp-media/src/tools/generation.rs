@@ -49,17 +49,19 @@ impl MediaServer {
                 })?;
                 crate::style::apply_preset(&mut media_params, &preset);
             }
-            let result = self
-                .vision_port
-                .media_generate("generate_image", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Image generation failed", e))?;
+            let args = serde_json::to_value(&media_params).map_err(|error| {
+                McpToolError::internal(format!("encode image generation parameters: {error}"))
+            })?;
 
             if count == 1 {
+                let result = self
+                    .vision_port
+                    .media_generate("generate_image", &media_params)
+                    .await
+                    .map_err(|error| classify_inference_error("Image generation failed", error))?;
                 // Persist the payload and compose the slim result (path +
                 // metadata + display hint — the base64 payload never enters
                 // the model's context).
-                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 return persist_slim_and_enrich(
                     gallery.as_ref(),
                     &self.gallery_store,
@@ -71,58 +73,80 @@ impl MediaServer {
                 .await;
             }
 
-            // Multi-variant path (the former generate_variants tool, folded
-            // in): the provider may return multiple images in data[].
-            // Extract each one, persist it, and build a media block for it.
-            // When the provider returns a single image per call (no data[]
-            // array), issue additional calls until `count` variants are
-            // collected (capped at `count` total provider calls).
-            let mut variants: Vec<serde_json::Value> = Vec::with_capacity(count as usize);
-            let mut pending_result = Some(result);
-            let mut attempts = 0;
-            while variants.len() < count as usize && attempts < count as usize {
+            // A requested variant is complete only when it is either durably
+            // persisted or represented by a causal failure. Valid siblings
+            // are never rolled back when another variant fails.
+            let requested = count as usize;
+            let mut variants = Vec::with_capacity(requested);
+            let mut failures = Vec::new();
+            let mut attempts = 0usize;
+            while variants.len() + failures.len() < requested && attempts < requested {
                 attempts += 1;
-                let result = match pending_result.take() {
-                    Some(first) => first,
-                    None => self
-                        .vision_port
-                        .media_generate("generate_image", &media_params)
-                        .await
-                        .map_err(|e| classify_inference_error("Image generation failed", e))?,
+                let result = match self
+                    .vision_port
+                    .media_generate("generate_image", &media_params)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let classified = classify_inference_error("Image generation failed", error);
+                        failures.push(serde_json::json!({
+                            "variant_index": variants.len() + failures.len(),
+                            "stage": "provider",
+                            "cause": classified.message,
+                        }));
+                        continue;
+                    }
                 };
-                let single_results: Vec<serde_json::Value> =
-                    match result.get("data").and_then(|d| d.as_array()) {
-                        Some(data) => data
-                            .iter()
-                            .map(|item| serde_json::json!({ "data": [item] }))
-                            .collect(),
-                        // Provider returned a single-image response — use it as-is.
-                        None => vec![result],
-                    };
+                let single_results = match result.get("data").and_then(|data| data.as_array()) {
+                    Some(data) if data.is_empty() => {
+                        failures.push(serde_json::json!({
+                            "variant_index": variants.len() + failures.len(),
+                            "stage": "provider",
+                            "cause": "provider returned an empty data array",
+                        }));
+                        continue;
+                    }
+                    Some(data) => data
+                        .iter()
+                        .map(|item| serde_json::json!({ "data": [item] }))
+                        .collect::<Vec<_>>(),
+                    None => vec![result],
+                };
                 for single_result in single_results {
-                    if variants.len() >= count as usize {
+                    if variants.len() + failures.len() >= requested {
                         break;
                     }
-                    // Persist each variant and compose its slim result (the
-                    // base64 payload never enters the model's context).
-                    variants.push(
-                        persist_slim_and_enrich(
-                            gallery.as_ref(),
-                            &self.gallery_store,
-                            &single_result,
-                            "generate_image",
-                            "image",
-                            serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null),
-                        )
-                        .await?,
-                    );
+                    let variant_index = variants.len() + failures.len();
+                    match persist_slim_and_enrich(
+                        gallery.as_ref(),
+                        &self.gallery_store,
+                        &single_result,
+                        "generate_image",
+                        "image",
+                        args.clone(),
+                    )
+                    .await
+                    {
+                        Ok(variant) => variants.push(variant),
+                        Err(error) => failures.push(serde_json::json!({
+                            "variant_index": variant_index,
+                            "stage": "persistence",
+                            "cause": error.message,
+                        })),
+                    }
                 }
             }
-            // Top-level display_hints (one fenced media block per variant)
-            // follows the system-prompt contract used by gallery_search, so
-            // the model can copy each block into its reply for grid display.
-            // The per-variant detail (with its own display_hint) stays in
-            // `variants`.
+
+            let status = if failures.is_empty() {
+                "completed"
+            } else if variants.is_empty() {
+                "failed"
+            } else {
+                "partial"
+            };
+            // Top-level display_hints (one fenced media block per valid
+            // variant) follows the gallery-search display contract.
             let display_hints: Vec<String> = variants
                 .iter()
                 .filter_map(|variant| {
@@ -133,10 +157,12 @@ impl MediaServer {
                 })
                 .collect();
             Ok(serde_json::json!({
+                "status": status,
                 "prompt": prompt,
                 "count_requested": count,
                 "count_returned": variants.len(),
                 "variants": variants,
+                "failures": failures,
                 "display_hints": display_hints,
             }))
         })
