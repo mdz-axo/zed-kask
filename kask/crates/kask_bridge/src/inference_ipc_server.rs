@@ -1422,8 +1422,8 @@ mod tests {
         Arc::new(tx)
     }
 
-    fn make_provider_credential_tx() -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
-    {
+    fn make_provider_credential_tx()
+    -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>> {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
         Arc::new(tx)
     }
