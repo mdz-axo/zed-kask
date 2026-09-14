@@ -165,48 +165,6 @@ impl KeyMetrics {
     }
 }
 
-/// Typed view over historical prices (FMP `/historical-price-eod/full` or EODHD
-/// `/eod`).
-///
-/// FMP stable returns a flat array of daily OHLCV bars `[{symbol, date, close, ...}]`.
-/// EODHD (normalized) returns the `{symbol, historical: [...]}` envelope.
-/// Both shapes are handled — `historical()` returns the bar array from either.
-pub(crate) struct HistoricalPriceView {
-    raw: Value,
-}
-
-impl HistoricalPriceView {
-    /// Wrap a normalized historical-price payload.
-    pub fn from_raw(raw: Value) -> Self {
-        Self { raw }
-    }
-
-    /// The array of daily OHLCV bars (newest-first per FMP), or an empty slice
-    /// if the payload has no bars. Handles both the FMP stable flat array and
-    /// the EODHD `{symbol, historical: [...]}` envelope.
-    pub fn historical(&self) -> &[Value] {
-        // FMP stable: flat array of bar objects.
-        if let Some(arr) = self.raw.as_array() {
-            return arr;
-        }
-        // EODHD normalized: {symbol, historical: [...]}.
-        self.raw
-            .get("historical")
-            .and_then(|v| v.as_array())
-            .map_or(&[], |v| v)
-    }
-
-    /// The latest day's close price, preferring `close` and falling back to
-    /// `adjClose` (the adjusted close — used when the raw close isn't
-    /// available, e.g. for split-adjusted EODHD bars).
-    pub fn latest_close(&self) -> Option<f64> {
-        let day = self.historical().first()?;
-        day.get("close")
-            .or_else(|| day.get("adjClose"))
-            .and_then(|v| v.as_f64())
-    }
-}
-
 // ── Provider enum ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -1496,9 +1454,8 @@ fn compute_revenue_growth(items: &mut [Value], income_yearly: Option<&Value>) {
 /// Normalize EODHD /eod/{symbol} historical prices → FMP-compatible format.
 ///
 /// EODHD returns an array of {date, open, high, low, close, adjusted_close, volume}.
-/// We wrap in the {symbol, historical: [...]} envelope (HistoricalPriceView
-/// handles both envelope and flat array) and map adjusted_close → adjClose
-/// so HistoricalPriceView::latest_close() fallback works.
+/// We wrap in the public `{symbol, historical: [...]}` response envelope and
+/// map `adjusted_close` to the FMP-compatible `adjClose` field.
 fn normalize_eodhd_historical(eod_value: &Value, symbol: &str) -> Value {
     let historical = match eod_value {
         Value::Array(arr) => {

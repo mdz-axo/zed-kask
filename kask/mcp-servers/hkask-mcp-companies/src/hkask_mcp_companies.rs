@@ -55,7 +55,7 @@ pub(crate) mod fibo_cache;
 mod financial_model;
 mod providers;
 pub(crate) mod research_store;
-pub(crate) use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
+pub(crate) use providers::{CompanyProfile, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
 mod screening;
@@ -229,19 +229,6 @@ impl CompaniesServer {
             self.fetch("key_metrics", symbol, &[("limit", &limit)])
                 .await?,
         ))
-    }
-
-    /// Fetch historical prices as a typed `HistoricalPriceView` view.
-    async fn fetch_historical_price(
-        &self,
-        symbol: &str,
-        from: &str,
-        to: &str,
-    ) -> Result<HistoricalPriceView, McpToolError> {
-        let raw = self
-            .fetch("historical_price", symbol, &[("from", from), ("to", to)])
-            .await?;
-        Ok(HistoricalPriceView::from_raw(raw))
     }
 
     async fn save_forecast(&self, forecast: PersistedForecast) -> Result<(), McpToolError> {

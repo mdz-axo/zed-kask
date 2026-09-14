@@ -1,9 +1,8 @@
 //! Company DCF valuation and scenario tools.
 use super::notes::run_store;
 use crate::{
-    CompaniesServer, StoredForecast, fibo, financial_model,
-    research_store::PersistedForecast, resolve_current_price, scenarios, superforecast, types,
-    validate_symbol,
+    CompaniesServer, StoredForecast, fibo, financial_model, research_store::PersistedForecast,
+    resolve_current_price, scenarios, superforecast, types, validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::time::now_rfc3339;
