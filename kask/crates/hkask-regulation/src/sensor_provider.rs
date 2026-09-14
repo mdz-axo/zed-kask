@@ -337,11 +337,8 @@ pub(crate) struct ToolReliabilitySensor {
 pub(crate) const TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES: u64 = 5;
 
 /// The equal-weighted aggregate success rate across domains meeting the
-/// minimum-sample floor — the single aggregation both
-/// `ToolReliabilitySensor::observe` and `verify_impact`'s after-value
-/// re-sense use, so the sensed deviation and the before/after impact
-/// values stay comparable. Returns `None` when no domain meets the floor
-/// (the no-data state, not 0% — the `.rules` `unwrap_or(0)` trap).
+/// minimum-sample floor. Returns `None` when no domain meets the floor (the
+/// no-data state, not 0% — the `.rules` `unwrap_or(0)` trap).
 pub(crate) fn aggregate_tool_reliability(
     breakdown: &[super::runtime::DomainOutcomeSnapshot],
 ) -> Option<f64> {
@@ -378,8 +375,7 @@ impl Sensor for ToolReliabilitySensor {
         // Equal-weighted aggregate across domains meeting the minimum-sample
         // floor (small-sample domains are noise, not signal); a domain with
         // zero operations falls out by the same floor (no data, not 0%
-        // success). The aggregation itself is shared with `verify_impact`'s
-        // re-sense via `aggregate_tool_reliability`.
+        // success).
         let aggregate = aggregate_tool_reliability(&breakdown)?;
         Some(Signal::new(
             LoopId::Cybernetics,
@@ -1148,7 +1144,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ocr_health_sensor_returns_none_when_healthy() {
+    async fn ocr_health_sensor_filters_healthy_from_deviation_helper() {
         let sensor = OcrHealthSensor::new(Arc::new(MockOcrHealth {
             recent_count: 0,
             broken: false,

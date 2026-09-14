@@ -137,32 +137,28 @@ converted to an `Escalate` alert and routed through a three-tier path:
 
 `Notify` actions are skipped — they are observational, not actionable.
 
-## Step 5: Verify — re-sense and classify impact
+## Step 5: Verify — classify evidence-bearing checks
 
-`CyberneticsLoop::verify_impact()` (`cycle.rs:684`) re-senses the metrics
-targeted by the previous cycle's actions and compares post-action values
-against pre-action values. For each action it computes an `ImpactReport`
-(`loops/core.rs:80`) with a three-tier `ActionDecision`
-(`loops/core.rs:173`):
+`CyberneticsLoop::verify_impact()` accepts only typed rollout checks. Their
+`RolloutEventSource` supplies comparable observations from opposite sides of
+a recorded action boundary; computed advisories cannot enter this interface.
+For each answered check it computes an `ImpactReport` with a three-tier
+`ActionDecision`:
 
 - **Accept** — the observation improved or worsened within noise tolerance.
-- **Stage** — the observation worsened moderately; escalate as Warning.
-- **Block** — the observation worsened severely; prevent re-use of that recommendation.
+- **Stage** — the observation worsened moderately.
+- **Block** — the observation worsened severely.
 
-These are observation decisions, not proof that advice caused a change. See
-[the ratified D4 contract](explanation.md#ratified-observation-and-advice-contract--core-review-d4).
-
-Classification uses `classify_decision` (`regulation_policy.rs:566`) with
+These are observation decisions, not causal claims. Classification uses
+`classify_decision` (`regulation_policy.rs`) with
 the `stage_worsening_ratio` (default 0.05) and `block_worsening_ratio`
 (default 0.20) from `SetPoints` (`set_points.rs:108,114`).
 
-When a `RolloutEventSource` is wired (`cybernetics_loop.rs:205`),
-`verify_impact` queries it for before/after metric values on rollouts the
-action targeted, and writes its impact verdict back to the event store as
-a `regulation_impact`-sourced verdict event (`cybernetics_loop.rs:73-110`).
-Externally-submitted rollout checks (via `submit_rollout_impact_check`,
-`cybernetics_loop.rs:609`) are drained into the current tick's verification
-pass (`cybernetics_loop.rs:739-750`).
+When a `RolloutEventSource` is wired, `verify_impact` queries it using the
+rollout ID, metric, and before-position carried by each submitted check, then
+writes the verdict back as a `regulation_impact`-sourced event. Checks queued
+through `submit_rollout_impact_check` are drained into the next tick's
+verification pass separately from computed advisories.
 
 The `StagnationDetector` (`dampener.rs:231`) records each (metric, action)
 pair's observed progress. When the same pair does not improve for `substitution_after`

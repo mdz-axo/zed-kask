@@ -100,6 +100,44 @@ mod tests {
             .expect("write test health file");
     }
 
+    #[derive(Default)]
+    struct RecordingAlertSink {
+        alerts: std::sync::Mutex<Vec<String>>,
+        observations: std::sync::Mutex<Vec<Vec<hkask_regulation::Signal>>>,
+    }
+
+    impl hkask_regulation::AlertEscalationSink for RecordingAlertSink {
+        fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+            self.observations
+                .lock()
+                .expect("observations lock")
+                .push(observations.to_vec());
+        }
+
+        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+            self.alerts
+                .lock()
+                .expect("alerts lock")
+                .push(output.to_string());
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingRegulationSink(std::sync::Mutex<Vec<String>>);
+
+    impl hkask_types::RegulationSink for RecordingRegulationSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.0
+                .lock()
+                .expect("regulation events lock")
+                .push(event.span.path.clone());
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn missing_file_is_zero_not_an_error() {
         let source = BridgeOcrHealthSource::at(temp_health_path("missing"));
@@ -133,6 +171,100 @@ mod tests {
                 .await
                 .expect("storm file must parse"),
             2
+        );
+    }
+
+    /// expect: "An OCR health-file failure becomes one advisory, while recovery remains an observation rather than an impact verdict"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation
+    /// \[P4\] Constraining: Clear Boundaries — observation, advice, and intervention remain distinct
+    /// pre: a readable health snapshot contains a recent silent failure
+    /// post: the loop queues an OCR advisory, emits no impact/block/plateau event,
+    ///       and carries a later zero reading to condition reconciliation
+    #[tokio::test]
+    async fn health_file_drives_advice_and_recovery_without_impact_verdict() {
+        let directory = tempfile::tempdir().expect("temporary health directory");
+        let path = directory.path().join("ocr-health.json");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_secs() as i64;
+        let mut failing = OcrHealthSnapshot::default();
+        failing.record_silent_failure(now - 1);
+        write_snapshot(&path, &failing);
+
+        let alerts = std::sync::Arc::new(RecordingAlertSink::default());
+        let events = std::sync::Arc::new(RecordingRegulationSink::default());
+        let source = std::sync::Arc::new(BridgeOcrHealthSource::at(&path));
+        let ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::RegulationLedger::default(),
+        ));
+        let mut regulation = hkask_regulation::CyberneticsLoop::new(ledger)
+            .with_ocr_health_source(source)
+            .with_event_sink(
+                std::sync::Arc::clone(&events) as std::sync::Arc<dyn hkask_types::RegulationSink>
+            );
+        regulation.set_alert_escalation_sink(Some(alerts.clone()));
+
+        regulation.tick().await;
+
+        {
+            let persisted = alerts.alerts.lock().expect("alerts lock");
+            assert_eq!(
+                persisted.len(),
+                1,
+                "one OCR condition produces one advisory"
+            );
+            assert!(
+                persisted
+                    .first()
+                    .expect("OCR advisory")
+                    .starts_with("ocr_silent_failures_exceeded"),
+                "the advisory names the sensed OCR condition"
+            );
+        }
+        assert!(
+            events
+                .0
+                .lock()
+                .expect("regulation events lock")
+                .iter()
+                .all(|path| !matches!(
+                    path.as_str(),
+                    "impact_verified" | "action_blocked" | "plateau_detected"
+                )),
+            "unapplied advice emits no impact judgment"
+        );
+
+        write_snapshot(&path, &OcrHealthSnapshot::default());
+        regulation.tick().await;
+
+        let reconciliations = alerts.observations.lock().expect("observations lock");
+        let recovered = reconciliations
+            .last()
+            .expect("second reconciliation")
+            .iter()
+            .find(|signal| signal.metric.to_string() == "ocr_silent_failures")
+            .expect("OCR recovery observation");
+        assert_eq!(
+            recovered.value, 0.0,
+            "a real zero carries recovery evidence"
+        );
+        assert_eq!(
+            alerts.alerts.lock().expect("alerts lock").len(),
+            1,
+            "recovery does not enqueue another advisory"
+        );
+        assert!(
+            events
+                .0
+                .lock()
+                .expect("regulation events lock")
+                .iter()
+                .all(|path| !matches!(
+                    path.as_str(),
+                    "impact_verified" | "action_blocked" | "plateau_detected"
+                )),
+            "recovery is not attributed to unapplied advice"
         );
     }
 

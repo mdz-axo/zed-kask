@@ -566,9 +566,9 @@ impl RegulationLedger {
 
     /// Record a regulation cycle's impact decisions for metacognition observability.
     ///
-    /// Called by `CyberneticsLoop::tick()` after `verify_impact()`.
-    /// Aggregates Accept/Stage/Block counts so the Curator can assess whether
-    /// regulatory actions are actually improving system state.
+    /// Called by `CyberneticsLoop::tick()` after evidence-bearing rollout
+    /// checks complete. Aggregates Accept/Stage/Block observations for
+    /// metacognition without treating advisory routing as an intervention.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — cycle recording enables metacognitive feedback

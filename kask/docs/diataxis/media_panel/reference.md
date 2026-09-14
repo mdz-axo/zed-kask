@@ -14,8 +14,8 @@ The reference model for the media panel's viewing pane: the interaction
 patterns a media viewer must supply, audited against the implementation.
 Each capability is marked **supplied** (with file:line evidence), **missing**
 (absent from the tree — verified by grep), or **degraded** (present but
-defective, with the defect named). All citations were re-derived from disk on
-2026-09-04. The implementation can be audited against this model after any
+defective, with the defect named). Playback citations and measurements were
+re-derived from disk on 2026-09-13. The implementation can be audited against this model after any
 change; a capability not listed here is out of model.
 
 ## Component map
@@ -44,7 +44,8 @@ classDiagram
     class PlaybackWorker {
         +VideoPlayer engine
         +commands
-        +updates
+        +lossless lifecycle events
+        +capacity-one frame mailbox
     }
     class TransportBar {
         +seek_slider: SimpleSlider
@@ -53,7 +54,7 @@ classDiagram
     MediaPanel --> MediaViewer : top pane (flex_1, min_h_0, min_w_0)
     MediaPanel --> MediaViewer : split divider (1px, draggable)
     MediaViewer --> MediaWidget : shared via viz-core cache
-    MediaWidget --> PlaybackWorker : non-blocking commands and updates
+    MediaWidget --> PlaybackWorker : commands, lifecycle events, latest frame
     MediaWidget --> TransportBar : emits TransportEvent
 ```
 
@@ -69,16 +70,19 @@ state; the media widget is the same entity the conversation renders inline
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| Playback: play/pause | supplied | `transport.rs:163` → `media_widget.rs:606` |
-| Playback: seek/position | supplied | `transport.rs:78` → `media_widget.rs:618` |
+| Playback: play/pause | supplied | `TransportEvent::TogglePlay` → `MediaWidget::handle_transport_event` |
+| Playback: seek/position | supplied | `TransportEvent::Seek` → `MediaWidget::handle_transport_event` → generation-scoped worker seek |
 | Playback: stop | supplied | `TransportEvent::Stop` stops the worker player and cancels widget polling |
 | Playback: first-frame paused | supplied | opening runs on the playback worker and returns a poster frame without entering `Playing` |
-| Playback: completion | supplied | FFmpeg EOF is drained into `PlaybackState::Finished`; normal completion is not an error and closes polling |
-| Playback: loading/failure feedback | supplied | transport renders `Loading…`; worker failures become one visible widget error and close polling |
+| Playback: timestamp pacing | supplied | `VideoDecoderInner` retains one future frame and returns `Pending` until the media clock reaches its PTS; the first decoded PTS becomes timeline zero and remains stable across seeks; pinned by `future_frame_waits_for_its_presentation_timestamp` and `nonzero_source_pts_is_normalized_to_the_playback_timeline` |
+| Playback: bounded frame delivery | supplied | ordinary BGRA frames use a capacity-one latest-frame mailbox; later due frames replace an unconsumed frame, while `Opened`/`Completed`/`Failed` remain an ordered lossless event batch; open/seek/stop generations reject stale frames and events; pinned by `worker_frame_backlog_is_bounded_to_latest_frame`, `lifecycle_events_survive_frame_coalescing`, `polling_preserves_repeated_lifecycle_events_in_order`, and `replacement_open_invalidates_unconsumed_prior_generation` |
+| Playback: completion | supplied | FFmpeg EOF is drained into the lossless `Completed` event and `PlaybackState::Finished`; normal completion is not an error and closes polling |
+| Playback: loading/failure feedback | supplied | transport renders `Loading…`; worker failures or channel disconnection become one visible widget error and close polling |
+| Playback: responsiveness benchmark | supplied | isolated `hkask-media-benchmarks` GPUI benchmark uses production widget/decoder/viz-cache paths without `test-support`, for 1/8/32 visible and cached videos; asserts order/count/final frame/backlog and reports completion, foreground, draw, and frame-budget metrics |
 | Playback: rate control | missing | no rate/set-speed surface anywhere in `hkask-media-widget` or `media_panel` |
 | Audio: volume | supplied | `TransportEvent::VolumeChange` updates audio or worker-owned video playback |
 | Audio: mute | missing | no mute toggle; video and audio both load paused, so neither produces unsolicited sound |
-| Display: fit-to-pane, aspect preserved | supplied | `media_widget.rs:911-912` (video `img` `size_full` + `ObjectFit::Contain`), `media_widget.rs:854` (image path); pinned by layout tests (below) |
+| Display: fit-to-pane, aspect preserved | supplied | `MediaWidget::render` applies `size_full` + `ObjectFit::Contain` to video and image paths; pinned by layout tests (below) |
 | Display: frame size adjustment | missing | no zoom / scale control |
 | Display: fullscreen | missing | zero hits in `media_panel` / `hkask-media-widget` |
 | Library: asset selection | supplied | `media_viewer.rs:895-912` (row click selects + switches to Media tab) |
@@ -92,9 +96,27 @@ state; the media widget is the same entity the conversation renders inline
 ### Degraded register
 
 None at 2026-09-13. Video decoding and remote packet reads run on a dedicated
-playback thread; the GPUI foreground only drains ready updates. EOF, loading,
-and fatal failure are distinct outcomes. The horizontal-fit defect remains
+playback thread; the GPUI foreground consumes at most one pending BGRA frame per
+player. Future PTS frames remain decoder-owned until due, and non-zero source
+PTS is normalized to the first decoded frame. EOF, loading, fatal failure, and
+worker disconnection are ordered generation-scoped outcomes that cannot be
+overwritten by frame coalescing or leak across source replacement. The horizontal-fit defect remains
 fixed as described under Layout invariants.
+
+## Playback performance baseline
+
+The production-shaped benchmark is `crates/hkask-media-benchmarks/benches/playback.rs`.
+It runs the same 600ms, six-frame, 10 FPS fixture through 1, 8, and 32 visible
+or viz-cached `MediaWidget` entities. The measured 2026-09-13 Linux run used
+120 FPS, ten samples per input, 100ms warm-up, and a one-second requested
+measurement window (Criterion extended each input to ten complete iterations).
+Completion intervals were 685.57–771.63ms across visible workloads and
+704.16–734.23ms across cached workloads. Across the combined run, foreground
+work p95/p99/max was 1.769/1.878/3.580ms, draw p95/p99/max was
+1.725/1.835/3.502ms, and both reported zero 8.33ms frame-budget overruns.
+The Linux headless path measures CPU scheduling/render work, not real GPU
+submission. Correctness gates require monotonic consumed PTS, final PTS 500ms,
+a retained final frame, and mailbox high-water exactly one.
 
 ## Layout invariants
 

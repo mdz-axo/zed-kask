@@ -747,257 +747,88 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Verify evidence-bearing impact checks (Fermi impact-gate pattern).
+    /// Verify evidence-bearing rollout impact checks (Fermi impact-gate pattern).
     ///
-    /// Production callers submit rollout checks whose event source supplies
-    /// comparable before/after observations. Computed advisories do not enter
-    /// this path: routing advice is not an intervention. Verified checks are
-    /// classified as Accept / Stage / Block using relative worsening
-    /// thresholds; repeated lack of improvement triggers stagnation detection.
+    /// The typed input excludes computed advisories: routing advice is not an
+    /// intervention. Each check is answered by the rollout event source with
+    /// comparable before/after observations, then classified using relative
+    /// worsening thresholds.
     pub(super) async fn verify_impact(
         &self,
-        previous_actions: &[RegulatoryAction],
+        impact_checks: &[super::RolloutImpactCheck],
     ) -> Vec<ImpactReport> {
         let mut reports = Vec::new();
 
-        // Re-sense current state for comparison.
-        let budget_statuses = self
-            .call_cap_manager
-            .read()
-            .await
-            .all_agent_statuses()
-            .await;
-        let ledger = self.ledger.read().await;
-        let health = ledger.health().await;
-        let current_deficit = health.overall_deficit as f64;
-        drop(ledger);
-
-        for action in previous_actions {
-            // Event-substrate path (phase 6): when the action's parameters
-            // name a rollout and a rollout event source is wired, query the
-            // store for the before/after values. The struct walk below is the
-            // fallback for actions that don't target a rollout. A query
-            // failure (Err) or a no-data result (Ok(None)) is warned and skips
-            // the action — it does NOT fall through to the struct walk: a
-            // RolloutImpactCheck carries no before value to re-sense, so
-            // falling through would silently drop the submitted check with no
-            // signal (the .rules broken-feedback-loop trap).
-            //
-            // The two paths that proceed (store-answered Ok(Some) and the
-            // struct-walk fallback) converge on the SAME classify/stagnation/
-            // block tail below — the store path sets (metric, before, after)
-            // and jumps past the struct walk; it must not bypass the stagnation
-            // detector or the block escalation, or a store-answered failure
-            // would never trigger plateau detection while a re-sensed one
-            // would.
-            let mut store_answered = false;
-            let (mut before_val, mut metric) = (0.0, SignalMetric::EnergyRemaining);
-            let mut after_val = 0.0;
-            // Capture the rollout_id when the store answers so the impact
-            // verdict write-back below can target the same rollout.
-            let mut store_rollout_id: Option<String> = None;
-            if let Some(source) = &self.rollout_events
-                && let Some((rollout_id, before_position)) = action.parameters.data.rollout_target()
-            {
-                // Only `RolloutImpactCheck` reaches here (rollout_target is
-                // Some only for that variant). Handle every store outcome
-                // explicitly — a silent fall-through to the struct-walk below
-                // would drop the submitted check with no signal, which is
-                // indistinguishable from "the check never ran" (the .rules
-                // broken-feedback-loop trap: never silently discard errors).
-                match source.metric_before_and_after(
-                    &rollout_id,
-                    action.parameters.data.metric_name(),
-                    before_position,
-                ) {
-                    Ok(Some((queried_before, queried_after))) => {
-                        metric = SignalMetric::from_str_name(action.parameters.data.metric_name())
-                            .unwrap_or(SignalMetric::EnergyRemaining);
-                        before_val = queried_before;
-                        after_val = queried_after;
-                        store_answered = true;
-                        store_rollout_id = Some(rollout_id.clone());
-                        tracing::debug!(
-                            target: "reg.cybernetics",
-                            rollout = %rollout_id,
-                            before = queried_before,
-                            after = queried_after,
-                            "verify_impact answered from the rollout event store"
-                        );
-                    }
-                    Ok(None) => {
-                        // The store has no before/after for this rollout/metric.
-                        // A submitted check with no store answer must be visible
-                        // — warn so "no baseline" is distinguishable from "no
-                        // check ran." There is nothing to fall back to (a
-                        // RolloutImpactCheck carries no before value), so skip.
-                        tracing::warn!(
-                            target: "reg.cybernetics",
-                            rollout = %rollout_id,
-                            metric = action.parameters.data.metric_name(),
-                            "rollout impact check found no events for this metric — no baseline to verify against"
-                        );
-                        continue;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "reg.cybernetics",
-                            rollout = %rollout_id,
-                            metric = action.parameters.data.metric_name(),
-                            error = %error,
-                            "rollout impact check store query failed — verdict not computed"
-                        );
-                        continue;
-                    }
+        for check in impact_checks {
+            let Some(source) = &self.rollout_events else {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    rollout = %check.rollout_id,
+                    metric = %check.metric,
+                    "rollout impact check has no event source — verdict not computed"
+                );
+                continue;
+            };
+            let Some(metric) = SignalMetric::from_str_name(&check.metric) else {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    rollout = %check.rollout_id,
+                    metric = %check.metric,
+                    "rollout impact check named an unknown metric — verdict not computed"
+                );
+                continue;
+            };
+            let (before_val, after_val) = match source.metric_before_and_after(
+                &check.rollout_id,
+                &check.metric,
+                check.before_position,
+            ) {
+                Ok(Some(values)) => values,
+                Ok(None) => {
+                    tracing::warn!(
+                        target: "reg.cybernetics",
+                        rollout = %check.rollout_id,
+                        metric = %check.metric,
+                        "rollout impact check found no events for this metric — no baseline to verify against"
+                    );
+                    continue;
                 }
-            }
-            if !store_answered {
-                // Fallback: determine metric and pre-action value from the
-                // typed RegulationData, then re-sense the after value.
-                // The per-variant (metric, before-value) table lives on
-                // `RegulationData::impact_before_value`, colocated with the
-                // variants it describes.
-                let (fallback_before, fallback_metric) = match action
-                    .parameters
-                    .data
-                    .impact_before_value()
-                {
-                    Some((data_metric, data_before)) => (data_before, data_metric),
-                    None => {
-                        // Actions whose RegulationData variant carries no
-                        // before-value (NoData and the meta-regulatory /
-                        // observational arms) can't be verified via the
-                        // struct-walk. Warn so the skip is visible — a
-                        // silent continue would make "no verification ran"
-                        // indistinguishable from "verification ran and
-                        // passed" (the .rules broken-feedback-loop trap).
-                        // Full impact verification for these actions needs
-                        // BOTH a before-value arm in
-                        // `RegulationData::impact_before_value` AND a
-                        // re-sense arm in the after-value match below — a
-                        // before-value alone still falls out at the
-                        // after-match's skip. Each metric needs a re-sense
-                        // source wired on the loop (the per-metric pattern)
-                        // or a generic SensorBus re-sense; deferred as a
-                        // scoped project, not a one-variant patch.
-                        tracing::warn!(
-                            target: "reg.cybernetics",
-                            metric = action.metric_name.as_deref().unwrap_or("unknown"),
-                            reason = %action.parameters.reason,
-                            "verify_impact: unhandled RegulationData variant — no before-value to verify against, skipping"
-                        );
-                        continue;
-                    }
-                };
-                before_val = fallback_before;
-                metric = fallback_metric;
-                after_val = match metric {
-                    SignalMetric::EnergyRemaining => budget_statuses
-                        .iter()
-                        .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
-                        .fold(1.0, f64::min),
-                    SignalMetric::VarietyDeficit => current_deficit,
-                    SignalMetric::ToolReliability => {
-                        // Re-sense the aggregate success rate from the ledger
-                        // using the same floored, equal-weighted aggregation
-                        // as `ToolReliabilitySensor::observe`
-                        // (`aggregate_tool_reliability`) so the before/after
-                        // values are comparable. No domain meeting the
-                        // minimum-sample floor is no data — warn and skip
-                        // rather than reporting 0.0, which would read as
-                        // "fully degraded" (the .rules unwrap_or(0) trap).
-                        let breakdown = {
-                            let ledger = self.ledger.read().await;
-                            ledger.outcome_breakdown().await
-                        };
-                        match crate::sensor_provider::aggregate_tool_reliability(&breakdown) {
-                            Some(aggregate) => aggregate,
-                            None => {
-                                tracing::warn!(
-                                    target: "reg.cybernetics",
-                                    "verify_impact: no tracked tool-outcome domain meets the minimum-sample floor — cannot re-sense reliability, skipping"
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                    SignalMetric::ContextServerHealth => {
-                        // Re-sense fleet health from the source stored on the loop.
-                        // If the source is not wired, warn and skip — a silent
-                        // 0.0 would read as "fleet fully degraded" (the .rules
-                        // unwrap_or(0) trap).
-                        if let Some(ref source) = self.context_server_health_source {
-                            let healthy = source.healthy_count().await;
-                            let total = source.total_count().await;
-                            if total == 0 {
-                                tracing::warn!(
-                                    target: "reg.cybernetics",
-                                    "verify_impact: context-server health source reports 0 total servers — cannot re-sense, skipping"
-                                );
-                                continue;
-                            }
-                            healthy as f64 / total as f64
-                        } else {
-                            tracing::warn!(
-                                target: "reg.cybernetics",
-                                "verify_impact: context-server health source not wired — cannot re-sense fleet health, skipping"
-                            );
-                            continue;
-                        }
-                    }
-                    SignalMetric::OcrSilentFailures => {
-                        // Re-sense the recent-window count from the source stored
-                        // on the loop. A broken or unwired source must warn and
-                        // skip — a silent 0.0 would read as "storm over" and
-                        // falsely auto-resolve the escalation (the .rules
-                        // unwrap_or(0) trap).
-                        if let Some(ref source) = self.ocr_health_source {
-                            match source.recent_silent_failures().await {
-                                Ok(count) => count as f64,
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "reg.cybernetics",
-                                        error = %error,
-                                        "verify_impact: OCR health source unreadable — cannot re-sense, skipping"
-                                    );
-                                    continue;
-                                }
-                            }
-                        } else {
-                            tracing::warn!(
-                                target: "reg.cybernetics",
-                                "verify_impact: OCR health source not wired — cannot re-sense silent failures, skipping"
-                            );
-                            continue;
-                        }
-                    }
-                    _ => continue,
-                };
-            }
-
-            let delta = after_val - before_val;
-            // The per-metric direction table lives on
-            // `SignalMetric::impact_direction`, colocated with the metric
-            // it describes. Unknown direction cannot establish improvement.
-            let improved = match metric.impact_direction() {
-                Some(true) => delta > 0.0,
-                Some(false) => delta < 0.0,
-                None => false,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "reg.cybernetics",
+                        rollout = %check.rollout_id,
+                        metric = %check.metric,
+                        error = %error,
+                        "rollout impact check store query failed — verdict not computed"
+                    );
+                    continue;
+                }
             };
 
-            // Classify against relative worsening thresholds. Absolute deltas
-            // are not comparable across ratios, counts, and other metric
-            // scales. A non-zero movement from a zero baseline has no defined
-            // relative magnitude, so it remains unassessed rather than being
-            // laundered into a verdict.
+            let delta = after_val - before_val;
+            let Some(higher_is_better) = metric.impact_direction() else {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    rollout = %check.rollout_id,
+                    metric = %check.metric,
+                    "rollout impact check metric has no impact direction — verdict not computed"
+                );
+                continue;
+            };
+            let improved = if higher_is_better {
+                delta > 0.0
+            } else {
+                delta < 0.0
+            };
             let worsening = if improved || delta.abs() <= f64::EPSILON {
                 0.0
             } else if before_val.abs() <= f64::EPSILON {
                 tracing::warn!(
                     target: "reg.cybernetics",
-                    metric = metric.as_str(),
+                    rollout = %check.rollout_id,
+                    metric = %check.metric,
                     after = after_val,
-                    "verify_impact: zero baseline cannot establish relative worsening — verdict not computed"
+                    "rollout impact check has a zero baseline — relative verdict not computed"
                 );
                 continue;
             } else {
@@ -1014,15 +845,13 @@ impl super::CyberneticsLoop {
                 block_worsening_ratio,
             );
 
-            // Tolerated noise is acceptable, but only observed improvement
-            // resets stagnation. An accepted noise-band verdict is not progress.
-            let action_type_str = action.action_type.as_str();
+            let action_type = ActionType::Notify;
+            let action_type_str = action_type.as_str();
             let plateau = self.stagnation_detector.record_and_check(
                 metric.as_str(),
                 action_type_str,
                 improved,
             );
-
             if plateau {
                 let threshold = {
                     let calibrated = self.calibrated_thresholds.read().await;
@@ -1045,32 +874,14 @@ impl super::CyberneticsLoop {
                     message: format!(
                         "Regulatory plateau: {} via {:?} has shown no observed improvement for {threshold} consecutive cycles",
                         metric.as_str(),
-                        action.action_type,
+                        action_type,
                     ),
                 };
-                // Latch: while a pending escalation for this plateau condition
-                // sits in the review queue, suppress the entire re-detection
-                // routing (span, queue persist, live channel) — the same
-                // source-level dedup `route_action_as_alert` applies. Without
-                // it, a persistent plateau re-fired every cycle: the queue
-                // row superseded on each detection (live-observed retry_count
-                // 37 and climbing), the `plateau_detected` span flooded the
-                // algedonic log (log-cap breach), and the Curator inbox
-                // received the same alert every 10s. The operator reviews the
-                // first one; when they resolve or dismiss it, the next
-                // detection re-fires with fresh data.
                 let latched = self
                     .alert_escalation_sink
                     .as_ref()
                     .is_some_and(|sink| sink.has_pending_alert(&alert.message));
-                if latched {
-                    tracing::debug!(
-                        target: "reg.cybernetics",
-                        metric = metric.as_str(),
-                        action_type = ?action.action_type,
-                        "Plateau alert latched — pending escalation already in queue"
-                    );
-                } else {
+                if !latched {
                     self.emit_regulation_span(
                         SpanKind::RegulatoryPlateauDetected,
                         serde_json::json!({
@@ -1083,29 +894,21 @@ impl super::CyberneticsLoop {
                     if metric == SignalMetric::ToolReliability {
                         self.emit_tool_outcome_breakdown().await;
                     }
-                    // Persist to the reviewable escalation queue unconditionally.
                     self.persist_alert_to_queue(&alert, None, None).await;
-                    if let Some(ref tx) = self.alerts_tx {
-                        if tx.send(CurationInput::Alert(alert)).is_err() {
-                            tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
-                        }
+                    if let Some(ref tx) = self.alerts_tx
+                        && tx.send(CurationInput::Alert(alert)).is_err()
+                    {
+                        tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
                     }
-                    tracing::warn!(
-                        target: "reg.cybernetics",
-                        metric = metric.as_str(),
-                        action_type = ?action.action_type,
-                        "Regulatory plateau detected"
-                    );
                 }
             }
 
-            // Blocked actions: escalate as Critical to Curation + emit Regulation span.
             if decision == ActionDecision::Block {
                 self.emit_regulation_span(
                     SpanKind::ActionBlocked,
                     serde_json::json!({
                         "metric": metric.as_str(),
-                        "action_type": format!("{:?}", action.action_type),
+                        "action_type": format!("{:?}", action_type),
                         "worsening": worsening,
                         "block_threshold": block_worsening_ratio,
                     }),
@@ -1125,22 +928,20 @@ impl super::CyberneticsLoop {
                         block_worsening_ratio * 100.0,
                     ),
                 };
-                // Persist to the reviewable escalation queue unconditionally.
                 self.persist_alert_to_queue(&alert, None, None).await;
-                if let Some(ref tx) = self.alerts_tx {
-                    if tx.send(CurationInput::Alert(alert)).is_err() {
-                        tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
-                    }
+                if let Some(ref tx) = self.alerts_tx
+                    && tx.send(CurationInput::Alert(alert)).is_err()
+                {
+                    tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
                 }
             }
 
-            // Emit Regulation span for Curator observability of regulatory effectiveness.
             self.emit_regulation_span(
                 SpanKind::ImpactVerified,
                 serde_json::json!({
                     "metric": metric.as_str(),
-                        "action_type": action.action_type.as_str(),
-                        "before": before_val,
+                    "action_type": action_type_str,
+                    "before": before_val,
                     "after": after_val,
                     "delta": delta,
                     "improved": improved,
@@ -1149,40 +950,24 @@ impl super::CyberneticsLoop {
             )
             .await;
 
-            // Event-substrate write-back: when the store answered the
-            // before/after query, persist the regulation loop's impact
-            // verdict back to the store as a `regulation_impact`-sourced
-            // verdict event. This closes the feedback loop — downstream
-            // consumers (training bridge, regression monitor, ORIENT) can
-            // see the regulation system's judgment alongside the harness's
-            // deterministic-evaluator verdicts. A write failure is warned
-            // and never silently dropped (the .rules failure-signal rule:
-            // a missing write-back means the loop's judgment is invisible to
-            // store consumers, which must be distinguishable from "no impact
-            // check ran").
-            if store_answered
-                && let Some(source) = &self.rollout_events
-                && let Some(rollout_id) = &store_rollout_id
-            {
-                if let Err(error) = source.append_impact_verdict(
-                    rollout_id,
-                    action.parameters.data.metric_name(),
-                    before_val,
-                    after_val,
-                    improved,
-                    &format!("{:?}", decision),
-                ) {
-                    tracing::warn!(
-                        target: "reg.cybernetics",
-                        rollout = %rollout_id,
-                        error = %error,
-                        "impact verdict write-back failed — the loop's judgment is not persisted to the store"
-                    );
-                }
+            if let Err(error) = source.append_impact_verdict(
+                &check.rollout_id,
+                &check.metric,
+                before_val,
+                after_val,
+                improved,
+                &format!("{:?}", decision),
+            ) {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    rollout = %check.rollout_id,
+                    error = %error,
+                    "impact verdict write-back failed — the loop's judgment is not persisted to the store"
+                );
             }
 
             reports.push(ImpactReport::new(
-                action.action_type,
+                action_type,
                 metric,
                 before_val,
                 after_val,
@@ -1481,6 +1266,7 @@ impl super::CyberneticsLoop {
 #[cfg(test)]
 mod tests {
     use crate::CyberneticsLoop;
+    use crate::cybernetics_loop::RolloutImpactCheck;
     use crate::loops::{
         ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
         RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
@@ -1508,9 +1294,8 @@ mod tests {
     /// calls so the test can assert exactly what the loop persisted.
     ///
     /// `metric_before_and_after` is configurable (Ok(Some) / Ok(None) / Err)
-    /// to exercise the three branches of the event-substrate path. The
-    /// no-data and error branches must NOT record a verdict and must NOT fall
-    /// through to the struct-walk fallback (B1).
+    /// to exercise the three event-substrate outcomes. The no-data and error
+    /// branches must not record a verdict.
     struct MockRolloutEventSource {
         /// `Err` holds only the failure detail; the typed
         /// [`RolloutEventError`] is built at the trait boundary so the mock
@@ -1822,14 +1607,14 @@ mod tests {
         );
     }
 
-    /// expect: "Immediate acceptance of advice does not prove that an alert cleared" [P9]
+    /// expect: "Routing advice does not prove that an alert cleared" [P9]
     #[tokio::test]
-    async fn accepted_observation_does_not_resolve_alert() {
+    async fn routing_advice_does_not_resolve_alert() {
         let sink = Arc::new(RecordingEscalationSink::new());
         let mut regulation_loop =
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
         regulation_loop.set_alert_escalation_sink(Some(sink.clone()));
-        let action = RegulatoryAction::new(
+        let action = RegulatoryAction::with_metric(
             LoopId::Curation,
             ActionType::Escalate,
             RegulatoryActionParams::with_data(
@@ -1839,26 +1624,19 @@ mod tests {
                     set_point: 0.20,
                 },
             ),
+            "energy_remaining".to_string(),
         );
         regulation_loop.route_action_as_alert(&action).await;
-        regulation_loop.verify_impact(&[action]).await;
         assert_eq!(sink.persisted.lock().expect("persisted").len(), 1);
         assert!(sink.auto_resolved.lock().expect("resolved").is_empty());
     }
 
-    fn rollout_impact_check(rollout_id: &str, metric: &str) -> RegulatoryAction {
-        RegulatoryAction::new(
-            LoopId::Curation,
-            ActionType::Notify,
-            RegulatoryActionParams::with_data(
-                "rollout_impact_check",
-                RegulationData::RolloutImpactCheck {
-                    rollout_id: rollout_id.to_string(),
-                    before_position: 1,
-                    metric: metric.to_string(),
-                },
-            ),
-        )
+    fn rollout_impact_check(rollout_id: &str, metric: &str) -> RolloutImpactCheck {
+        RolloutImpactCheck {
+            rollout_id: rollout_id.to_string(),
+            before_position: 1,
+            metric: metric.to_string(),
+        }
     }
 
     /// The plateau latch: while a pending escalation for the plateau
@@ -2036,18 +1814,12 @@ mod tests {
             assert_eq!(
                 regulation
                     .stagnation_detector
-                    .ineffective_count("tool_reliability", action.action_type.as_str()),
+                    .ineffective_count("tool_reliability", ActionType::Notify.as_str()),
                 (index + 1) as u32
             );
             assert_eq!(
-                LoopMetrics::from_cycle(
-                    0,
-                    &[],
-                    std::slice::from_ref(&action),
-                    &reports,
-                    TriggerOrigin::Scheduled
-                )
-                .observed_progress_score,
+                LoopMetrics::from_cycle(0, &[], &[], &reports, TriggerOrigin::Scheduled)
+                    .observed_progress_score,
                 0.0
             );
         }
@@ -2059,7 +1831,7 @@ mod tests {
         assert_eq!(
             regulation
                 .stagnation_detector
-                .ineffective_count("tool_reliability", action.action_type.as_str()),
+                .ineffective_count("tool_reliability", ActionType::Notify.as_str()),
             0
         );
     }
@@ -2130,11 +1902,8 @@ mod tests {
         });
     }
 
-    /// B1 (no-data): a submitted impact check the store can't answer must NOT
-    /// silently fall through to the struct-walk (which `continue`s for
-    /// `RolloutImpactCheck`) with no signal. It skips the action — no report,
-    /// no verdict write-back. Before the fix the `Ok(None)` was swallowed by
-    /// `if let Ok(Some(..))` and the check vanished.
+    /// A submitted impact check the store cannot answer must surface the
+    /// missing baseline and produce neither a report nor a verdict write-back.
     #[test]
     fn verify_impact_store_no_data_skips_without_verdict() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -2169,69 +1938,6 @@ mod tests {
                 source.recorded().is_empty(),
                 "no verdict written back on a store error"
             );
-        });
-    }
-
-    /// Pins the ToolReliabilityDegraded arm of the verify_impact struct-walk.
-    /// Before the fix the typed variant fell into the NoData catch-all and
-    /// every tool_reliability_degraded escalation skipped verification — the
-    /// live-observed "verify_impact: action carries NoData ... skipping" warn
-    /// on every tick. The arm re-senses the after-value from the ledger's
-    /// tracked outcomes using the same equal-weighted aggregation as
-    /// ToolReliabilitySensor::sense.
-    #[test]
-    fn verify_impact_reliability_action_verifies_against_ledger() {
-        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-        runtime.block_on(async {
-            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
-            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
-
-            let reliability_action = || {
-                RegulatoryAction::new(
-                    LoopId::Curation,
-                    ActionType::Escalate,
-                    RegulatoryActionParams::with_data(
-                        "tool_reliability_degraded",
-                        RegulationData::ToolReliabilityDegraded {
-                            reliability: 0.6667,
-                            threshold: 0.8,
-                        },
-                    ),
-                )
-            };
-
-            // Empty ledger: no tracked domains is no data — skip without a
-            // report (not a 0.0 after-value, which would read as "fully
-            // degraded", the .rules unwrap_or(0) trap).
-            let reports = regulation_loop.verify_impact(&[reliability_action()]).await;
-            assert!(reports.is_empty(), "no tracked domains → no report");
-
-            // Seed one domain to 100% success (5/5 — the sensor's
-            // minimum-sample floor; 4/4 would be below it and re-sensing
-            // would skip). The re-sensed after-value (1.0) improves over the
-            // before-value (0.6667).
-            {
-                let ledger_guard = ledger.read().await;
-                for _ in 0..crate::sensor_provider::TOOL_RELIABILITY_MIN_DOMAIN_SAMPLES {
-                    ledger_guard
-                        .record_outcome("reliability_verify_test", true, None)
-                        .await;
-                }
-            }
-            let reports = regulation_loop.verify_impact(&[reliability_action()]).await;
-            assert_eq!(reports.len(), 1, "seeded ledger → one report");
-            let report = &reports[0];
-            assert_eq!(report.metric, SignalMetric::ToolReliability);
-            assert!(
-                (report.before - 0.6667).abs() < 1e-9,
-                "before is the escalation-time reliability"
-            );
-            assert!(
-                (report.after - 1.0).abs() < 1e-9,
-                "after is re-sensed from the ledger"
-            );
-            assert!(report.improved, "1.0 > 0.6667 is an improvement");
-            assert_eq!(report.decision, ActionDecision::Accept);
         });
     }
 
@@ -2339,11 +2045,12 @@ mod tests {
         // An action with no metric_name but a reason that contains "low" —
         // under the old fallback this would have matched EnergyRemaining
         // BelowSetPoint via reason.contains("low").
-        let action = RegulatoryAction::new(
-            LoopId::Curation,
-            ActionType::Escalate,
-            RegulatoryActionParams::reason("some_unrelated_low_thing"),
-        );
+        let action = RegulatoryAction {
+            target: LoopId::Curation,
+            action_type: ActionType::Escalate,
+            parameters: RegulatoryActionParams::reason("some_unrelated_low_thing"),
+            metric_name: None,
+        };
         let metrics =
             LoopMetrics::from_cycle(0, &[deviation], &[action], &[], TriggerOrigin::Scheduled);
         assert_eq!(

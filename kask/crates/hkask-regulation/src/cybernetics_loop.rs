@@ -116,11 +116,7 @@ use crate::set_points::SetPoints;
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
 
-use crate::loops::RegulationData;
-use crate::loops::{
-    ActionDecision, ActionType, CurationInput, LoopId, LoopMetrics, RegulatoryAction,
-    RegulatoryActionParams, TriggerOrigin,
-};
+use crate::loops::{ActionDecision, CurationInput, LoopMetrics, TriggerOrigin};
 
 use hkask_types::CuratorDirective;
 use hkask_types::WebID;
@@ -135,6 +131,13 @@ struct CalibratedThresholds {
     stagnation_thresholds: HashMap<String, u32>,
     block_worsening_ratio: f64,
     substitution_after: u32,
+}
+
+#[derive(Clone)]
+struct RolloutImpactCheck {
+    rollout_id: String,
+    before_position: i64,
+    metric: String,
 }
 
 /// The Cybernetics Loop — homeostatic self-regulation.
@@ -183,7 +186,7 @@ pub struct CyberneticsLoop {
     /// Curator) submit a `RolloutImpactCheck` when they want the loop to
     /// verify a rollout's metric movement across an action — this is the
     /// producer side of the event-substrate phase 6 seam.
-    submitted_rollout_checks: tokio::sync::Mutex<Vec<RegulatoryAction>>,
+    submitted_rollout_checks: tokio::sync::Mutex<Vec<RolloutImpactCheck>>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
@@ -200,22 +203,15 @@ pub struct CyberneticsLoop {
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
     /// Optional rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for before/after metric values on rollouts
-    /// the action targeted — the store becomes the impact data plane and the
-    /// struct-walk below becomes the fallback instead of the only path.
+    /// `verify_impact` queries it for before/after metric values named by a
+    /// typed `RolloutImpactCheck`; there is no advisory re-sense fallback.
     rollout_events: Option<Arc<dyn RolloutEventSource>>,
-    /// Optional context-server health source, stored directly so `verify_impact`
-    /// can re-sense fleet health without going through the sensor registry.
-    /// The sensor registry still holds a `ContextServerHealthSensor` wrapping
-    /// the same source for the sense phase; this field is the verify-phase
-    /// re-sense path.
+    /// Optional context-server health source retained so advisory construction
+    /// can carry the current fleet counts as quantitative trigger evidence.
+    /// The sensor registry holds a `ContextServerHealthSensor` wrapping the
+    /// same source for the sense phase.
     context_server_health_source:
         Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
-    /// Optional OCR health source, stored directly so `verify_impact` can
-    /// re-sense the recent silent-failure count without going through the
-    /// sensor registry — the verify-phase re-sense path, mirroring
-    /// `context_server_health_source`.
-    ocr_health_source: Option<Arc<dyn crate::sensor_provider::OcrHealthSource>>,
 }
 
 impl CyberneticsLoop {
@@ -377,7 +373,6 @@ impl CyberneticsLoop {
             calibrated_thresholds,
             rollout_events: None,
             context_server_health_source: None,
-            ocr_health_source: None,
         }
     }
 
@@ -392,8 +387,8 @@ impl CyberneticsLoop {
     }
 
     /// Wire the rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for before/after metric values before
-    /// falling back to the in-memory re-sense path.
+    /// `verify_impact` queries it for the before/after values named by typed
+    /// rollout checks.
     ///
     /// expect: "The system provides configurable cybernetic self-regulation"
     /// post: returns Self for chaining
@@ -551,14 +546,13 @@ impl CyberneticsLoop {
     /// post: returns Self for chaining
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_ocr_health_source(
-        mut self,
+        self,
         source: Arc<dyn crate::sensor_provider::OcrHealthSource>,
     ) -> Self {
         self.sensor_registry
             .register(Arc::new(crate::sensor_provider::OcrHealthSensor::new(
-                Arc::clone(&source),
+                source,
             )));
-        self.ocr_health_source = Some(source);
         self
     }
 
@@ -620,18 +614,11 @@ impl CyberneticsLoop {
         before_position: i64,
         metric: String,
     ) {
-        let action = RegulatoryAction::new(
-            LoopId::Curation,
-            ActionType::Notify,
-            RegulatoryActionParams::with_data(
-                "rollout_impact_check",
-                RegulationData::RolloutImpactCheck {
-                    rollout_id,
-                    before_position,
-                    metric,
-                },
-            ),
-        );
+        let check = RolloutImpactCheck {
+            rollout_id,
+            before_position,
+            metric,
+        };
         let mut queue = self.submitted_rollout_checks.lock().await;
         // Bound the queue: a producer runaway must not grow it unboundedly.
         // Dropping the OLDEST check is correct — the newest observations are
@@ -641,7 +628,7 @@ impl CyberneticsLoop {
         if queue.len() >= MAX_SUBMITTED_CHECKS {
             queue.remove(0);
         }
-        queue.push(action);
+        queue.push(check);
     }
 
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
@@ -768,8 +755,7 @@ impl CyberneticsLoop {
         // Computed actions are routed to the operator and have no causal
         // impact to verify until an intervention is confirmed. Rollout checks
         // already carry an evidence-bearing before/after query contract.
-        let impact_checks: Vec<RegulatoryAction> =
-            std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
+        let impact_checks = std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
         if !impact_checks.is_empty() {
             tracing::debug!(
                 target: "reg.cybernetics",

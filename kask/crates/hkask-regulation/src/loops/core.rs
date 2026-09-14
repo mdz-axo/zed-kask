@@ -65,20 +65,19 @@ pub enum TriggerOrigin {
     Prompted,
 }
 
-/// Result of verifying whether a regulatory action improved its target metric.
+/// Result of an evidence-bearing before/after impact check.
 ///
-/// Fermi pattern: the "impact gate" — after acting, re-sense the targeted
-/// metric and compare against the pre-action value. This closes the cybernetic
-/// feedback loop: sense → compare → compute → act → **verify**.
+/// Fermi pattern: the "impact gate" compares observations on opposite sides
+/// of a recorded action boundary. Advisory routing does not create a report.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImpactReport {
     /// The action that was verified.
     pub action_type: ActionType,
     /// The metric the action targeted.
     pub metric: SignalMetric,
-    /// Metric value before the action was applied.
+    /// Metric value before the recorded action boundary.
     pub before: f64,
-    /// Metric value after the action was applied (re-sensed).
+    /// Metric value after the recorded action boundary.
     pub after: f64,
     /// Absolute change: after − before.
     pub delta: f64,

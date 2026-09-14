@@ -185,9 +185,7 @@ pub trait AlertEscalationSink: Send + Sync {
     ///
     /// This closes the stuck-loop pattern: without auto-resolve, the loop
     /// senses a deviation, escalates it, the condition self-resolves, but the
-    /// escalation sits in the queue until manual review — the loop spins
-    /// indefinitely with zero effectiveness because `verify_impact` produces
-    /// no ImpactReport for NoData actions.
+    /// escalation remains pending until manual review.
     ///
     /// Default is a no-op (no auto-resolve). Implementations backed by a
     /// durable queue should resolve the matching pending escalation.

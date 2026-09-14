@@ -1,7 +1,6 @@
 //! Loop action types — efferent actions and their type classification.
 
 use super::core::LoopId;
-use super::signals::SignalMetric;
 
 /// Budget option presented to the Curator during budget guard escalation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -74,16 +73,7 @@ pub enum RegulationData {
     /// values (previously the action carried only a reason string and the
     /// budget/target were silently dropped).
     CuratorBudgetOverride { agent: String, new_budget: u64 },
-    /// A regulatory action whose impact should be verified against a rollout
-    /// in the event store (event-substrate phase 6). `verify_impact` queries
-    /// the wired `RolloutEventSource` for the metric's value at
-    /// `before_position` and at the rollout's end — the store answers "what
-    /// changed after this action" as a query instead of a struct walk.
-    RolloutImpactCheck {
-        rollout_id: String,
-        before_position: i64,
-        metric: String,
-    },
+
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]
     #[default]
@@ -91,40 +81,6 @@ pub enum RegulationData {
 }
 
 impl RegulationData {
-    /// The rollout this action's impact should be verified against, and the
-    /// event position marking "before the action" (event-substrate phase 6).
-    /// `None` for actions that don't target a rollout — those take the
-    /// re-sense fallback in `verify_impact`.
-    pub fn rollout_target(&self) -> Option<(String, i64)> {
-        match self {
-            RegulationData::RolloutImpactCheck {
-                rollout_id,
-                before_position,
-                ..
-            } => Some((rollout_id.clone(), *before_position)),
-            _ => None,
-        }
-    }
-
-    /// The metric name this action's data concerns (for store queries).
-    pub fn metric_name(&self) -> &str {
-        match self {
-            RegulationData::EnergyBudgetLow { .. }
-            | RegulationData::BudgetGuardEscalation { .. }
-            | RegulationData::EnergyDepletionAutoAdjust { .. } => "energy_remaining",
-            RegulationData::VarietyDeficitExceeded { .. } => "variety_deficit",
-            RegulationData::ErrorRateExceeded { .. } => "error_rate",
-            RegulationData::ConnectorLatencyExceeded { .. } => "connector_latency",
-            RegulationData::CommunicationBackpressure { .. } => "queue_depth",
-            RegulationData::ToolReliabilityDegraded { .. } => "tool_reliability",
-            RegulationData::ContextServerFleetHealth { .. } => "context_server_health",
-            RegulationData::OcrSilentFailuresExceeded { .. } => "ocr_silent_failures",
-            RegulationData::CuratorBudgetOverride { .. } => "energy_remaining",
-            RegulationData::RolloutImpactCheck { metric, .. } => metric,
-            RegulationData::NoData => "no_metric",
-        }
-    }
-
     /// Whether this variant's deviation is the value falling *below* its
     /// threshold (a floor metric), as opposed to rising above it (a ceiling
     /// metric).
@@ -144,47 +100,6 @@ impl RegulationData {
                 | RegulationData::BudgetGuardEscalation { .. }
                 | RegulationData::EnergyDepletionAutoAdjust { .. }
         )
-    }
-
-    /// The (metric, before-value) pair `verify_impact` compares a
-    /// re-sensed after-value against — the value this variant carried at
-    /// escalation time. `None` for variants that carry no before-value
-    /// (`NoData` and the meta-regulatory / observational arms);
-    /// `verify_impact` warns and skips those.
-    ///
-    /// This is the per-variant impact table, colocated with the variants
-    /// it describes: adding impact verification to a variant is one arm
-    /// here, plus a re-sense arm in `verify_impact` only if the metric is
-    /// new to it.
-    pub fn impact_before_value(&self) -> Option<(SignalMetric, f64)> {
-        match self {
-            RegulationData::EnergyBudgetLow {
-                remaining_ratio, ..
-            }
-            | RegulationData::BudgetGuardEscalation {
-                remaining_ratio, ..
-            }
-            | RegulationData::EnergyDepletionAutoAdjust {
-                remaining_ratio, ..
-            } => Some((SignalMetric::EnergyRemaining, *remaining_ratio)),
-            RegulationData::VarietyDeficitExceeded { deficit, .. } => {
-                Some((SignalMetric::VarietyDeficit, *deficit))
-            }
-            RegulationData::ContextServerFleetHealth {
-                healthy_count,
-                total_count,
-            } => Some((
-                SignalMetric::ContextServerHealth,
-                *healthy_count as f64 / (*total_count).max(1) as f64,
-            )),
-            RegulationData::ToolReliabilityDegraded { reliability, .. } => {
-                Some((SignalMetric::ToolReliability, *reliability))
-            }
-            RegulationData::OcrSilentFailuresExceeded { count, .. } => {
-                Some((SignalMetric::OcrSilentFailures, *count))
-            }
-            _ => None,
-        }
     }
 }
 
@@ -251,19 +166,6 @@ pub struct RegulatoryAction {
 }
 
 impl RegulatoryAction {
-    pub fn new(
-        target: LoopId,
-        action_type: ActionType,
-        parameters: RegulatoryActionParams,
-    ) -> Self {
-        Self {
-            target,
-            action_type,
-            parameters,
-            metric_name: None,
-        }
-    }
-
     /// Create an action with its target metric set for impact verification.
     pub fn with_metric(
         target: LoopId,
@@ -349,89 +251,5 @@ impl ActionType {
             "Prune" => Some(ActionType::Prune),
             _ => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Pins the per-variant impact table: every variant that carries a
-    /// before-value maps to the metric `verify_impact` re-senses, and the
-    /// observational arms map to `None` (`verify_impact` warns and skips).
-    #[test]
-    fn impact_before_value_covers_the_verifiable_variants() {
-        let energy = RegulationData::EnergyBudgetLow {
-            remaining_ratio: 0.2,
-            set_point: 0.3,
-        };
-        assert_eq!(
-            energy.impact_before_value(),
-            Some((SignalMetric::EnergyRemaining, 0.2))
-        );
-
-        let guard = RegulationData::BudgetGuardEscalation {
-            remaining_ratio: 0.1,
-            set_point: 0.3,
-            projected_minutes: 5,
-            options: Vec::new(),
-            curator_timeout_secs: 60,
-            fallback: "reduce".to_string(),
-        };
-        assert_eq!(
-            guard.impact_before_value(),
-            Some((SignalMetric::EnergyRemaining, 0.1))
-        );
-
-        let variety = RegulationData::VarietyDeficitExceeded {
-            deficit: 42.0,
-            threshold: 19.0,
-        };
-        assert_eq!(
-            variety.impact_before_value(),
-            Some((SignalMetric::VarietyDeficit, 42.0))
-        );
-
-        // Fleet health carries counts, not a ratio — the before-value is
-        // the healthy/total ratio at escalation time.
-        let fleet = RegulationData::ContextServerFleetHealth {
-            healthy_count: 3,
-            total_count: 4,
-        };
-        assert_eq!(
-            fleet.impact_before_value(),
-            Some((SignalMetric::ContextServerHealth, 0.75))
-        );
-
-        let reliability = RegulationData::ToolReliabilityDegraded {
-            reliability: 0.0,
-            threshold: 0.8,
-        };
-        assert_eq!(
-            reliability.impact_before_value(),
-            Some((SignalMetric::ToolReliability, 0.0))
-        );
-
-        // OCR silent failures carry the storm count — the before-value the
-        // re-sense arm compares against as entries age out of the window.
-        let ocr = RegulationData::OcrSilentFailuresExceeded {
-            count: 14.0,
-            threshold: 0.0,
-        };
-        assert_eq!(
-            ocr.impact_before_value(),
-            Some((SignalMetric::OcrSilentFailures, 14.0))
-        );
-
-        // No before-value: verify_impact warns and skips these.
-        assert_eq!(RegulationData::NoData.impact_before_value(), None);
-        assert_eq!(
-            RegulationData::CuratorBudgetOverride {
-                agent: "curator".to_string(),
-                new_budget: 100,
-            }
-            .impact_before_value(),
-            None
-        );
     }
 }

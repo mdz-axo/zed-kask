@@ -31,7 +31,7 @@ use crate::media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, PathMediaStorage, ResolvedMedia,
 };
 use crate::transport::{TransportBar, TransportEvent, TransportState};
-use crate::video_decoder::{DecodedFrame, WidgetVideoPlayer};
+use crate::video_decoder::{DecodedFrame, VideoPlaybackEvent, WidgetVideoPlayer};
 #[cfg(feature = "bench-support")]
 use crate::video_decoder::{PlaybackState, VideoDeliveryStats};
 
@@ -555,18 +555,22 @@ impl MediaWidget {
 
         if let Some(player) = &mut self.video_player {
             let poll = player.poll();
-            if poll.opened || poll.completed {
-                self.video_loading = false;
-            }
             if let Some(frame) = poll.frame {
                 self.current_frame = Some(render_video_frame(frame));
                 frame_decoded = true;
             }
-            if let Some(error) = poll.error {
-                self.video_loading = false;
-                self.error = Some(SharedString::from(format!(
-                    "video playback failed: {error}"
-                )));
+            for event in poll.events {
+                match event {
+                    VideoPlaybackEvent::Opened | VideoPlaybackEvent::Completed => {
+                        self.video_loading = false;
+                    }
+                    VideoPlaybackEvent::Failed(error) => {
+                        self.video_loading = false;
+                        self.error = Some(SharedString::from(format!(
+                            "video playback failed: {error}"
+                        )));
+                    }
+                }
             }
             transport_state.is_loading = self.audio_loading || self.video_loading;
             transport_state.is_playing = player.is_playing();

@@ -451,9 +451,7 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::OcrSilentFailuresExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
-        RegulationData::CuratorBudgetOverride { .. }
-        | RegulationData::RolloutImpactCheck { .. }
-        | RegulationData::NoData => None,
+        RegulationData::CuratorBudgetOverride { .. } | RegulationData::NoData => None,
     }
 }
 
