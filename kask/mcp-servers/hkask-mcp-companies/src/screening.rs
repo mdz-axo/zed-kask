@@ -834,17 +834,43 @@ fn materialize_security(
 /// pre: securities passed the venue, type, capitalization, and liquidity gates.
 /// post: shared LEI, primary ticker, ISIN, or non-conflicting normalized name evidence forms one group.
 /// [P1] Constraining: conflicting LEIs are never merged through the name fallback.
+fn disjoint_root(parents: &mut [usize], index: usize) -> usize {
+    if parents[index] != index {
+        parents[index] = disjoint_root(parents, parents[index]);
+    }
+    parents[index]
+}
+
+fn merge_disjoint(parents: &mut [usize], left: usize, right: usize) {
+    let left_root = disjoint_root(parents, left);
+    let right_root = disjoint_root(parents, right);
+    if left_root != right_root {
+        parents[right_root] = left_root;
+    }
+}
+
 fn group_materialized_securities(materialized: Vec<MaterializedSecurity>) -> Vec<IssuerGroup> {
     if materialized
         .iter()
         .all(|security| security.lei.is_none() && security.primary_ticker.is_none())
     {
-        let mut groups: BTreeMap<String, Vec<MaterializedSecurity>> = BTreeMap::new();
-        for security in materialized {
-            groups
-                .entry(security.normalized_issuer_name.clone())
-                .or_default()
-                .push(security);
+        let mut parents: Vec<usize> = (0..materialized.len()).collect();
+        let mut identity_owner: HashMap<String, usize> = HashMap::new();
+        for (index, security) in materialized.iter().enumerate() {
+            let mut identities = vec![format!("name:{}", security.normalized_issuer_name)];
+            if let Some(isin) = &security.isin {
+                identities.push(format!("isin:{isin}"));
+            }
+            for identity in identities {
+                if let Some(owner) = identity_owner.insert(identity, index) {
+                    merge_disjoint(&mut parents, index, owner);
+                }
+            }
+        }
+        let mut groups: BTreeMap<usize, Vec<MaterializedSecurity>> = BTreeMap::new();
+        for (index, security) in materialized.into_iter().enumerate() {
+            let root = disjoint_root(&mut parents, index);
+            groups.entry(root).or_default().push(security);
         }
         return groups.into_values().map(finalize_issuer_group).collect();
     }
@@ -1991,6 +2017,31 @@ mod tests {
             Some("screen calculation panicked: calculation exploded")
         );
         Ok(())
+    }
+
+    /// expect: Distinct listing names that share an ISIN produce one durable issuer key.
+    #[test]
+    fn preliminary_identity_union_prevents_duplicate_durable_keys() {
+        let make_security = |symbol: &str, name: &str, isin: &str| MaterializedSecurity {
+            symbol: symbol.to_string(),
+            name: name.to_string(),
+            market_capitalization_usd: 10_000_000_000.0,
+            average_daily_dollar_volume_usd: 2_000_000.0,
+            adjusted_close: 20.0,
+            currency_symbol: "USD".to_string(),
+            issuer_key: format!("isin:{isin}"),
+            lei: None,
+            primary_ticker: None,
+            isin: Some(isin.to_string()),
+            normalized_issuer_name: normalize_name(name),
+        };
+        let groups = group_materialized_securities(vec![
+            make_security("ACME.US", "Acme Inc", "US0000000001"),
+            make_security("ACM.A.TO", "Acme Holdings", "US0000000001"),
+        ]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].issuer_key, "isin:US0000000001");
+        assert_eq!(groups[0].securities.len(), 2);
     }
 
     /// expect: Production-shaped deterministic issuer grouping preserves all passers without top-N truncation.
