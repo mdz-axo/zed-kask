@@ -500,8 +500,8 @@ fn eodhd_fixture() -> Value {
         "Highlights":{"MarketCapitalization":3000000000.0,"DividendYield":0.02,"EBITDA":300000000.0},
         "Financials":{
             "Income_Statement":{"yearly":{
-                "2025-12-31":{"totalRevenue":"1000000000.00","grossProfit":"400000000.00","costOfRevenue":"600000000.00","netIncome":"150000000.00"},
-                "2024-12-31":{"totalRevenue":"900000000.00","grossProfit":"360000000.00","costOfRevenue":"540000000.00","netIncome":"135000000.00"}
+                "2025-12-31":{"totalRevenue":"1000000000.00","grossProfit":"400000000.00","costOfRevenue":"600000000.00","sellingGeneralAdministrative":"100000000.00","netIncome":"150000000.00"},
+                "2024-12-31":{"totalRevenue":"900000000.00","grossProfit":"360000000.00","costOfRevenue":"540000000.00","sellingGeneralAdministrative":"90000000.00","netIncome":"135000000.00"}
             }},
             "Balance_Sheet":{"yearly":{
                 "2025-12-31":{"totalAssets":"1200000000.00","totalStockholderEquity":"750000000.00","netInvestedCapital":"900000000.00","netDebt":"150000000.00","accountsPayable":"50000000.00","netReceivables":"100000000.00","inventory":"50000000.00","commonStockSharesOutstanding":"100000000.00"},
@@ -509,6 +509,20 @@ fn eodhd_fixture() -> Value {
             }}
         }
     })
+}
+
+/// expect: [P5] EODHD SG&A reaches the normalized financial model instead of
+/// becoming a fabricated zero operating expense.
+/// pre: the provider payload uses EODHD's sellingGeneralAdministrative field.
+/// post: normalized income statements expose the FMP-compatible SG&A field.
+/// [P1] Constraining: provider normalization preserves reported economics.
+#[test]
+fn eodhd_normalization_preserves_sga() {
+    let normalized = providers::normalize_eodhd("income_statement", &eodhd_fixture(), "GLOBAL.LSE");
+    assert_eq!(
+        normalized[0]["sellingGeneralAndAdministrativeExpenses"],
+        100_000_000.0
+    );
 }
 
 /// expect: [P5] EODHD annual metrics do not need quarterly Earnings.History or FMP supplements.
@@ -2940,9 +2954,9 @@ async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
 fn dupont_fixture(dividend_ratio: f64) -> Value {
     json!({
         "income": [
-            {"calendarYear": "2025", "revenue": 1210.0, "netIncome": 121.0, "interestExpense": 60.5, "incomeTaxExpense": 24.2, "incomeBeforeTax": 121.0, "weightedAverageShsOut": 100.0},
-            {"calendarYear": "2024", "revenue": 1100.0, "netIncome": 110.0, "interestExpense": 55.0},
-            {"calendarYear": "2023", "revenue": 1000.0, "netIncome": 100.0, "interestExpense": 50.0},
+            {"calendarYear": "2025", "revenue": 1210.0, "netIncome": 121.0, "sellingGeneralAndAdministrativeExpenses": 121.0, "interestExpense": 60.5, "incomeTaxExpense": 24.2, "incomeBeforeTax": 121.0, "weightedAverageShsOut": 100.0},
+            {"calendarYear": "2024", "revenue": 1100.0, "netIncome": 110.0, "sellingGeneralAndAdministrativeExpenses": 110.0, "interestExpense": 55.0},
+            {"calendarYear": "2023", "revenue": 1000.0, "netIncome": 100.0, "sellingGeneralAndAdministrativeExpenses": 100.0, "interestExpense": 50.0},
         ],
         "balance": [
             {"calendarYear": "2025", "totalAssets": 2420.0, "totalStockholdersEquity": 968.0},
@@ -2967,26 +2981,25 @@ fn dupont_snapshot(fixture: &Value) -> financial_model::HistoricalSnapshot {
     )
 }
 
-/// expect: [P5] DuPont capability: the identity NPM × AT × EM = ROE holds on
-/// medians, retention derives from dividends, and SGR = ROE × retention.
+/// expect: [P5] DuPont capability uses average beginning/ending assets and
+/// equity for each income period; retention derives from dividends and SGR is
+/// the robust ROE estimate multiplied by retention.
+/// pre: three consecutive annual balance sheets and matching income statements.
+/// post: two return periods use average balance-sheet denominators.
+/// [P1] Constraining: period-end buybacks must not silently inflate capability.
 #[test]
-fn dupont_identity_and_sustainable_growth() {
-    // dividends 40% of net income → retention 0.6; SGR = 0.125 × 0.6.
+fn dupont_uses_average_balance_sheet_denominators() {
+    // 2024 average assets = 2100 and average equity = 840; 2025 uses 2310/924.
+    // Both measured years therefore have AT 1100/2100, EM 2.5, ROE 110/840.
     let snapshot = dupont_snapshot(&dupont_fixture(0.4));
     let dupont = snapshot.dupont().expect("dupont");
-    assert_eq!(dupont.years, 3);
+    assert_eq!(dupont.years, 2);
     assert!((dupont.net_profit_margin - 0.10).abs() < 1e-12);
-    assert!((dupont.asset_turnover - 0.50).abs() < 1e-12);
+    assert!((dupont.asset_turnover - (1100.0 / 2100.0)).abs() < 1e-12);
     assert!((dupont.equity_multiplier - 2.50).abs() < 1e-12);
-    assert!((dupont.roe - 0.125).abs() < 1e-12);
-    let product = dupont.net_profit_margin * dupont.asset_turnover * dupont.equity_multiplier;
-    assert!((product - dupont.roe).abs() < 1e-12, "identity: {product}");
-    assert!(
-        (dupont.retention - 0.60).abs() < 1e-12,
-        "retention {}",
-        dupont.retention
-    );
-    assert!((dupont.sustainable_growth_rate - 0.075).abs() < 1e-12);
+    assert!((dupont.roe - (110.0 / 840.0)).abs() < 1e-12);
+    assert!((dupont.retention - 0.60).abs() < 1e-12);
+    assert!((dupont.sustainable_growth_rate - (110.0 / 840.0 * 0.60)).abs() < 1e-12);
 }
 
 /// expect: [P5] Dividends above earnings demonstrate zero retained funding,
@@ -3014,27 +3027,28 @@ fn implied_roe_round_trips_justified_price_to_book() {
     assert!(financial_model::implied_roe_from_price_to_book(0.0, 100.0, 0.10, 0.05).is_none());
 }
 
-/// expect: [P5] The implied-NET-margin solve carries the interest burden: at
-/// a price generated from a known net margin, the solver recovers that net
-/// margin exactly — interest at the demonstrated interest-to-revenue level
-/// and tax at the demonstrated rate included. A pre-interest solve would
-/// return 0.04, not 0.08, so this test fails if interest or tax drops out
-/// of the NM ↔ GM conversion (operator ruling 2026-09-10). Unbracketed
-/// prices return None, never a fabricated margin.
+/// expect: [P5] The implied-NET-margin solve carries every modeled expense:
+/// at a price generated from a known net margin, the solver recovers that net
+/// margin exactly after SG&A, interest, D&A, and tax. Omitting any expense from
+/// either side breaks the round trip. Unbracketed prices return None, never a
+/// fabricated margin.
+/// pre: history contains positive revenue and explicit SG&A and interest.
+/// post: the inverse solve recovers the known net margin used by the forward DCF.
+/// [P1] Constraining: reported profitability is the shareholder's net margin.
 #[test]
-fn implied_net_margin_solve_carries_interest_burden() {
+fn implied_net_margin_solve_carries_all_modeled_expenses() {
     let snapshot = dupont_snapshot(&dupont_fixture(0.4));
-    // tax_rate = 24.2/121.0 = 0.2; latest interest/revenue = 60.5/1210 = 5%.
+    // Tax = 20%, SG&A/revenue = 10%, interest/revenue = 5%, D&A = 0%.
     assert!((snapshot.tax_rate - 0.2).abs() < 1e-12);
+    assert!((snapshot.sga_to_revenue() - 0.10).abs() < 1e-12);
     let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot);
-    // Known net margin 8%: through the identity GM = NM/(1−tax) + interest%
-    // + D&A% (D&A 0 here) → GM = 0.08/0.8 + 0.05 = 0.15, and
-    // NI/revenue = (0.15 − 0.05) × 0.8 = 0.08 exactly.
+    // Known net margin 8%: GM = NM/(1−tax) + SG&A% + interest% + D&A%
+    // = 0.08/0.8 + 0.10 + 0.05 = 0.25.
     let intrinsic = financial_model::project_model(
         &snapshot,
         &financial_model::ProjectionAssumptions {
             revenue_growth: 0.05,
-            gross_margin: 0.15,
+            gross_margin: 0.25,
             ..assumptions
         },
         100.0,
@@ -3046,7 +3060,7 @@ fn implied_net_margin_solve_carries_interest_burden() {
             .expect("net margin solve");
     assert!(
         (solved - 0.08).abs() < 1e-3,
-        "solved {solved} — pre-interest would be 0.04"
+        "solved {solved} — the forward/inverse expense bridge diverged"
     );
     assert!(
         financial_model::implied_net_margin_at_growth(
@@ -3069,6 +3083,51 @@ fn hand_built_capability() -> financial_model::DuPontAnalysis {
         sustainable_growth_rate: 0.06864,
         years: 5,
     }
+}
+
+/// expect: [P1] A sustainable-growth estimate outside the reverse DCF's
+/// validated growth domain is labeled model-sensitive, never presented as an
+/// ordinary complete capability comparison.
+/// pre: SGR is at or above the reverse DCF upper bound.
+/// post: the report names the violated model domain in data quality.
+#[test]
+fn extreme_sustainable_growth_is_model_sensitive() {
+    let solve = tools::expectations::ExpectationsSolve {
+        capability: financial_model::DuPontAnalysis {
+            sustainable_growth_rate: financial_model::IMPLIED_GROWTH_HI + 0.01,
+            roe: 1.20,
+            retention: 0.90,
+            ..hand_built_capability()
+        },
+        headline: "net_margin",
+        implied_growth: Some(0.05),
+        implied_net_margin_at_sgr: None,
+        implied_roe: None,
+        growth_gap_pp: Some(-96.0),
+        profitability_gap_pp: None,
+        book_value_per_share: None,
+        sustainable_growth_rate: financial_model::IMPLIED_GROWTH_HI + 0.01,
+    };
+    let report = tools::expectations::build_gap_report(
+        "EXTREME",
+        &Some(solve),
+        &[],
+        0.05,
+        &[],
+        0,
+        "fixture",
+    );
+    assert_eq!(
+        report["data_quality"]["capability_status"],
+        "model_sensitive"
+    );
+    assert!(
+        report["data_quality"]["capability_flags"]
+            .as_array()
+            .is_some_and(|flags| flags
+                .iter()
+                .any(|flag| { flag == "sustainable_growth_outside_reverse_dcf_validated_range" }))
+    );
 }
 
 /// expect: [P1] The gap axis is price-implied vs demonstrated DuPont
@@ -3216,9 +3275,11 @@ fn solve_expectations_financial_sector_uses_roe_path() {
     assert!(solve.implied_roe.is_some());
     assert!(solve.implied_growth.is_none());
     assert!(solve.growth_gap_pp.is_none());
-    // equity 968 / shares 100 → BVPS 9.68; P/B = 20/9.68
+    // Equity 968 / shares 100 → BVPS 9.68; P/B = 20/9.68. Demonstrated
+    // SGR uses average equity: (110 / ((800 + 880) / 2)) × 60% retention.
     let implied_roe = solve.implied_roe.expect("roe");
-    let expected = (20.0 / 9.68) * (0.10 - 0.075) + 0.075;
+    let sustainable_growth = (110.0 / 840.0) * 0.60;
+    let expected = (20.0 / 9.68) * (0.10 - sustainable_growth) + sustainable_growth;
     assert!(
         (implied_roe - expected).abs() < 1e-12,
         "{implied_roe} vs {expected}"

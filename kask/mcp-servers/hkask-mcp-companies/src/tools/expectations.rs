@@ -178,9 +178,9 @@ pub(crate) struct ExpectationsSolve {
     /// Net margin the price demands at the sustainable growth rate: NET
     /// INCOME / revenue, after interest at demonstrated leverage and tax —
     /// the equity holder's margin (operator ruling 2026-09-10, stated
-    /// three times). Solved exactly through the enterprise model's internal
-    /// gross-margin parameter via `GM = NM/(1−tax) + interest% + D&A%`, so
-    /// the solved value satisfies NI = (EBIT − interest) × (1 − tax) by
+    /// three times). Solved through the enterprise model's internal
+    /// gross-margin parameter via `GM = NM/(1−tax) + SG&A% + interest% + D&A%`,
+    /// so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by
     /// construction. Gross margin never appears as a reported quantity.
     pub implied_net_margin_at_sgr: Option<f64>,
     pub implied_roe: Option<f64>,
@@ -282,9 +282,8 @@ pub(crate) fn solve_expectations(
         // equity holders. The demonstrated side is the DuPont median of
         // actual reported net income / revenue — no formula. The gap is
         // like-for-like in net-income space. The enterprise model's gross
-        // margin is an internal parameter only, reached through the exact
-        // identity GM = NM/(1−tax) + interest% + D&A% (operator ruling
-        // 2026-09-10).
+        // margin is an internal parameter only, reached through the identity
+        // GM = NM/(1−tax) + SG&A% + interest% + D&A%.
         let assumptions = financial_model::ProjectionAssumptions::from_history(&hist);
         let sustainable_growth_rate = capability.sustainable_growth_rate;
         let demonstrated_net_margin = capability.net_profit_margin;
@@ -293,12 +292,19 @@ pub(crate) fn solve_expectations(
                 *growth > financial_model::IMPLIED_GROWTH_LO + 0.01
                     && *growth < financial_model::IMPLIED_GROWTH_HI - 0.01
             });
-        let implied_net_margin_at_sgr = financial_model::implied_net_margin_at_growth(
-            &hist,
-            &assumptions,
-            sustainable_growth_rate,
-            current_price,
-        );
+        let implied_net_margin_at_sgr = if sustainable_growth_rate
+            > financial_model::IMPLIED_GROWTH_LO
+            && sustainable_growth_rate < financial_model::IMPLIED_GROWTH_HI
+        {
+            financial_model::implied_net_margin_at_growth(
+                &hist,
+                &assumptions,
+                sustainable_growth_rate,
+                current_price,
+            )
+        } else {
+            None
+        };
         let growth_gap_pp = implied_growth.map(|growth| (growth - sustainable_growth_rate) * 100.0);
         let profitability_gap_pp = implied_net_margin_at_sgr
             .map(|net_margin| (net_margin - demonstrated_net_margin) * 100.0);
@@ -358,6 +364,22 @@ fn display_pct(value: f64) -> String {
     }
 }
 
+fn capability_quality_flags(analysis: &Option<ExpectationsSolve>) -> Vec<&'static str> {
+    let Some(solve) = analysis else {
+        return Vec::new();
+    };
+    let mut flags = Vec::new();
+    if solve.capability.roe.abs() >= 1.0 {
+        flags.push("demonstrated_roe_at_or_above_100_percent");
+    }
+    if solve.sustainable_growth_rate <= financial_model::IMPLIED_GROWTH_LO
+        || solve.sustainable_growth_rate >= financial_model::IMPLIED_GROWTH_HI
+    {
+        flags.push("sustainable_growth_outside_reverse_dcf_validated_range");
+    }
+    flags
+}
+
 /// expect: [P1] The gap axis is price-implied vs demonstrated DuPont
 /// capability — management guidance never appears in gaps (operator ruling
 /// 2026-09-10); it is a context annotation only.
@@ -372,11 +394,16 @@ pub(crate) fn build_gap_report(
     price_source: &str,
 ) -> serde_json::Value {
     let mgmt_median = median(management_growth);
+    let capability_flags = capability_quality_flags(analysis);
 
     let (signal, interpretation) = match analysis {
         None => (
             "insufficient_data",
             "Demonstrated capability (DuPont: net income, assets, equity over at least two years) or the current price is unavailable — the gap cannot be solved. Check the raw financial-data tools for this symbol.",
+        ),
+        Some(_) if !capability_flags.is_empty() => (
+            "model_sensitive",
+            "The demonstrated capability is outside the reverse DCF's validated model domain. Treat the gap as unavailable for ranking until the accounting denominator and sustainable-growth assumptions are reviewed.",
         ),
         Some(solve) => {
             let (solve_signal, solve_interpretation) = match solve.headline {
@@ -514,6 +541,8 @@ pub(crate) fn build_gap_report(
             "growth_leg_available": analysis.as_ref().is_some_and(|solve| solve.growth_gap_pp.is_some() || solve.implied_roe.is_some()),
             "profitability_leg_available": analysis.as_ref().is_some_and(|solve| solve.profitability_gap_pp.is_some()),
             "price_source": price_source,
+            "capability_status": if capability_flags.is_empty() { "within_model_domain" } else { "model_sensitive" },
+            "capability_flags": capability_flags,
         },
     })
 }

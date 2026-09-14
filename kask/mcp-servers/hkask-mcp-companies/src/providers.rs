@@ -968,8 +968,13 @@ fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
                         obj_map
                             .entry("date".to_string())
                             .or_insert_with(|| Value::String(date.to_string()));
-                        // Map EODHD field names → FMP field names
+                        // Map EODHD field names → FMP field names.
                         map_field(obj_map, "totalRevenue", "revenue");
+                        map_field(
+                            obj_map,
+                            "sellingGeneralAdministrative",
+                            "sellingGeneralAndAdministrativeExpenses",
+                        );
                     }
                     obj
                 })

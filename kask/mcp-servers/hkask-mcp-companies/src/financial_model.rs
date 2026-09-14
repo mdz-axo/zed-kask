@@ -519,12 +519,12 @@ impl HistoricalSnapshot {
         self.latest_debt() - self.latest_cash()
     }
 
-    /// DuPont decomposition over the years where revenue, net income, total
-    /// assets and equity all resolve positive. Components are per-year
-    /// medians, so the identity NPM × AT × EM = ROE holds exactly per year
-    /// and approximately across medians. Retention is 1 − dividends/net
-    /// income clamped to [0, 1] — a year paying dividends above earnings
-    /// demonstrates zero retained funding, not negative. SGR = ROE ×
+    /// DuPont decomposition over income periods with matching beginning and
+    /// ending balance sheets. Asset turnover and ROE use average assets and
+    /// average equity; components are robust per-period medians. The identity
+    /// NPM × AT × EM = ROE holds exactly within each measured period and only
+    /// approximately across independently aggregated medians. Retention is
+    /// 1 − dividends/net income clamped to [0, 1]. SGR = median ROE × median
     /// retention; with no profitable year the self-funding rate is zero.
     pub fn dupont(&self) -> Option<DuPontAnalysis> {
         let net_by_year: std::collections::HashMap<&str, f64> = self
@@ -532,15 +532,31 @@ impl HistoricalSnapshot {
             .iter()
             .map(|(year, value)| (year.as_str(), *value))
             .collect();
-        let assets_by_year: std::collections::HashMap<&str, f64> = self
+        let average_assets_by_year: std::collections::HashMap<&str, f64> = self
             .total_assets
-            .iter()
-            .map(|(year, value)| (year.as_str(), *value))
+            .windows(2)
+            .filter_map(|window| {
+                let [(previous_year, previous), (year, current)] = window else {
+                    return None;
+                };
+                if previous_year == year || *previous <= 0.0 || *current <= 0.0 {
+                    return None;
+                }
+                Some((year.as_str(), (previous + current) / 2.0))
+            })
             .collect();
-        let equity_by_year: std::collections::HashMap<&str, f64> = self
+        let average_equity_by_year: std::collections::HashMap<&str, f64> = self
             .total_equity
-            .iter()
-            .map(|(year, value)| (year.as_str(), *value))
+            .windows(2)
+            .filter_map(|window| {
+                let [(previous_year, previous), (year, current)] = window else {
+                    return None;
+                };
+                if previous_year == year || *previous <= 0.0 || *current <= 0.0 {
+                    return None;
+                }
+                Some((year.as_str(), (previous + current) / 2.0))
+            })
             .collect();
         let dividends_by_year: std::collections::HashMap<&str, f64> = self
             .dividends_paid
@@ -554,20 +570,20 @@ impl HistoricalSnapshot {
         let mut roes = Vec::new();
         let mut retentions = Vec::new();
         for (year, revenue) in &self.revenue {
-            let (Some(&net_income), Some(&assets), Some(&equity)) = (
+            let (Some(&net_income), Some(&average_assets), Some(&average_equity)) = (
                 net_by_year.get(year.as_str()),
-                assets_by_year.get(year.as_str()),
-                equity_by_year.get(year.as_str()),
+                average_assets_by_year.get(year.as_str()),
+                average_equity_by_year.get(year.as_str()),
             ) else {
                 continue;
             };
-            if *revenue <= 0.0 || assets <= 0.0 || equity <= 0.0 {
+            if *revenue <= 0.0 || average_assets <= 0.0 || average_equity <= 0.0 {
                 continue;
             }
             net_profit_margins.push(net_income / *revenue);
-            asset_turnovers.push(*revenue / assets);
-            equity_multipliers.push(assets / equity);
-            roes.push(net_income / equity);
+            asset_turnovers.push(*revenue / average_assets);
+            equity_multipliers.push(average_assets / average_equity);
+            roes.push(net_income / average_equity);
             if net_income > 0.0 {
                 let payout = dividends_by_year.get(year.as_str()).copied().unwrap_or(0.0);
                 retentions.push((1.0 - payout / net_income).clamp(0.0, 1.0));
@@ -809,6 +825,7 @@ pub(crate) struct ProjectedLineItems {
     pub revenue: f64,
     pub cogs: f64,
     pub gross_profit: f64,
+    pub sga: f64,
     pub da: f64,
     pub ebit: f64,
     pub tax: f64,
@@ -1072,8 +1089,9 @@ pub fn project_model(
 
         let cogs = revenue * (1.0 - assumptions.gross_margin);
         let gross_profit = revenue - cogs;
+        let sga = revenue * hist.sga_to_revenue();
         let da = revenue * assumptions.da_to_revenue;
-        let ebit = gross_profit - da; // simplified: no separate SG&A
+        let ebit = gross_profit - sga - da;
         let tax = ebit * assumptions.tax_rate;
         let nopat = ebit - tax;
         let capex = revenue * assumptions.capex_to_revenue;
@@ -1090,6 +1108,7 @@ pub fn project_model(
             revenue,
             cogs,
             gross_profit,
+            sga,
             da,
             ebit,
             tax,
@@ -1201,10 +1220,9 @@ pub(crate) fn implied_growth(
 
 /// Net-margin search bounds for the profitability leg of the expectations
 /// gap. Net margin is NET INCOME / revenue — the equity holder's margin,
-/// after interest at demonstrated leverage and tax (operator ruling
-/// 2026-09-10, stated three times: net income is what flows to equity
-/// holders). The floor allows loss-making margins; the ceiling bounds
-/// the bisection over economically meaningful profitability.
+/// after SG&A, interest at demonstrated leverage, D&A, and tax. The floor
+/// allows loss-making margins; the ceiling bounds the bisection over
+/// economically meaningful profitability.
 pub(crate) const IMPLIED_NET_MARGIN_LO: f64 = -0.30;
 pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
 
@@ -1215,9 +1233,9 @@ pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
 ///
 /// Net margin is the solve variable and the reported quantity. The
 /// enterprise model's gross margin is an internal projection parameter
-/// only, reached through the exact per-revenue income-statement identity
-/// `GM = NM/(1−tax) + interest% + D&A%` with interest at the demonstrated
-/// interest-expense-to-revenue level — so the solved NM satisfies
+/// only, reached through the per-revenue income-statement identity
+/// `GM = NM/(1−tax) + SG&A% + interest% + D&A%` with expenses held at their
+/// demonstrated revenue shares. The solved NM therefore satisfies
 /// `NI = (EBIT − interest) × (1 − tax)` by construction. Debt is carried at
 /// demonstrated net debt in the equity bridge, not through the margin.
 ///
@@ -1248,11 +1266,12 @@ pub(crate) fn implied_net_margin_at_growth(
     if (1.0 - tax_rate) <= 0.01 {
         return None;
     }
+    let sga_pct = hist.sga_to_revenue();
     // NM → the model's internal gross margin, exactly: the solved NM is
-    // net income / revenue at demonstrated interest and D&A shares of
-    // revenue.
-    let net_margin_to_gross =
-        |net_margin: f64| net_margin / (1.0 - tax_rate) + interest_pct + assumptions.da_to_revenue;
+    // net income / revenue after demonstrated SG&A, interest, D&A, and tax.
+    let net_margin_to_gross = |net_margin: f64| {
+        net_margin / (1.0 - tax_rate) + sga_pct + interest_pct + assumptions.da_to_revenue
+    };
 
     let at_margin = |net_margin: f64| {
         project_model(

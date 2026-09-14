@@ -838,7 +838,24 @@ async fn analyze_issuer_group(
         .get("profitability_gap_pp")
         .cloned()
         .unwrap_or(Value::Null);
-    let score = expectation_score(&growth_gap, &profitability_gap);
+    let capability_status = report
+        .pointer("/data_quality/capability_status")
+        .and_then(Value::as_str)
+        .unwrap_or("unavailable");
+    let capability_flags = report
+        .pointer("/data_quality/capability_flags")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let capability_model_sensitive = capability_status == "model_sensitive";
+    let score = expectation_score(&growth_gap, &profitability_gap, capability_model_sensitive);
+    let gap_status = gap_data_status(&growth_gap, &profitability_gap);
+    let data_quality_status = if gap_status == "partial" {
+        "partial"
+    } else if capability_model_sensitive {
+        "model_sensitive"
+    } else {
+        "complete"
+    };
     Ok(json!({
         "company": actionable.name,
         "issuer_key": issuer_group.issuer_key,
@@ -867,7 +884,9 @@ async fn analyze_issuer_group(
         "implied_profitability": implied_profitability,
         "profitability_gap_pp": profitability_gap,
         "expectations_gap_score": score,
-        "data_quality_status": if score.is_number() { "complete" } else { "partial" },
+        "gap_data_status": gap_status,
+        "data_quality_status": data_quality_status,
+        "capability_quality_flags": capability_flags,
         "price_currency_normalization_provenance": price_currency_normalization_provenance,
         "expectations_report": report,
     }))
@@ -1128,7 +1147,22 @@ fn currency_code_unit(code: &str) -> (String, f64) {
     }
 }
 
-fn expectation_score(growth_gap: &Value, profitability_gap: &Value) -> Value {
+fn gap_data_status(growth_gap: &Value, profitability_gap: &Value) -> &'static str {
+    if growth_gap.is_number() && profitability_gap.is_number() {
+        "complete"
+    } else {
+        "partial"
+    }
+}
+
+fn expectation_score(
+    growth_gap: &Value,
+    profitability_gap: &Value,
+    capability_model_sensitive: bool,
+) -> Value {
+    if capability_model_sensitive {
+        return Value::Null;
+    }
     let Some(growth) = growth_gap.as_f64() else {
         return Value::Null;
     };
@@ -1402,6 +1436,25 @@ mod tests {
             error.message,
             "screen as_of \"2026-09-12\" does not match current acquisition date \"2026-09-13\""
         );
+    }
+
+    /// expect: [P1] Gap-data completeness reports whether both requested gap
+    /// legs exist; score eligibility must not masquerade as data quality.
+    /// pre: growth and profitability gap values may have any sign.
+    /// post: two numeric legs are complete even when no ranking score is awarded.
+    #[test]
+    fn gap_data_status_is_independent_of_score_sign() {
+        assert_eq!(gap_data_status(&json!(4.0), &json!(-2.0)), "complete");
+        assert_eq!(gap_data_status(&json!(-4.0), &json!(-2.0)), "complete");
+        assert_eq!(gap_data_status(&Value::Null, &json!(-2.0)), "partial");
+    }
+
+    /// expect: [P1] Model-sensitive capability estimates never enter the
+    /// expectations-gap ranking even when both numeric gaps are negative.
+    #[test]
+    fn model_sensitive_gap_is_not_scored() {
+        assert!(expectation_score(&json!(-10.0), &json!(-5.0), true).is_null());
+        assert!(expectation_score(&json!(-10.0), &json!(-5.0), false).is_number());
     }
 
     #[test]
