@@ -65,7 +65,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | Tool | Description |
 |---|---|
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade. |
-| `expectations_gap` | Compare price-implied expectations with demonstrated DuPont capability (net margin, asset turnover, equity multiplier, ROE, sustainable self-funding growth rate); management guidance is context only. |
+| `expectations_gap` | Compare implied revenue growth and net margin with demonstrated revenue CAGR and net margin; surface DuPont ROE and Higgins SGR separately as decomposition and financing capacity. |
 
 ### Portfolio ledger, notes, and files
 
@@ -150,16 +150,18 @@ Review hardening of this same slice:
 - `PreparedDcf` computes the existing `ModelInputQuality` once. Standalone and overlay serialize that same type under `data_quality`, including `quality_warning`; model-quality rules and projection math are unchanged.
 - One comparison-row builder validates both target and peer results. Empty/nonarray metrics produce an endpoint-specific error without hiding an available profile, comparison table or overlay.
 
-## Expectations-gap definition — 2026-09-10
+## Expectations-gap definition — amended 2026-09-14
 
-Operator ruling, superseding the guidance-gap definition that arrived with the hkask migration (`af7613e11a`) without ratification:
+Operator ruling, superseding both the guidance-gap definition that arrived with the hkask migration (`af7613e11a`) and the 2026-09-10 use of Higgins SGR as the primary revenue-growth benchmark:
 
 - The gap is between what the price implies and what the company has demonstrated it can do — never between price and management guidance. Guidance is a context annotation only.
 - Demonstrated capability is the DuPont decomposition: ROE = net profit margin × asset turnover × equity multiplier, plus the Higgins sustainable growth rate SGR = ROE × retention (self-funding growth without external financing). Asset turnover and ROE use average beginning/ending assets and equity for each measured income period; displayed components are robust per-period medians.
 - Industry-aware profitability headline: ROE for financial-sector companies (price-implied ROE from the justified P/B identity, P/B = (ROE − g)/(COE − g), COE default 10%); net margin for everyone else — net income / revenue, interest at demonstrated leverage and tax included, because net income is what flows to equity holders (operator ruling 2026-09-10).
-- The gap vector: growth gap (implied growth − SGR, with SGR surfaced beside it as the anchor) and profitability gap (implied net margin − demonstrated net margin — the DuPont median of actual net income / revenue — or implied ROE − demonstrated ROE for financials).
+- For non-financials, the primary growth gap is like-for-like: reverse-DCF-implied revenue growth minus demonstrated full-period revenue CAGR. Financing headroom is separately reported as implied revenue growth minus Higgins SGR; SGR is not treated as demonstrated revenue growth.
+- The profitability gap is implied net margin at demonstrated revenue CAGR minus demonstrated net margin (median actual net income / revenue). Financials continue to use implied ROE minus demonstrated ROE.
 - Before either price-implied solve, the selected security's price is converted from its listing currency and unit into the normalized financial-statement currency using cached EODHD USD cross-rates. Minor units are explicit (`GBX` → `GBP` at 0.01); missing currency metadata or rates surface as unavailable rather than entering valuation unconverted.
-- Capability estimates at or beyond the reverse DCF's validated growth range are `model_sensitive`, carry explicit flags, and cannot receive a ranking score. Gap-data completeness is independent of score eligibility: mixed or positive gaps remain complete when both legs were calculated.
+- Capability estimates at or beyond the reverse DCF's validated growth range are `model_sensitive` and carry explicit flags. Gap-data completeness is independent of model sensitivity: mixed or positive gaps remain complete when both legs were calculated.
+- The prior square-root composite score is withheld because it has no external calibration. Saved-screen output exposes raw growth, financing-headroom, and profitability dimensions without a synthetic ranking.
 - Net margin is net income / revenue. It is never approximated by a pre-interest operating formula: the solve uses GM = NM/(1−tax) + SG&A% + interest% + D&A%, holding modeled expenses at demonstrated revenue shares, so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by construction. Gross margin is the internal projection parameter only, never a reported expectations quantity.
 
 ## Validation

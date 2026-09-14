@@ -829,11 +829,19 @@ async fn analyze_issuer_group(
             .unwrap_or(Value::Null)
     } else {
         price_implied
-            .pointer("/implied_net_margin_at_sustainable_growth/value")
+            .pointer("/implied_net_margin_at_demonstrated_growth/value")
             .cloned()
             .unwrap_or(Value::Null)
     };
+    let demonstrated_growth = gaps
+        .get("demonstrated_revenue_growth")
+        .cloned()
+        .unwrap_or(Value::Null);
     let growth_gap = gaps.get("growth_gap_pp").cloned().unwrap_or(Value::Null);
+    let financing_growth_gap = gaps
+        .get("financing_growth_gap_pp")
+        .cloned()
+        .unwrap_or(Value::Null);
     let profitability_gap = gaps
         .get("profitability_gap_pp")
         .cloned()
@@ -847,7 +855,6 @@ async fn analyze_issuer_group(
         .cloned()
         .unwrap_or_else(|| json!([]));
     let capability_model_sensitive = capability_status == "model_sensitive";
-    let score = expectation_score(&growth_gap, &profitability_gap, capability_model_sensitive);
     let gap_status = gap_data_status(&growth_gap, &profitability_gap);
     let data_quality_status = if gap_status == "partial" {
         "partial"
@@ -878,12 +885,13 @@ async fn analyze_issuer_group(
         "market_capitalization_usd": cap,
         "average_daily_dollar_volume_usd": actionable.average_daily_dollar_volume_usd,
         "demonstrated_profitability": demonstrated,
+        "demonstrated_growth": demonstrated_growth,
         "sustainable_growth": capability.get("sustainable_growth_rate").cloned().unwrap_or(Value::Null),
         "implied_growth": price_implied.pointer("/implied_growth/value").cloned().unwrap_or(Value::Null),
         "growth_gap_pp": growth_gap,
+        "financing_growth_gap_pp": financing_growth_gap,
         "implied_profitability": implied_profitability,
         "profitability_gap_pp": profitability_gap,
-        "expectations_gap_score": score,
         "gap_data_status": gap_status,
         "data_quality_status": data_quality_status,
         "capability_quality_flags": capability_flags,
@@ -1153,26 +1161,6 @@ fn gap_data_status(growth_gap: &Value, profitability_gap: &Value) -> &'static st
     } else {
         "partial"
     }
-}
-
-fn expectation_score(
-    growth_gap: &Value,
-    profitability_gap: &Value,
-    capability_model_sensitive: bool,
-) -> Value {
-    if capability_model_sensitive {
-        return Value::Null;
-    }
-    let Some(growth) = growth_gap.as_f64() else {
-        return Value::Null;
-    };
-    let Some(profitability) = profitability_gap.as_f64() else {
-        return Value::Null;
-    };
-    if growth >= 0.0 || profitability >= 0.0 {
-        return Value::Null;
-    }
-    json!(((-growth / 3.0) * (-profitability / 0.5)).sqrt())
 }
 
 fn currency_spec(symbol: &str) -> Option<(&'static str, f64)> {
@@ -1449,12 +1437,30 @@ mod tests {
         assert_eq!(gap_data_status(&Value::Null, &json!(-2.0)), "partial");
     }
 
-    /// expect: [P1] Model-sensitive capability estimates never enter the
-    /// expectations-gap ranking even when both numeric gaps are negative.
+    /// expect: [P1] The production template exposes raw gap dimensions and
+    /// does not rank companies with an uncalibrated synthetic score.
     #[test]
-    fn model_sensitive_gap_is_not_scored() {
-        assert!(expectation_score(&json!(-10.0), &json!(-5.0), true).is_null());
-        assert!(expectation_score(&json!(-10.0), &json!(-5.0), false).is_number());
+    fn expectations_template_withholds_uncalibrated_composite_score() {
+        let definition = expectations_definition("2026-09-14", vec!["US".to_string()]);
+        assert!(definition.ranking.is_empty());
+        assert!(
+            definition
+                .columns
+                .iter()
+                .all(|column| column.id != "expectations_gap_score")
+        );
+        assert!(
+            definition
+                .columns
+                .iter()
+                .any(|column| column.id == "demonstrated_growth")
+        );
+        assert!(
+            definition
+                .columns
+                .iter()
+                .any(|column| column.id == "financing_growth_gap_pp")
+        );
     }
 
     #[test]

@@ -44,20 +44,19 @@ visibility: Public
     {"id":"market_capitalization_usd","label":"Issuer Market Capitalization","source":"market_capitalization_usd","data_type":"number","unit":"USD"},
     {"id":"average_daily_dollar_volume_usd","label":"Average Daily Dollar Volume","source":"average_daily_dollar_volume_usd","data_type":"number","unit":"USD"},
     {"id":"demonstrated_profitability","label":"Demonstrated Profitability","source":"demonstrated_profitability","data_type":"number","unit":"ratio"},
+    {"id":"demonstrated_growth","label":"Demonstrated Revenue CAGR","source":"demonstrated_growth","data_type":"number","unit":"ratio"},
     {"id":"sustainable_growth","label":"Sustainable Growth","source":"sustainable_growth","data_type":"number","unit":"ratio"},
-    {"id":"implied_growth","label":"Implied Growth","source":"implied_growth","data_type":"number","unit":"ratio"},
-    {"id":"growth_gap_pp","label":"Growth Gap","source":"growth_gap_pp","data_type":"number","unit":"percentage_points"},
+    {"id":"implied_growth","label":"Implied Revenue Growth","source":"implied_growth","data_type":"number","unit":"ratio"},
+    {"id":"growth_gap_pp","label":"Revenue Growth Gap","source":"growth_gap_pp","data_type":"number","unit":"percentage_points"},
+    {"id":"financing_growth_gap_pp","label":"Financing Growth Headroom","source":"financing_growth_gap_pp","data_type":"number","unit":"percentage_points"},
     {"id":"implied_profitability","label":"Implied Profitability","source":"implied_profitability","data_type":"number","unit":"ratio"},
     {"id":"profitability_gap_pp","label":"Profitability Gap","source":"profitability_gap_pp","data_type":"number","unit":"percentage_points"},
-    {"id":"expectations_gap_score","label":"Expectations Gap Score","source":"expectations_gap_score","data_type":"number","unit":"score"},
     {"id":"gap_data_status","label":"Gap Data Completeness","source":"gap_data_status","data_type":"string","unit":null},
     {"id":"capability_quality_flags","label":"Capability Quality Flags","source":"capability_quality_flags","data_type":"array","unit":null},
     {"id":"price_currency_normalization_provenance","label":"Price and Currency Normalization Provenance","source":"price_currency_normalization_provenance","data_type":"object","unit":null},
     {"id":"data_quality_status","label":"Data Quality","source":"data_quality_status","data_type":"string","unit":null}
   ],
-  "ranking": [
-    {"column":"expectations_gap_score","direction":"descending"}
-  ],
+  "ranking": [],
   "logic_env": {
     "market_cap_min": {{ market_cap_min }},
     "market_cap_max": {{ market_cap_max }},

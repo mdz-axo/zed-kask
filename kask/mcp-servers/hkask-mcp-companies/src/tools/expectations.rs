@@ -3,16 +3,15 @@
 //!
 //! The gap is between what the current price implies (reverse-DCF-implied
 //! growth and profitability) and what the company has demonstrated it can
-//! do — its DuPont capability envelope: ROE = net profit margin × asset
-//! turnover × equity multiplier, plus the Higgins sustainable growth rate
-//! SGR = ROE × retention (the growth a company can self-fund without
-//! external financing).
+//! do. For non-financials, the primary growth axis is like-for-like revenue:
+//! reverse-DCF-implied growth versus demonstrated full-period revenue CAGR.
+//! DuPont ROE and Higgins SGR remain the profitability decomposition and a
+//! separately labeled financing-capacity diagnostic.
 //!
 //! Industry-aware profitability headline (operator ruling 2026-09-10): ROE
 //! for financial-sector companies — solved from the justified P/B identity
 //! P/B = (ROE − g)/(COE − g) — and net margin for everyone else, via the
-//! FCF reverse DCF with an implied-margin solve at the sustainable growth
-//! rate.
+//! FCF reverse DCF with an implied-margin solve at demonstrated revenue CAGR.
 //!
 //! Management guidance is CONTEXT ONLY, never the gap axis. The original
 //! guidance-gap definition arrived with the hkask migration (`af7613e11a`)
@@ -34,7 +33,7 @@ const DEFAULT_COST_OF_EQUITY: f64 = 0.10;
 #[tool_router(router = expectations_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Expectations gap analysis (Mauboussin's Expectations Investing). The gap is between what the price implies and what the company has DEMONSTRATED it can do: price-implied growth (reverse DCF) and profitability (implied margin at the sustainable growth rate) vs the DuPont capability envelope — net margin x asset turnover x equity multiplier = ROE, retention, and the sustainable self-funding growth rate (ROE x retention). Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only, never the gap axis."
+        description = "Expectations gap analysis (Mauboussin's Expectations Investing). For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only."
     )]
     pub async fn expectations_gap(
         &self,
@@ -175,18 +174,19 @@ pub(crate) struct ExpectationsSolve {
     /// "roe" for financial-sector companies, "net_margin" otherwise.
     pub headline: &'static str,
     pub implied_growth: Option<f64>,
-    /// Net margin the price demands at the sustainable growth rate: NET
-    /// INCOME / revenue, after interest at demonstrated leverage and tax —
-    /// the equity holder's margin (operator ruling 2026-09-10, stated
-    /// three times). Solved through the enterprise model's internal
-    /// gross-margin parameter via `GM = NM/(1−tax) + SG&A% + interest% + D&A%`,
-    /// so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by
-    /// construction. Gross margin never appears as a reported quantity.
-    pub implied_net_margin_at_sgr: Option<f64>,
+    /// Net margin the price demands when revenue growth is held at the
+    /// demonstrated multi-year CAGR. Solved through the enterprise model's
+    /// internal gross-margin parameter via
+    /// `GM = NM/(1−tax) + SG&A% + interest% + D&A%`.
+    pub implied_net_margin_at_demonstrated_growth: Option<f64>,
     pub implied_roe: Option<f64>,
-    /// Implied growth − sustainable growth rate, percentage points
-    /// (non-financials only).
+    /// Demonstrated full-period revenue CAGR (non-financials only).
+    pub demonstrated_revenue_growth: Option<f64>,
+    /// Implied revenue growth − demonstrated revenue CAGR, percentage points.
     pub growth_gap_pp: Option<f64>,
+    /// Implied revenue growth − Higgins sustainable growth rate, retained as a
+    /// separately labeled financing-capacity diagnostic.
+    pub financing_growth_gap_pp: Option<f64>,
     /// Net-margin space for non-financials; ROE percentage points for
     /// financials — the profitability leg of the gap.
     pub profitability_gap_pp: Option<f64>,
@@ -266,55 +266,63 @@ pub(crate) fn solve_expectations(
             capability,
             headline: "roe",
             implied_growth: None,
-            implied_net_margin_at_sgr: None,
+            implied_net_margin_at_demonstrated_growth: None,
             implied_roe,
+            demonstrated_revenue_growth: None,
             growth_gap_pp: None,
+            financing_growth_gap_pp: None,
             profitability_gap_pp,
             book_value_per_share: Some(book_value_per_share),
             sustainable_growth_rate,
         })
     } else {
-        // Non-financials: the FCF reverse DCF. Growth leg: implied growth
-        // at demonstrated margins vs the sustainable growth rate.
-        // Profitability leg: the NET margin (net income / revenue) the price
-        // demands at the sustainable growth rate — interest at demonstrated
-        // leverage and tax included, because net income is what flows to
-        // equity holders. The demonstrated side is the DuPont median of
+        // Non-financials: the FCF reverse DCF. Growth leg: implied revenue
+        // growth at demonstrated margins versus demonstrated revenue CAGR.
+        // Financing headroom separately compares implied growth with Higgins
+        // SGR. Profitability is the NET margin the price demands at the
+        // demonstrated CAGR, with modeled expenses and tax included. The
+        // demonstrated side is the DuPont median of
         // actual reported net income / revenue — no formula. The gap is
         // like-for-like in net-income space. The enterprise model's gross
         // margin is an internal parameter only, reached through the identity
         // GM = NM/(1−tax) + SG&A% + interest% + D&A%.
         let assumptions = financial_model::ProjectionAssumptions::from_history(&hist);
         let sustainable_growth_rate = capability.sustainable_growth_rate;
+        let demonstrated_revenue_growth = hist.demonstrated_revenue_cagr()?;
         let demonstrated_net_margin = capability.net_profit_margin;
         let implied_growth = financial_model::implied_growth(&hist, &assumptions, current_price)
             .filter(|growth| {
                 *growth > financial_model::IMPLIED_GROWTH_LO + 0.01
                     && *growth < financial_model::IMPLIED_GROWTH_HI - 0.01
             });
-        let implied_net_margin_at_sgr = if sustainable_growth_rate
+        let implied_net_margin_at_demonstrated_growth = if demonstrated_revenue_growth
             > financial_model::IMPLIED_GROWTH_LO
-            && sustainable_growth_rate < financial_model::IMPLIED_GROWTH_HI
+            && demonstrated_revenue_growth < financial_model::IMPLIED_GROWTH_HI
         {
             financial_model::implied_net_margin_at_growth(
                 &hist,
                 &assumptions,
-                sustainable_growth_rate,
+                demonstrated_revenue_growth,
                 current_price,
             )
         } else {
             None
         };
-        let growth_gap_pp = implied_growth.map(|growth| (growth - sustainable_growth_rate) * 100.0);
-        let profitability_gap_pp = implied_net_margin_at_sgr
+        let growth_gap_pp =
+            implied_growth.map(|growth| (growth - demonstrated_revenue_growth) * 100.0);
+        let financing_growth_gap_pp =
+            implied_growth.map(|growth| (growth - sustainable_growth_rate) * 100.0);
+        let profitability_gap_pp = implied_net_margin_at_demonstrated_growth
             .map(|net_margin| (net_margin - demonstrated_net_margin) * 100.0);
         Some(ExpectationsSolve {
             capability,
             headline: "net_margin",
             implied_growth,
-            implied_net_margin_at_sgr,
+            implied_net_margin_at_demonstrated_growth,
             implied_roe: None,
+            demonstrated_revenue_growth: Some(demonstrated_revenue_growth),
             growth_gap_pp,
+            financing_growth_gap_pp,
             profitability_gap_pp,
             book_value_per_share: None,
             sustainable_growth_rate,
@@ -376,6 +384,11 @@ fn capability_quality_flags(analysis: &Option<ExpectationsSolve>) -> Vec<&'stati
         || solve.sustainable_growth_rate >= financial_model::IMPLIED_GROWTH_HI
     {
         flags.push("sustainable_growth_outside_reverse_dcf_validated_range");
+    }
+    if solve.demonstrated_revenue_growth.is_some_and(|growth| {
+        growth <= financial_model::IMPLIED_GROWTH_LO || growth >= financial_model::IMPLIED_GROWTH_HI
+    }) {
+        flags.push("demonstrated_revenue_growth_outside_reverse_dcf_validated_range");
     }
     flags
 }
@@ -444,11 +457,11 @@ pub(crate) fn build_gap_report(
                     ),
                     (Some(growth), None) if growth > 3.0 => (
                         "price_demands_more_than_demonstrated",
-                        "The price demands more growth than the sustainable self-funding rate; the profitability leg could not be solved within model bounds (see gaps).",
+                        "The price demands more revenue growth than the company demonstrated; the profitability leg could not be solved within model bounds (see gaps).",
                     ),
                     (Some(growth), None) if growth < -3.0 => (
                         "price_demands_less_than_demonstrated",
-                        "The price demands less growth than the sustainable self-funding rate; the profitability leg could not be solved within model bounds (see gaps).",
+                        "The price demands less revenue growth than the company demonstrated; the profitability leg could not be solved within model bounds (see gaps).",
                     ),
                     (Some(_), None) | (None, Some(_)) => (
                         "insufficient_data",
@@ -472,8 +485,10 @@ pub(crate) fn build_gap_report(
             "equity_multiplier": solve.capability.equity_multiplier,
             "roe": solve.capability.roe,
             "retention": solve.capability.retention,
+            "demonstrated_revenue_growth": solve.demonstrated_revenue_growth,
             "sustainable_growth_rate": solve.capability.sustainable_growth_rate,
             "years": solve.capability.years,
+            "balance_sheet_denominator_basis": "average beginning and ending assets/equity for each income period",
         }),
         None => serde_json::Value::Null,
     };
@@ -485,10 +500,10 @@ pub(crate) fn build_gap_report(
                 "display": display_pct(value),
                 "source": "reverse DCF: growth rate at demonstrated margins that equates intrinsic value to the current price",
             })).unwrap_or(serde_json::Value::Null),
-            "implied_net_margin_at_sustainable_growth": solve.implied_net_margin_at_sgr.map(|value| serde_json::json!({
+            "implied_net_margin_at_demonstrated_growth": solve.implied_net_margin_at_demonstrated_growth.map(|value| serde_json::json!({
                 "value": value,
                 "display": display_pct(value),
-                "source": "reverse DCF at the sustainable growth rate: the net income margin (net income / revenue, interest at demonstrated leverage and tax included) that equates equity value to the current price",
+                "source": "reverse DCF at demonstrated revenue CAGR: the net income margin that equates equity value to the current price",
             })).unwrap_or(serde_json::Value::Null),
             "implied_roe": solve.implied_roe.map(|value| serde_json::json!({
                 "value": value,
@@ -502,10 +517,17 @@ pub(crate) fn build_gap_report(
 
     let gaps_json = match analysis {
         Some(solve) => serde_json::json!({
+            "demonstrated_revenue_growth": solve.demonstrated_revenue_growth,
             "sustainable_growth_rate": solve.sustainable_growth_rate,
             "growth_gap_pp": solve.growth_gap_pp,
             "growth_gap_basis": if solve.growth_gap_pp.is_some() {
-                serde_json::json!("implied growth − sustainable growth rate (ROE × retention)")
+                serde_json::json!("implied revenue growth − demonstrated full-period revenue CAGR")
+            } else {
+                serde_json::Value::Null
+            },
+            "financing_growth_gap_pp": solve.financing_growth_gap_pp,
+            "financing_growth_gap_basis": if solve.financing_growth_gap_pp.is_some() {
+                serde_json::json!("implied revenue growth − Higgins sustainable growth rate (ROE × retention)")
             } else {
                 serde_json::Value::Null
             },
@@ -513,7 +535,7 @@ pub(crate) fn build_gap_report(
             "profitability_gap_basis": if solve.headline == "roe" {
                 serde_json::json!("implied ROE − demonstrated ROE (percentage points)")
             } else {
-                serde_json::json!("implied net margin at SGR − demonstrated net margin (DuPont median of actual net income / revenue), percentage points")
+                serde_json::json!("implied net margin at demonstrated revenue CAGR − demonstrated net margin (median actual net income / revenue), percentage points")
             },
         }),
         None => serde_json::Value::Null,
@@ -521,7 +543,7 @@ pub(crate) fn build_gap_report(
 
     serde_json::json!({
         "symbol": symbol,
-        "framework": "Expectations gap = price-implied expectations vs demonstrated financial capability. Capability is the DuPont envelope: ROE = net margin × asset turnover × equity multiplier, retention, and the sustainable self-funding growth rate (ROE × retention, Higgins 1977). Financial-sector companies use the equity-based implied-ROE solve (justified P/B); everyone else the FCF reverse DCF with an implied-margin solve at the sustainable growth rate. Operator ruling 2026-09-10 — management guidance is context only, never the gap axis. Mauboussin & Rappaport (2001) Expectations Investing.",
+        "framework": "Expectations gap = price-implied expectations vs demonstrated like-for-like financial performance. For non-financials, the primary growth gap compares implied revenue growth with demonstrated full-period revenue CAGR; Higgins sustainable growth remains a separately labeled financing-capacity diagnostic. Profitability compares implied net margin at demonstrated growth with demonstrated net margin. Financial-sector companies use the equity-based implied-ROE solve. Operator ruling 2026-09-14; Mauboussin & Rappaport (2001), DuPont analysis, and Higgins (1977).",
         "capability": capability_json,
         "price_implied": price_implied_json,
         "gaps": gaps_json,
@@ -529,7 +551,7 @@ pub(crate) fn build_gap_report(
             "management_guidance_median": if mgmt_median.is_finite() { serde_json::json!(mgmt_median) } else { serde_json::Value::Null },
             "guidance_samples": management_growth.len(),
             "user_estimate": user_growth,
-            "note": "Context annotations. The gap axis is price-implied vs demonstrated DuPont capability (operator ruling 2026-09-10).",
+            "note": "Context annotations. The primary growth gap is price-implied revenue growth versus demonstrated revenue CAGR; SGR is a separate financing-capacity diagnostic (operator ruling 2026-09-14).",
         },
         "signal": signal,
         "interpretation": interpretation,

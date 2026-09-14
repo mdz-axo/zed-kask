@@ -491,7 +491,21 @@ impl HistoricalSnapshot {
         self.latest_nwc() / rev
     }
 
-    /// Revenue CAGR from historical data.
+    /// Demonstrated full-period revenue CAGR from positive reported annual
+    /// observations. Unlike model defaults, this never fabricates a fallback.
+    pub fn demonstrated_revenue_cagr(&self) -> Option<f64> {
+        let periods = self.revenue.len().checked_sub(1)?;
+        let first = self.revenue.first().map(|(_, value)| *value)?;
+        let last = self.revenue.last().map(|(_, value)| *value)?;
+        if first <= 0.0 || last <= 0.0 {
+            return None;
+        }
+        let growth = (last / first).powf(1.0 / periods as f64) - 1.0;
+        growth.is_finite().then_some(growth)
+    }
+
+    /// Revenue CAGR from historical data, with the legacy model default when
+    /// demonstrated growth cannot be measured.
     pub fn revenue_cagr(&self) -> f64 {
         if self.revenue.len() < 2 {
             return 0.05;

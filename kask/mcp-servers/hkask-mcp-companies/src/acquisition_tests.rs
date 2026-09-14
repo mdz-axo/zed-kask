@@ -3002,6 +3002,18 @@ fn dupont_uses_average_balance_sheet_denominators() {
     assert!((dupont.sustainable_growth_rate - (110.0 / 840.0 * 0.60)).abs() < 1e-12);
 }
 
+/// expect: [P5] Demonstrated revenue growth is the full-period CAGR over
+/// positive reported annual revenue, not a financing-capacity proxy or a
+/// fabricated default.
+#[test]
+fn demonstrated_revenue_growth_is_reported_cagr() {
+    let snapshot = dupont_snapshot(&dupont_fixture(0.4));
+    let growth = snapshot
+        .demonstrated_revenue_cagr()
+        .expect("three positive revenue observations");
+    assert!((growth - 0.10).abs() < 1e-12);
+}
+
 /// expect: [P5] Dividends above earnings demonstrate zero retained funding,
 /// never negative — the self-funding growth rate floors at zero.
 #[test]
@@ -3101,9 +3113,11 @@ fn extreme_sustainable_growth_is_model_sensitive() {
         },
         headline: "net_margin",
         implied_growth: Some(0.05),
-        implied_net_margin_at_sgr: None,
+        implied_net_margin_at_demonstrated_growth: None,
         implied_roe: None,
-        growth_gap_pp: Some(-96.0),
+        demonstrated_revenue_growth: Some(0.10),
+        growth_gap_pp: Some(-5.0),
+        financing_growth_gap_pp: Some(-96.0),
         profitability_gap_pp: None,
         book_value_per_share: None,
         sustainable_growth_rate: financial_model::IMPLIED_GROWTH_HI + 0.01,
@@ -3130,19 +3144,22 @@ fn extreme_sustainable_growth_is_model_sensitive() {
     );
 }
 
-/// expect: [P1] The gap axis is price-implied vs demonstrated DuPont
-/// capability — the guidance-gap fields never reappear; guidance is a
-/// context annotation (operator ruling 2026-09-10).
+/// expect: [P1] The primary growth gap compares like-for-like revenue growth:
+/// price-implied growth minus demonstrated CAGR. Higgins SGR remains a separate
+/// financing diagnostic; guidance remains context only (operator ruling
+/// 2026-09-14).
 #[test]
-fn expectations_gap_axis_is_capability_not_guidance() {
+fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
     // Non-financial: both legs solved, both demanding more than demonstrated.
     let non_financial = tools::expectations::ExpectationsSolve {
         capability: hand_built_capability(),
         headline: "net_margin",
         implied_growth: Some(0.12),
-        implied_net_margin_at_sgr: Some(0.10),
+        implied_net_margin_at_demonstrated_growth: Some(0.10),
         implied_roe: None,
-        growth_gap_pp: Some((0.12 - 0.06864) * 100.0),
+        demonstrated_revenue_growth: Some(0.08),
+        growth_gap_pp: Some((0.12 - 0.08) * 100.0),
+        financing_growth_gap_pp: Some((0.12 - 0.06864) * 100.0),
         profitability_gap_pp: Some(1.5),
         book_value_per_share: None,
         sustainable_growth_rate: 0.06864,
@@ -3164,12 +3181,27 @@ fn expectations_gap_axis_is_capability_not_guidance() {
         report["capability"]["sustainable_growth_rate"],
         json!(0.06864)
     );
-    // SGR is the anchor of the growth leg — surfaced beside the gap.
+    assert_eq!(report["gaps"]["demonstrated_revenue_growth"], json!(0.08));
     assert_eq!(report["gaps"]["sustainable_growth_rate"], json!(0.06864));
-    assert!(report["gaps"]["growth_gap_pp"].as_f64().is_some());
+    assert!(
+        (report["gaps"]["growth_gap_pp"]
+            .as_f64()
+            .expect("growth gap")
+            - 4.0)
+            .abs()
+            < 1e-12
+    );
+    assert!(
+        (report["gaps"]["financing_growth_gap_pp"]
+            .as_f64()
+            .expect("financing gap")
+            - (0.12 - 0.06864) * 100.0)
+            .abs()
+            < 1e-12
+    );
     assert_eq!(report["gaps"]["profitability_gap_pp"], json!(1.5));
     assert!(
-        report["price_implied"]["implied_net_margin_at_sustainable_growth"]["value"]
+        report["price_implied"]["implied_net_margin_at_demonstrated_growth"]["value"]
             .as_f64()
             .is_some()
     );
@@ -3206,9 +3238,11 @@ fn expectations_gap_axis_is_capability_not_guidance() {
         capability: hand_built_capability(),
         headline: "roe",
         implied_growth: None,
-        implied_net_margin_at_sgr: None,
+        implied_net_margin_at_demonstrated_growth: None,
         implied_roe: Some(0.16),
+        demonstrated_revenue_growth: None,
         growth_gap_pp: None,
+        financing_growth_gap_pp: None,
         profitability_gap_pp: Some((0.16 - 0.1056) * 100.0),
         book_value_per_share: Some(242.0),
         sustainable_growth_rate: 0.06864,
