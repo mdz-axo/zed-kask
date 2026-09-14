@@ -384,7 +384,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     );
                     reqwest::Client::new()
                 });
-            Ok(CompaniesServer::new(
+            let server = CompaniesServer::new(
                 ctx.webid,
                 http_client,
                 fmp_api_key,
@@ -403,8 +403,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 })),
                 superforecast::FermiDefaults::from_env(),
                 fibo_cache,
-
-            ))
+            );
+            screening::resume_pending_jobs(&server);
+            Ok(server)
         },
         vec![
             hkask_mcp_server::CredentialRequirement::required(

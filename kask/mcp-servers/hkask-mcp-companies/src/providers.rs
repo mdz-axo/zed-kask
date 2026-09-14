@@ -1835,14 +1835,6 @@ pub async fn fetch_eodhd_fundamentals(
     eodhd_get(client, "/fundamentals", eodhd_api_key, symbol, &[]).await
 }
 
-pub async fn fetch_eodhd_realtime(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
-    symbol: &str,
-) -> Result<Value, McpToolError> {
-    eodhd_get(client, "/real-time", eodhd_api_key, symbol, &[]).await
-}
-
 /// Latest USD→currency exchange rate from EODHD FOREX EOD data — the
 /// max-by-date row's close of `USD{currency}.FOREX`. Returns the rate's
 /// as-of date alongside the value.

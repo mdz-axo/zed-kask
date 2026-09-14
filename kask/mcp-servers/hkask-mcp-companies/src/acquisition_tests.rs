@@ -2503,9 +2503,12 @@ async fn saved_screen_calculates_and_pages_one_universe_result() {
                     .expect("first page"),
             );
             assert_eq!(first["metadata"]["candidate_count"], json!(3));
-            assert_eq!(first["metadata"]["passed_count"], json!(3));
-            assert_eq!(first["metadata"]["excluded_count"], json!(0));
-            assert_eq!(first["metadata"]["reconciled"], json!(true));
+            assert_eq!(first["metadata"]["issuer_count"], json!(3));
+            assert_eq!(first["metadata"]["excluded_security_count"], json!(0));
+            assert_eq!(
+                first["metadata"]["candidate_securities_reconciled"],
+                json!(true)
+            );
             assert_eq!(first["table"]["row_count"], json!(3));
             assert_eq!(first["table"]["page_count"], json!(2));
             assert_eq!(first["table"]["next_cursor"], json!(2));
@@ -2649,9 +2652,16 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                     .expect("results"),
             );
             assert_eq!(output["metadata"]["candidate_count"], json!(3));
-            assert_eq!(output["metadata"]["passed_count"], json!(1));
-            assert_eq!(output["metadata"]["excluded_count"], json!(2));
-            assert_eq!(output["metadata"]["reconciled"], json!(true));
+            assert_eq!(output["metadata"]["issuer_count"], json!(1));
+            assert_eq!(
+                output["metadata"]["financial_passing_security_count"],
+                json!(2)
+            );
+            assert_eq!(output["metadata"]["excluded_security_count"], json!(1));
+            assert_eq!(
+                output["metadata"]["candidate_securities_reconciled"],
+                json!(true)
+            );
             assert_eq!(output["table"]["row_count"], json!(1));
             assert_eq!(output["table"]["row_ids"], json!(["LIQADR.US"]));
             assert_eq!(
@@ -2664,17 +2674,14 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             );
             assert_eq!(
                 output["table"]["columns"]["issuer_key"]["values"],
-                json!(["lei:549300LIQUIDSET01"])
+                json!(["name:liquidissuer"])
             );
             assert_eq!(
                 output["table"]["columns"]["issuer_identity_provenance"]["values"],
                 json!(["normalized_name_fallback"])
             );
             assert!(output["exclusions"].as_array().is_some_and(|exclusions| {
-                exclusions.iter().any(|row| {
-                    row["symbol"] == json!("LIQ.US")
-                        && row["reason"] == json!("issuer_deduplicated")
-                }) && exclusions.iter().any(|row| {
+                exclusions.len() == 1 && exclusions.iter().any(|row| {
                     row["symbol"] == json!("ILL.US")
                         && row["reason"] == json!("below_liquidity_minimum")
                 })
@@ -2685,8 +2692,8 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 .filter(|path| path.starts_with("/eodhd/fundamentals/"))
                 .count();
             assert_eq!(
-                fundamental_calls, 2,
-                "illiquid rows must not fetch fundamentals"
+                fundamental_calls, 1,
+                "financial filtering and issuer grouping must precede one fundamentals request per issuer"
             );
             let history_calls = fixture
                 .requests()

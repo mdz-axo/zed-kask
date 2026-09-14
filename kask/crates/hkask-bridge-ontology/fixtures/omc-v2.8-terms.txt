@@ -15,6 +15,7 @@ omc:Participant
 omc:Capture
 omc:Asset
 omc:Task
+omc:Provenance
 omc:VersionInfo
 #
 # Notably NOT in official OMC v2.8 (do not use):

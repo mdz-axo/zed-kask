@@ -6,8 +6,6 @@
 //! not silently converted into a complete model.
 
 use crate::providers::CompanyProfile;
-use crate::types::ProjectionAssumptionOverrides;
-use serde::{Deserialize, Serialize};
 
 /// Sector classification source: FMP `company_profile` API, which returns
 /// GICS sector and industry classifications. Verified against COF, JPM, BAC,
@@ -784,43 +782,6 @@ impl HistoricalSnapshot {
         }
     }
 
-    /// AR as fraction of NWC (for distributing NWC across WC accounts).
-    pub fn ar_to_nwc_ratio(&self) -> f64 {
-        let ar = self
-            .accounts_receivable
-            .last()
-            .map(|(_, v)| *v)
-            .unwrap_or(0.0);
-        let nwc = self.latest_nwc().abs();
-        if nwc > 0.0 {
-            (ar / nwc).clamp(0.0, 1.0)
-        } else {
-            0.5
-        }
-    }
-
-    /// Inventory as fraction of NWC.
-    pub fn inventory_to_nwc_ratio(&self) -> f64 {
-        let inv = self.inventory.last().map(|(_, v)| *v).unwrap_or(0.0);
-        let nwc = self.latest_nwc().abs();
-        if nwc > 0.0 {
-            (inv / nwc).clamp(0.0, 1.0)
-        } else {
-            0.3
-        }
-    }
-
-    /// AP as fraction of NWC.
-    pub fn ap_to_nwc_ratio(&self) -> f64 {
-        let ap = self.accounts_payable.last().map(|(_, v)| *v).unwrap_or(0.0);
-        let nwc = self.latest_nwc().abs();
-        if nwc > 0.0 {
-            (ap / nwc).clamp(0.0, 1.0)
-        } else {
-            0.2
-        }
-    }
-
     /// Compute signal quality for all 11-line-item model inputs.
     /// Returns ModelInputQuality with CV, outliers, cyclicality, and confidence.
     pub fn signal_quality(&self) -> super::data_quality::ModelInputQuality {
@@ -903,7 +864,6 @@ pub(crate) use scenario_impact::{
 // ── Authoritative driver-based financial model
 mod driver_model;
 pub(crate) use driver_model::{
-    IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, IMPLIED_NET_MARGIN_HI, IMPLIED_NET_MARGIN_LO, NwcMethod,
-    ProjectedFinancialModel, ProjectedPeriod, ProjectionAssumptions, ProjectionError,
-    implied_growth, implied_net_margin_at_growth, project_financial_model,
+    IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, ProjectedFinancialModel, ProjectionAssumptions,
+    ProjectionError, implied_growth, implied_net_margin_at_growth, project_financial_model,
 };

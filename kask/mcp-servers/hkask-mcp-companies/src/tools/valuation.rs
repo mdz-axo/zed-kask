@@ -457,7 +457,6 @@ impl CompaniesServer {
                 types::ProjectionAssumptionOverrides::from(&req),
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-            let current_price = profile.price().unwrap_or(0.0);
             let model = financial_model::project_financial_model(&hist, &assumptions)
                 .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
@@ -1232,7 +1231,7 @@ impl CompaniesServer {
             );
             // FIX (H7): Use the forecast's own probability from the stored
             // snapshot, not a hardcoded 0.7. The forecast probability is the
-            // calibrated confidence from calibrate_forecast or driver_forecast.
+            // calibrated confidence from the stored forecast.
             // When no stored forecast is available, fall back to 0.7 (the
             // historical default) and warn so the operator knows the Brier
             // score is not measuring the forecast's own calibration.

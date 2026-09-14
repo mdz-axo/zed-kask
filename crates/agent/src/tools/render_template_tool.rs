@@ -108,6 +108,15 @@ impl AgentTool for RenderTemplateTool {
                 RenderTemplateToolOutput::Error { error: e }
             })?;
 
+            validate_contract_inputs(&content, &input.context).map_err(|error| {
+                RenderTemplateToolOutput::Error {
+                    error: format!(
+                        "Template contract validation failed for '{}': {error}",
+                        input.template_ref
+                    ),
+                }
+            })?;
+
             // Strip YAML frontmatter (--- delimited header).
             let template_body = strip_frontmatter(&content);
 
@@ -180,6 +189,91 @@ fn resolve_template_path(
     let canonical_joined = joined.canonicalize().ok()?;
     if canonical_joined.starts_with(&canonical_base) {
         Some(canonical_joined)
+    } else {
+        None
+    }
+}
+
+fn validate_contract_inputs(
+    content: &str,
+    context: &std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+) -> Result<(), String> {
+    let Some(header) = template_metadata_header(content) else {
+        return Ok(());
+    };
+    let metadata: serde_yaml::Value = serde_yaml::from_str(header)
+        .map_err(|error| format!("invalid template metadata: {error}"))?;
+    let Some(inputs) = metadata
+        .get("contract")
+        .and_then(|contract| contract.get("input"))
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return Ok(());
+    };
+
+    let mut missing = inputs
+        .iter()
+        .filter_map(|(name, specification)| {
+            let name = name.as_str()?;
+            (contract_input_is_required(specification) && !context.contains_key(name))
+                .then(|| name.to_string())
+        })
+        .collect::<Vec<_>>();
+    missing.sort();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "missing required input field(s): {}",
+            missing.join(", ")
+        ))
+    }
+}
+
+fn contract_input_is_required(specification: &serde_yaml::Value) -> bool {
+    if specification
+        .as_str()
+        .is_some_and(|value| value.split('|').any(|part| part.trim() == "null"))
+    {
+        return false;
+    }
+
+    let Some(mapping) = specification.as_mapping() else {
+        return true;
+    };
+    let key = |name: &str| serde_yaml::Value::String(name.to_string());
+    if mapping
+        .get(key("required"))
+        .and_then(serde_yaml::Value::as_bool)
+        == Some(false)
+        || mapping.contains_key(key("default"))
+    {
+        return false;
+    }
+
+    !mapping
+        .get(key("type"))
+        .and_then(serde_yaml::Value::as_str)
+        .is_some_and(|value| value.split('|').any(|part| part.trim() == "null"))
+}
+
+fn template_metadata_header(content: &str) -> Option<&str> {
+    let mut working = content.trim_start();
+    loop {
+        if !working.lines().next()?.trim().starts_with("{#") {
+            break;
+        }
+        let close_pos = working.find("#}")?;
+        working = working.get(close_pos + 2..)?.trim_start_matches('\n');
+    }
+
+    if let Some(metadata) = working.strip_prefix("[inference]\n") {
+        let end = metadata.find("\n---\n")?;
+        metadata.get(..end)
+    } else if let Some(metadata) = working.strip_prefix("---\n") {
+        let end = metadata.find("\n---\n")?;
+        metadata.get(..end)
     } else {
         None
     }
@@ -345,6 +439,34 @@ mod tests {
     }
 
     #[test]
+    fn contract_validation_rejects_missing_required_render_inputs() {
+        let input = "[inference]\ncontract:\n  input:\n    grill_ratings:\n      type: array\n    grill_verdict:\n      type: string\n---\n{{ grill_verdict }}";
+        let context = std::collections::HashMap::from([(
+            "verification".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!({
+                "verdict": "rewrite_needed",
+                "ratings": []
+            })),
+        )]);
+
+        let error = validate_contract_inputs(input, &context).expect_err("missing flat inputs");
+
+        assert!(error.contains("grill_ratings"), "got: {error}");
+        assert!(error.contains("grill_verdict"), "got: {error}");
+    }
+
+    #[test]
+    fn contract_validation_allows_optional_and_defaulted_inputs() {
+        let input = "[inference]\ncontract:\n  input:\n    required_value: string\n    nullable_value: string|null\n    defaulted_value:\n      type: string\n      default: fallback\n    explicitly_optional:\n      type: string\n      required: false\n---\n{{ required_value }}";
+        let context = std::collections::HashMap::from([(
+            "required_value".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!("present")),
+        )]);
+
+        validate_contract_inputs(input, &context).expect("optional inputs may be absent");
+    }
+
+    #[test]
     fn test_strip_frontmatter_handles_empty_body() {
         let input = "---\nfoo: bar\n---\n";
         let result = strip_frontmatter(input);
@@ -415,6 +537,45 @@ mod tests {
         let rendered = env.render_str(&result, &()).unwrap();
         assert!(rendered.contains("You are a kanban task management triage agent."));
         assert!(!rendered.contains("{#"));
+    }
+
+    #[test]
+    fn all_registry_template_contract_headers_parse() {
+        fn collect_templates(directory: &std::path::Path, templates: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_templates(&path, templates);
+                } else if path.extension().is_some_and(|extension| extension == "j2") {
+                    templates.push(path);
+                }
+            }
+        }
+
+        let base = std::path::PathBuf::from("kask/registry/templates");
+        if !base.is_dir() {
+            return;
+        }
+        let mut templates = Vec::new();
+        collect_templates(&base, &mut templates);
+        assert!(!templates.is_empty(), "registry template census is empty");
+
+        for path in templates {
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let Some(header) = template_metadata_header(&content) else {
+                continue;
+            };
+            serde_yaml::from_str::<serde_yaml::Value>(header).unwrap_or_else(|error| {
+                panic!(
+                    "failed to parse contract header in {}: {error}",
+                    path.display()
+                )
+            });
+        }
     }
 
     #[test]

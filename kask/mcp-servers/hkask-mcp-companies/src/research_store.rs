@@ -443,6 +443,7 @@ impl ResearchStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn update_screen_job(
         &self,
         id: &str,
@@ -714,23 +715,6 @@ impl ResearchStore {
         transaction
             .commit()
             .map_err(|e| format!("commit screen item completion: {e}"))?;
-        Ok(())
-    }
-
-    pub fn mark_pending_screen_items_unavailable(
-        &self,
-        id: &str,
-        reason: &str,
-    ) -> Result<(), PortfolioError> {
-        let pending = self.pending_screen_items(id)?;
-        for item in pending {
-            let row = serde_json::json!({
-                "issuer_key": item.issuer_key,
-                "data_quality_status": "unavailable",
-                "unavailable_reason": reason,
-            });
-            self.complete_screen_item(id, &item.issuer_key, "unavailable", &row, Some(reason))?;
-        }
         Ok(())
     }
 

@@ -56,12 +56,12 @@ const NAMED_DOMAIN_REGISTRIES: &[(&str, &[(&str, &str)])] = &[
 
 const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
     ("FIBO", fibo::ALL_TERMS),
+    ("OMC", omc::ALL_CONCEPTS),
     ("PKO", pko::ALL_TERMS),
     ("SEPIO", sepio::ALL_TERMS),
     ("GOLEM", golem::ALL_TERMS),
     ("SDMX", sdmx::ALL_CONCEPTS),
     ("ML-Schema", ml_schema::ALL_CONCEPTS),
-    ("OMC", omc::ALL_CONCEPTS),
     ("schema.org", schema_org::ALL_TERMS),
     ("RDF", rdf::ALL_TERMS),
 ];
@@ -214,6 +214,7 @@ mod tests {
                 "fibo-be-le-cb:Corporation",
             ),
             ("assertion", "domain_supplement", "SEPIO", sepio::ASSERTION),
+            ("Provenance", "domain_supplement", "OMC", "omc:Provenance"),
             ("net margin", "derived", "derived", "net_margin"),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),
@@ -223,6 +224,19 @@ mod tests {
             assert_eq!(resolved.namespace, namespace, "{term}: {resolved:?}");
             assert_eq!(resolved.concept, concept, "{term}: {resolved:?}");
         }
+    }
+
+    #[test]
+    fn omc_precedes_pko_within_domain_supplement_resolution() {
+        let omc = DOMAIN_REGISTRIES
+            .iter()
+            .position(|(namespace, _)| *namespace == "OMC")
+            .expect("OMC domain registry");
+        let pko = DOMAIN_REGISTRIES
+            .iter()
+            .position(|(namespace, _)| *namespace == "PKO")
+            .expect("PKO domain registry");
+        assert!(omc < pko, "media terms must try OMC before PKO");
     }
 
     #[test]

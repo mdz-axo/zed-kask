@@ -55,6 +55,9 @@ pub const ASSET: OmcConcept = "omc:Asset";
 /// A unit of production work — a workflow execution, a generation job.
 /// OMC: `omc:Task`.
 pub const TASK: OmcConcept = "omc:Task";
+/// The origin and creation account attached to a media asset.
+/// OMC: `omc:Provenance`, linked from `omc:Asset` by `omc:hasProvenance`.
+pub const PROVENANCE: OmcConcept = "omc:Provenance";
 /// A derived or modified form of a creative work — an upscale, transform,
 /// or remix output. OMC: `omc:VersionInfo` (a description of a version of
 /// an asset; OMC v2.8 publishes no `Version` class — versioning is modeled
@@ -71,6 +74,7 @@ pub const ALL_CONCEPTS: &[OmcConcept] = &[
     CAPTURE,
     ASSET,
     TASK,
+    PROVENANCE,
     VERSION_INFO,
 ];
 

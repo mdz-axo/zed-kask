@@ -9,12 +9,13 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+#[cfg(test)]
+use std::future::Future;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    future::Future,
+    collections::{BTreeMap, BTreeSet, HashMap},
     panic::AssertUnwindSafe,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const SCREEN_TEMPLATES: &[(&str, &str)] = &[
@@ -132,6 +133,42 @@ struct PreparedPassSet {
     financial_passing_security_count: usize,
     exclusions: Vec<Value>,
     fx_rates: HashMap<String, f64>,
+}
+
+pub(crate) fn resume_pending_jobs(server: &CompaniesServer) {
+    let jobs = match server.research.pending_screen_jobs() {
+        Ok(jobs) => jobs,
+        Err(error) => {
+            tracing::warn!("failed to load resumable screen jobs: {error}");
+            return;
+        }
+    };
+    for job in jobs {
+        let definition: ScreenDefinition = match serde_json::from_value(job.definition) {
+            Ok(definition) => definition,
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    "invalid resumable screen definition: {error}"
+                );
+                continue;
+            }
+        };
+        let verification = match verify_assertions(&definition) {
+            Ok(verification) => verification,
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    "resumable screen assertions failed: {error}"
+                );
+                continue;
+            }
+        };
+        let server = server.clone();
+        drop(tokio::spawn(async move {
+            calculate_job(server, job.id, definition, verification).await;
+        }));
+    }
 }
 
 pub(crate) async fn execute(
@@ -456,11 +493,18 @@ where
     let (status, result, error) = match outcome {
         Ok(Ok(result)) => ("completed", Some(result), None),
         Ok(Err(error)) => ("failed", None, Some(error.to_string())),
-        Err(_) => (
-            "failed",
-            None,
-            Some("screen calculation panicked".to_string()),
-        ),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic payload".to_string());
+            (
+                "failed",
+                None,
+                Some(format!("screen calculation panicked: {message}")),
+            )
+        }
     };
     if let Err(store_error) =
         store.update_screen_job(&job_id, status, result.as_ref(), error.as_deref())
@@ -505,6 +549,15 @@ fn build_calculation_result(
 ) -> Value {
     let row_count = calculation.rows.len();
     let excluded_count = calculation.exclusions.len();
+    let financial_passing_security_count = calculation
+        .rows
+        .iter()
+        .map(|row| {
+            row.get("eligible_lines")
+                .and_then(Value::as_array)
+                .map_or(1, Vec::len)
+        })
+        .sum::<usize>();
     let analysis_counts = calculation
         .rows
         .iter()
@@ -523,7 +576,9 @@ fn build_calculation_result(
         "metadata": {
             "candidate_count": calculation.candidate_count,
             "issuer_count": row_count,
+            "financial_passing_security_count": financial_passing_security_count,
             "excluded_security_count": excluded_count,
+            "candidate_securities_reconciled": calculation.candidate_count == financial_passing_security_count + excluded_count,
             "analysis_state_counts": analysis_counts,
             "issuer_states_reconciled": analysis_counts.values().sum::<usize>() == row_count,
             "source": "EODHD Screener API",
@@ -860,8 +915,8 @@ fn finalize_issuer_group(securities: Vec<MaterializedSecurity>) -> IssuerGroup {
     };
     IssuerGroup {
         issuer_key,
-        issuer_key_provenance,
-        issuer_identity_provenance,
+        issuer_key_provenance: issuer_key_provenance.to_string(),
+        issuer_identity_provenance: issuer_identity_provenance.to_string(),
         securities,
     }
 }
@@ -940,14 +995,6 @@ async fn analyze_issuer_group(
         0,
         "EODHD as-of close; single fundamentals payload",
     );
-    let actionable = group
-        .iter()
-        .max_by(|left, right| {
-            left.average_daily_dollar_volume_usd
-                .partial_cmp(&right.average_daily_dollar_volume_usd)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .ok_or_else(|| "issuer group is empty".to_string())?;
     let mut caps: Vec<f64> = group
         .iter()
         .map(|security| security.market_capitalization_usd)
@@ -1016,8 +1063,8 @@ async fn analyze_issuer_group(
         "issuer_key_provenance": issuer_group.issuer_key_provenance,
         "issuer_identity_provenance": issuer_group.issuer_identity_provenance,
         "primary_ticker": primary,
-        "analysis_symbol": primary,
-        "analysis_line_reason": "EODHD PrimaryTicker supplies the issuer fundamentals and price-implied analysis",
+        "analysis_symbol": analysis_symbol,
+        "analysis_line_reason": "highest-liquidity eligible line supplies one issuer-level fundamentals request and the price-implied analysis",
         "actionable_symbol": actionable.symbol,
         "actionable_venue": symbol_venue(&actionable.symbol),
         "actionable_line_reason": "highest normalized 200-day average daily dollar volume among eligible lines",
@@ -1047,19 +1094,189 @@ async fn analyze_issuer_group(
     }))
 }
 
+fn unavailable_issuer_row(group: &IssuerGroup, reason: &str) -> Value {
+    let actionable = group.securities.iter().max_by(|left, right| {
+        left.average_daily_dollar_volume_usd
+            .partial_cmp(&right.average_daily_dollar_volume_usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    json!({
+        "company": actionable.map(|security| security.name.as_str()),
+        "issuer_key": group.issuer_key,
+        "issuer_key_provenance": group.issuer_key_provenance,
+        "issuer_identity_provenance": group.issuer_identity_provenance,
+        "actionable_symbol": actionable.map(|security| security.symbol.as_str()),
+        "eligible_symbols": group.securities.iter().map(|security| security.symbol.clone()).collect::<Vec<_>>(),
+        "eligible_lines": group.securities.iter().map(|security| json!({
+            "symbol": security.symbol,
+            "venue": symbol_venue(&security.symbol),
+            "market_capitalization_usd": security.market_capitalization_usd,
+            "average_daily_dollar_volume_usd": security.average_daily_dollar_volume_usd,
+            "listing_currency_symbol": security.currency_symbol,
+        })).collect::<Vec<_>>(),
+        "gap_data_status": "unavailable",
+        "data_quality_status": "unavailable",
+        "unavailable_reason": reason,
+    })
+}
+
+struct RequestRateLimiter {
+    next: tokio::sync::Mutex<tokio::time::Instant>,
+}
+
+impl RequestRateLimiter {
+    fn new() -> Self {
+        Self {
+            next: tokio::sync::Mutex::new(tokio::time::Instant::now()),
+        }
+    }
+
+    async fn acquire(&self) {
+        let scheduled = {
+            let mut next = self.next.lock().await;
+            let now = tokio::time::Instant::now();
+            let scheduled = (*next).max(now);
+            *next = scheduled + Duration::from_millis(63);
+            scheduled
+        };
+        tokio::time::sleep_until(scheduled).await;
+    }
+}
+
+async fn enrich_pending_issuers(
+    server: &CompaniesServer,
+    job_id: &str,
+) -> Result<(), McpToolError> {
+    let pending = server
+        .research
+        .pending_screen_items(job_id)
+        .map_err(crate::map_portfolio_error)?;
+    let job = load_job(&server.research, job_id)?;
+    let fx_rates: HashMap<String, f64> = serde_json::from_value(
+        job.checkpoint
+            .as_ref()
+            .and_then(|value| value.get("fx_rates"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
+    .map_err(|error| McpToolError::internal(format!("invalid FX checkpoint: {error}")))?;
+    let limiter = Arc::new(RequestRateLimiter::new());
+    let work = futures::stream::iter(pending.into_iter().map(|item| {
+        let client = server.client.clone();
+        let api_key = server.eodhd_api_key.clone();
+        let store = server.research.clone();
+        let fx_rates = fx_rates.clone();
+        let limiter = limiter.clone();
+        let job_id = job_id.to_string();
+        async move {
+            if store.screen_cancel_requested(&job_id)? {
+                return Ok::<(), crate::research_store::PortfolioError>(());
+            }
+            limiter.acquire().await;
+            if store.screen_cancel_requested(&job_id)? {
+                return Ok(());
+            }
+            let group: IssuerGroup =
+                serde_json::from_value(item.payload.clone()).map_err(|error| {
+                    crate::research_store::PortfolioError::from(format!(
+                        "decode issuer checkpoint: {error}"
+                    ))
+                })?;
+            let (row, error) =
+                match analyze_issuer_group(&client, &api_key, &fx_rates, &group).await {
+                    Ok(row) => (row, None),
+                    Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
+                };
+            let classification = row
+                .get("data_quality_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable");
+            store.complete_screen_item(
+                &job_id,
+                &item.issuer_key,
+                classification,
+                &row,
+                error.as_deref(),
+            )
+        }
+    }))
+    .buffer_unordered(64)
+    .collect::<Vec<_>>();
+    tokio::pin!(work);
+    let deadline = tokio::time::sleep(Duration::from_secs(110));
+    tokio::pin!(deadline);
+    let mut cancellation_poll = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            outcomes = &mut work => {
+                for outcome in outcomes { outcome.map_err(crate::map_portfolio_error)?; }
+                return Ok(());
+            }
+            _ = cancellation_poll.tick() => {
+                if server.research.screen_cancel_requested(job_id).map_err(crate::map_portfolio_error)? {
+                    return Ok(());
+                }
+            }
+            _ = &mut deadline => {
+                for item in server.research.pending_screen_items(job_id).map_err(crate::map_portfolio_error)? {
+                    let group: IssuerGroup = serde_json::from_value(item.payload)
+                        .map_err(|error| McpToolError::internal(format!("decode timed-out issuer checkpoint: {error}")))?;
+                    let row = unavailable_issuer_row(&group, "enrichment deadline exceeded");
+                    server.research.complete_screen_item(
+                        job_id, &item.issuer_key, "unavailable", &row, Some("enrichment deadline exceeded"),
+                    ).map_err(crate::map_portfolio_error)?;
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
 fn screen_exclusion(symbol: &str, reason: &str, detail: Option<&str>) -> Value {
     json!({"symbol":symbol,"reason":reason,"detail":detail})
 }
 
 async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpToolError> {
     let job = load_job(&server.research, job_id)?;
+    if job.status == "queued" && job.stage != "queued" {
+        let definition: ScreenDefinition =
+            serde_json::from_value(job.definition.clone()).map_err(|error| {
+                McpToolError::internal(format!("invalid persisted screen definition: {error}"))
+            })?;
+        let verification = verify_assertions(&definition)?;
+        let server = server.clone();
+        let job_id = job_id.to_string();
+        drop(tokio::spawn(async move {
+            calculate_job(server, job_id, definition, verification).await;
+        }));
+    }
     Ok(json!({
         "job_id": job.id,
         "status": job.status,
+        "stage": job.stage,
+        "processed": job.processed,
+        "total": job.total,
+        "complete_count": job.complete_count,
+        "partial_count": job.partial_count,
+        "unavailable_count": job.unavailable_count,
+        "model_sensitive_count": job.model_sensitive_count,
+        "heartbeat_at": job.heartbeat_at,
+        "cancel_requested": job.cancel_requested,
+        "artifact_path": job.artifact_path,
         "error": job.error,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }))
+}
+
+async fn cancel(server: &CompaniesServer, job_id: &str) -> Result<Value, McpToolError> {
+    let accepted = server
+        .research
+        .request_screen_cancel(job_id)
+        .map_err(crate::map_portfolio_error)?;
+    Ok(
+        json!({"job_id": job_id, "status": if accepted { "cancelling" } else { "unchanged" }, "accepted": accepted}),
+    )
 }
 
 async fn results(

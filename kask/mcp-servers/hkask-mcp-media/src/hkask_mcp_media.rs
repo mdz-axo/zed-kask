@@ -1599,7 +1599,7 @@ mod tool_behavior_tests {
             );
             assert_eq!(hint["src"], content["output"]);
             assert_eq!(hint["gallery_asset_id"], asset_id);
-            assert_eq!(hint["ontology"], "omc:Sequence");
+            assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::SEQUENCE);
             assert_eq!(hint["kind"], "video");
             assert_eq!(hint["provenance"]["tool"], "video_clip");
             let effective_params = serde_json::json!({
@@ -1821,7 +1821,7 @@ mod tool_behavior_tests {
         assert!(output_path.is_file(), "durable publication is missing");
         assert_eq!(hint["src"], content["output"]);
         assert_eq!(hint["gallery_asset_id"], asset_id);
-        assert_eq!(hint["ontology"], "omc:Sequence");
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::SEQUENCE);
         assert_eq!(hint["kind"], expected_media_type);
         assert_eq!(hint["provenance"]["tool"], expected_op);
         assert_eq!(

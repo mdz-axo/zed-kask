@@ -107,14 +107,7 @@ pub(crate) enum ProjectionError {
         minimum: f64,
         maximum: f64,
     },
-    #[error("{field} must be finite")]
-    NotFinite { field: &'static str },
-    #[error("{field} must be within {min}..={max}")]
-    OutOfRange {
-        field: &'static str,
-        min: f64,
-        max: f64,
-    },
+
     #[error("{field} must be finite and within {min}..={max}")]
     NotFiniteOrOutOfRange {
         field: &'static str,
