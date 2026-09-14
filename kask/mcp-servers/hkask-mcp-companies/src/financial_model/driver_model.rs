@@ -888,6 +888,7 @@ mod tests {
             capex_da_ratio: Some(1.25),
             nwc_method: NwcMethod::ChangePercentOfRevenue,
             nwc_to_revenue: 0.02,
+            investor_target_return: 0.10,
             discount_rate: 0.10,
             terminal_growth: 0.025,
             total_years: 5,

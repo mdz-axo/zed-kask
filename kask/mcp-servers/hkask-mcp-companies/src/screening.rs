@@ -2291,7 +2291,7 @@ mod tests {
         assert_eq!(schema_fields, contract_fields);
         assert_eq!(
             server_fields,
-            std::collections::BTreeSet::from(["as_of".to_string()])
+            std::collections::BTreeSet::from(["as_of".to_string(), "target_return".to_string(),])
         );
     }
 
