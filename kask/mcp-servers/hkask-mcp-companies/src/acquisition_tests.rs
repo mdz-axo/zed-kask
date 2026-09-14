@@ -3385,3 +3385,47 @@ async fn saved_screen_cancel_is_bounded_and_durable() {
         panic!("cancelled state was not persisted");
     }).await;
 }
+
+/// AnalystPrep CFA worked example: NI 50,000, revenue 285,000, average assets
+/// 1,000,000, and average equity 600,000 produce NPM 17.54%, turnover 0.285,
+/// multiplier 1.667, and ROE 8.33%.
+/// Source: https://analystprep.com/cfa-level-1-exam/financial-reporting-and-analysis/dupont-analysis-of-return-on-equity/
+#[test]
+fn dupont_reproduces_published_cfa_worked_example() {
+    let snapshot = financial_model::HistoricalSnapshot::from_api_json(
+        &[json!({"calendarYear":"2025","revenue":285000.0,"netIncome":50000.0})],
+        &[
+            json!({"calendarYear":"2025","totalAssets":1000000.0,"totalStockholdersEquity":600000.0}),
+            json!({"calendarYear":"2024","totalAssets":1000000.0,"totalStockholdersEquity":600000.0}),
+        ],
+        &[json!({"calendarYear":"2025","dividendsPaid":0.0})],
+        &[],
+        &json!({}),
+    );
+    let result = snapshot.dupont().expect("published DuPont case");
+    assert!((result.net_profit_margin - 0.1754385965).abs() < 1e-9);
+    assert!((result.asset_turnover - 0.285).abs() < 1e-12);
+    assert!((result.equity_multiplier - 1.6666666667).abs() < 1e-9);
+    assert!((result.roe - 0.0833333333).abs() < 1e-9);
+}
+
+/// Wall Street Prep Higgins SGR worked example: NI $50m, dividends $25m,
+/// average equity $200m => retention 50%, ROE 25%, SGR 12.5%.
+/// Source: https://www.wallstreetprep.com/knowledge/sustainable-growth-rate/
+#[test]
+fn sustainable_growth_reproduces_published_worked_example() {
+    let snapshot = financial_model::HistoricalSnapshot::from_api_json(
+        &[json!({"calendarYear":"2025","revenue":100.0,"netIncome":50.0})],
+        &[
+            json!({"calendarYear":"2025","totalAssets":300.0,"totalStockholdersEquity":200.0}),
+            json!({"calendarYear":"2024","totalAssets":300.0,"totalStockholdersEquity":200.0}),
+        ],
+        &[json!({"calendarYear":"2025","dividendsPaid":-25.0})],
+        &[],
+        &json!({}),
+    );
+    let result = snapshot.dupont().expect("published Higgins case");
+    assert!((result.retention - 0.50).abs() < 1e-12);
+    assert!((result.roe - 0.25).abs() < 1e-12);
+    assert!((result.sustainable_growth_rate - 0.125).abs() < 1e-12);
+}

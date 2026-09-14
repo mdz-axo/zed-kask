@@ -21,6 +21,8 @@ pub(crate) enum NwcMethod {
     Days,
     #[default]
     PercentOfRevenue,
+    /// Annual change in NWC equals the configured percentage of revenue.
+    ChangePercentOfRevenue,
     Explicit,
 }
 
@@ -297,7 +299,7 @@ impl ProjectionAssumptions {
                 });
             }
         }
-        if self.total_years < 2 || self.stage1_years == 0 || self.stage1_years >= self.total_years {
+        if self.total_years < 2 || self.stage1_years == 0 || self.stage1_years > self.total_years {
             return Err(ProjectionError::InvalidHorizon);
         }
         if self.discount_rate <= self.terminal_growth || self.cost_of_equity <= self.terminal_growth
@@ -404,6 +406,7 @@ fn working_capital(
     assumptions: &ProjectionAssumptions,
     revenue: f64,
     cogs: f64,
+    previous_nwc: f64,
 ) -> (f64, f64, f64, f64) {
     match assumptions.nwc_method {
         NwcMethod::Days => {
@@ -412,9 +415,11 @@ fn working_capital(
             let ap = cogs * assumptions.dpo_days / 365.0;
             (ar, inventory, ap, ar + inventory - ap)
         }
-        NwcMethod::PercentOfRevenue | NwcMethod::Explicit => {
+        NwcMethod::PercentOfRevenue | NwcMethod::ChangePercentOfRevenue | NwcMethod::Explicit => {
             let target = if assumptions.nwc_method == NwcMethod::Explicit {
                 assumptions.nwc_explicit
+            } else if assumptions.nwc_method == NwcMethod::ChangePercentOfRevenue {
+                previous_nwc + revenue * assumptions.nwc_to_revenue + assumptions.nwc_explicit
             } else {
                 revenue * assumptions.nwc_to_revenue + assumptions.nwc_explicit
             };
@@ -475,7 +480,8 @@ fn project_industrial(
         let nopat = ebit * (1.0 - assumptions.tax_rate);
         let dividends = net_income.max(0.0) * assumptions.dividend_payout_ratio;
         let equity = previous_equity + net_income - dividends + assumptions.equity_issuance;
-        let (ar, inventory, ap, nwc) = working_capital(hist, assumptions, revenue, cogs);
+        let (ar, inventory, ap, nwc) =
+            working_capital(hist, assumptions, revenue, cogs, previous_nwc);
         let change_in_nwc = nwc - previous_nwc;
         let ppe_net = previous_ppe + capex - da;
         let cfo = net_income + da - change_in_nwc;
@@ -486,7 +492,7 @@ fn project_industrial(
         let total_liabilities_equity = ap + debt + equity + starting_other_liabilities;
         let balance_reconciliation = total_assets - total_liabilities_equity;
         let free_cash_flow = nopat + da - capex - change_in_nwc;
-        let discount_factor = 1.0 / (1.0 + assumptions.discount_rate).powi((period + 1) as i32);
+        let discount_factor = 1.0 / (1.0 + assumptions.discount_rate).powf(period as f64 + 0.5);
         let present_value = free_cash_flow * discount_factor;
         periods.push(ProjectedPeriod {
             period,
@@ -547,7 +553,7 @@ fn project_financial(
         let equity = previous_equity + net_income - dividends + assumptions.equity_issuance;
         let residual_income =
             (assumptions.financial_roe - assumptions.cost_of_equity) * previous_equity;
-        let discount_factor = 1.0 / (1.0 + assumptions.cost_of_equity).powi((period + 1) as i32);
+        let discount_factor = 1.0 / (1.0 + assumptions.cost_of_equity).powf(period as f64 + 0.5);
         periods.push(ProjectedPeriod {
             period,
             year: (period + 1) as f64,
@@ -592,7 +598,7 @@ fn project_financial(
     let terminal_value = last_residual * (1.0 + assumptions.terminal_growth)
         / (assumptions.cost_of_equity - assumptions.terminal_growth);
     let terminal_pv = terminal_value
-        / (1.0 + assumptions.cost_of_equity).powi(i32::from(assumptions.total_years));
+        / (1.0 + assumptions.cost_of_equity).powf(f64::from(assumptions.total_years) - 0.5);
     let equity_value = opening_equity
         + periods
             .iter()
@@ -623,8 +629,8 @@ fn finish_model(
         .unwrap_or(0.0);
     let terminal_value = last_fcf * (1.0 + assumptions.terminal_growth)
         / (assumptions.discount_rate - assumptions.terminal_growth);
-    let terminal_pv =
-        terminal_value / (1.0 + assumptions.discount_rate).powi(i32::from(assumptions.total_years));
+    let terminal_pv = terminal_value
+        / (1.0 + assumptions.discount_rate).powf(f64::from(assumptions.total_years) - 0.5);
     let enterprise_value = periods
         .iter()
         .map(|period| period.present_value)
@@ -773,6 +779,70 @@ mod tests {
         assert!((first.free_cash_flow - 130.0).abs() < 1e-10);
         // Gordon value at g=0 is FCF/r = 130/0.10 = 1300.
         assert!((model.terminal_value - 1300.0).abs() < 1e-8);
+    }
+
+    /// Wall Street Prep's published reverse-DCF case: $100m revenue, 40% EBIT
+    /// margin, 21% tax, capex at 4% of revenue, D&A at 80% of capex, annual
+    /// change in NWC at 2% of revenue, 10% WACC, 2.5% terminal growth, $20m
+    /// net debt, 10m shares, and a $60 price imply 12.4% five-year growth.
+    /// Source: https://www.wallstreetprep.com/knowledge/reverse-dcf-model/
+    #[test]
+    fn reverse_dcf_reproduces_wall_street_prep_worked_case() {
+        let mut history = worked_history();
+        for series in [
+            &mut history.revenue,
+            &mut history.cogs,
+            &mut history.da,
+            &mut history.capex,
+            &mut history.sga,
+            &mut history.operating_income,
+            &mut history.current_assets,
+            &mut history.current_liabilities,
+            &mut history.cash,
+            &mut history.accounts_receivable,
+            &mut history.inventory,
+            &mut history.accounts_payable,
+            &mut history.total_equity,
+            &mut history.total_assets,
+            &mut history.ppe_net,
+            &mut history.interest_expense,
+            &mut history.dividends_paid,
+            &mut history.net_income,
+        ] {
+            for (_, value) in series {
+                *value /= 10.0;
+            }
+        }
+        history.shares_outstanding = 10.0;
+        history.long_term_debt = vec![("2024".to_string(), 20.0), ("2025".to_string(), 20.0)];
+        let assumptions = ProjectionAssumptions {
+            revenue_growth: 0.124,
+            gross_margin: 0.432,
+            sga_to_revenue: 0.0,
+            other_operating_expense_to_revenue: 0.0,
+            da_to_revenue: 0.032,
+            tax_rate: 0.21,
+            capex_to_revenue: 0.04,
+            capex_da_ratio: Some(1.25),
+            nwc_method: NwcMethod::ChangePercentOfRevenue,
+            nwc_to_revenue: 0.02,
+            discount_rate: 0.10,
+            terminal_growth: 0.025,
+            total_years: 5,
+            stage1_years: 5,
+            ..ProjectionAssumptions::default()
+        };
+        let model = project_financial_model(&history, &assumptions).expect("published case model");
+        assert!(
+            (model.intrinsic_per_share - 60.0).abs() < 1.0,
+            "intrinsic per share was {}",
+            model.intrinsic_per_share
+        );
+        let implied = implied_growth(&history, &assumptions, 60.0).expect("published case solve");
+        assert!(
+            (implied - 0.124).abs() < 0.005,
+            "implied growth was {implied}"
+        );
     }
 
     #[test]
