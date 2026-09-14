@@ -15,6 +15,184 @@ use crate::transcript::TimedWord;
 use crate::transcript_layers::TranscriptLayer;
 use crate::transcript_select::{SelectionError, WordRange, word_range_to_time_range};
 use crate::transcript_store::LayerRecord;
+use crate::{MediaError, map_media_error};
+use hkask_mcp_server::server::McpToolError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TranscriptExportFormat {
+    Srt,
+    HighlightsCsv,
+    CorpusText,
+}
+
+impl TranscriptExportFormat {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "srt" => Some(Self::Srt),
+            "highlights_csv" => Some(Self::HighlightsCsv),
+            "corpus_text" => Some(Self::CorpusText),
+            _ => None,
+        }
+    }
+
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::Srt => "srt",
+            Self::HighlightsCsv => "csv",
+            Self::CorpusText => "txt",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Srt => "srt",
+            Self::HighlightsCsv => "highlights_csv",
+            Self::CorpusText => "corpus_text",
+        }
+    }
+}
+
+struct DocumentPublicationCleanup {
+    paths: Vec<std::path::PathBuf>,
+    committed: bool,
+}
+
+impl DocumentPublicationCleanup {
+    fn new(paths: Vec<std::path::PathBuf>) -> Self {
+        Self {
+            paths,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for DocumentPublicationCleanup {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        for path in &self.paths {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => tracing::warn!(
+                    target: "hkask.mcp.media",
+                    path = %path.display(),
+                    %error,
+                    "Failed to roll back transcript document publication"
+                ),
+            }
+        }
+    }
+}
+
+fn document_io_error(action: &str, path: &std::path::Path, error: std::io::Error) -> McpToolError {
+    map_media_error(MediaError::AssetPersistence(format!(
+        "{action} {}: {error}",
+        path.display()
+    )))
+}
+
+/// Publish a transcript projection and its provenance metadata as one durable document unit.
+pub(crate) fn publish_document<T: serde::Serialize + ?Sized>(
+    transcript_id: &str,
+    format: TranscriptExportFormat,
+    content: &[u8],
+    effective_params: &T,
+) -> Result<serde_json::Value, McpToolError> {
+    let dir = crate::assets::generated_assets_dir().join("transcript-exports");
+    publish_document_in_dir(
+        &dir,
+        &uuid::Uuid::new_v4().to_string(),
+        transcript_id,
+        format,
+        content,
+        effective_params,
+    )
+}
+
+fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
+    dir: &std::path::Path,
+    export_id: &str,
+    transcript_id: &str,
+    format: TranscriptExportFormat,
+    content: &[u8],
+    effective_params: &T,
+) -> Result<serde_json::Value, McpToolError> {
+    std::fs::create_dir_all(dir).map_err(|error| document_io_error("create", dir, error))?;
+    let output = dir.join(format!("{export_id}.{}", format.extension()));
+    let metadata_path = dir.join(format!("{export_id}.json"));
+    let staged_output = dir.join(format!(".{export_id}.{}.staged", format.extension()));
+    let staged_metadata = dir.join(format!(".{export_id}.json.staged"));
+    let mut cleanup = DocumentPublicationCleanup::new(vec![
+        staged_output.clone(),
+        staged_metadata.clone(),
+        output.clone(),
+        metadata_path.clone(),
+    ]);
+
+    let mut effective_value = serde_json::to_value(effective_params).map_err(|error| {
+        map_media_error(MediaError::AssetPersistence(format!(
+            "serialize educt_export effective parameters: {error}"
+        )))
+    })?;
+    let Some(effective_fields) = effective_value.as_object_mut() else {
+        return Err(map_media_error(MediaError::AssetPersistence(
+            "serialize educt_export effective parameters: expected an object".to_string(),
+        )));
+    };
+    effective_fields.insert(
+        "format".to_string(),
+        serde_json::Value::String(format.label().to_string()),
+    );
+    let provenance =
+        crate::media_block::Provenance::for_tool("educt_export", effective_value.clone(), None);
+    let metadata = serde_json::json!({
+        "export_id": export_id,
+        "transcript_id": transcript_id,
+        "format": format,
+        "output": output,
+        "created_at": hkask_types::time::now_rfc3339(),
+        "provenance": provenance,
+        "effective_params": effective_value.clone(),
+    });
+    let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| {
+        map_media_error(MediaError::AssetPersistence(format!(
+            "serialize transcript export metadata: {error}"
+        )))
+    })?;
+
+    std::fs::write(&staged_output, content)
+        .map_err(|error| document_io_error("stage", &staged_output, error))?;
+    std::fs::write(&staged_metadata, metadata_bytes)
+        .map_err(|error| document_io_error("stage", &staged_metadata, error))?;
+    std::fs::rename(&staged_output, &output)
+        .map_err(|error| document_io_error("publish", &output, error))?;
+    std::fs::rename(&staged_metadata, &metadata_path)
+        .map_err(|error| document_io_error("publish", &metadata_path, error))?;
+
+    let mut result = metadata;
+    let Some(result_object) = result.as_object_mut() else {
+        return Err(map_media_error(MediaError::AssetPersistence(
+            "compose transcript export result: metadata must be an object".to_string(),
+        )));
+    };
+    if let Some(effective_fields) = effective_value.as_object() {
+        result_object.extend(effective_fields.clone());
+    }
+    result_object.insert(
+        "metadata_path".to_string(),
+        serde_json::json!(metadata_path),
+    );
+    result_object.insert("status".to_string(), serde_json::json!("exported"));
+    cleanup.commit();
+    Ok(result)
+}
 
 /// Maximum words per SRT cue — sentence punctuation splits first; the cap
 /// bounds unpunctuated runs.
@@ -199,6 +377,41 @@ mod tests {
         assert!(csv.contains("\"key, \"\"argument\"\"\""));
         // The time range is the algebra's mapping of words [0,1].
         assert!(csv.contains("layer-1,test-model,0,1,0,1500"));
+    }
+
+    #[test]
+    fn document_metadata_failure_rolls_back_published_content_and_staging()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let export_id = "forced-metadata-failure";
+        let metadata_path = dir.path().join(format!("{export_id}.json"));
+        std::fs::create_dir(&metadata_path)?;
+        let error = publish_document_in_dir(
+            dir.path(),
+            export_id,
+            "transcript-1",
+            TranscriptExportFormat::Srt,
+            b"caption",
+            &serde_json::json!({"cues": 1}),
+        )
+        .expect_err("metadata promotion must fail");
+
+        assert!(
+            error.to_string().contains("publish") && error.to_string().contains(".json"),
+            "filesystem publication cause was lost: {error}"
+        );
+        assert!(!dir.path().join(format!("{export_id}.srt")).exists());
+        assert!(!dir.path().join(format!(".{export_id}.srt.staged")).exists());
+        assert!(
+            !dir.path()
+                .join(format!(".{export_id}.json.staged"))
+                .exists()
+        );
+        assert!(
+            metadata_path.is_dir(),
+            "pre-existing failure fixture was removed"
+        );
+        Ok(())
     }
 
     #[test]

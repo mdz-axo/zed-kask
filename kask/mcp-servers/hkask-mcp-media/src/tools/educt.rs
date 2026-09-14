@@ -24,6 +24,87 @@ use crate::types::{
 };
 use crate::*;
 
+#[derive(serde::Serialize)]
+struct EdlRenderEffectiveParams<'a> {
+    transcript_id: &'a str,
+    edl_layer_id: &'a str,
+    source: &'a str,
+    clip_plan: &'a [(f64, f64)],
+    clips: usize,
+}
+
+#[derive(serde::Serialize)]
+struct SrtExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    cues: usize,
+}
+
+#[derive(serde::Serialize)]
+struct HighlightsExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    layer_ids: &'a [String],
+    rows: usize,
+}
+
+#[derive(serde::Serialize)]
+struct CorpusExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    words: usize,
+    word_timings: bool,
+    composition: &'static str,
+}
+
+struct EdlRenderIntermediates {
+    paths: Vec<std::path::PathBuf>,
+}
+
+impl EdlRenderIntermediates {
+    fn new() -> Self {
+        Self { paths: Vec::new() }
+    }
+
+    fn track(&mut self, path: std::path::PathBuf) {
+        self.paths.push(path);
+    }
+
+    fn cleanup(&mut self) -> Result<(), MediaError> {
+        let mut first_error = None;
+        let mut remaining = Vec::new();
+        for path in std::mem::take(&mut self.paths) {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(MediaError::Io(format!(
+                            "delete EDL render intermediate {}: {error}",
+                            path.display()
+                        )));
+                    }
+                    remaining.push(path);
+                }
+            }
+        }
+        self.paths = remaining;
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for EdlRenderIntermediates {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                %error,
+                "Failed to clean up EDL render intermediates"
+            );
+        }
+    }
+}
+
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
 /// internal): a missing transcript is NotFound; a validation failure is
 /// InvalidArgument carrying the named invariant; a DB failure is Internal.
@@ -698,6 +779,7 @@ impl MediaServer {
         }): Parameters<EductRenderEdlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_render_edl", async {
+            let gallery = self.capture_required_gallery()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -755,7 +837,8 @@ impl MediaServer {
             self.require_ffmpeg()?;
             let media_path = bundle.audio_path.clone();
             let audio = is_audio_path(&media_path);
-            let mut clip_paths: Vec<String> = Vec::with_capacity(plan_secs.len());
+            let mut intermediates = EdlRenderIntermediates::new();
+            let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(plan_secs.len());
             for (start_sec, end_sec) in &plan_secs {
                 let clipped = if audio {
                     self.ffmpeg
@@ -767,44 +850,53 @@ impl MediaServer {
                         .await
                 }
                 .map_err(map_media_error)?;
-                clip_paths.push(clipped.display().to_string());
+                intermediates.track(clipped.clone());
+                clip_paths.push(clipped);
             }
             let output = if clip_paths.len() == 1 {
-                std::path::PathBuf::from(clip_paths[0].clone())
-            } else if audio {
-                self.ffmpeg
-                    .audio_concat(&clip_paths)
-                    .await
-                    .map_err(map_media_error)?
+                clip_paths.first().cloned().ok_or_else(|| {
+                    McpToolError::internal(
+                        // rr0044-ok: non-empty-plan invariant violation
+                        "EDL render produced no clip after a non-empty plan",
+                    )
+                })?
             } else {
-                self.ffmpeg
-                    .concat(&clip_paths)
-                    .await
-                    .map_err(map_media_error)?
+                let clip_sources = clip_paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                if audio {
+                    self.ffmpeg
+                        .audio_concat(&clip_sources)
+                        .await
+                        .map_err(map_media_error)?
+                } else {
+                    self.ffmpeg
+                        .concat(&clip_sources)
+                        .await
+                        .map_err(map_media_error)?
+                }
             };
-
-            let result = serde_json::json!({
-                "status": "rendered",
-                "source": media_path,
-                "clip_plan": plan_secs,
-                "clips": clip_paths.len(),
-                "output": output.display().to_string(),
-                "edl_layer": {
-                    "id": record.id,
-                    "provenance": record.layer.provenance(),
-                },
-            });
-            let args = serde_json::json!({
-                "transcript_id": transcript_id,
-                "layer_id": record.id,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            let effective_params = EdlRenderEffectiveParams {
+                transcript_id: &transcript_id,
+                edl_layer_id: &record.id,
+                source: &media_path,
+                clip_plan: &plan_secs,
+                clips: clip_paths.len(),
+            };
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
                 "educt_render_edl",
-                if audio { "audio" } else { "video" },
-                args,
-                None,
-            ))
+                "rendered",
+                if audio {
+                    crate::assets::LocalMediaFormat::Wav
+                } else {
+                    crate::assets::LocalMediaFormat::Mp4
+                },
+                &effective_params,
+            )
         })
         .await
     }
@@ -828,9 +920,15 @@ impl MediaServer {
                     "transcript {transcript_id} not found"
                 )));
             };
-            let dir = crate::assets::generated_assets_dir();
-            match format.as_str() {
-                "srt" => {
+            let export_format = crate::transcript_export::TranscriptExportFormat::parse(&format)
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "format must be \"srt\", \"highlights_csv\", or \"corpus_text\", got \
+                         \"{format}\""
+                    ))
+                })?;
+            match export_format {
+                crate::transcript_export::TranscriptExportFormat::Srt => {
                     if !summary.has_word_timings {
                         return Err(McpToolError::invalid_argument(
                             "transcript has no word-level timings; SRT cues cannot anchor \
@@ -840,19 +938,18 @@ impl MediaServer {
                     let srt = crate::transcript_export::srt_from_words(&bundle.words).map_err(
                         |error| McpToolError::invalid_argument(format!("SRT export: {error}")),
                     )?;
-                    let cues = srt.matches("\n\n").count();
-                    let path = dir.join(format!("educt-{transcript_id}.srt"));
-                    std::fs::write(&path, &srt).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
-                    })?;
-                    Ok(serde_json::json!({
-                        "status": "exported",
-                        "format": "srt",
-                        "output": path.display().to_string(),
-                        "cues": cues,
-                    }))
+                    let effective_params = SrtExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        cues: srt.matches("\n\n").count(),
+                    };
+                    crate::transcript_export::publish_document(
+                        &transcript_id,
+                        export_format,
+                        srt.as_bytes(),
+                        &effective_params,
+                    )
                 }
-                "highlights_csv" => {
+                crate::transcript_export::TranscriptExportFormat::HighlightsCsv => {
                     let layers = transcript_store::list_layers(driver, &transcript_id)
                         .map_err(map_store_error)?;
                     let highlight_records: Vec<_> = layers
@@ -876,18 +973,23 @@ impl MediaServer {
                             .map_err(|error| {
                                 McpToolError::invalid_argument(format!("CSV export: {error}"))
                             })?;
-                    let path = dir.join(format!("educt-{transcript_id}-highlights.csv"));
-                    std::fs::write(&path, &csv).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
-                    })?;
-                    Ok(serde_json::json!({
-                        "status": "exported",
-                        "format": "highlights_csv",
-                        "output": path.display().to_string(),
-                        "rows": rows,
-                    }))
+                    let layer_ids = highlight_records
+                        .iter()
+                        .map(|record| record.id.clone())
+                        .collect::<Vec<_>>();
+                    let effective_params = HighlightsExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        layer_ids: &layer_ids,
+                        rows,
+                    };
+                    crate::transcript_export::publish_document(
+                        &transcript_id,
+                        export_format,
+                        csv.as_bytes(),
+                        &effective_params,
+                    )
                 }
-                "corpus_text" => {
+                crate::transcript_export::TranscriptExportFormat::CorpusText => {
                     // The rendered form (words joined by single spaces) is
                     // what text_to_word_ranges matches — a corpus hit on
                     // this text maps back to word ranges exactly. Without
@@ -902,19 +1004,21 @@ impl MediaServer {
                     } else {
                         (bundle.full_text.clone(), false)
                     };
-                    let path = dir.join(format!("educt-transcript-{transcript_id}.txt"));
-                    std::fs::write(&path, &text).map_err(|e| {
-                        McpToolError::internal(format!("write {}: {e}", path.display())) // rr0044-ok: write to server-managed assets dir
-                    })?;
-                    let mut result = serde_json::json!({
-                        "status": "exported",
-                        "format": "corpus_text",
-                        "output": path.display().to_string(),
-                        "words": bundle.words.len(),
-                        "composition": "run corpus_convert → corpus_chunk → corpus_embed on this \
-                         file; corpus_query hits map back to word ranges via \
-                         text_to_word_ranges over the stored transcript",
-                    });
+                    const COMPOSITION: &str = "run corpus_convert → corpus_chunk → \
+                         corpus_embed on this file; corpus_query hits map back to word ranges via \
+                         text_to_word_ranges over the stored transcript";
+                    let effective_params = CorpusExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        words: bundle.words.len(),
+                        word_timings,
+                        composition: COMPOSITION,
+                    };
+                    let mut result = crate::transcript_export::publish_document(
+                        &transcript_id,
+                        export_format,
+                        text.as_bytes(),
+                        &effective_params,
+                    )?;
                     if !word_timings {
                         result["degradation"] = serde_json::json!(
                             "no word-level timings — exported the provider's full_text; \
@@ -923,10 +1027,6 @@ impl MediaServer {
                     }
                     Ok(result)
                 }
-                other => Err(McpToolError::invalid_argument(format!(
-                    "format must be \"srt\", \"highlights_csv\", or \"corpus_text\", got \
-                     \"{other}\""
-                ))),
             }
         })
         .await

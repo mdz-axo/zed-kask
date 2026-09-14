@@ -476,6 +476,9 @@ pub struct LanguageModelRequest {
     /// Optional per-request output limit; overrides the OpenRouter model limit (D13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
+    /// Provider-native structured response contract for reserved result channels (D57).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
 }
 
 impl LanguageModelRequest {

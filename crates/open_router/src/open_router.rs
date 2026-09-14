@@ -182,6 +182,9 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
+    // zed-kask: D57 — provider-native schema contract for reserved results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
     pub usage: RequestUsage,
     pub provider: Option<Provider>,
 }

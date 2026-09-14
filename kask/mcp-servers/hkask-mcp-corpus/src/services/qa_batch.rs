@@ -190,10 +190,16 @@ impl QaBatchService {
                     .await;
                     match response {
                         Ok(response) => {
-                            let text = prepared_qa_payload_from_tool_calls(&response.tool_calls)
-                                .unwrap_or_else(|error| {
-                                    serde_json::json!({"qa_contract_error": error}).to_string()
-                                });
+                            let text = if response.tool_calls.is_empty()
+                                && !response.text.trim().is_empty()
+                            {
+                                response.text.clone()
+                            } else {
+                                prepared_qa_payload_from_tool_calls(&response.tool_calls)
+                                    .unwrap_or_else(|error| {
+                                        serde_json::json!({"qa_contract_error": error}).to_string()
+                                    })
+                            };
                             Ok(QaCompletion {
                                 text,
                                 tokens_used: u64::from(response.usage.total_tokens),

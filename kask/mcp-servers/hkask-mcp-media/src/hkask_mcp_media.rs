@@ -3731,8 +3731,15 @@ mod tool_behavior_tests {
         );
     }
 
+    /// dcterms:identifier: `MediaServer::educt_render_edl`
+    /// expect: My rendered reel is a durable gallery asset, not temporary FFmpeg output.
+    /// [P1] Motivating: completed edits survive teardown with one stable identity.
+    /// pre: a timed transcript, stored EDL, real media source, and active gallery exist.
+    /// post: canonical file, gallery row, media block, provenance, and lineage agree.
+    /// [P1] Constraining: clip intermediates are removed and no parent asset is invented.
     #[tokio::test]
-    async fn educt_render_edl_produces_a_clip_from_a_real_media_file() {
+    async fn educt_render_edl_produces_a_clip_from_a_real_media_file()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::transcript::{TimedWord, TranscriptBundle};
         use crate::transcript_layers::{EdlLayer, LayerProvenance, TranscriptLayer};
         use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
@@ -3740,11 +3747,21 @@ mod tool_behavior_tests {
             EductRenderEdlRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
         };
 
-        let server = make_pass_server("{}".to_string());
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         // Generate a real 2-second WAV via ffmpeg — the same binary the
         // render path uses; the test proves the full loop (EDL → clip plan
         // → stream-copy render) against real media.
-        let wav = std::env::temp_dir().join("hkask_educt_render_test.wav");
+        let wav = gallery_root.path().join("educt-render-source.wav");
         let status = tokio::process::Command::new("ffmpeg")
             .args([
                 "-y",
@@ -3761,7 +3778,11 @@ mod tool_behavior_tests {
             .output()
             .await
             .expect("ffmpeg runs");
-        assert!(status.status.success(), "ffmpeg must generate the test WAV");
+        assert!(
+            status.status.success(),
+            "ffmpeg must generate the test WAV: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
         let wav_path = wav.display().to_string();
 
         // A transcript over it: two words, 0-1s and 1-2s.
@@ -3829,11 +3850,30 @@ mod tool_behavior_tests {
             serde_json::json!([[0.0, 1.0]]),
             "the clip plan is the word range mapped to seconds"
         );
-        let output = content["output"].as_str().expect("output path").to_string();
+        let output = std::path::PathBuf::from(content["output"].as_str().ok_or("output path")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing gallery_asset_id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing display_hint")?,
+        )?;
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
         assert!(
-            std::path::Path::new(&output).exists(),
-            "rendered clip exists at {output}"
+            output.is_file(),
+            "rendered clip exists at {}",
+            output.display()
         );
+        assert_eq!(hint["kind"], "audio");
+        assert_eq!(hint["gallery_asset_id"], asset_id);
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::SEQUENCE);
+        assert_eq!(store.get_by_id(&gallery_id, asset_id)?.media_type, "audio");
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("EDL render lineage missing")?;
+        assert_eq!(lineage.op, "educt_render_edl");
+        Ok(())
     }
 
     #[tokio::test]
@@ -3860,7 +3900,7 @@ mod tool_behavior_tests {
         let transcript_id = store_two_word_transcript(&server).await;
         let result = server
             .educt_export(Parameters(crate::types::EductExportRequest {
-                transcript_id,
+                transcript_id: transcript_id.clone(),
                 format: "srt".to_string(),
             }))
             .await
@@ -3872,6 +3912,19 @@ mod tool_behavior_tests {
             "exported SRT exists at {output}"
         );
         assert_eq!(content["cues"].as_u64(), Some(1));
+        let export_id = content["export_id"].as_str().expect("export id");
+        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
+        assert!(output.contains("transcript-exports"));
+        assert!(output.contains(export_id));
+        let metadata: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
+        )
+        .expect("parse export metadata");
+        assert_eq!(metadata["export_id"], export_id);
+        assert_eq!(metadata["transcript_id"], transcript_id);
+        assert_eq!(metadata["format"], "srt");
+        assert_eq!(metadata["provenance"], content["provenance"]);
+        assert_eq!(metadata["effective_params"], content["effective_params"]);
         let srt = std::fs::read_to_string(&output).expect("read SRT");
         assert!(
             srt.contains("1\n00:00:00,000 --> 00:00:00,900\nalpha beta\n"),
@@ -3913,7 +3966,7 @@ mod tool_behavior_tests {
 
         let result = server
             .educt_export(Parameters(crate::types::EductExportRequest {
-                transcript_id,
+                transcript_id: transcript_id.clone(),
                 format: "highlights_csv".to_string(),
             }))
             .await
@@ -3921,6 +3974,14 @@ mod tool_behavior_tests {
         let content = content_of(&result);
         assert_eq!(content["rows"].as_u64(), Some(1));
         let output = content["output"].as_str().expect("output path").to_string();
+        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
+        let metadata: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
+        )
+        .expect("parse export metadata");
+        assert_eq!(metadata["transcript_id"], transcript_id);
+        assert_eq!(metadata["format"], "highlights_csv");
+        assert_eq!(metadata["effective_params"], content["effective_params"]);
         let csv = std::fs::read_to_string(&output).expect("read CSV");
         assert!(csv.starts_with("layer_id,model,start_word,end_word,start_ms,end_ms,label,note"));
         assert!(csv.contains("key-argument"));
@@ -3934,13 +3995,21 @@ mod tool_behavior_tests {
         let transcript_id = store_two_word_transcript(&server).await;
         let result = server
             .educt_export(Parameters(crate::types::EductExportRequest {
-                transcript_id,
+                transcript_id: transcript_id.clone(),
                 format: "corpus_text".to_string(),
             }))
             .await
             .expect("corpus export succeeds");
         let content = content_of(&result);
         let output = content["output"].as_str().expect("output path").to_string();
+        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
+        let metadata: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
+        )
+        .expect("parse export metadata");
+        assert_eq!(metadata["transcript_id"], transcript_id);
+        assert_eq!(metadata["format"], "corpus_text");
+        assert_eq!(metadata["effective_params"], content["effective_params"]);
         let text = std::fs::read_to_string(&output).expect("read corpus text");
         // The rendered form — exactly what text_to_word_ranges matches,
         // so corpus hits map back to word ranges.

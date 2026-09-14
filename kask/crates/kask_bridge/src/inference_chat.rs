@@ -736,6 +736,18 @@ impl LanguageModelInferencePort {
             })
             .collect();
 
+        let response_format = match tools.unwrap_or(&[]) {
+            [tool] if tool.function.name == "emit_result" => Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "emit_result",
+                    "strict": true,
+                    "schema": tool.function.parameters.clone()
+                }
+            })),
+            _ => None,
+        };
+
         LanguageModelRequest {
             messages: req_messages,
             tools: req_tools,
@@ -750,6 +762,7 @@ impl LanguageModelInferencePort {
                 [tool] if tool.function.name == "emit_result" => Some(LanguageModelToolChoice::Any),
                 _ => Some(LanguageModelToolChoice::Auto),
             },
+            response_format,
             ..Default::default()
         }
     }
