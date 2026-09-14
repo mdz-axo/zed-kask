@@ -2538,7 +2538,7 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
         if path.starts_with("/eodhd/screener") {
             return (200, json!({"data":[
                 {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
-                {"code":"LIQADR","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0},
+                {"code":"LIQADR","name":"Liquid Issuer ADR","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0},
                 {"code":"ILL","name":"Illiquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":8_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":1_000.0}
             ]}));
         }
@@ -2552,7 +2552,7 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
         if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
             let mut value = eodhd_fixture();
             value["General"]["Code"] = json!("LIQADR");
-            value["General"]["Name"] = json!("Liquid Issuer");
+            value["General"]["Name"] = json!("Liquid Issuer ADR");
             value["General"]["Type"] = json!("Common Stock");
             value["General"]["CurrencyCode"] = json!("USD");
             value["General"]["ISIN"] = json!("US0000000003");

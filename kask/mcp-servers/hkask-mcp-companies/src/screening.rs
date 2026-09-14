@@ -1164,11 +1164,15 @@ fn symbol_venue(symbol: &str) -> &str {
 }
 
 fn normalize_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+    let mut tokens: Vec<String> = value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    if let Some(adr_index) = tokens.iter().position(|token| token == "adr") {
+        tokens.truncate(adr_index);
+    }
+    tokens.concat()
 }
 
 fn sort_rows(rows: &mut [Value], definition: &ScreenDefinition) {
