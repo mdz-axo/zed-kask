@@ -1,7 +1,7 @@
 //! Canonical prepared QA records and completion/output accounting for both
 //! batch transports. Single-chunk generation retains its own prompt formatter.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 
 use hkask_types::ChatMessage;
@@ -239,6 +239,8 @@ pub(crate) fn read_prompts(path: &str) -> Result<Vec<PreparedQaPrompt>, McpToolE
 pub(crate) struct QaCompletion {
     pub text: String,
     pub tokens_used: u64,
+    pub completion_tokens: Option<u64>,
+    pub finish_reason: Option<String>,
     pub cost_usd: Option<f64>,
 }
 
@@ -272,6 +274,10 @@ pub(crate) struct QaOutput<W: Write> {
     prompts_failed: usize,
     qa_rows_written: usize,
     tokens_used: u64,
+    completion_tokens_used: u64,
+    completion_token_reports: usize,
+    finish_reason_counts: BTreeMap<String, usize>,
+    finish_reason_reports: usize,
     provider_responses: usize,
     cost_reports: usize,
     reported_cost_usd: f64,
@@ -286,6 +292,10 @@ impl<W: Write> QaOutput<W> {
             prompts_failed: 0,
             qa_rows_written: 0,
             tokens_used: 0,
+            completion_tokens_used: 0,
+            completion_token_reports: 0,
+            finish_reason_counts: BTreeMap::new(),
+            finish_reason_reports: 0,
             provider_responses: 0,
             cost_reports: 0,
             reported_cost_usd: 0.0,
@@ -315,14 +325,28 @@ impl<W: Write> QaOutput<W> {
         completion: Result<QaCompletion, QaCompletionError>,
         model: &str,
     ) -> Result<(), McpToolError> {
+        let mut completion_metadata = None;
         let parsed = match completion {
             Ok(completion) => {
                 self.tokens_used += completion.tokens_used;
                 self.provider_responses += 1;
+                if let Some(completion_tokens) = completion.completion_tokens {
+                    self.completion_tokens_used += completion_tokens;
+                    self.completion_token_reports += 1;
+                }
+                if let Some(finish_reason) = completion.finish_reason.as_ref() {
+                    *self
+                        .finish_reason_counts
+                        .entry(finish_reason.clone())
+                        .or_default() += 1;
+                    self.finish_reason_reports += 1;
+                }
                 if let Some(cost_usd) = completion.cost_usd {
                     self.cost_reports += 1;
                     self.reported_cost_usd += cost_usd;
                 }
+                completion_metadata =
+                    Some((completion.completion_tokens, completion.finish_reason));
                 parse_prepared_qa_response(&extract_json_from_response(&completion.text), prompt)
                     .map_err(QaCompletionError::Rejected)
             }
@@ -337,11 +361,14 @@ impl<W: Write> QaOutput<W> {
                 self.prompts_succeeded += 1;
             }
             Err(error) => {
+                let (completion_tokens, finish_reason) = completion_metadata.unwrap_or_default();
                 self.write_record(&json!({
                     "prompt_id": prompt.prompt_id,
                     "chunk_ref": prompt.primary().chunk_ref,
                     "source": prompt.primary().source,
                     "error": error.to_string(),
+                    "completion_tokens": completion_tokens,
+                    "finish_reason": finish_reason,
                 }))?;
                 self.prompts_failed += 1;
             }
@@ -374,12 +401,20 @@ impl<W: Write> QaOutput<W> {
         let cost_reporting_complete = self.provider_responses == self.prompts_total
             && self.cost_reports == self.provider_responses;
         let reported_cost_usd = cost_reporting_complete.then_some(self.reported_cost_usd);
+        let completion_token_reporting_complete =
+            self.completion_token_reports == self.provider_responses;
+        let finish_reason_reporting_complete =
+            self.finish_reason_reports == self.provider_responses;
         Ok(json!({
             "prompts_total": self.prompts_total,
             "prompts_succeeded": self.prompts_succeeded,
             "prompts_failed": self.prompts_failed,
             "qa_rows_written": self.qa_rows_written,
             "tokens_used": self.tokens_used,
+            "completion_tokens_used": self.completion_tokens_used,
+            "completion_token_reporting_complete": completion_token_reporting_complete,
+            "finish_reason_counts": self.finish_reason_counts,
+            "finish_reason_reporting_complete": finish_reason_reporting_complete,
             "provider_responses": self.provider_responses,
             "reported_cost_usd": reported_cost_usd,
             "cost_reporting_complete": cost_reporting_complete,
@@ -533,6 +568,8 @@ mod tests {
         Ok(QaCompletion {
             text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
             tokens_used: 10,
+            completion_tokens: Some(5),
+            finish_reason: Some("stop".into()),
             cost_usd: Some(0.01),
         })
     }
@@ -644,6 +681,8 @@ mod tests {
                 Ok(QaCompletion {
                     text: response.into(),
                     tokens_used: 7,
+                    completion_tokens: Some(5),
+                    finish_reason: Some("length".into()),
                     cost_usd: Some(0.02),
                 }),
                 "offline-model",
@@ -654,11 +693,17 @@ mod tests {
             assert_eq!(summary["prompts_failed"], 1);
             assert_eq!(summary["qa_rows_written"], 0);
             assert_eq!(summary["tokens_used"], 7);
+            assert_eq!(summary["completion_tokens_used"], 5);
+            assert_eq!(summary["completion_token_reporting_complete"], true);
+            assert_eq!(summary["finish_reason_counts"]["length"], 1);
+            assert_eq!(summary["finish_reason_reporting_complete"], true);
             assert_eq!(summary["reported_cost_usd"], 0.02);
             assert_eq!(summary["cost_reporting_complete"], true);
             let row: serde_json::Value = serde_json::from_slice(&bytes)?;
             assert_eq!(row["prompt_id"], "qa-1");
             assert!(row["error"].as_str().expect("error").contains("rejected"));
+            assert_eq!(row["completion_tokens"], 5);
+            assert_eq!(row["finish_reason"], "length");
             assert!(row.get("response").is_none());
         }
         Ok(())

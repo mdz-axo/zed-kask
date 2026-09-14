@@ -208,10 +208,14 @@ submission has no automatic retry because remote acceptance can be unknown
 `src/batch.rs:73–153` and `src/tools/semantic/batch_api.rs:31–38` in that crate).
 
 Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
-`qa_rows_written`, prompt-level `tokens_used`, `provider_responses`,
-`reported_cost_usd`, `cost_reporting_complete`, `output`, `batch_api`, `degraded`,
-with total = succeeded + failed. Null/incomplete cost is unknown, never zero.
-A prompt can emit multiple pairs; error rows are not QA rows. Missing/duplicate
+`qa_rows_written`, prompt-level `tokens_used`, `completion_tokens_used`,
+`completion_token_reporting_complete`, `finish_reason_counts`,
+`finish_reason_reporting_complete`, `provider_responses`, `reported_cost_usd`,
+`cost_reporting_complete`, `output`, `batch_api`, and `degraded`, with total =
+succeeded + failed. Null/incomplete cost or completion telemetry is unknown, never
+zero. Rejected-response rows retain provider `completion_tokens` and
+`finish_reason`; transport failures without a provider response record nulls. A
+prompt can emit multiple pairs; error rows are not QA rows. Missing/duplicate
 known provider IDs and joins fail identified prompts; unknown IDs and IPC failures
 are tool errors. Writes/flushes propagate errors; partial output and cancellation
 are explicit. Remaining local workers are aborted, without promising remote job

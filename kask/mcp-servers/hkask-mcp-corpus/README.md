@@ -242,8 +242,10 @@ One accepted pair becomes one ingestible envelope:
 
 The model identifier above is illustrative, not a configured default. Prompt
 token usage is counted once in the batch summary rather than repeated on every
-pair row. A failed prompt writes primary `prompt_id`, `chunk_ref`, `source` and
-`error`, with no response; it is never training data.
+pair row. A failed prompt writes primary `prompt_id`, `chunk_ref`, `source`,
+`error`, provider `completion_tokens`, and provider `finish_reason`, with no
+response; unavailable provider telemetry is null rather than fabricated. Failed
+prompts are never training data.
 
 ## QA routing, scheduling and output ownership
 
@@ -285,7 +287,9 @@ errors. Join failures retain prompt identity for a failed-prompt row.
 | `prompts_succeeded` | Entire response accepted and rows written |
 | `prompts_failed` | Identified failed-prompt records |
 | `qa_rows_written` | Accepted pairs only; a prompt can yield multiple pairs |
-| `tokens_used` | Completion usage counted once per returned prompt, including rejected QA |
+| `tokens_used` | Total usage counted once per returned prompt, including rejected QA |
+| `completion_tokens_used`, `completion_token_reporting_complete` | Completion-token coverage; incomplete reporting is unknown, never zero |
+| `finish_reason_counts`, `finish_reason_reporting_complete` | Provider stop-reason distribution and whether every provider response reported one |
 | `provider_responses`, `reported_cost_usd`, `cost_reporting_complete` | Cost coverage; null/incomplete cost is unknown, never zero |
 | `output`, `batch_api` | Requested destination and selected transport |
 | `degraded` | Shared failure-rate classification, at least 10%; not completeness |

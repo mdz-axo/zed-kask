@@ -190,6 +190,8 @@ impl QaBatchService {
                         Ok(response) => Ok(QaCompletion {
                             text: response.text,
                             tokens_used: u64::from(response.usage.total_tokens),
+                            completion_tokens: Some(u64::from(response.usage.completion_tokens)),
+                            finish_reason: Some(response.finish_reason),
                             cost_usd: response.cost_usd,
                         }),
                         Err(error) => {

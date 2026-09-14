@@ -153,6 +153,8 @@ mod tests {
                 ]])
                 .to_string(),
                 tokens_used: 10,
+                completion_tokens: Some(5),
+                finish_reason: Some("stop".into()),
                 cost_usd: Some(0.01),
             }),
             "offline-model",

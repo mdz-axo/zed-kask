@@ -64,6 +64,8 @@ pub(crate) async fn generate_qa_via_batch_api<W: Write>(
                 (Some(text), None) => Ok(QaCompletion {
                     text: text.clone(),
                     tokens_used: result.total_tokens,
+                    completion_tokens: None,
+                    finish_reason: None,
                     cost_usd: None,
                 }),
                 (None, Some(error)) => Err(QaCompletionError::BatchProvider(error.clone())),
