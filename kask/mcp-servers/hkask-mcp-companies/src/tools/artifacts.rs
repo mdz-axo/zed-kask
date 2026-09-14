@@ -80,6 +80,27 @@ pub struct ReportListRequest {
     pub kind: String,
 }
 
+pub(crate) fn save_json_artifact(
+    kind: &str,
+    name: &str,
+    payload: &serde_json::Value,
+) -> Result<std::path::PathBuf, McpToolError> {
+    let kind_label = validate_kind(kind)?;
+    let name = sanitize_artifact_name(name)?;
+    let directory = artifact_dir(kind_label)?;
+    let path = directory.join(format!("{name}.json"));
+    let content = serde_json::to_string_pretty(payload).map_err(|error| {
+        McpToolError::invalid_argument(format!("payload is not serializable: {error}"))
+    })?;
+    std::fs::write(&path, content).map_err(|error| {
+        McpToolError::internal(format!(
+            "Failed to write artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(path)
+}
+
 #[tool_router(router = artifacts_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
@@ -90,16 +111,8 @@ impl CompaniesServer {
         Parameters(req): Parameters<ReportSaveRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "report_save", async {
-            let kind_label = validate_kind(&req.kind)?;
             let name = sanitize_artifact_name(&req.name)?;
-            let dir = artifact_dir(kind_label)?;
-            let path = dir.join(format!("{name}.json"));
-            let json = serde_json::to_string_pretty(&req.payload).map_err(|e| {
-                McpToolError::invalid_argument(format!("payload is not serializable: {e}"))
-            })?;
-            std::fs::write(&path, json).map_err(|e| {
-                McpToolError::internal(format!("Failed to write artifact {}: {e}", path.display()))
-            })?;
+            let path = save_json_artifact(&req.kind, &name, &req.payload)?;
             Ok(serde_json::json!({
                 "saved": true,
                 "kind": req.kind,

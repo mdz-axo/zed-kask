@@ -1,6 +1,6 @@
 use crate::{
     CompaniesServer, providers,
-    research_store::{ResearchStore, ScreenJobRecord},
+    research_store::{ResearchStore, ScreenJobItemRecord, ScreenJobRecord},
     types::{ScreenAction, ScreenTemplateContext, ScreenerRequest},
 };
 
@@ -13,6 +13,8 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     future::Future,
     panic::AssertUnwindSafe,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 const SCREEN_TEMPLATES: &[(&str, &str)] = &[
@@ -101,6 +103,7 @@ struct ScreenCalculation {
     exclusions: Vec<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct MaterializedSecurity {
     symbol: String,
     name: String,
@@ -113,14 +116,22 @@ struct MaterializedSecurity {
     primary_ticker: Option<String>,
     isin: Option<String>,
     normalized_issuer_name: String,
-    fundamentals: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct IssuerGroup {
     issuer_key: String,
-    issuer_key_provenance: &'static str,
-    issuer_identity_provenance: &'static str,
+    issuer_key_provenance: String,
+    issuer_identity_provenance: String,
     securities: Vec<MaterializedSecurity>,
+}
+
+struct PreparedPassSet {
+    groups: Vec<IssuerGroup>,
+    candidate_count: usize,
+    financial_passing_security_count: usize,
+    exclusions: Vec<Value>,
+    fx_rates: HashMap<String, f64>,
 }
 
 pub(crate) async fn execute(
@@ -130,6 +141,7 @@ pub(crate) async fn execute(
     match req.action {
         Some(ScreenAction::Calculate) => submit(server, req).await,
         Some(ScreenAction::Status) => status(server, required_job_id(&req)?).await,
+        Some(ScreenAction::Cancel) => cancel(server, required_job_id(&req)?).await,
         Some(ScreenAction::Results) => {
             results(
                 server,
@@ -251,20 +263,187 @@ async fn calculate_job(
     verification: Value,
 ) {
     let store = server.research.clone();
-    let calculation = async {
-        let universe_snapshot = acquire_universe(&server, &definition).await?;
-        calculate(
-            &server.client,
-            &server.eodhd_api_key,
-            &definition,
-            verification,
-            universe_snapshot,
-        )
-        .await
+    let heartbeat_store = store.clone();
+    let heartbeat_job = job_id.clone();
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    let heartbeat = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(error) = heartbeat_store.heartbeat_screen_job(&heartbeat_job) {
+                        tracing::warn!(job_id = heartbeat_job, "screen heartbeat failed: {error}");
+                    }
+                }
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() { break; }
+                }
+            }
+        }
+    });
+    let outcome = AssertUnwindSafe(run_screen_job(&server, &job_id, &definition, verification))
+        .catch_unwind()
+        .await;
+    if stop_tx.send(true).is_err() {
+        tracing::debug!(job_id, "screen heartbeat already stopped");
+    }
+    if let Err(error) = heartbeat.await {
+        tracing::warn!(job_id, "screen heartbeat task failed: {error}");
+    }
+    let failure = match outcome {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error.to_string()),
+        Err(payload) => Some(
+            payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic payload".to_string()),
+        ),
     };
-    persist_screen_calculation(store, job_id, calculation).await;
+    if let Some(error) = failure
+        && let Err(store_error) =
+            store.finish_screen_job(&job_id, "failed", None, Some(&error), None)
+    {
+        tracing::error!(job_id, "failed to persist screen failure: {store_error}");
+    }
 }
 
+async fn run_screen_job(
+    server: &CompaniesServer,
+    job_id: &str,
+    definition: &ScreenDefinition,
+    verification: Value,
+) -> Result<(), McpToolError> {
+    server
+        .research
+        .mark_screen_job_executing(job_id)
+        .map_err(crate::map_portfolio_error)?;
+    if definition.kind != "expectations_gap" {
+        let universe = acquire_universe(server, definition).await?;
+        let result = calculate(
+            &server.client,
+            &server.eodhd_api_key,
+            definition,
+            verification,
+            universe,
+        )
+        .await?;
+        server
+            .research
+            .finish_screen_job(job_id, "completed", Some(&result), None, None)
+            .map_err(crate::map_portfolio_error)?;
+        return Ok(());
+    }
+
+    let job = load_job(&server.research, job_id)?;
+    if job.checkpoint.is_none() {
+        let pass_stage = async {
+            let universe = acquire_universe(server, definition).await?;
+            prepare_expectations_pass_set(
+                &server.client,
+                &server.eodhd_api_key,
+                definition,
+                universe,
+            )
+            .await
+        };
+        let prepared = tokio::time::timeout(Duration::from_secs(60), pass_stage)
+            .await
+            .map_err(|_| {
+                McpToolError::unavailable("financial screen did not complete within 60 seconds")
+            })??;
+        let items: Vec<ScreenJobItemRecord> = prepared
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(ordinal, group)| {
+                let payload = serde_json::to_value(group).unwrap_or(Value::Null);
+                ScreenJobItemRecord::pending(&group.issuer_key, ordinal, payload)
+            })
+            .collect();
+        let checkpoint = json!({
+            "candidate_count": prepared.candidate_count,
+            "financial_passing_security_count": prepared.financial_passing_security_count,
+            "exclusions": prepared.exclusions,
+            "fx_rates": prepared.fx_rates,
+            "logic_verification": verification,
+        });
+        server
+            .research
+            .persist_screen_pass_set(job_id, &checkpoint, &items)
+            .map_err(crate::map_portfolio_error)?;
+        server
+            .research
+            .mark_screen_job_executing(job_id)
+            .map_err(crate::map_portfolio_error)?;
+    }
+
+    enrich_pending_issuers(server, job_id).await?;
+    if server
+        .research
+        .screen_cancel_requested(job_id)
+        .map_err(crate::map_portfolio_error)?
+    {
+        server
+            .research
+            .finish_screen_job(job_id, "cancelled", None, None, None)
+            .map_err(crate::map_portfolio_error)?;
+        return Ok(());
+    }
+
+    let job = load_job(&server.research, job_id)?;
+    let checkpoint = job
+        .checkpoint
+        .as_ref()
+        .ok_or_else(|| McpToolError::internal("screen checkpoint missing"))?;
+    let mut rows: Vec<Value> = server
+        .research
+        .all_screen_items(job_id)
+        .map_err(crate::map_portfolio_error)?
+        .into_iter()
+        .filter_map(|item| item.row)
+        .collect();
+    sort_rows(&mut rows, definition);
+    let exclusions = checkpoint
+        .get("exclusions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let candidate_count = checkpoint
+        .get("candidate_count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let result = build_calculation_result(
+        definition,
+        checkpoint
+            .get("logic_verification")
+            .cloned()
+            .unwrap_or(Value::Null),
+        ScreenCalculation {
+            rows,
+            candidate_count,
+            exclusions,
+        },
+    );
+    let artifact_name = format!("expectations-gap-{}-{job_id}", definition.as_of);
+    let artifact_path =
+        crate::tools::artifacts::save_json_artifact("report", &artifact_name, &result)?;
+    server
+        .research
+        .finish_screen_job(
+            job_id,
+            "completed",
+            Some(&result),
+            None,
+            Some(&artifact_path.to_string_lossy()),
+        )
+        .map_err(crate::map_portfolio_error)?;
+    Ok(())
+}
+
+#[cfg(test)]
 async fn persist_screen_calculation<F>(store: ResearchStore, job_id: String, calculation: F)
 where
     F: Future<Output = Result<Value, McpToolError>>,
@@ -277,19 +456,11 @@ where
     let (status, result, error) = match outcome {
         Ok(Ok(result)) => ("completed", Some(result), None),
         Ok(Err(error)) => ("failed", None, Some(error.to_string())),
-        Err(payload) => {
-            let panic_message = payload
-                .downcast_ref::<&str>()
-                .map(|message| (*message).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic payload".to_string());
-            tracing::error!(job_id, panic_message, "screen calculation panicked");
-            (
-                "failed",
-                None,
-                Some(format!("screen calculation panicked: {panic_message}")),
-            )
-        }
+        Err(_) => (
+            "failed",
+            None,
+            Some("screen calculation panicked".to_string()),
+        ),
     };
     if let Err(store_error) =
         store.update_screen_job(&job_id, status, result.as_ref(), error.as_deref())
@@ -318,26 +489,49 @@ async fn calculate(
             exclusions: Vec::new(),
         }
     };
-    let mut rows = calculation.rows;
-    sort_rows(&mut rows, definition);
-    let table = columnar_table(&rows, definition);
-    let row_count = rows.len();
+    let mut calculation = calculation;
+    sort_rows(&mut calculation.rows, definition);
+    Ok(build_calculation_result(
+        definition,
+        verification,
+        calculation,
+    ))
+}
+
+fn build_calculation_result(
+    definition: &ScreenDefinition,
+    verification: Value,
+    calculation: ScreenCalculation,
+) -> Value {
+    let row_count = calculation.rows.len();
     let excluded_count = calculation.exclusions.len();
-    Ok(json!({
+    let analysis_counts = calculation
+        .rows
+        .iter()
+        .fold(BTreeMap::new(), |mut counts, row| {
+            let status = row
+                .get("data_quality_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unclassified");
+            *counts.entry(status.to_string()).or_insert(0_usize) += 1;
+            counts
+        });
+    json!({
         "screen_name": definition.name,
         "as_of": definition.as_of,
         "reporting_currency": definition.reporting_currency,
         "metadata": {
             "candidate_count": calculation.candidate_count,
-            "passed_count": row_count,
-            "excluded_count": excluded_count,
-            "reconciled": calculation.candidate_count == row_count + excluded_count,
+            "issuer_count": row_count,
+            "excluded_security_count": excluded_count,
+            "analysis_state_counts": analysis_counts,
+            "issuer_states_reconciled": analysis_counts.values().sum::<usize>() == row_count,
             "source": "EODHD Screener API",
             "logic_verification": verification,
         },
-        "table": table,
+        "table": columnar_table(&calculation.rows, definition),
         "exclusions": calculation.exclusions,
-    }))
+    })
 }
 
 async fn calculate_expectations_gap(
@@ -346,6 +540,30 @@ async fn calculate_expectations_gap(
     definition: &ScreenDefinition,
     universe: Vec<Value>,
 ) -> Result<ScreenCalculation, McpToolError> {
+    let prepared =
+        prepare_expectations_pass_set(client, eodhd_api_key, definition, universe).await?;
+    let mut rows = Vec::with_capacity(prepared.groups.len());
+    for group in prepared.groups {
+        let row =
+            match analyze_issuer_group(client, eodhd_api_key, &prepared.fx_rates, &group).await {
+                Ok(row) => row,
+                Err(reason) => unavailable_issuer_row(&group, &reason),
+            };
+        rows.push(row);
+    }
+    Ok(ScreenCalculation {
+        rows,
+        candidate_count: prepared.candidate_count,
+        exclusions: prepared.exclusions,
+    })
+}
+
+async fn prepare_expectations_pass_set(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+    definition: &ScreenDefinition,
+    universe: Vec<Value>,
+) -> Result<PreparedPassSet, McpToolError> {
     let candidate_count = universe.len();
     let cap_min = definition
         .logic_env
@@ -362,6 +580,7 @@ async fn calculate_expectations_gap(
         .get("liquidity_min_usd")
         .and_then(Value::as_f64)
         .ok_or_else(|| McpToolError::invalid_argument("screen has no liquidity_min_usd"))?;
+
     let ticker_fetches = definition
         .universe
         .exchanges
@@ -371,7 +590,7 @@ async fn calculate_expectations_gap(
                 providers::fetch_eodhd_common_stocks(client, eodhd_api_key, exchange).await?;
             Ok::<_, McpToolError>((exchange.clone(), tickers))
         });
-    let mut common_stocks = HashSet::new();
+    let mut ticker_inventory = HashMap::new();
     for outcome in futures::future::join_all(ticker_fetches).await {
         let (exchange, tickers) = outcome?;
         let rows = tickers.as_array().ok_or_else(|| {
@@ -381,7 +600,7 @@ async fn calculate_expectations_gap(
             if row.get("Type").and_then(Value::as_str) == Some("Common Stock")
                 && let Some(code) = row.get("Code").and_then(Value::as_str)
             {
-                common_stocks.insert(format!("{exchange}:{code}"));
+                ticker_inventory.insert(format!("{exchange}:{code}"), row.clone());
             }
         }
     }
@@ -398,84 +617,40 @@ async fn calculate_expectations_gap(
         let (_, rate) = providers::fetch_eodhd_forex_rate(client, eodhd_api_key, &currency).await?;
         Ok::<_, McpToolError>((currency, rate))
     });
-    let mut fx_rates = HashMap::new();
-    fx_rates.insert("USD".to_string(), 1.0);
+    let mut fx_rates = HashMap::from([("USD".to_string(), 1.0)]);
     for outcome in futures::future::join_all(fx_fetches).await {
         let (currency, rate) = outcome?;
         fx_rates.insert(currency, rate);
     }
 
-    let outcomes = futures::stream::iter(universe.into_iter().map(|row| {
-        let common_stocks = &common_stocks;
-        let fx_rates = &fx_rates;
-        async move {
-            materialize_security(
-                client,
-                eodhd_api_key,
-                row,
-                common_stocks,
-                fx_rates,
-                cap_min,
-                cap_max,
-                liquidity_min,
-            )
-            .await
-        }
-    }))
-    .buffered(12)
-    .collect::<Vec<_>>()
-    .await;
     let mut materialized = Vec::new();
     let mut exclusions = Vec::new();
-    for outcome in outcomes {
-        match outcome {
+    for row in universe {
+        match materialize_security(
+            row,
+            &ticker_inventory,
+            &fx_rates,
+            cap_min,
+            cap_max,
+            liquidity_min,
+        ) {
             Ok(security) => materialized.push(security),
             Err(exclusion) => exclusions.push(exclusion),
         }
     }
-
+    let financial_passing_security_count = materialized.len();
     let groups = group_materialized_securities(materialized);
-    let mut rows = Vec::new();
-    for group in groups {
-        match analyze_issuer_group(client, eodhd_api_key, &fx_rates, &group).await {
-            Ok(row) => {
-                let actionable_symbol = row.get("actionable_symbol").and_then(Value::as_str);
-                for duplicate in group
-                    .securities
-                    .iter()
-                    .filter(|security| Some(security.symbol.as_str()) != actionable_symbol)
-                {
-                    exclusions.push(json!({
-                        "symbol": duplicate.symbol,
-                        "reason": "issuer_deduplicated",
-                        "issuer_key": group.issuer_key,
-                    }));
-                }
-                rows.push(row);
-            }
-            Err(reason) => {
-                for security in group.securities {
-                    exclusions.push(json!({
-                        "symbol": security.symbol,
-                        "reason": "expectations_unavailable",
-                        "detail": reason,
-                    }));
-                }
-            }
-        }
-    }
-    Ok(ScreenCalculation {
-        rows,
+    Ok(PreparedPassSet {
+        groups,
         candidate_count,
+        financial_passing_security_count,
         exclusions,
+        fx_rates,
     })
 }
-
-async fn materialize_security(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
+fn materialize_security(
     row: Value,
-    common_stocks: &HashSet<String>,
+    ticker_inventory: &HashMap<String, Value>,
     fx_rates: &HashMap<String, f64>,
     cap_min: f64,
     cap_max: f64,
@@ -484,9 +659,9 @@ async fn materialize_security(
     let code = row.get("code").and_then(Value::as_str).unwrap_or("");
     let exchange = row.get("exchange").and_then(Value::as_str).unwrap_or("");
     let symbol = format!("{code}.{exchange}");
-    if !common_stocks.contains(&format!("{exchange}:{code}")) {
-        return Err(screen_exclusion(&symbol, "ineligible_security_type", None));
-    }
+    let ticker = ticker_inventory
+        .get(&format!("{exchange}:{code}"))
+        .ok_or_else(|| screen_exclusion(&symbol, "ineligible_security_type", None))?;
     let cap = row
         .get("market_capitalization_usd")
         .and_then(Value::as_f64)
@@ -530,43 +705,17 @@ async fn materialize_security(
             "minimum_usd": liquidity_min,
         }));
     }
-    let fundamentals = providers::fetch_eodhd_fundamentals(client, eodhd_api_key, &symbol)
-        .await
-        .map_err(|error| {
-            screen_exclusion(
-                &symbol,
-                "fundamentals_unavailable",
-                Some(&error.to_string()),
-            )
-        })?;
-    let general = fundamentals
-        .get("General")
-        .and_then(Value::as_object)
-        .ok_or_else(|| screen_exclusion(&symbol, "identity_unavailable", None))?;
-    if general.get("Type").and_then(Value::as_str) != Some("Common Stock") {
-        return Err(screen_exclusion(&symbol, "ineligible_security_type", None));
-    }
-    if general.get("IsDelisted").and_then(Value::as_bool) == Some(true) {
-        return Err(screen_exclusion(&symbol, "inactive_security", None));
-    }
-    let name = general
+    let name = ticker
         .get("Name")
         .and_then(Value::as_str)
         .or_else(|| row.get("name").and_then(Value::as_str))
         .unwrap_or(code)
         .to_string();
-    let primary_ticker = general
-        .get("PrimaryTicker")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let lei = general
-        .get("LEI")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let isin = general
-        .get("ISIN")
+    let primary_ticker = None;
+    let lei = None;
+    let isin = ticker
+        .get("Isin")
+        .or_else(|| ticker.get("ISIN"))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
@@ -593,7 +742,6 @@ async fn materialize_security(
         primary_ticker,
         isin,
         normalized_issuer_name,
-        fundamentals,
     })
 }
 
@@ -725,45 +873,36 @@ async fn analyze_issuer_group(
     issuer_group: &IssuerGroup,
 ) -> Result<Value, String> {
     let group = &issuer_group.securities;
-    let primary = group
+    let actionable = group
         .iter()
-        .find_map(|security| security.primary_ticker.as_deref())
-        .ok_or_else(|| "EODHD PrimaryTicker is unavailable".to_string())?;
-    let primary_security = group.iter().find(|security| security.symbol == primary);
-    let fundamentals = match primary_security {
-        Some(security) => security.fundamentals.clone(),
-        None => providers::fetch_eodhd_fundamentals(client, eodhd_api_key, primary)
-            .await
-            .map_err(|error| error.to_string())?,
-    };
-    let income = providers::normalize_eodhd("income_statement", &fundamentals, primary);
-    let balance = providers::normalize_eodhd("balance_sheet", &fundamentals, primary);
-    let cash_flow = providers::normalize_eodhd("cash_flow_statement", &fundamentals, primary);
-    let metrics = providers::normalize_eodhd("key_metrics", &fundamentals, primary);
-    let profile_value = providers::normalize_eodhd("company_profile", &fundamentals, primary);
+        .max_by(|left, right| {
+            left.average_daily_dollar_volume_usd
+                .partial_cmp(&right.average_daily_dollar_volume_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .ok_or_else(|| "issuer group is empty".to_string())?;
+    let analysis_symbol = actionable.symbol.as_str();
+    let fundamentals = providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol)
+        .await
+        .map_err(|error| error.to_string())?;
+    let primary = fundamentals
+        .pointer("/General/PrimaryTicker")
+        .and_then(Value::as_str)
+        .unwrap_or(analysis_symbol);
+    let income = providers::normalize_eodhd("income_statement", &fundamentals, analysis_symbol);
+    let balance = providers::normalize_eodhd("balance_sheet", &fundamentals, analysis_symbol);
+    let cash_flow =
+        providers::normalize_eodhd("cash_flow_statement", &fundamentals, analysis_symbol);
+    let metrics = providers::normalize_eodhd("key_metrics", &fundamentals, analysis_symbol);
+    let profile_value =
+        providers::normalize_eodhd("company_profile", &fundamentals, analysis_symbol);
     let profile = crate::CompanyProfile::from_response(providers::ProviderResponse {
         value: profile_value,
         provider: crate::Provider::Eodhd,
         warnings: Vec::new(),
     });
-    let (raw_price, listing_currency_symbol) = match primary_security {
-        Some(security) => (
-            security.adjusted_close,
-            Some(security.currency_symbol.as_str()),
-        ),
-        None => {
-            let quote = providers::fetch_eodhd_realtime(client, eodhd_api_key, primary)
-                .await
-                .map_err(|error| error.to_string())?;
-            let price = quote
-                .get("close")
-                .or_else(|| quote.get("price"))
-                .and_then(Value::as_f64)
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .ok_or_else(|| "primary security has no current price".to_string())?;
-            (price, None)
-        }
-    };
+    let raw_price = actionable.adjusted_close;
+    let listing_currency_symbol = Some(actionable.currency_symbol.as_str());
     let current_price = normalize_primary_price(
         client,
         eodhd_api_key,
@@ -774,12 +913,9 @@ async fn analyze_issuer_group(
     )
     .await?;
     let price_currency_normalization_provenance = json!({
-        "analysis_symbol": primary,
-        "price_source": if primary_security.is_some() {
-            "EODHD screener adjusted_close"
-        } else {
-            "EODHD realtime primary-security close"
-        },
+        "analysis_symbol": analysis_symbol,
+        "reported_primary_ticker": primary,
+        "price_source": "EODHD screener adjusted_close",
         "raw_price": raw_price,
         "listing_currency_symbol": listing_currency_symbol,
         "quote_currency": fundamentals.pointer("/General/CurrencyCode"),
@@ -796,7 +932,7 @@ async fn analyze_issuer_group(
         current_price,
     );
     let report = crate::tools::expectations::build_gap_report(
-        primary,
+        analysis_symbol,
         &analysis,
         &[],
         0.05,

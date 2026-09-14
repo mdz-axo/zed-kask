@@ -741,6 +741,7 @@ pub(crate) enum ScreenAction {
     Calculate,
     Status,
     Results,
+    Cancel,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
