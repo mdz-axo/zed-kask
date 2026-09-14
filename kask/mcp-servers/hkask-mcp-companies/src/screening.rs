@@ -417,15 +417,17 @@ async fn run_screen_job(
                 return Ok(());
             }
         };
-        let items: Vec<ScreenJobItemRecord> = prepared
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(ordinal, group)| {
-                let payload = serde_json::to_value(group).unwrap_or(Value::Null);
-                ScreenJobItemRecord::pending(&group.issuer_key, ordinal, payload)
-            })
-            .collect();
+        let mut items = Vec::with_capacity(prepared.groups.len());
+        for (ordinal, group) in prepared.groups.iter().enumerate() {
+            let payload = serde_json::to_value(group).map_err(|error| {
+                McpToolError::internal(format!("serialize issuer checkpoint: {error}"))
+            })?;
+            items.push(ScreenJobItemRecord::pending(
+                &group.issuer_key,
+                ordinal,
+                payload,
+            ));
+        }
         let checkpoint = json!({
             "candidate_count": prepared.candidate_count,
             "financial_passing_security_count": prepared.financial_passing_security_count,
@@ -833,6 +835,19 @@ fn materialize_security(
 /// post: shared LEI, primary ticker, ISIN, or non-conflicting normalized name evidence forms one group.
 /// [P1] Constraining: conflicting LEIs are never merged through the name fallback.
 fn group_materialized_securities(materialized: Vec<MaterializedSecurity>) -> Vec<IssuerGroup> {
+    if materialized
+        .iter()
+        .all(|security| security.lei.is_none() && security.primary_ticker.is_none())
+    {
+        let mut groups: BTreeMap<String, Vec<MaterializedSecurity>> = BTreeMap::new();
+        for security in materialized {
+            groups
+                .entry(security.normalized_issuer_name.clone())
+                .or_default()
+                .push(security);
+        }
+        return groups.into_values().map(finalize_issuer_group).collect();
+    }
     let mut groups: Vec<Vec<MaterializedSecurity>> = Vec::new();
     for security in materialized {
         let mut merged = vec![security];
@@ -896,7 +911,8 @@ fn optional_identity_matches(left: &Option<String>, right: &Option<String>) -> b
         .is_some_and(|(left, right)| left == right)
 }
 
-fn finalize_issuer_group(securities: Vec<MaterializedSecurity>) -> IssuerGroup {
+fn finalize_issuer_group(mut securities: Vec<MaterializedSecurity>) -> IssuerGroup {
+    securities.sort_by(|left, right| left.symbol.cmp(&right.symbol));
     let leis: BTreeSet<&str> = securities
         .iter()
         .filter_map(|security| security.lei.as_deref())
@@ -1077,10 +1093,10 @@ async fn analyze_issuer_group(
         .unwrap_or_else(|| json!([]));
     let capability_model_sensitive = capability_status == "model_sensitive";
     let gap_status = gap_data_status(&growth_gap, &profitability_gap);
-    let data_quality_status = if gap_status == "partial" {
-        "partial"
-    } else if capability_model_sensitive {
+    let data_quality_status = if capability_model_sensitive {
         "model_sensitive"
+    } else if gap_status == "partial" {
+        "partial"
     } else {
         "complete"
     };
@@ -1277,6 +1293,30 @@ fn screen_exclusion(symbol: &str, reason: &str, detail: Option<&str>) -> Value {
 
 async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpToolError> {
     let job = load_job(&server.research, job_id)?;
+    let now = chrono::Utc::now();
+    let elapsed_seconds = chrono::DateTime::parse_from_rfc3339(&job.created_at)
+        .ok()
+        .map(|created| {
+            (now - created.with_timezone(&chrono::Utc))
+                .num_seconds()
+                .max(0)
+        });
+    let heartbeat_age_seconds = job
+        .heartbeat_at
+        .as_deref()
+        .and_then(|heartbeat| chrono::DateTime::parse_from_rfc3339(heartbeat).ok())
+        .map(|heartbeat| {
+            (now - heartbeat.with_timezone(&chrono::Utc))
+                .num_seconds()
+                .max(0)
+        });
+    let eta_seconds = elapsed_seconds.and_then(|elapsed| {
+        (job.processed > 0 && job.processed < job.total).then(|| {
+            let remaining = job.total - job.processed;
+            elapsed.saturating_mul(i64::try_from(remaining).unwrap_or(i64::MAX))
+                / i64::try_from(job.processed).unwrap_or(1)
+        })
+    });
     if job.status == "queued" && job.stage != "queued" {
         let definition: ScreenDefinition =
             serde_json::from_value(job.definition.clone()).map_err(|error| {
@@ -1300,6 +1340,9 @@ async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpTool
         "unavailable_count": job.unavailable_count,
         "model_sensitive_count": job.model_sensitive_count,
         "heartbeat_at": job.heartbeat_at,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "elapsed_seconds": elapsed_seconds,
+        "eta_seconds": eta_seconds,
         "cancel_requested": job.cancel_requested,
         "artifact_path": job.artifact_path,
         "error": job.error,
@@ -1776,6 +1819,10 @@ fn paginate_result(mut result: Value, cursor: u32, limit: u32) -> Result<Value, 
             Value::Null
         },
     );
+    if cursor > 0 {
+        result["exclusions"] = json!([]);
+        result["exclusions_page"] = json!("omitted_after_first_page");
+    }
     Ok(result)
 }
 
@@ -1887,6 +1934,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn later_result_pages_do_not_repeat_full_exclusions() {
+        let result = json!({
+            "exclusions": [{"symbol":"DROP.US","reason":"below_liquidity_minimum"}],
+            "table": {
+                "row_count": 2,
+                "row_ids": ["A.US", "B.US"],
+                "columns": {"company": {"values": ["A", "B"]}}
+            }
+        });
+        let page = paginate_result(result, 1, 1).expect("second page");
+        assert_eq!(page["exclusions"], json!([]));
+        assert_eq!(page["exclusions_page"], json!("omitted_after_first_page"));
+    }
+
     #[tokio::test]
     async fn calculation_panic_is_persisted_as_failed() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
@@ -1929,6 +1991,40 @@ mod tests {
             Some("screen calculation panicked: calculation exploded")
         );
         Ok(())
+    }
+
+    /// expect: Production-shaped deterministic issuer grouping preserves all passers without top-N truncation.
+    #[test]
+    fn production_shaped_grouping_preserves_cardinality_within_stage_budget() {
+        let started = std::time::Instant::now();
+        let securities: Vec<MaterializedSecurity> = (0..3_224)
+            .map(|index| {
+                let issuer = index % 1_270;
+                MaterializedSecurity {
+                    symbol: format!("S{index}.US"),
+                    name: format!("Issuer {issuer}"),
+                    market_capitalization_usd: 10_000_000_000.0,
+                    average_daily_dollar_volume_usd: 2_000_000.0,
+                    adjusted_close: 20.0,
+                    currency_symbol: "USD".to_string(),
+                    issuer_key: format!("name:issuer{issuer}"),
+                    lei: None,
+                    primary_ticker: None,
+                    isin: None,
+                    normalized_issuer_name: format!("issuer{issuer}"),
+                }
+            })
+            .collect();
+        let groups = group_materialized_securities(securities);
+        assert_eq!(groups.len(), 1_270);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.securities.len())
+                .sum::<usize>(),
+            3_224
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     /// expect: Enrichment failure retains every financially qualified security in an explicit unavailable issuer row.

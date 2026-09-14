@@ -3342,7 +3342,8 @@ async fn saved_screen_cancel_is_bounded_and_durable() {
     let fixture = FixtureHttp::start_async(|_path| async {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         (200, json!({"data":[]}))
-    }).await;
+    })
+    .await;
     providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
         let server = server(directory.path());
         let request = serde_json::from_value::<types::ScreenerRequest>(json!({

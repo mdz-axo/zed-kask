@@ -1096,7 +1096,24 @@ mod tests {
             checkpoint: Some(json!({"candidate_count": 1})),
             artifact_path: None,
         };
-        store.insert_screen_job(&make_job("executing-job", "executing"))?;
+        store.insert_screen_job(&make_job("executing-job", "queued"))?;
+        let items = vec![
+            ScreenJobItemRecord::pending("issuer:a", 0, json!({"eligible_symbols":["A.US"]})),
+            ScreenJobItemRecord::pending("issuer:b", 1, json!({"eligible_symbols":["B.US"]})),
+        ];
+        store.persist_screen_pass_set(
+            "executing-job",
+            &json!({"candidate_count": 2, "universe_snapshot_persisted": true}),
+            &items,
+        )?;
+        store.complete_screen_item(
+            "executing-job",
+            "issuer:a",
+            "complete",
+            &json!({"issuer_key":"issuer:a","data_quality_status":"complete"}),
+            None,
+        )?;
+        store.mark_screen_job_executing("executing-job")?;
         store.insert_screen_job(&make_job("completed-job", "queued"))?;
         let completed_result = json!({"rows":[{"symbol":"TEST.US"}]});
         store.update_screen_job("completed-job", "completed", Some(&completed_result), None)?;
@@ -1108,7 +1125,13 @@ mod tests {
             .ok_or_else(|| PortfolioError::from("missing executing job".to_string()))?;
         assert_eq!(resumed.status, "queued");
         assert_eq!(resumed.stage, "enrichment");
-        assert!(resumed.checkpoint.is_some());
+        assert_eq!(resumed.processed, 1);
+        assert_eq!(resumed.total, 2);
+        assert_eq!(resumed.complete_count, 1);
+        assert_eq!(reopened.pending_screen_items("executing-job")?.len(), 1);
+        assert!(resumed.checkpoint.as_ref().is_some_and(|checkpoint| {
+            checkpoint["universe_snapshot_persisted"] == json!(true)
+        }));
 
         let completed = reopened
             .get_screen_job("completed-job")?

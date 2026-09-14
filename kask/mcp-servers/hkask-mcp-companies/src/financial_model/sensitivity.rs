@@ -44,7 +44,7 @@ pub(crate) fn sensitivity_analysis(
         &dyn Fn(&ProjectionAssumptions) -> f64,
         &dyn Fn(&mut ProjectionAssumptions, f64),
         &str,
-    ); 6] = [
+    ); 8] = [
         (
             "revenue_growth",
             "Revenue Growth",
@@ -58,6 +58,13 @@ pub(crate) fn sensitivity_analysis(
             &|a| a.gross_margin,
             &|a, v| a.gross_margin = v.clamp(0.05, 0.95),
             METRIC_GROSS_PROFIT_MARGIN,
+        ),
+        (
+            "other_operating_expense_to_revenue",
+            "Other Operating Expense / Revenue",
+            &|a| a.other_operating_expense_to_revenue,
+            &|a, v| a.other_operating_expense_to_revenue = v.clamp(0.0, 1.0),
+            "operating_expense_reconciliation",
         ),
         (
             "da_to_revenue",
@@ -79,6 +86,13 @@ pub(crate) fn sensitivity_analysis(
             &|a| a.nwc_to_revenue,
             &|a, v| a.nwc_to_revenue = v.clamp(-0.20, 0.50),
             METRIC_NET_WORKING_CAPITAL,
+        ),
+        (
+            "terminal_growth",
+            "Terminal Growth",
+            &|a| a.terminal_growth,
+            &|a, v| a.terminal_growth = v.clamp(0.0, (a.discount_rate - 0.0001).max(0.0)),
+            "terminal_growth_rate",
         ),
         (
             "discount_rate",
@@ -121,6 +135,33 @@ pub(crate) fn sensitivity_analysis(
             metric,
         });
     }
+
+    let base_horizon = base_assumptions.total_years;
+    let low_horizon = base_horizon
+        .saturating_sub(1)
+        .max(base_assumptions.stage1_years + 1);
+    let high_horizon = base_horizon.saturating_add(1);
+    let mut low_assumptions = base_assumptions.clone();
+    low_assumptions.total_years = low_horizon;
+    let mut high_assumptions = base_assumptions.clone();
+    high_assumptions.total_years = high_horizon;
+    let intrinsic_low = project_financial_model(hist, &low_assumptions)?.intrinsic_per_share;
+    let intrinsic_high = project_financial_model(hist, &high_assumptions)?.intrinsic_per_share;
+    results.push(SensitivityResult {
+        driver: "forecast_horizon_years".to_string(),
+        label: "Forecast Horizon".to_string(),
+        base_value: f64::from(base_horizon),
+        low_value: f64::from(low_horizon),
+        high_value: f64::from(high_horizon),
+        intrinsic_low,
+        intrinsic_high,
+        delta_pct: if base_intrinsic > 0.0 {
+            (intrinsic_high - intrinsic_low) / base_intrinsic
+        } else {
+            0.0
+        },
+        metric: "forecast_horizon",
+    });
 
     results.sort_by(|a, b| {
         b.delta_pct

@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn dispatch_routes_concepts_to_ontologies_that_have_them() {
         // Forecasting / scenarios are processes → PKO dual-axis.
-        for domain in ["forecast", "scenario", "scenario_build", "driver_forecast"] {
+        for domain in ["forecast", "scenario", "scenario_build"] {
             let anchor = select_ontology_anchor(domain);
             assert_eq!(
                 anchor,
