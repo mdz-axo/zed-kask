@@ -10,7 +10,7 @@ use crate::types::{
 use crate::*;
 
 const JOB_HISTORY_SCOPE: &str = "ephemeral_process_local";
-const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; all records are lost when the media server restarts.";
+const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; records are lost when the media server restarts and older terminal records may be removed by bounded retention.";
 
 /// Decode the `job_list` wire contract at a client boundary. New responses
 /// carry explicit history scope; legacy arrays remain readable by existing clients.
@@ -866,8 +866,7 @@ mod tests {
         Ok(())
     }
 
-    /// expect: After a restart, list, status, and cancel all explicitly disclose that job
-    /// history is ephemeral and process-local rather than implying durable history.
+    /// expect: List, status, and cancel disclose process-local restart loss and bounded retention.
     #[tokio::test]
     async fn all_job_history_surfaces_disclose_ephemeral_restart_scope()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -905,6 +904,7 @@ mod tests {
             assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
             assert!(error.message.contains("ephemeral"));
             assert!(error.message.contains("restart"));
+            assert!(error.message.contains("retention"));
         }
         Ok(())
     }

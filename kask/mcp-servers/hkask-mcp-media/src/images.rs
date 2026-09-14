@@ -137,6 +137,19 @@ fn configured_vision_model() -> Option<(String, String)> {
     configured_vision_model_from(crate::models::vision_model())
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct AnalysisRunResult {
+    pub(crate) completed: u32,
+    pub(crate) partial: u32,
+    pub(crate) errors: Vec<String>,
+}
+
+impl AnalysisRunResult {
+    pub(crate) fn durable_progress(&self) -> u32 {
+        self.completed + self.partial
+    }
+}
+
 impl MediaServer {
     /// Resolve the vision model for the tagging pipelines.
     ///
@@ -195,15 +208,25 @@ impl MediaServer {
         Ok((scan, result))
     }
 
-    /// Run the analysis pipeline on a subset of gallery images.
-    /// Used internally by gallery_organize auto_analyze and gallery_analyze.
-    /// Returns (analyzed_count, error_messages).
+    #[cfg(test)]
     pub(crate) async fn run_analysis_on_indices(
         &self,
         gallery: &crate::GalleryAccess,
         indices: &[usize],
         pipelines: &[String],
     ) -> (u32, Vec<String>) {
+        let result = self
+            .run_analysis_on_indices_detailed(gallery, indices, pipelines)
+            .await;
+        (result.completed, result.errors)
+    }
+
+    pub(crate) async fn run_analysis_on_indices_detailed(
+        &self,
+        gallery: &crate::GalleryAccess,
+        indices: &[usize],
+        pipelines: &[String],
+    ) -> AnalysisRunResult {
         let records = indices
             .iter()
             .map(|index| {
@@ -212,36 +235,43 @@ impl MediaServer {
             })
             .collect::<Result<Vec<_>, _>>();
         match records {
-            Ok(records) => self.run_analysis_on_assets(&records, pipelines).await,
-            Err(error) => (0, vec![error.to_string()]),
+            Ok(records) => {
+                self.run_analysis_on_assets_detailed(&records, pipelines)
+                    .await
+            }
+            Err(error) => AnalysisRunResult {
+                errors: vec![error.to_string()],
+                ..Default::default()
+            },
         }
     }
 
-    pub(crate) async fn run_analysis_on_assets(
+    pub(crate) async fn run_analysis_on_assets_detailed(
         &self,
         records: &[hkask_storage::gallery::ImageRecord],
         pipelines: &[String],
-    ) -> (u32, Vec<String>) {
+    ) -> AnalysisRunResult {
         if records.is_empty() {
-            return (0, Vec::new());
+            return AnalysisRunResult::default();
         }
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
             None => {
-                return (
-                    0,
-                    vec![
-                    "No vision model available — configure a vision-capable provider (OpenRouter)"
-                        .to_string(),
-                ],
-                );
+                return AnalysisRunResult {
+                    errors: vec![
+                        "No vision model available — configure a vision-capable provider (OpenRouter)"
+                            .to_string(),
+                    ],
+                    ..Default::default()
+                };
             }
         };
         // Shadow to &str so the per-pipeline call sites below (which take
         // Option<&str> / &str) work unchanged.
         let vision_model = vision_model.as_str();
         let vision_label = vision_label.as_str();
-        let mut analyzed = 0u32;
+        let mut completed = 0u32;
+        let mut partial = 0u32;
         let mut errors = Vec::new();
 
         let run_faces = pipelines.iter().any(|p| p == "faces");
@@ -446,13 +476,18 @@ impl MediaServer {
                 vision_label,
                 complete,
             ) {
-                Ok(true) => analyzed += 1,
+                Ok(true) if errors.len() == before_errors => completed += 1,
+                Ok(true) => partial += 1,
                 Ok(false) => errors.push(format!("image {idx} revision changed during analysis")),
                 Err(error) => errors.push(format!("image {idx} metadata persistence: {error}")),
             }
         }
 
-        (analyzed, errors)
+        AnalysisRunResult {
+            completed,
+            partial,
+            errors,
+        }
     }
 
     /// Extract EXIF metadata from an image file.

@@ -43,8 +43,9 @@ pub use media_widget::PlaybackBenchmarkSnapshot;
 use gpui::{App, AppContext, Entity, Window};
 
 /// Create a `MediaWidget` entity from a block body, without wrapping it in an
-/// element. Used by `hkask_viz_core::block_renderer` to cache the entity across
-/// renders (so audio/video playback and widget state survive re-renders).
+/// element. `hkask_viz_core::block_renderer` may weakly reuse the entity by
+/// stable gallery Asset identity while a surface still owns it; media players
+/// are never retained by the generic strong viz cache.
 ///
 /// Returns `None` if the body is not a valid media block (non-JSON, missing
 /// `src`, unknown kind). The caller falls through to the next renderer or the

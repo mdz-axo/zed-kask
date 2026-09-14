@@ -35,7 +35,7 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 | `video_caption` | Generate a description of video content by extracting keyframes and analyzing them with a vision LLM |
 | `video_meme` | Create a meme video from a gallery image with text overlay and camera motion. Composes text rendering + AI motion generation |
 | `voice_design` | Design a synthetic voice profile from a character description. Returns a VoiceDesign JSON for use with generate_speech |
-| `generate_speech` | Generate speech audio from text using a voice design. Returns audio as base64 data URI |
+| `generate_speech` | Generate speech audio from text using a voice design. Publishes and returns a durable local audio Asset; provider payloads do not enter the result |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
@@ -68,6 +68,35 @@ Pins: `media_blocks_round_trip_escaped_paths`,
 `ingest_tool_result_accepts_structured_and_text_transports`,
 `load_jobs_surfaces_array_rows_and_response_failures`, and
 `server_hint_round_trips_through_viewer_and_widget` tests.
+
+## Resource and lifecycle bounds
+
+Shared admission limits live in `hkask_types::media_limits`; server and panel
+callers import them rather than copying values. Concat accepts at most 64 audio
+or video inputs, image-sequence rendering accepts 256 images, keyframe
+extraction accepts 256 frames, and image generation accepts 10 variants.
+Workflow graphs are limited to 1 MiB. Cap violations fail before work begins;
+requests are never clamped or silently truncated.
+
+Multi-variant generation reports `completed`, `partial`, or `failed`, preserves
+each valid published variant, and returns a causal failure for every missing
+variant. Keyframe extraction owns one scratch batch, removes it on success or
+failure, removes failed durable copies, aggregates failures instead of warning
+once per frame, and reports partial completion explicitly.
+
+`job_list` defaults to 20 rows, accepts at most 256, and returns `total` plus
+`has_more`; the panel displays the subset rather than presenting it as the
+whole history. Job history is process-local: restart loss and bounded terminal
+retention are disclosed at list/status/cancel boundaries. Workflow listing is
+bounded to summaries (default 100, maximum 256); `workflow_load` is the only
+list/load surface that returns the full graph.
+
+The media panel applies one latest-request ownership rule to Library, Queue,
+Detail, and edits. Every success and failure is epoch-gated, malformed results
+preserve the complete last-good snapshot, pagination is reachable, and loading,
+ready/empty, degraded, and failed states are distinct. Queue polling uses a
+single GPUI-native timer only while the Queue tab is active and a nonterminal
+job exists; hiding the tab, reaching terminal state, or failure cancels it.
 
 ## Gallery lifecycle — operator decision 2026-09-06
 
@@ -112,13 +141,18 @@ still-present source file usable. Requested file deletion happens before the
 gallery row is removed, and a filesystem failure surfaces with its cause rather
 than warning and falsely reporting success.
 
-Reconciliation and analysis writes use real SQLite transactions. Analysis captures
+Reconciliation and analysis writes use real SQLite transactions. New records begin
+analysis-pending. Refresh targets the exact added/changed/restored records returned
+by reconciliation rather than guessing positional indices. Analysis captures
 records before awaiting vision, commits only against the same stored hash, and
 only a successful complete pipeline clears staleness (including faces when face
-annotations exist). Partial analysis does not certify all retained metadata, and
-structurally invalid vision output — a missing colors array, an empty composition
-object, or a blank caption — surfaces as an analysis error that retains staleness;
-legitimate empty face/object detections are valid results. Generated assets capture
+annotations exist). Partial analysis remains retryable, reports `partial`, and
+atomically replaces prior model-derived metadata for the requested pipelines while
+preserving user-authored tags. Invalid modes, pipelines, bounds, or selection
+indices fail before inference. Structurally invalid vision output — a missing
+colors array, an empty composition object, or a blank caption — surfaces as an
+analysis error that retains staleness; legitimate empty face/object detections are
+valid results. Generated assets capture
 the gallery at operation admission, before the first inference await: the snapshot
 travels immutably through inference, downloads, and every variant, so a root switch
 mid-flight never retargets an in-flight generation (background jobs capture at

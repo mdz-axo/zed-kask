@@ -19,7 +19,7 @@ fn validate_analysis_pipelines(
         ));
     }
     for pipeline in &pipelines {
-        if pipeline.is_empty() {
+        if pipeline.trim().is_empty() {
             return Err(McpToolError::invalid_argument(
                 "pipeline names must not be empty",
             ));
@@ -92,12 +92,17 @@ fn validate_analysis_target(
     }
 }
 
-fn analysis_status(requested: usize, analyzed: u32, errors: &[String]) -> &'static str {
+fn analysis_status(
+    requested: usize,
+    completed: u32,
+    partial: u32,
+    errors: &[String],
+) -> &'static str {
     if requested == 0 {
         "nothing_to_analyze"
-    } else if errors.is_empty() && analyzed as usize == requested {
+    } else if errors.is_empty() && completed as usize == requested {
         "completed"
-    } else if analyzed == 0 {
+    } else if completed + partial == 0 {
         "failed"
     } else {
         "partial"
@@ -205,11 +210,12 @@ impl MediaServer {
             if auto_analyze && !reconciled.analysis_assets.is_empty() {
                 let pipelines =
                     ["faces", "objects", "colors", "composition", "scene"].map(String::from);
-                let (analyzed, errors) = self
-                    .run_analysis_on_assets(&reconciled.analysis_assets, &pipelines)
+                let analysis = self
+                    .run_analysis_on_assets_detailed(&reconciled.analysis_assets, &pipelines)
                     .await;
-                result["auto_analyzed"] = serde_json::json!(analyzed);
-                result["analyze_errors"] = serde_json::json!(errors);
+                result["auto_analyzed"] = serde_json::json!(analysis.completed);
+                result["auto_analyzed_partial"] = serde_json::json!(analysis.partial);
+                result["analyze_errors"] = serde_json::json!(analysis.errors);
             }
             Ok(result)
         })
@@ -552,8 +558,8 @@ impl MediaServer {
                 .cloned()
                 .collect();
             let analysis_requested = analysis_assets.len();
-            let (analyzed, analyze_errors) = self
-                .run_analysis_on_assets(&analysis_assets, &pipelines)
+            let analysis = self
+                .run_analysis_on_assets_detailed(&analysis_assets, &pipelines)
                 .await;
 
             let mut faces_matched = 0u32;
@@ -597,7 +603,7 @@ impl MediaServer {
 
             let status = refresh_status(
                 &scan.errors,
-                &[&analyze_errors, &face_scan_errors, &match_errors],
+                &[&analysis.errors, &face_scan_errors, &match_errors],
             );
 
             Ok(serde_json::json!({
@@ -614,9 +620,16 @@ impl MediaServer {
                     "persisted": persisted,
                 },
                 "analysis": {
-                    "status": analysis_status(analysis_requested, analyzed, &analyze_errors),
+                    "status": analysis_status(
+                        analysis_requested,
+                        analysis.completed,
+                        analysis.partial,
+                        &analysis.errors,
+                    ),
                     "images_requested": analysis_requested,
-                    "images_analyzed": analyzed,
+                    "images_analyzed": analysis.durable_progress(),
+                    "images_completed": analysis.completed,
+                    "images_partial": analysis.partial,
                     "images_pending_after_bound": reconciled.analysis_assets.len().saturating_sub(analysis_requested),
                     "pipelines": pipelines,
                 },
@@ -626,7 +639,7 @@ impl MediaServer {
                     "registry_entries": registry_count,
                 },
                 "errors": {
-                    "analysis": analyze_errors,
+                    "analysis": analysis.errors,
                     "face_scan": face_scan_errors,
                     "matching": match_errors,
                 },
@@ -734,8 +747,8 @@ impl MediaServer {
                 }));
             }
 
-            let (analyzed, errors) = self
-                .run_analysis_on_indices(&ga, &indices, &pipelines)
+            let analysis = self
+                .run_analysis_on_indices_detailed(&ga, &indices, &pipelines)
                 .await;
 
             let vision_label = self
@@ -744,14 +757,21 @@ impl MediaServer {
                 .map(|(_, label)| label)
                 .unwrap_or_else(|| "none".to_string());
 
-            let status = analysis_status(indices.len(), analyzed, &errors);
+            let status = analysis_status(
+                indices.len(),
+                analysis.completed,
+                analysis.partial,
+                &analysis.errors,
+            );
             Ok(serde_json::json!({
                 "status": status,
-                "images_analyzed": analyzed,
+                "images_analyzed": analysis.durable_progress(),
+                "images_completed": analysis.completed,
+                "images_partial": analysis.partial,
                 "total_images": indices.len(),
                 "pipelines_run": pipelines,
                 "model": vision_label,
-                "errors": errors,
+                "errors": analysis.errors,
             }))
         })
         .await
@@ -1613,5 +1633,54 @@ impl MediaServer {
             }))
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: Selection validation preserves caller order, removes duplicates, and never truncates requested indices. [P1]
+    #[test]
+    fn selection_validation_is_ordered_deduplicated_and_bounded() {
+        let target = validate_analysis_target("selection", Some(vec![3, 1, 3]), 4, 3);
+        assert_eq!(target.ok(), Some(AnalysisTarget::Indices(vec![3, 1])));
+        assert!(validate_analysis_target("selection", Some(vec![1, 1, 2]), 4, 2).is_err());
+    }
+
+    /// expect: Invalid gallery analysis requests fail before any inference work can begin. [P1]
+    #[test]
+    fn analysis_request_validation_rejects_invalid_modes_bounds_and_indices() {
+        assert!(validate_analysis_target("recent", None, 3, 1).is_err());
+        assert!(validate_analysis_target("all", None, 3, 0).is_err());
+        assert!(validate_analysis_target("selection", None, 3, 3).is_err());
+        assert!(validate_analysis_target("selection", Some(vec![3]), 3, 3).is_err());
+        assert!(validate_analysis_target("new", Some(vec![0]), 3, 3).is_err());
+    }
+
+    /// expect: Pipeline selection rejects empty and unknown names instead of silently doing no work. [P1]
+    #[test]
+    fn analysis_pipeline_validation_is_strict() {
+        assert!(validate_analysis_pipelines(Some(Vec::new())).is_err());
+        assert!(validate_analysis_pipelines(Some(vec![String::new()])).is_err());
+        assert!(validate_analysis_pipelines(Some(vec!["depth".into()])).is_err());
+        assert_eq!(
+            validate_analysis_pipelines(Some(vec!["scene".into(), "objects".into()])).ok(),
+            Some(vec!["scene".into(), "objects".into()])
+        );
+    }
+
+    /// expect: Lifecycle status distinguishes complete, partial, failed, degraded, and empty work. [P1]
+    #[test]
+    fn analysis_and_refresh_statuses_reflect_progress_and_errors() {
+        let errors = vec!["failure".to_string()];
+        assert_eq!(analysis_status(0, 0, 0, &[]), "nothing_to_analyze");
+        assert_eq!(analysis_status(2, 2, 0, &[]), "completed");
+        assert_eq!(analysis_status(2, 1, 0, &errors), "partial");
+        assert_eq!(analysis_status(2, 0, 1, &errors), "partial");
+        assert_eq!(analysis_status(2, 0, 0, &errors), "failed");
+        assert_eq!(refresh_status(&errors, &[&[]]), "degraded");
+        assert_eq!(refresh_status(&[], &[&errors]), "partial");
+        assert_eq!(refresh_status(&[], &[&[]]), "completed");
     }
 }

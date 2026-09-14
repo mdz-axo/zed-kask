@@ -5438,7 +5438,7 @@ mod gallery_lifecycle_tests {
         assert_eq!(returned.id, original.id);
         assert_eq!(returned.added_at, original.added_at);
         assert!(!returned.missing);
-        assert!(!returned.metadata_stale);
+        assert_eq!(returned.metadata_stale, original.metadata_stale);
         assert_eq!(
             store.list_album_members(&album.id)?,
             vec![original.id.clone()]

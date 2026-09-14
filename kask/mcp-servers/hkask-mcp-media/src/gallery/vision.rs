@@ -20,6 +20,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const MODEL_OUTPUT_EXCERPT_BYTES: usize = 200;
+
+fn bounded_model_output_excerpt(text: &str) -> &str {
+    if text.len() <= MODEL_OUTPUT_EXCERPT_BYTES {
+        return text;
+    }
+    let mut end = MODEL_OUTPUT_EXCERPT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 /// Load an image and return it as raw base64-encoded PNG — the exact
 /// payload the inference bridge's `LanguageModelImage` contract expects
 /// (`to_base64_url` prepends `data:image/png;base64,` itself). The former
@@ -165,7 +178,7 @@ pub async fn detect_faces(
         crate::MediaError::VisionParse(format!(
             "Failed to parse face detection result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
 
@@ -229,7 +242,7 @@ pub async fn validate_face_reference(
         crate::MediaError::VisionParse(format!(
             "Failed to parse validation result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
 
@@ -296,7 +309,7 @@ pub async fn match_faces(
         crate::MediaError::VisionParse(format!(
             "Failed to parse match result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
 
@@ -341,7 +354,7 @@ pub async fn detect_objects(
         crate::MediaError::VisionParse(format!(
             "Failed to parse object detection result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
     Ok(objects)
@@ -375,7 +388,7 @@ pub async fn analyze_colors(
         crate::MediaError::VisionParse(format!(
             "Failed to parse color analysis result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
     // A parsed-but-empty object is not a usable palette: without this check a
@@ -384,7 +397,7 @@ pub async fn analyze_colors(
     if !parsed.get("colors").is_some_and(|colors| colors.is_array()) {
         return Err(crate::MediaError::VisionParse(format!(
             "Color analysis result has no colors array — raw: {}",
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         )));
     }
     Ok(parsed)
@@ -416,7 +429,7 @@ pub async fn analyze_composition(
         crate::MediaError::VisionParse(format!(
             "Failed to parse composition analysis result: {} — raw: {}",
             e,
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         ))
     })?;
     // An object with none of the recognized fields carries no composition
@@ -440,7 +453,7 @@ pub async fn analyze_composition(
         return Err(crate::MediaError::VisionParse(format!(
             "Composition analysis result has none of the recognized fields ({}) — raw: {}",
             COMPOSITION_FIELDS.join(", "),
-            &result.text[..200.min(result.text.len())]
+            bounded_model_output_excerpt(&result.text)
         )));
     }
     Ok(parsed)
@@ -482,7 +495,7 @@ pub async fn caption_scene(
 
 #[cfg(test)]
 mod tests {
-    use super::load_image_as_png_base64;
+    use super::{bounded_model_output_excerpt, load_image_as_png_base64};
 
     /// A 1×1 PNG fixture (the same byte pattern the corpus server's OCR
     /// guard tests use).
@@ -517,11 +530,12 @@ mod tests {
             line!()
         ));
         std::fs::write(&path, TINY_PNG).expect("fixture write");
-        let b64 = load_image_as_png_base64(path.to_str().unwrap())
+        let path_string = path.to_string_lossy();
+        let b64 = load_image_as_png_base64(&path_string)
             .await
             .expect("local file loads");
         assert_raw_png_base64(&b64);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("fixture cleanup");
     }
 
     /// Pre-built data URIs must be UNWRAPPED — passing them whole would make
@@ -538,6 +552,16 @@ mod tests {
             .await
             .expect("data URI loads");
         assert_raw_png_base64(&b64);
+    }
+
+    /// expect: Diagnostic excerpts never split a UTF-8 code point and remain byte-bounded. [P1]
+    #[test]
+    fn model_output_excerpt_is_utf8_safe_and_bounded() {
+        let input = format!("{}é-tail", "a".repeat(199));
+        let excerpt = bounded_model_output_excerpt(&input);
+        assert_eq!(excerpt, "a".repeat(199));
+        assert!(excerpt.len() <= 200);
+        assert_eq!(bounded_model_output_excerpt("short"), "short");
     }
 
     #[tokio::test]

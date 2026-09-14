@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-09
+last_updated: 2026-09-14
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -115,6 +115,44 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides (TTS,
 
 **Image size cap:** gallery images larger than 32 MiB are rejected before base64 encoding to prevent OOM (`MAX_IMAGE_READ_BYTES`, `src/hkask_mcp_media.rs:54-58`).
 
+### Resource bounds and lifecycle presentation
+
+`hkask_types::media_limits` is the shared admission-policy authority. Requests
+outside these bounds fail before allocation or external work; no caller input is
+clamped or silently truncated.
+
+| Surface | Bound |
+|---|---:|
+| audio/video concat inputs | 64 |
+| image-sequence inputs | 256 |
+| extracted keyframes | 256 |
+| generated image variants | 10 |
+| workflow graph JSON | 1 MiB |
+| `job_list` rows | default 20, maximum 256 |
+| `workflow_list` summaries | default 100, maximum 256 |
+
+Generation and frame extraction report `completed`, `partial`, or `failed` and
+retain per-item causes. Valid generation variants remain published when a
+sibling fails. Extraction owns and removes its scratch batch on every terminal
+path, removes failed durable copies, and aggregates failures rather than
+emitting one warning per frame. Workflow listing returns bounded summaries;
+`workflow_load` returns the full graph.
+
+The media panel uses latest-request ownership for Library, Queue, Detail, and
+edit calls. Both success and failure callbacks are epoch-gated; a malformed or
+failed refresh preserves the atomically committed last-good snapshot. Library
+pagination is user-reachable. Loading, ready/empty, degraded, and failed states
+are distinct, and progress does not use error styling. Queue polling is
+single-flight and uses a GPUI-native timer only while the Queue tab is active
+and a nonterminal job exists; it stops on hide, terminal completion, or error.
+Job responses expose `total` and `has_more`, and process-local restart loss plus
+bounded terminal-record retention are disclosed.
+
+The media widget clears stale failures on retry, synchronizes Pause/Stop into
+the visible transport immediately, surfaces missing image/SVG filesystem causes,
+and invalidates in-flight remote resolution when suspended so hidden media
+cannot restart polling.
+
 ## Gallery lifecycle — ratified 2026-09-06
 
 The operator approved **retain-and-mark-missing**, not deletion or compatibility
@@ -141,12 +179,16 @@ supersedes the create-only activation / insert-only rescan behavior.
   `(added_at, id)` ordering. Listing exposes `gallery_id`, `id`, `missing`,
   `metadata_stale`; tag/semantic search exposes `image_id` and `metadata_stale`.
   The existing Detail inspector renders these flags without a layout redesign.
-- Scans and vision target captured galleries/asset records. Auto-analysis consumes
-  actual added/changed/restored records, not guessed index ranges. Complete
-  successful analysis clears staleness only when the captured hash still matches;
-  partial analysis cannot certify all retained metadata. Structurally invalid
-  vision output (missing colors array, empty composition object, blank caption)
-  errors and retains staleness; legitimate empty face/object detections are valid.
+- Scans and vision target captured galleries/asset records. New records begin
+  analysis-pending. Auto-analysis consumes actual added/changed/restored records,
+  not guessed index ranges. Complete successful analysis clears staleness only
+  when the captured hash still matches; partial analysis remains retryable and
+  reports `partial`. Reanalysis atomically replaces prior model-derived tags for
+  requested pipelines while preserving user-authored tags. Invalid modes,
+  pipelines, bounds, and selection indices fail before inference. Structurally
+  invalid vision output (missing colors array, empty composition object, blank
+  caption) errors and retains staleness; legitimate empty face/object detections
+  are valid.
   Generation captures the gallery at operation admission — before the first
   inference await — and that snapshot travels immutably through inference,
   downloads, and all variants; background jobs capture at submission.

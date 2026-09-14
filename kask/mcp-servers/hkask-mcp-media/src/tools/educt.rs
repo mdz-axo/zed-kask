@@ -608,7 +608,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Run the correction pass over a stored transcript: an LLM proposes text replacements over word ranges for likely speech-to-text errors (mishearings, homophones, garbled fragments). Edits are proposals — timings are never touched, and applying them (educt_apply_corrections) produces a derived text view while the original words stay immutable. The output is validated (disjoint, in-bounds) and stored as a CorrectionLayer. The response carries pass stats."
+        description = "Run the correction pass over a stored transcript: an LLM proposes text replacements over word ranges for likely speech-to-text errors (mishearings, homophones, garbled fragments). Timings are never touched. The newest stored correction becomes the working derived transcript used by inspection and downstream timed operations when aligned; educt_apply_corrections returns that derived view explicitly. Original source words stay immutable. The output is validated (disjoint, in-bounds) and stored as a CorrectionLayer. The response carries pass stats."
     )]
     pub async fn educt_correction_pass(
         &self,

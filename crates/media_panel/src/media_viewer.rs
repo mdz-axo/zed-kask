@@ -389,7 +389,7 @@ impl MediaViewer {
         cx.notify();
         let task = invoker.invoke_tool(MEDIA_SERVER, tool, params);
         cx.spawn(async move |this, cx| {
-            let result = task.await.map_err(|error| error.message().to_string());
+            let result = task.await.map_err(|error| error.message());
             this.update(cx, |this, cx| {
                 this.apply_edit_result(epoch, tool, result, cx)
             })
