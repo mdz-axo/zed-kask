@@ -612,6 +612,54 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
     format: LocalMediaFormat,
     effective_params: &T,
 ) -> Result<serde_json::Value, McpToolError> {
+    publish_local_media_inner(
+        gallery,
+        gallery_store,
+        output,
+        op,
+        status,
+        format,
+        effective_params,
+        None,
+    )
+}
+
+/// Publish a rendered transcript EDL under the canonical local-media owner,
+/// recording its typed transcript/layer origin before rollback ownership is
+/// released.
+pub(crate) fn publish_local_media_with_transcript_render<T: serde::Serialize + ?Sized>(
+    gallery: &GalleryState,
+    gallery_store: &Arc<GalleryStore>,
+    output: &std::path::Path,
+    op: &str,
+    status: &str,
+    format: LocalMediaFormat,
+    effective_params: &T,
+    transcript_id: &str,
+    edl_layer_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    publish_local_media_inner(
+        gallery,
+        gallery_store,
+        output,
+        op,
+        status,
+        format,
+        effective_params,
+        Some((transcript_id, edl_layer_id)),
+    )
+}
+
+fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
+    gallery: &GalleryState,
+    gallery_store: &Arc<GalleryStore>,
+    output: &std::path::Path,
+    op: &str,
+    status: &str,
+    format: LocalMediaFormat,
+    effective_params: &T,
+    transcript_render: Option<(&str, &str)>,
+) -> Result<serde_json::Value, McpToolError> {
     let mut publication = stage_local_media_publication(output, format).map_err(map_media_error)?;
     let mut effective_value = match serde_json::to_value(effective_params) {
         Ok(value) => value,
@@ -693,6 +741,22 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
             &mut publication,
             MediaError::AssetPersistence(format!("record {op} OMC creation graph: {error}")),
         ));
+    }
+    if let Some((transcript_id, edl_layer_id)) = transcript_render {
+        if let Err(error) = crate::transcript_store::record_render(
+            &**gallery_store.driver(),
+            &gallery_asset_id,
+            transcript_id,
+            edl_layer_id,
+            &generation.created_at,
+        ) {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!(
+                    "record {op} transcript render relationship: {error}"
+                )),
+            ));
+        }
     }
 
     let Some(effective_fields) = effective_value.as_object() else {

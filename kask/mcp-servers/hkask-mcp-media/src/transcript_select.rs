@@ -2,7 +2,7 @@
 //!
 //! The trust boundary of the transcript-store design: LLM passes emit word
 //! indices, never timestamps; this module owns the only index→time mapping
-//! (`tasks/transcript-store-design.md` §2). Everything here is pure over
+//! required by `tasks/reduct-video-analysis-scaffold.md`. Everything here is pure over
 //! `&[TimedWord]` — no I/O, no storage, no inference — so every guarantee
 //! is checkable by test.
 //!

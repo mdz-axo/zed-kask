@@ -3931,7 +3931,7 @@ mod tool_behavior_tests {
         let temp_files_before = temp_media_files().expect("read temp media files before render");
         let rendered = server
             .educt_render_edl(Parameters(EductRenderEdlRequest {
-                transcript_id,
+                transcript_id: transcript_id.clone(),
                 layer_id: None,
             }))
             .await
@@ -3966,6 +3966,17 @@ mod tool_behavior_tests {
             .get_generation(asset_id)?
             .ok_or("EDL render lineage missing")?;
         assert_eq!(lineage.op, "educt_render_edl");
+        let render_relation = crate::transcript_store::get_render(&**store.driver(), asset_id)?
+            .ok_or("EDL render relationship missing")?;
+        assert_eq!(
+            render_relation.transcript_id.as_deref(),
+            Some(transcript_id.as_str())
+        );
+        assert_eq!(render_relation.source_transcript_id, transcript_id);
+        assert_eq!(
+            render_relation.edl_layer_id,
+            Some(render_relation.source_edl_layer_id.clone())
+        );
         let temp_files_after = temp_media_files()?;
         assert_eq!(
             temp_files_after.difference(&temp_files_before).count(),
@@ -4027,6 +4038,17 @@ mod tool_behavior_tests {
         assert_eq!(metadata["format"], "srt");
         assert_eq!(metadata["provenance"], content["provenance"]);
         assert_eq!(metadata["effective_params"], content["effective_params"]);
+        let exports =
+            crate::transcript_store::list_exports(&**server.gallery_store.driver(), &transcript_id)
+                .expect("list durable exports");
+        assert_eq!(exports.len(), 1);
+        assert_eq!(exports[0].export_id, export_id);
+        assert_eq!(exports[0].document_path, output);
+        assert_eq!(exports[0].metadata_path, metadata_path);
+        assert_eq!(
+            exports[0].transcript_id.as_deref(),
+            Some(transcript_id.as_str())
+        );
         let srt = std::fs::read_to_string(&output).expect("read SRT");
         assert!(
             srt.contains("1\n00:00:00,000 --> 00:00:00,900\nalpha beta\n"),
@@ -4330,6 +4352,29 @@ mod tool_behavior_tests {
         };
 
         let server = make_server();
+        let gallery_root = tempfile::tempdir().expect("gallery root");
+        let source = gallery_root.path().join("a.wav");
+        std::fs::write(&source, b"source audio").expect("source media");
+        let gallery = server
+            .gallery_store
+            .open(
+                gallery_root.path().to_str().expect("UTF-8 gallery root"),
+                GalleryMode::CopyOnWrite,
+            )
+            .expect("open gallery");
+        let asset = server
+            .gallery_store
+            .add_media(
+                &gallery.id,
+                source.to_str().expect("UTF-8 source path"),
+                "source-hash",
+                0,
+                0,
+                "wav",
+                12,
+                "audio",
+            )
+            .expect("add source asset");
         let bundle = TranscriptBundle {
             words: vec![
                 TimedWord {
@@ -4345,7 +4390,11 @@ mod tool_behavior_tests {
                     confidence: None,
                 },
             ],
-            ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
+            ..TranscriptBundle::new(
+                source.to_string_lossy().into_owned(),
+                1.0,
+                "alpha beta".to_string(),
+            )
         };
 
         // Store.
@@ -4354,7 +4403,7 @@ mod tool_behavior_tests {
                 transcript: hkask_types::AnyJsonValue(
                     serde_json::to_value(&bundle).expect("serialize bundle"),
                 ),
-                gallery_asset_id: Some("asset-1".to_string()),
+                gallery_asset_id: Some(asset.id.clone()),
             }))
             .await
             .expect("educt_store_transcript succeeds");
@@ -4367,7 +4416,7 @@ mod tool_behavior_tests {
         let listed = server
             .educt_list_transcripts(Parameters(EductListTranscriptsRequest {
                 media_path: None,
-                gallery_asset_id: Some("asset-1".to_string()),
+                gallery_asset_id: Some(asset.id.clone()),
                 limit: Some(10),
             }))
             .await
@@ -4538,6 +4587,139 @@ mod gallery_lifecycle_tests {
         let value: serde_json::Value = serde_json::from_str(&result)?;
         assert!(!result.contains("\"error\":"), "{result}");
         Ok(value)
+    }
+
+    /// dcterms:identifier: `MediaServer::gallery_delete_image`
+    /// expect: Removing an Asset from the gallery preserves my transcript and leaves its source usable when I keep the file.
+    /// [P1] Motivating: Catalog cleanup never silently destroys transcript-based editorial work.
+    #[tokio::test]
+    async fn index_only_asset_deletion_detaches_transcript_and_keeps_source() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        let source = root.join("source.wav");
+        std::fs::write(&source, b"source audio")?;
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
+        organize(&server, &root, true).await?;
+        let gallery = server.access_gallery()?;
+        let asset = server.gallery_store.add_media(
+            &gallery.gallery_id,
+            source.to_str().ok_or("UTF-8 source path")?,
+            "source-hash",
+            0,
+            0,
+            "wav",
+            12,
+            "audio",
+        )?;
+        let bundle = crate::transcript::TranscriptBundle::new(
+            source.to_string_lossy().into_owned(),
+            1.0,
+            "source".to_string(),
+        );
+        let transcript = crate::transcript_store::store_transcript(
+            &**server.gallery_store.driver(),
+            &bundle,
+            Some(&asset.id),
+        )?;
+
+        let result = server
+            .gallery_delete_image(Parameters(GalleryDeleteImageRequest {
+                image_index: None,
+                image_id: Some(asset.id.clone()),
+                delete_file: false,
+            }))
+            .await?;
+
+        assert!(result.contains("\"transcripts_detached\":1"), "{result}");
+        assert!(result.contains("\"file_deleted\":false"), "{result}");
+        assert!(source.is_file());
+        let (summary, _) = crate::transcript_store::load_transcript(
+            &**server.gallery_store.driver(),
+            &transcript.id,
+        )?
+        .ok_or("transcript preserved")?;
+        assert_eq!(
+            summary.source_link,
+            crate::transcript_store::TranscriptSourceLink::Detached
+        );
+        assert_eq!(
+            summary.source_availability,
+            crate::transcript_store::TranscriptSourceAvailability::Available
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::gallery_delete_image`
+    /// expect: If source-file deletion fails, I see the filesystem cause and no durable identity is falsely removed.
+    /// [P1] Motivating: Destructive operations fail closed and never report cleanup they did not perform.
+    #[tokio::test]
+    async fn asset_file_deletion_failure_preserves_gallery_and_transcript_identity() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        let source = root.join("source.wav");
+        std::fs::write(&source, b"source audio")?;
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
+        organize(&server, &root, true).await?;
+        let gallery = server.access_gallery()?;
+        let asset = server.gallery_store.add_media(
+            &gallery.gallery_id,
+            source.to_str().ok_or("UTF-8 source path")?,
+            "source-hash",
+            0,
+            0,
+            "wav",
+            12,
+            "audio",
+        )?;
+        let bundle = crate::transcript::TranscriptBundle::new(
+            source.to_string_lossy().into_owned(),
+            1.0,
+            "source".to_string(),
+        );
+        let transcript = crate::transcript_store::store_transcript(
+            &**server.gallery_store.driver(),
+            &bundle,
+            Some(&asset.id),
+        )?;
+        std::fs::remove_file(&source)?;
+        std::fs::create_dir(&source)?;
+
+        let error = server
+            .gallery_delete_image(Parameters(GalleryDeleteImageRequest {
+                image_index: None,
+                image_id: Some(asset.id.clone()),
+                delete_file: true,
+            }))
+            .await
+            .expect_err("directory cannot be removed as a source file");
+
+        assert!(error.message.contains("delete source file"), "{error}");
+        assert!(error.message.contains("source.wav"), "{error}");
+        assert!(
+            server
+                .gallery_store
+                .get_by_id(&gallery.gallery_id, &asset.id)
+                .is_ok()
+        );
+        let (summary, _) = crate::transcript_store::load_transcript(
+            &**server.gallery_store.driver(),
+            &transcript.id,
+        )?
+        .ok_or("transcript preserved")?;
+        assert_eq!(summary.gallery_asset_id.as_deref(), Some(asset.id.as_str()));
+        assert_eq!(
+            summary.source_link,
+            crate::transcript_store::TranscriptSourceLink::Linked
+        );
+        Ok(())
     }
 
     /// expect: My gallery and mode survive restart, aliases, and switches; invalid roots never activate. [P1]

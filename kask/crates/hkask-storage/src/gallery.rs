@@ -1498,12 +1498,13 @@ impl GalleryStore {
         Ok(rows)
     }
 
-    /// Delete an image record and all its associated data (tags, face
-    /// associations, generation lineage). Does NOT delete the underlying
-    /// file on disk — only the gallery index entry.
+    /// Delete an Asset record. Foreign-key cascades remove its tags, face
+    /// associations, album memberships, generation lineage, OMC graph, and
+    /// media-server relationship rows in the same database statement. Does
+    /// NOT delete the underlying file on disk.
     ///
     /// pre:  image_id is a valid gallery image ID
-    /// post: image record, tags, and generation lineage for image_id are deleted
+    /// post: the Asset and every foreign-key-owned child row are deleted atomically
     /// post: returns NotFound if the image_id does not exist
     pub fn delete_image(&self, image_id: &str) -> std::result::Result<(), GalleryStoreError> {
         let affected = self.driver.execute(
@@ -1515,33 +1516,6 @@ impl GalleryStore {
                 entity_type: "image".to_string(),
                 id: format!("image_id={}", image_id),
             }));
-        }
-        // Cascade: delete tags and generation lineage for this image.
-        // These are best-effort — if they fail, the image is already deleted
-        // and the orphaned tags/lineage are harmless (they reference a
-        // non-existent image_id) — but the failure is logged so a lingering
-        // orphan is diagnosable instead of silent.
-        if let Err(e) = self.driver.execute(
-            "DELETE FROM gallery_tags WHERE image_id = ?1",
-            &[DbValue::Text(image_id.to_string())],
-        ) {
-            tracing::warn!(
-                target: "reg.storage",
-                error = %e,
-                image_id,
-                "failed to cascade-delete gallery tags — orphaned rows are harmless but visible"
-            );
-        }
-        if let Err(e) = self.driver.execute(
-            "DELETE FROM gallery_generation WHERE image_id = ?1",
-            &[DbValue::Text(image_id.to_string())],
-        ) {
-            tracing::warn!(
-                target: "reg.storage",
-                error = %e,
-                image_id,
-                "failed to cascade-delete gallery generation lineage — orphaned rows are harmless but visible"
-            );
         }
         Ok(())
     }

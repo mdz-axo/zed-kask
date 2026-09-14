@@ -155,7 +155,11 @@ supersedes the create-only activation / insert-only rescan behavior.
   selection/deletion actions), drops superseded listing responses (request
   epochs), reconciles exhausted page tails against the payload `total`, and
   addresses detail/delete by stable `image_id` (`gallery_delete_image` accepts
-  exactly one of `image_id` or `image_index`).
+  exactly one of `image_id` or `image_index`). Asset deletion preserves linked
+  transcripts, clears only their live gallery link in the same database statement,
+  and retains immutable source identity. Index-only deletion leaves path-backed
+  transcripts usable; requested file deletion fails before row deletion when the
+  filesystem operation fails.
 - Canonicalization of an absent path resolves its existing symlink ancestors
   (deepest existing prefix canonicalized, absent remainder appended lexically),
   so alias and real spellings of a missing file denote one identity. Conflicting
@@ -175,6 +179,32 @@ Storage API callers use `open` and pass one canonical asset path to insertion.
 No providers, generation-job lifecycle, or D35 child-local routing changes are
 part of this decision. See the server README's gallery lifecycle section for
 regression test names.
+
+## Transcript-as-timeline model
+
+The 15 `educt_*` tools implement the interaction model published by Reduct.video:
+word-timed transcript selections become media ranges; labeled highlights compose
+into ordered Reel Keep operations; Cut operations implement strikethrough editing;
+and render/export are non-destructive projections. This is a local implementation,
+not a Reduct cloud/API integration.
+
+Transcript, layer, document-export, and rendered-Asset relationships share the
+media database. Deleting a transcript atomically removes its editable layers while
+preserving document exports and rendered EDL Assets; preserved outputs retain
+immutable source transcript/layer IDs while live links become null. Export
+publication and canonical EDL publication record these typed relationships before
+releasing rollback ownership. `educt_get_transcript` enumerates live exports and
+renders, and `gallery_asset_detail` exposes a rendered Asset's transcript origin.
+
+Reviewed divergence: correction layers preserve original word timings and produce a
+derived corrected-text view, but locate/highlight/SRT/corpus export still read the
+original words. Reduct promotes corrected text into its working transcript and
+re-aligns it. The local correction projection must gain a timing-preserving token
+map before those consumers can switch without corrupting provenance.
+
+Official reference surface:
+<https://reduct.video/product/edit-video/> and
+<https://help.reduct.video/en/articles/2528101-how-do-i-correct-a-transcript>.
 
 ## Tool reference
 
@@ -229,9 +259,9 @@ No routing or layout change is part of this repair.
 | `gallery_timeline` | 927 | Organize gallery images by time period using EXIF dates; grouped by year, month, or decade. |
 | `gallery_record_generation` | 1026 | Record generation lineage for a gallery image (prompt, model, provider, seed, params) so it can be reproduced or varied later; image must already be indexed. |
 | `gallery_lineage` | 1079 | Show the recorded generation lineage for a gallery image; `lineage: null` if none recorded. |
-| `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing/status fields, lineage, and the structured OMC v2.8 creation graph; the inspector-panel data source. |
+| `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing/status fields, lineage, structured OMC v2.8 creation graph, and typed transcript-render origin; the inspector-panel data source. |
 | `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
-| `gallery_delete_image` | 1176 | Delete an image from the gallery index by stable `image_id` or active `image_index` (exactly one); by default index-only, `delete_file=true` also removes the file. |
+| `gallery_delete_image` | 1176 | Delete an Asset from the gallery index by stable `image_id` or active `image_index` (exactly one); linked transcripts detach and survive. By default the source remains usable; `delete_file=true` removes it before database deletion and surfaces filesystem failure. |
 | `gallery_add_media` | 1256 | Import a video or audio file into the gallery index (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
 | `gallery_create_album` | 1375 | Create an album; metadata-only grouping, assets stay in place, an asset can be in multiple albums. |
 | `gallery_list_albums` | 1401 | List all albums in the current gallery. |

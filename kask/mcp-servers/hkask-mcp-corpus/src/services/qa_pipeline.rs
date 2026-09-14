@@ -131,7 +131,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
         prompt.qa_types.len(),
         instructions
     );
@@ -418,7 +418,7 @@ impl<W: Write> QaOutput<W> {
 /// Single source of truth for prepared QA generation.
 pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
     hkask_types::template::LLMParameters {
-        temperature: 0.3,
+        temperature: 0.0,
         top_p: 0.95,
         frequency_penalty: 0.0,
         presence_penalty: 0.0,
@@ -460,6 +460,24 @@ fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: QA generation is deterministic and never enables model thinking.
+    #[test]
+    fn qa_generation_uses_deterministic_sampling() {
+        let parameters = qa_llm_parameters();
+        assert_eq!(parameters.temperature, 0.0);
+        assert!(!parameters.thinking_allowed);
+    }
+
+    /// expect: The compact contract asks for the shortest sufficient grounded output.
+    #[test]
+    fn prepared_prompt_requires_concise_qa_and_evidence() -> Result<(), McpToolError> {
+        let messages = render_prepared_messages(&prepared())?;
+        assert!(messages[0].content.contains(
+            "Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer."
+        ));
+        Ok(())
+    }
 
     fn prepared() -> PreparedQaPrompt {
         PreparedQaPrompt {

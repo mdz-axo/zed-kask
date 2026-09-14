@@ -1051,7 +1051,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Get complete details for a gallery asset — record, tags, lineage, OMC creation graph, and face associations in a single call. The inspector-panel data source."
+        description = "Get complete details for a gallery asset — record, tags, lineage, OMC creation graph, transcript-render origin, and face associations in a single call. The inspector-panel data source."
     )]
     pub async fn gallery_asset_detail(
         &self,
@@ -1097,6 +1097,9 @@ impl MediaServer {
                             })
                     })
                     .transpose()?;
+            let transcript_render =
+                crate::transcript_store::get_render(&**self.gallery_store.driver(), &image.id)
+                    .map_err(crate::tools::educt::map_store_error)?;
             let faces = self
                 .gallery_store
                 .get_faces_for_image(&image.id)
@@ -1106,6 +1109,7 @@ impl MediaServer {
                 "tags": &tags,
                 "lineage": &lineage,
                 "omc_creation_graph": &omc_creation_graph,
+                "transcript_render": &transcript_render,
                 "faces": &faces,
             }))
         })
@@ -1186,7 +1190,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Delete an image from the gallery index. By default only removes the index entry (tags, face associations, generation lineage) — the file on disk is left untouched. Set delete_file=true to also remove the file. Supply exactly one of image_index (positional, active gallery) or image_id (stable identity)."
+        description = "Delete an Asset from the gallery index. Linked transcripts are preserved and explicitly detached. By default the source file remains usable by those transcripts; delete_file=true removes it before deleting the gallery identity. Supply exactly one of image_index or image_id."
     )]
     pub async fn gallery_delete_image(
         &self,
@@ -1215,28 +1219,27 @@ impl MediaServer {
                     ));
                 }
             };
-            let image_path = if delete_file {
-                Some(std::path::PathBuf::from(&image.absolute_path))
-            } else {
-                None
-            };
+            let driver = &**self.gallery_store.driver();
+            let transcripts_detached =
+                crate::transcript_store::count_linked_transcripts(driver, &image.id)
+                    .map_err(crate::tools::educt::map_store_error)?;
+            if delete_file {
+                let path = std::path::Path::new(&image.absolute_path);
+                std::fs::remove_file(path).map_err(|error| {
+                    map_media_error(MediaError::AssetPersistence(format!(
+                        "delete source file {}: {error}",
+                        path.display()
+                    )))
+                })?;
+            }
             self.gallery_store
                 .delete_image(&image.id)
                 .map_err(|e| map_media_error(e.into()))?;
-            if let Some(path) = image_path {
-                if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!(
-                        target: "hkask.mcp.media",
-                        path = %path.display(),
-                        error = %e,
-                        "Failed to delete image file on disk (index entry already deleted)"
-                    );
-                }
-            }
             Ok(serde_json::json!({
                 "deleted": true,
                 "image_id": image.id,
                 "file_deleted": delete_file,
+                "transcripts_detached": transcripts_detached,
             }))
         })
         .await

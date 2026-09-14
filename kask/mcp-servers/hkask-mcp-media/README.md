@@ -105,7 +105,12 @@ Positional indices use the same `(added_at, id)` order across listing, lookup,
 and album positions; positions are not durable identities. Panel detail and
 delete actions address assets by stable `image_id` (`gallery_delete_image`
 accepts exactly one of `image_id` or `image_index`) — a positional index
-captured before a root switch can never act on the new gallery.
+captured before a root switch can never act on the new gallery. Asset deletion
+preserves linked transcripts and atomically detaches their live gallery link;
+the immutable source Asset ID remains queryable. Index-only deletion leaves a
+still-present source file usable. Requested file deletion happens before the
+gallery row is removed, and a filesystem failure surfaces with its cause rather
+than warning and falsely reporting success.
 
 Reconciliation and analysis writes use real SQLite transactions. Analysis captures
 records before awaiting vision, commits only against the same stored hash, and
@@ -121,7 +126,9 @@ submission). Canonically published media also persist an OMC v2.8 creation graph
 the output Asset links to its creation Task and Provenance; the Task links to its
 completed State/StateDescriptor; and an OMC Role links that Task to the responsible
 hkask media Service/Participant. `gallery_asset_detail` returns this structured
-`omc_creation_graph`, and deleting the asset cascades the graph. Keyframes are copied
+`omc_creation_graph` plus any typed transcript-render origin. Deleting the Asset
+cascades its graph, lineage, gallery metadata, and render relationship in the same
+parent-row statement. Keyframes are copied
 into durable artifacts before indexing, not indexed as soon-to-be-deleted extraction
 scratch files.
 
@@ -146,6 +153,36 @@ and `invalid_analysis_outputs_retain_staleness`), and storage's
 `absent_alias_path_resolves_existing_ancestors_and_keeps_identity`,
 `conflicting_absent_alias_spellings_fail_explicitly`,
 and `forward_schema_preserves_data_and_refuses_duplicate_identity`.
+
+## Transcript-as-timeline reference model
+
+The local educt system follows Reduct.video's published interaction model rather
+than integrating or imitating its private cloud API. The current official product
+surface describes selecting transcript text to create video highlights, arranging
+highlights into a Reel, deleting text to skip media, correcting transcript text,
+and exporting captions or finished video:
+
+- <https://reduct.video/product/edit-video/>
+- <https://help.reduct.video/en/articles/2528101-how-do-i-correct-a-transcript>
+
+The implemented local model preserves the load-bearing structure: immutable
+word-level time anchors; text selections as media ranges; overlapping labeled
+highlights; ordered Keep ranges as a Reel; Cut ranges as strikethrough/subtractive
+editing; deterministic FFmpeg rendering; and durable SRT, highlight CSV, corpus
+text, and rendered-media outputs. Transcript deletion removes editable layers in
+one database transition but preserves exports and rendered media with immutable
+source transcript/layer IDs and nullable live links. Gallery Asset deletion keeps
+transcripts and marks their source relationship detached instead of destroying
+editorial work.
+
+One reviewed divergence remains explicit: correction layers currently produce a
+derived corrected-text view, but `educt_locate`, semantic highlighting, SRT, and
+corpus-text export still consume the immutable original words. Reduct promotes
+corrections into its working transcript and re-aligns them to media. Closing that
+gap requires a timing-preserving corrected-token projection (and a surfaced
+unaligned state when replacement text cannot map safely); mutating the original
+word/timing evidence would violate this system's provenance model. There is no
+hidden Reduct upload, credential, fallback, or cloud mode.
 
 ## Configuration
 

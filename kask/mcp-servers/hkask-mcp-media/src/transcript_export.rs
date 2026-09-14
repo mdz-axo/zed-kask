@@ -1,7 +1,7 @@
 //! Educt transcript exports — deterministic projections of the stored
 //! transcript to shareable and ingestable formats (slice 7):
-//! - **SRT captions** from `TimedWord` — the immutable ground truth
-//!   (segments stay a derived view, design doc §1.3).
+//! - **SRT captions** from `TimedWord` — immutable timing ground truth;
+//!   segments stay a derived view.
 //! - **A CSV of every stored highlight** — with time ranges via the
 //!   selection algebra (the only index→time mapping).
 //! - **The rendered transcript text** for corpus ingestion —
@@ -17,6 +17,7 @@ use crate::transcript_select::{SelectionError, WordRange, word_range_to_time_ran
 use crate::transcript_store::LayerRecord;
 use crate::{MediaError, map_media_error};
 use hkask_mcp_server::server::McpToolError;
+use hkask_storage::database::driver::DatabaseDriver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,6 +112,7 @@ fn document_io_error(action: &str, path: &std::path::Path, error: std::io::Error
 
 /// Publish a transcript projection and its provenance metadata as one durable document unit.
 pub(crate) fn publish_document<T: serde::Serialize + ?Sized>(
+    driver: &dyn DatabaseDriver,
     transcript_id: &str,
     format: TranscriptExportFormat,
     content: &[u8],
@@ -118,6 +120,7 @@ pub(crate) fn publish_document<T: serde::Serialize + ?Sized>(
 ) -> Result<serde_json::Value, McpToolError> {
     let dir = crate::assets::generated_assets_dir().join("transcript-exports");
     publish_document_in_dir(
+        driver,
         &dir,
         &uuid::Uuid::new_v4().to_string(),
         transcript_id,
@@ -128,6 +131,7 @@ pub(crate) fn publish_document<T: serde::Serialize + ?Sized>(
 }
 
 fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
+    driver: &dyn DatabaseDriver,
     dir: &std::path::Path,
     export_id: &str,
     transcript_id: &str,
@@ -162,12 +166,13 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
     );
     let provenance =
         crate::media_block::Provenance::for_tool("educt_export", effective_value.clone(), None);
+    let created_at = hkask_types::time::now_rfc3339();
     let metadata = serde_json::json!({
         "export_id": export_id,
         "transcript_id": transcript_id,
         "format": format,
         "output": output,
-        "created_at": hkask_types::time::now_rfc3339(),
+        "created_at": created_at,
         "provenance": provenance,
         "effective_params": effective_value.clone(),
     });
@@ -183,7 +188,18 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
         .map_err(|error| document_io_error("stage", &staged_metadata, error))?;
     std::fs::rename(&staged_dir, &published_dir)
         .map_err(|error| document_io_error("publish", &published_dir, error))?;
-    cleanup.mark_published(published_dir);
+    cleanup.mark_published(published_dir.clone());
+    crate::transcript_store::record_export(
+        driver,
+        export_id,
+        transcript_id,
+        format.label(),
+        &published_dir,
+        &output,
+        &metadata_path,
+        &created_at,
+    )
+    .map_err(crate::tools::educt::map_store_error)?;
 
     let mut result = metadata;
     let Some(result_object) = result.as_object_mut() else {
@@ -313,6 +329,7 @@ fn csv_escape(field: &str) -> String {
 mod tests {
     use super::*;
     use crate::transcript_layers::{HighlightEntry, HighlightLayer, LayerProvenance};
+    use hkask_storage::database::sqlite::SqliteDriver;
 
     fn timed_words(texts: &[&str]) -> Vec<TimedWord> {
         texts
@@ -396,7 +413,9 @@ mod tests {
         let published_dir = dir.path().join(export_id);
         std::fs::create_dir(&published_dir)?;
         std::fs::write(published_dir.join("sentinel"), b"pre-existing")?;
+        let driver = SqliteDriver::in_memory_driver();
         let error = publish_document_in_dir(
+            &*driver,
             dir.path(),
             export_id,
             "transcript-1",

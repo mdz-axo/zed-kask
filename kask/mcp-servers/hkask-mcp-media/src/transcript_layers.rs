@@ -2,7 +2,7 @@
 //! over the immutable `words` array.
 //!
 //! Every layer anchors to word indices, never timestamps (the
-//! word-index-anchoring thesis, `tasks/transcript-store-design.md` §2), and
+//! transcript-as-timeline model in `tasks/reduct-video-analysis-scaffold.md`), and
 //! carries `LayerProvenance` (model, prompt template, created_at) — Magna
 //! Carta: system types are provenance-aware. Validation is deterministic
 //! and total: a layer that fails is rejected with the named failing
@@ -17,7 +17,7 @@
 //! - `HighlightLayer`: labeled selections (Reduct's highlights) — overlap
 //!   allowed, they are independent annotations, not a partition.
 //! - `EdlLayer`: an edit-decision list — validation delegates to the
-//!   slice-1 selection algebra (Keep ops disjoint; Cut ops union).
+//!   selection algebra (Keep ops disjoint; Cut ops union).
 
 use crate::transcript::TimedWord;
 use crate::transcript_select::{Edl, SelectionError};
@@ -98,7 +98,7 @@ pub struct HighlightLayer {
 }
 
 /// An edit-decision list over the transcript — the Reel. Ops reuse the
-/// slice-1 types; validation delegates to the selection algebra.
+/// shared selection types; validation delegates to the selection algebra.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EdlLayer {
     pub provenance: LayerProvenance,
@@ -232,7 +232,7 @@ impl TranscriptLayer {
                 }
             }
             Self::Edl(layer) => {
-                // Delegate to the slice-1 algebra: bounds, non-reversed,
+                // Delegate to the selection algebra: bounds, non-reversed,
                 // Keep ops disjoint (Cut ops may overlap — union).
                 let edl = Edl {
                     ops: layer.ops.clone(),

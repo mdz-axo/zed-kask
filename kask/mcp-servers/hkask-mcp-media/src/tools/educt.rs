@@ -1,11 +1,10 @@
 //! Educt transcript-store tools — persist and recall transcripts + layers.
 //!
-//! Gap 1 of the local-mode scaffold
-//! (`tasks/reduct-dual-mode-video-analysis.md`): transcripts stop being
-//! per-call artifacts dropped after the conversation and become queryable
-//! objects keyed to their media path and optional gallery asset. All six
-//! tools are local-only — no inference, no network, no Reduct; the store
-//! is the media server's own SQLite (design doc §1.4).
+//! Local implementation of the transcript-as-timeline interaction model
+//! recovered in `tasks/reduct-video-analysis-scaffold.md`: transcripts stop
+//! being per-call artifacts and become queryable objects keyed to their media
+//! path and optional gallery Asset. Persistence and selection are local; pass
+//! tools use configured inference providers, never a hidden Reduct cloud path.
 
 use crate::transcript::TranscriptBundle;
 use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};
@@ -115,6 +114,18 @@ pub(crate) fn map_store_error(error: TranscriptStoreError) -> McpToolError {
         }
         TranscriptStoreError::Validation(validation) => {
             McpToolError::invalid_argument(format!("layer rejected: {validation}"))
+        }
+        TranscriptStoreError::GalleryAssetNotFound { gallery_asset_id } => {
+            McpToolError::not_found(format!("gallery asset {gallery_asset_id} not found"))
+        }
+        TranscriptStoreError::LayerNotFound {
+            transcript_id,
+            layer_id,
+        } => McpToolError::not_found(format!(
+            "layer {layer_id} not found for transcript {transcript_id}"
+        )),
+        TranscriptStoreError::SourceInspection { path, source } => {
+            McpToolError::unavailable(format!("inspect transcript source {path}: {source}"))
         }
         TranscriptStoreError::Serialization(message) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         TranscriptStoreError::Db(error) => {
@@ -270,13 +281,19 @@ impl MediaServer {
                     .map_err(map_store_error)?;
                 result["layers"] = serde_json::json!(layers);
             }
+            let exports =
+                transcript_store::list_exports(driver, &transcript_id).map_err(map_store_error)?;
+            let renders =
+                transcript_store::list_renders(driver, &transcript_id).map_err(map_store_error)?;
+            result["exports"] = serde_json::json!(exports);
+            result["renders"] = serde_json::json!(renders);
             Ok(result)
         })
         .await
     }
 
     #[tool(
-        description = "Delete a stored transcript and all of its layers (layers are removed first — a failure can leave a transcript without layers, never an orphaned layer). Returns removal counts; not-found when neither existed."
+        description = "Delete a stored transcript and its editable layers atomically. Durable SRT/CSV/text exports and rendered EDL gallery media are preserved with detached source identities and returned in the result."
     )]
     pub async fn educt_delete_transcript(
         &self,
@@ -293,9 +310,17 @@ impl MediaServer {
                     "transcript {transcript_id} not found"
                 )));
             }
+            let exports =
+                transcript_store::list_exports(driver, &transcript_id).map_err(map_store_error)?;
+            let renders =
+                transcript_store::list_renders(driver, &transcript_id).map_err(map_store_error)?;
             Ok(serde_json::json!({
                 "transcripts_removed": counts.transcripts_removed,
                 "layers_removed": counts.layers_removed,
+                "exports_preserved": counts.exports_preserved,
+                "renders_preserved": counts.renders_preserved,
+                "preserved_exports": exports,
+                "preserved_renders": renders,
             }))
         })
         .await
@@ -884,7 +909,7 @@ impl MediaServer {
                 clip_plan: &plan_secs,
                 clips: clip_paths.len(),
             };
-            crate::assets::publish_local_media(
+            crate::assets::publish_local_media_with_transcript_render(
                 &gallery,
                 &self.gallery_store,
                 &output,
@@ -896,6 +921,8 @@ impl MediaServer {
                     crate::assets::LocalMediaFormat::Mp4
                 },
                 &effective_params,
+                &transcript_id,
+                &record.id,
             )
         })
         .await
@@ -943,6 +970,7 @@ impl MediaServer {
                         cues: srt.matches("\n\n").count(),
                     };
                     crate::transcript_export::publish_document(
+                        driver,
                         &transcript_id,
                         export_format,
                         srt.as_bytes(),
@@ -983,6 +1011,7 @@ impl MediaServer {
                         rows,
                     };
                     crate::transcript_export::publish_document(
+                        driver,
                         &transcript_id,
                         export_format,
                         csv.as_bytes(),
@@ -1014,6 +1043,7 @@ impl MediaServer {
                         composition: COMPOSITION,
                     };
                     let mut result = crate::transcript_export::publish_document(
+                        driver,
                         &transcript_id,
                         export_format,
                         text.as_bytes(),
