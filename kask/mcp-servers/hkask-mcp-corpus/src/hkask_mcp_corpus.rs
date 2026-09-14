@@ -7,13 +7,13 @@
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
-//! Tools (24):
+//! Tools (23):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
 //!   corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
-//! - QA output:  corpus_build_prompts, corpus_generate_qa, corpus_generate_qa_batch,
-//!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
+//! - QA output:  corpus_build_prompts, corpus_generate_qa_batch, corpus_ingest_qa,
+//!   corpus_prepare_training_dataset, corpus_purge_qa
 //! - Compose:    corpus_compose, corpus_rewrite, corpus_centroid
 //! - Manage:     corpus_cache, corpus_query, corpus_clear_index
 //!
@@ -268,15 +268,15 @@ impl rmcp::ServerHandler for CorpusServer {}
 mod tool_surface_tests {
     use crate::CorpusServer;
 
-    /// The corpus server registers exactly 24 tools. A `#[tool]` method in an
+    /// The corpus server registers exactly 23 tools. A `#[tool]` method in an
     /// impl block WITHOUT `#[tool_router]` silently registers nothing while
     /// `cargo check` passes — `corpus_prepare_training_dataset` shipped that
     /// way (attributed, implemented, unreachable) until this pin caught the
     /// class. Mirrors the media/scenarios pin tests.
     #[test]
-    fn tool_surface_is_exactly_24_registered_tools() {
+    fn tool_surface_is_exactly_23_registered_tools() {
         let n = CorpusServer::combined_router().list_all().len();
-        assert_eq!(n, 24, "corpus registered tool surface changed; got {n}");
+        assert_eq!(n, 23, "corpus registered tool surface changed; got {n}");
     }
 
     /// expect: "Step 6 extends the existing centroid tool, not the tool count." [P3]

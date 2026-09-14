@@ -489,8 +489,6 @@ pub fn into_open_router(
     // zed-kask: D13 — preserve an explicit per-request output override before
     // moving the messages; absent overrides use the model's advertised limit.
     let request_max_tokens = request.max_tokens;
-    let response_format = request.response_format.clone();
-    let uses_response_format = response_format.is_some();
 
     let mut messages = Vec::new();
     let mut any_message_wants_cache = false;
@@ -660,48 +658,33 @@ pub fn into_open_router(
             }),
             _ => None,
         },
-        tools: if uses_response_format {
-            Vec::new()
-        } else {
-            request
-                .tools
-                .into_iter()
-                .map(|tool| {
-                    let input_schema = match tool.input {
-                        language_model::LanguageModelRequestToolInput::Function {
-                            input_schema,
-                            ..
-                        } => input_schema,
-                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
-                            return Err(anyhow::anyhow!(
-                                "OpenRouter does not support custom tools"
-                            ));
-                        }
-                    };
-                    let strict = (tool.name == "emit_result").then_some(true);
-                    Ok(open_router::ToolDefinition::Function {
-                        function: open_router::FunctionDefinition {
-                            name: tool.name,
-                            description: Some(tool.description),
-                            parameters: Some(input_schema),
-                            // zed-kask: D56 — `emit_result` is the reserved
-                            // schema-bound result channel, not an ordinary tool.
-                            strict,
-                        },
-                    })
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("OpenRouter does not support custom tools"));
+                    }
+                };
+                Ok(open_router::ToolDefinition::Function {
+                    function: open_router::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
                 })
-                .collect::<Result<_>>()?
-        },
-        tool_choice: if uses_response_format {
-            None
-        } else {
-            request.tool_choice.map(|choice| match choice {
-                LanguageModelToolChoice::Auto => open_router::ToolChoice::Auto,
-                LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
-                LanguageModelToolChoice::None => open_router::ToolChoice::None,
             })
-        },
-        response_format,
+            .collect::<Result<_>>()?,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => open_router::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
+            LanguageModelToolChoice::None => open_router::ToolChoice::None,
+        }),
         provider: model.provider.clone(),
     })
 }
@@ -806,66 +789,6 @@ fn add_message_content_part(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// zed-kask: D56 — reserved structured results use OpenRouter's strict
-    /// function schema; ordinary tools retain the provider default.
-    #[test]
-    fn emit_result_is_strict_without_changing_ordinary_tools() {
-        let request = LanguageModelRequest {
-            tools: vec![
-                language_model::LanguageModelRequestTool::function(
-                    "emit_result".into(),
-                    "structured result".into(),
-                    serde_json::json!({"type": "object"}),
-                    false,
-                ),
-                language_model::LanguageModelRequestTool::function(
-                    "lookup".into(),
-                    "ordinary tool".into(),
-                    serde_json::json!({"type": "object"}),
-                    false,
-                ),
-            ],
-            ..Default::default()
-        };
-        let result = into_open_router(request, &Model::default(), None).expect("request");
-        let strict = result
-            .tools
-            .iter()
-            .map(|tool| match tool {
-                open_router::ToolDefinition::Function { function } => function.strict,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(strict, vec![Some(true), None]);
-        let wire = serde_json::to_value(result).expect("wire request");
-        assert_eq!(wire["tools"][0]["function"]["strict"], true);
-        assert!(wire["tools"][1]["function"].get("strict").is_none());
-    }
-
-    /// zed-kask: D57 — a provider-native response schema replaces the tool
-    /// channel on the OpenRouter wire request so the two contracts cannot conflict.
-    #[test]
-    fn response_format_omits_tools_and_tool_choice() {
-        let response_format = serde_json::json!({
-            "type": "json_schema",
-            "json_schema": {"name": "emit_result", "strict": true, "schema": {"type": "object"}}
-        });
-        let request = LanguageModelRequest {
-            tools: vec![language_model::LanguageModelRequestTool::function(
-                "emit_result".into(),
-                "structured result".into(),
-                serde_json::json!({"type": "object"}),
-                false,
-            )],
-            tool_choice: Some(LanguageModelToolChoice::Any),
-            response_format: Some(response_format.clone()),
-            ..Default::default()
-        };
-        let result = into_open_router(request, &Model::default(), None).expect("request");
-        assert!(result.tools.is_empty());
-        assert!(result.tool_choice.is_none());
-        assert_eq!(result.response_format, Some(response_format));
-    }
 
     #[gpui::test]
     async fn test_max_completion_tokens_from_api_becomes_request_budget() {

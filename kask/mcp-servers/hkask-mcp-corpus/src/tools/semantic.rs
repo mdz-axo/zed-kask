@@ -10,11 +10,9 @@
 //! `impl CorpusServer` block, so the tool methods stay here in `semantic.rs`.
 
 mod assertions;
-pub(crate) mod batch_api;
+
 mod ontology_io;
 pub(crate) mod qa;
-#[cfg(test)]
-mod qa_model_tests;
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
@@ -23,10 +21,10 @@ use crate::helpers::default_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, McpToolError, Parameters, default_embedding_model, default_owner,
-    execute_tool, extract_json_from_response, json, read_jsonl, tool, tool_router,
+    execute_tool, json, read_jsonl, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
-use qa::parse_qa_response;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -42,94 +40,7 @@ pub(crate) use qa::configured_qa_model;
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Generate QA pairs from text chunks. Accepts a single chunk (text) or multiple chunks (texts) for cross-reference synthesis. Uses Bloom's taxonomy levels. Multi-chunk mode (texts) generates QAs that require synthesizing across all passages with source citation."
-    )]
-    pub async fn corpus_generate_qa(
-        &self,
-        Parameters(GenerateQaRequest {
-            text: _text,
-            texts: _texts,
-            chunk_id,
-            bloom_levels,
-            model,
-        }): Parameters<GenerateQaRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "corpus_generate_qa", async {
-            let cross_ref_passages = _texts.as_ref().filter(|texts| !texts.is_empty());
-            let is_cross_ref = cross_ref_passages.is_some();
-            let single_text = _text.unwrap_or_default();
-
-            if !is_cross_ref && single_text.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "text must not be empty (or set texts for cross-reference mode)",
-                ));
-            }
-            if chunk_id.is_empty() {
-                return Err(McpToolError::invalid_argument("chunk_id must not be empty"));
-            }
-
-            let levels =
-                bloom_levels.unwrap_or_else(crate::services::qa_pipeline::default_bloom_levels);
-            let levels_str = levels.join(", ");
-
-            let (prompt, template_source) = if let Some(passages) = cross_ref_passages {
-                let formatted = crate::services::qa_pipeline::format_cross_reference_prompt(
-                    &levels_str,
-                    &chunk_id,
-                    passages,
-                );
-                (formatted.text, formatted.template_source)
-            } else {
-                let single_text = crate::guard_content(&single_text);
-                let formatted = crate::services::qa_pipeline::format_single_chunk_prompt(
-                    &levels_str,
-                    &chunk_id,
-                    &single_text,
-                );
-                (formatted.text, formatted.template_source)
-            };
-            let selected_model =
-                hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
-                    .map_err(qa::map_qa_inference_error)?;
-
-            let params = crate::services::qa_pipeline::qa_llm_parameters();
-
-            match self
-                .inference_router
-                .generate_with_model(&prompt, &params, Some(&selected_model), None)
-                .await
-            {
-                Ok(response) => {
-                    let content = &response.text;
-                    let qa_response = parse_qa_response(
-                        &extract_json_from_response(content),
-                        &levels,
-                        is_cross_ref.then(|| cross_ref_passages.map_or(0, Vec::len)),
-                    )
-                    .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: parse-llm-output
-                    let result = json!({
-                        "chunk_id": chunk_id,
-                        "bloom_levels": levels,
-                        "cross_reference": is_cross_ref,
-                        "qa_pairs": qa_response.qa_pairs,
-                        "provenance": {
-                            "generator_model": selected_model,
-                            "generator_parameters": params,
-                            "prompt_template": template_source,
-                            "source_chunk_ref": chunk_id,
-                        },
-                        "tokens_used": response.usage.total_tokens,
-                    });
-                    Ok(result)
-                }
-                Err(e) => Err(qa::map_qa_inference_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. One provider call may produce several pairs. Both transports render identical local-ID messages; canonical identities are restored only after exact quote verification. Old rendered-message files are rejected. Output contains ingest-compatible QA or identified error rows; summary includes prompt outcomes, QA rows, and prompt-level token usage."
+        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. One provider call may produce several pairs. Canonical identities are restored only after exact quote verification. Old rendered-message files are rejected. Output contains ingest-compatible QA or identified error rows; summary includes prompt outcomes, QA rows, and prompt-level token usage."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -459,25 +370,6 @@ impl CorpusServer {
 }
 
 // ── Request structs ────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GenerateQaRequest {
-    /// Single chunk text (mutually exclusive with texts for multi-chunk cross-reference)
-    #[serde(default)]
-    pub text: Option<String>,
-    /// Multiple chunks for cross-reference QA generation (RA-DIT method).
-    /// When set, generates QAs that require synthesizing across all passages.
-    #[serde(default)]
-    pub texts: Option<Vec<String>>,
-    pub chunk_id: String,
-    #[serde(default)]
-    pub bloom_levels: Option<Vec<String>>,
-    /// Optional provider-prefixed generation model; must accept non-thinking requests.
-    /// When absent, requires `kask.models.qa_generation_model`
-    /// (`HKASK_QA_GENERATION_MODEL`). Never uses the active chat or training model.
-    #[serde(default)]
-    pub model: Option<String>,
-}
 
 /// Request for generating QA from a canonical prepared-prompt JSONL file.
 #[derive(Debug, Deserialize, JsonSchema)]

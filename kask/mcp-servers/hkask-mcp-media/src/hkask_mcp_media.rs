@@ -3768,7 +3768,7 @@ mod tool_behavior_tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "sine=frequency=440:duration=2",
+                "sine=frequency=440:duration=3",
                 "-ac",
                 "1",
                 "-ar",
@@ -3791,17 +3791,23 @@ mod tool_behavior_tests {
                 TimedWord {
                     word: "alpha".to_string(),
                     start_ms: 0,
-                    end_ms: 1000,
+                    end_ms: 500,
                     confidence: None,
                 },
                 TimedWord {
                     word: "beta".to_string(),
                     start_ms: 1000,
-                    end_ms: 2000,
+                    end_ms: 1500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "gamma".to_string(),
+                    start_ms: 2500,
+                    end_ms: 3000,
                     confidence: None,
                 },
             ],
-            ..TranscriptBundle::new(wav_path.clone(), 2.0, "alpha beta".to_string())
+            ..TranscriptBundle::new(wav_path.clone(), 3.0, "alpha beta gamma".to_string())
         };
         let stored = server
             .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
@@ -3821,10 +3827,16 @@ mod tool_behavior_tests {
                 prompt_template: "test".to_string(),
                 created_at: "2026-08-30T00:00:00Z".to_string(),
             },
-            ops: vec![EdlEntry {
-                range: WordRange::new(0, 0),
-                op: EdlOp::Keep,
-            }],
+            ops: vec![
+                EdlEntry {
+                    range: WordRange::new(0, 0),
+                    op: EdlOp::Keep,
+                },
+                EdlEntry {
+                    range: WordRange::new(2, 2),
+                    op: EdlOp::Keep,
+                },
+            ],
         });
         server
             .educt_store_layer(Parameters(EductStoreLayerRequest {
@@ -3836,6 +3848,7 @@ mod tool_behavior_tests {
             .await
             .expect("edl stored");
 
+        let temp_files_before = temp_media_files().expect("read temp media files before render");
         let rendered = server
             .educt_render_edl(Parameters(EductRenderEdlRequest {
                 transcript_id,
@@ -3844,10 +3857,10 @@ mod tool_behavior_tests {
             .await
             .expect("render succeeds");
         let content = content_of(&rendered);
-        assert_eq!(content["clips"].as_u64(), Some(1));
+        assert_eq!(content["clips"].as_u64(), Some(2));
         assert_eq!(
             content["clip_plan"],
-            serde_json::json!([[0.0, 1.0]]),
+            serde_json::json!([[0.0, 0.5], [2.5, 3.0]]),
             "the clip plan is the word range mapped to seconds"
         );
         let output = std::path::PathBuf::from(content["output"].as_str().ok_or("output path")?);
@@ -3873,6 +3886,15 @@ mod tool_behavior_tests {
             .get_generation(asset_id)?
             .ok_or("EDL render lineage missing")?;
         assert_eq!(lineage.op, "educt_render_edl");
+        let temp_files_after = temp_media_files()?;
+        assert_eq!(
+            temp_files_after.difference(&temp_files_before).count(),
+            0,
+            "EDL render left FFmpeg intermediates: {:?}",
+            temp_files_after
+                .difference(&temp_files_before)
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 

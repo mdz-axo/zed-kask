@@ -13,8 +13,8 @@
 //! - `cluster`         — shared load → normalize → cluster pipeline (dedup + consolidation)
 //! - `consolidation`   — `ConsolidationService` (cluster + LLM-synthesize + re-embed)
 //! - `prompt_builder`  — `PromptBuilderService` (KNN + concept graph + knowledge graph + QA prompts)
-//! - `qa_pipeline`     — shared QA prompt formatting + result envelope construction
-//!   (used by `corpus_generate_qa`, `corpus_generate_qa_batch`, and the batch API path)
+//! - `qa_pipeline`     — prepared QA validation, accounting, and result envelopes
+//!   for the single synchronous generation path
 
 pub(crate) mod assertions;
 pub(crate) mod cluster;

@@ -12,7 +12,7 @@ mds_categories: [domain, composition]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **24 registered tools**, pinned by
+schema contract and **23 registered tools**, pinned by
 `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:264–290`.
 Parameter additions do not add tools.
 
@@ -38,8 +38,7 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
 | | `corpus_dedup_chunks` | Source-local similarity clustering; retain highest-salience representatives |
 | | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified |
-| QA output (5) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
-| | `corpus_generate_qa` | Single/cross-reference text QA; absent source identities require empty evidence |
+| QA output (4) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
 | | `corpus_ingest_qa` | Structural admission/exact dedup with evidence retention and explicit storage status |
 | | `corpus_prepare_training_dataset` | Alpaca → ChatML plus dataset-size gate and advisory PEFT recommendations |
@@ -84,7 +83,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–9
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size` |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
-| `corpus_generate_qa` | `chunk_id`, `text` or `texts`, optional `bloom_levels`, optional QA `model` |
+
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ingest_qa` | `generated_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
 | `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
@@ -173,10 +172,8 @@ The whole input is validated before inference/output creation.
 Required model response shape:
 
 ```json
-{"pairs":[{"level":"factual","question":"What is the delay?","answer":"72 hours","evidence":[{"passage":"p0","quote":"The delay is 72 hours."}]},{"level":"conceptual","question":"Why does it matter?","answer":"It constrains timing.","evidence":[{"passage":"p0","quote":"delay is 72 hours"}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
-
-Synchronous inference requires this object through one `emit_result` function call, allowing the provider to enforce the JSON schema. Provider-batch inference returns the same object as text because the batch IPC contract has no tool channel.
 
 Pair count and ordered Bloom levels must exactly match the request. Every pair
 requires nonblank question, answer and local evidence. Each local ID must resolve
@@ -187,27 +184,22 @@ entailment remains a separate audit.
 Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
 canonical evidence and protocol/model provenance. Completion tokens are counted
 once in the batch summary, not repeated on pair rows. Failed prompts carry
-primary identity and `error`, never an ingestible response. Both transports render
-the same deterministic messages and provider batches match `custom_id` to prompt
-identity.
+primary identity and `error`, never an ingestible response.
 
 ### Batch ownership, retries and accounting
 
 The dedicated non-thinking QA model is explicit `model`, otherwise
 `kask.models.qa_generation_model` → `HKASK_QA_GENERATION_MODEL`. The setting
 defaults empty; missing/malformed/unresolved settings fail visibly. No chat,
-classifier, `HKASK_QA_MODEL` or training-base fallback. `:batch` selects provider
-batch transport.
+classifier, `HKASK_QA_MODEL`, training-base fallback, or provider-batch side path.
 
 Input/output aliases, including symlink/hard-link aliases, are rejected before
-truncation. One process-wide canonical output lease spans service instances and
-both transports. Workers retain ownership until destroyed, including after an
-abort request; it is not a cross-process lock. Synchronous AIMD retries only typed
+truncation. One process-wide canonical output lease spans service instances.
+Workers retain ownership until destroyed, including after an abort request; it is
+not a cross-process lock. Synchronous AIMD retries only typed
 Connection/Overloaded/Timeout errors, at most **3 total attempts** (2s/4s backoff).
-Permanent/configuration errors and response rejection are not retried. Provider
-submission has no automatic retry because remote acceptance can be unknown
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:24–239`;
-`src/batch.rs:73–153` and `src/tools/semantic/batch_api.rs:31–38` in that crate).
+Permanent/configuration errors and response rejection are not retried
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs`; `src/batch.rs`).
 
 Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
 `qa_rows_written`, prompt-level `tokens_used`, `completion_tokens_used`,

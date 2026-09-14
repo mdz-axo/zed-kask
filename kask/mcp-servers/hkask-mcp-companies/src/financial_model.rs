@@ -864,6 +864,7 @@ pub(crate) use scenario_impact::{
 // ── Authoritative driver-based financial model
 mod driver_model;
 pub(crate) use driver_model::{
-    IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, ProjectedFinancialModel, ProjectionAssumptions,
-    ProjectionError, implied_growth, implied_net_margin_at_growth, project_financial_model,
+    IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, MAIA_INVESTOR_TARGET_RETURN, ProjectedFinancialModel,
+    ProjectionAssumptions, ProjectionError, implied_growth, implied_net_margin_at_growth,
+    project_financial_model,
 };

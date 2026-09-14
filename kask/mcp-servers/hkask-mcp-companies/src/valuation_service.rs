@@ -93,7 +93,10 @@ pub(crate) fn build_dcf_response(
             "stage1_years": assumptions.stage1_years,
             "stage2_years": assumptions.total_years - assumptions.stage1_years,
             "total_years": assumptions.total_years,
-            "discount_rate": assumptions.discount_rate,
+            "investor_target_return": assumptions.investor_target_return,
+            "modified_wacc": assumptions.discount_rate,
+            "equity_weight": assumptions.equity_weight,
+            "debt_weight": assumptions.debt_weight,
             "terminal_growth": assumptions.terminal_growth,
             "revenue_growth": assumptions.revenue_growth,
             "gross_margin": assumptions.gross_margin,
@@ -126,7 +129,7 @@ pub(crate) fn build_dcf_response(
             "margin_of_safety": margin_of_safety,
         },
         "data_quality": signal_quality,
-        "framework": "Two-stage 11-line-item DCF: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
+        "framework": "Investor-perspective driver DCF: the equity component of modified WACC is the investor target return (MAIA default 15%), not CAPM cost of equity. Two-stage projection: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
     })
 }
 

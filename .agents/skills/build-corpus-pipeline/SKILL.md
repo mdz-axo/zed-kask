@@ -328,14 +328,13 @@ is requested. Never race a timed-out/cancelled call with a replacement writer.
 
 Synchronous inference retries only typed Connection/Overloaded/Timeout failures,
 at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failures
-and rejected QA are not retried. Provider-batch submission is not retried because
-remote acceptance can be unknown. `:batch` selects that transport; both
-transports render the same protocol-stamped compact request.
+and rejected QA are not retried. There is one synchronous prepared-prompt
+transport; no provider-batch side path.
 
-The model returns one named object with exactly one pair per requested level, in order. Synchronous inference requires it through one `emit_result` function call; provider-batch inference returns the same object as text because its IPC contract has no tool channel:
+The model returns exactly one tuple per requested level, in order:
 
 ```json
-{"pairs":[{"level":"factual","question":"What is the delay?","answer":"72 hours","evidence":[{"passage":"p0","quote":"The delay is 72 hours."}]},{"level":"conceptual","question":"Why does it matter?","answer":"It constrains timing.","evidence":[{"passage":"p0","quote":"delay is 72 hours"}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
 
 Every pair requires nonblank question, answer and local evidence. Local IDs must
@@ -345,9 +344,6 @@ envelopes retain primary identity, candidate terms, QA type, canonical evidence
 and protocol/model provenance. Prompt token usage is counted once in the summary,
 not repeated per pair. Matching quotation bytes still does not validate answer
 synthesis.
-Manual single/cross-reference `corpus_generate_qa` calls with only text have no
-source identity: they request empty evidence, not invented sources. They are not
-a cited replacement for this prepared pipeline or a failed stage.
 
 **Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
 all prepared IDs, require no unresolved failed prompts, and separately measure

@@ -439,6 +439,7 @@ async fn run_screen_job(
             "exclusions": prepared.exclusions,
             "fx_rates": prepared.fx_rates,
             "logic_verification": verification,
+            "investor_target_return": definition.logic_env.get("investor_target_return").cloned(),
             "pass_set_persisted_at": now_rfc3339(),
         });
         server
@@ -632,15 +633,26 @@ async fn calculate_expectations_gap(
 ) -> Result<ScreenCalculation, McpToolError> {
     let prepared =
         prepare_expectations_pass_set(client, eodhd_api_key, definition, universe).await?;
+    let investor_target_return = definition
+        .logic_env
+        .get("investor_target_return")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| McpToolError::invalid_argument("screen has no investor_target_return"))?;
     let mut rows = Vec::with_capacity(prepared.groups.len());
     for group in prepared.groups {
-        let row =
-            match analyze_issuer_group(client, eodhd_api_key, &prepared.fx_rates, &group, None)
-                .await
-            {
-                Ok(row) => row,
-                Err(reason) => unavailable_issuer_row(&group, &reason),
-            };
+        let row = match analyze_issuer_group(
+            client,
+            eodhd_api_key,
+            &prepared.fx_rates,
+            &group,
+            None,
+            investor_target_return,
+        )
+        .await
+        {
+            Ok(row) => row,
+            Err(reason) => unavailable_issuer_row(&group, &reason),
+        };
         rows.push(row);
     }
     Ok(ScreenCalculation {
@@ -1004,6 +1016,7 @@ async fn analyze_issuer_group(
     fx_rates: &HashMap<String, f64>,
     issuer_group: &IssuerGroup,
     fundamentals: Option<Value>,
+    investor_target_return: f64,
 ) -> Result<Value, String> {
     let group = &issuer_group.securities;
     let actionable = group
@@ -1066,6 +1079,7 @@ async fn analyze_issuer_group(
         &metrics,
         &profile,
         current_price,
+        investor_target_return,
     );
     let report = crate::tools::expectations::build_gap_report(
         analysis_symbol,
@@ -1086,6 +1100,7 @@ async fn analyze_issuer_group(
         .copied()
         .ok_or_else(|| "issuer has no market capitalization".to_string())?;
     let capability = report.get("capability").cloned().unwrap_or(Value::Null);
+    let discounting = report.get("discounting").cloned().unwrap_or(Value::Null);
     let price_implied = report.get("price_implied").cloned().unwrap_or(Value::Null);
     let gaps = report.get("gaps").cloned().unwrap_or(Value::Null);
     let headline = capability.get("headline_measure").and_then(Value::as_str);
@@ -1160,6 +1175,10 @@ async fn analyze_issuer_group(
         })).collect::<Vec<_>>(),
         "market_capitalization_usd": cap,
         "average_daily_dollar_volume_usd": actionable.average_daily_dollar_volume_usd,
+        "investor_target_return": discounting.get("investor_target_return").cloned().unwrap_or(Value::Null),
+        "modified_wacc": discounting.get("modified_wacc").cloned().unwrap_or(Value::Null),
+        "equity_weight": discounting.get("equity_weight").cloned().unwrap_or(Value::Null),
+        "debt_weight": discounting.get("debt_weight").cloned().unwrap_or(Value::Null),
         "demonstrated_profitability": demonstrated,
         "demonstrated_growth": demonstrated_growth,
         "sustainable_growth": capability.get("sustainable_growth_rate").cloned().unwrap_or(Value::Null),
@@ -1310,6 +1329,12 @@ async fn enrich_pending_issuers(
         .pending_screen_items(job_id)
         .map_err(crate::map_portfolio_error)?;
     let job = load_job(&server.research, job_id)?;
+    let investor_target_return = job
+        .checkpoint
+        .as_ref()
+        .and_then(|value| value.get("investor_target_return"))
+        .and_then(Value::as_f64)
+        .ok_or_else(|| McpToolError::internal("screen checkpoint has no investor target return"))?;
     let fx_rates: HashMap<String, f64> = serde_json::from_value(
         job.checkpoint
             .as_ref()
@@ -1369,7 +1394,12 @@ async fn enrich_pending_issuers(
             };
             let (row, error) = match fundamentals {
                 Ok(fundamentals) => match analyze_issuer_group(
-                    &client, &api_key, &fx_rates, &group, Some(fundamentals),
+                    &client,
+                    &api_key,
+                    &fx_rates,
+                    &group,
+                    Some(fundamentals),
+                    investor_target_return,
                 ).await {
                     Ok(row) => (row, None),
                     Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
@@ -1993,6 +2023,7 @@ mod tests {
             market_cap_min: Some(5_000_000_000.0),
             market_cap_max: Some(50_000_000_000.0),
             liquidity_min_usd: Some(1_000_000.0),
+            target_return: Some(0.15),
         };
         match render_template("expectations_gap", Some(&context), as_of) {
             Ok(definition) => definition,

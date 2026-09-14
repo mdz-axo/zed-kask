@@ -65,7 +65,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | Tool | Description |
 |---|---|
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade. |
-| `expectations_gap` | Compare implied revenue growth and net margin with demonstrated revenue CAGR and net margin; surface DuPont ROE and Higgins SGR separately as decomposition and financing capacity. |
+| `expectations_gap` | Compare implied revenue growth and profitability with demonstrated capability using the investor's target return as the equity component of modified WACC; surface DuPont ROE and Higgins SGR separately. |
 
 ### Portfolio ledger, notes, and files
 
@@ -156,13 +156,14 @@ Operator ruling, superseding both the guidance-gap definition that arrived with 
 
 - The gap is between what the price implies and what the company has demonstrated it can do — never between price and management guidance. Guidance is a context annotation only.
 - Demonstrated capability is the DuPont decomposition: ROE = net profit margin × asset turnover × equity multiplier, plus the Higgins sustainable growth rate SGR = ROE × retention (self-funding growth without external financing). Asset turnover and ROE use average beginning/ending assets and equity for each measured income period; displayed components are robust per-period medians.
-- Industry-aware profitability headline: ROE for financial-sector companies (price-implied ROE from the justified P/B identity, P/B = (ROE − g)/(COE − g), COE default 10%); net margin for everyone else — net income / revenue, interest at demonstrated leverage and tax included, because net income is what flows to equity holders (operator ruling 2026-09-10).
+- Industry-aware profitability headline: ROE for financial-sector companies (price-implied ROE from the justified P/B identity, P/B = (ROE − g)/(r − g), where `r` is the investor target return); net margin for everyone else — net income / revenue, interest at demonstrated leverage and tax included.
+- Discounting follows the MAIA investor perspective (`MA_Guidebook_July23.md`, “A Note on Valuation” and “Valuation”): the equity component is the investor's required return, 15% by MAIA default or an explicit request override. Modified WACC = equity weight × investor target return + debt weight × pre-tax debt cost × (1 − tax rate). For financial issuers the target return is used directly.
 - For non-financials, the primary growth gap is like-for-like: reverse-DCF-implied revenue growth minus demonstrated full-period revenue CAGR. Financing headroom is separately reported as implied revenue growth minus Higgins SGR; SGR is not treated as demonstrated revenue growth.
 - The profitability gap is implied net margin at demonstrated revenue CAGR minus demonstrated net margin (median actual net income / revenue). Financials continue to use implied ROE minus demonstrated ROE.
 - Before either price-implied solve, the selected security's price is converted from its listing currency and unit into the normalized financial-statement currency using cached EODHD USD cross-rates. Minor units are explicit (`GBX` → `GBP` at 0.01); missing currency metadata or rates surface as unavailable rather than entering valuation unconverted.
 - Capability estimates at or beyond the reverse DCF's validated growth range are `model_sensitive` and carry explicit flags. Gap-data completeness is independent of model sensitivity: mixed or positive gaps remain complete when both legs were calculated.
 - The prior square-root composite score is withheld because it has no external calibration. Saved-screen output exposes raw growth, financing-headroom, and profitability dimensions without a synthetic ranking.
-- Net margin is net income / revenue. It is never approximated by a pre-interest operating formula: the solve uses GM = NM/(1−tax) + SG&A% + interest% + D&A%, holding modeled expenses at demonstrated revenue shares, so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by construction. Gross margin is the internal projection parameter only, never a reported expectations quantity.
+- Net margin is net income / revenue. It is never approximated by a pre-interest operating formula: the solve uses GM = NM/(1−tax) + SG&A% + other operating expense% + interest% + D&A%, holding modeled expenses at demonstrated revenue shares, so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by construction. Gross margin is the internal projection parameter only, never a reported expectations quantity.
 
 ## Validation
 
@@ -173,4 +174,4 @@ env -u HKASK_FMP_API_KEY -u HKASK_EODHD_API_KEY cargo test -p hkask-mcp-companie
 GITHUB_ACTIONS=1 ./script/clippy -p hkask-mcp-companies
 ```
 
-`src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, listing-price to statement-currency normalization, and the screener's per-exchange fan-out, unconverted USD bounds, and offset-cap pagination (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.
+Published numeric oracles include Wall Street Prep's 12.4% reverse-DCF case, AnalystPrep CFA's 8.33% DuPont case, and Wall Street Prep's 12.5% Higgins SGR case. `src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, listing-price to statement-currency normalization, and the screener's per-exchange fan-out, unconverted USD bounds, and offset-cap pagination (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.

@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 
-use hkask_types::{ChatMessage, ChatToolDefinition, ChatToolFunction, StructuredToolCall};
+use hkask_types::ChatMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -12,13 +12,7 @@ use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
 use crate::tools::corpus::{QaType, qa_type_instruction};
 use crate::tools::semantic::qa::QaPair;
-use crate::{
-    CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response, render_docproc_template,
-};
-
-/// Canonical model response shape. Empty evidence means no source citation;
-/// quotes never confer semantic verification on ordinary answer prose.
-pub(crate) const QA_RESPONSE_CONTRACT: &str = r#"Respond only in JSON: {"qa_pairs":[{"question":"...","answer":"...","bloom_level":"factual|conceptual|analyze|evaluate|create","evidence_quotes":[{"chunk_ref":"exact supplied chunk ID","source":"exact supplied source ID","quote":"exact nonempty substring"}]}]}. Use only the requested Bloom levels. Question and answer must be nonblank; concise answers are valid. Cite only supplied source/chunk identities, never fabricate them. If source identity is unavailable, return evidence_quotes: []. No numeric passage citations or bare quoted-string arrays. A matching citation does not verify answer synthesis."#;
+use crate::{McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
 
@@ -130,7 +124,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only this JSON object: {{\"pairs\":[{{\"level\":\"factual\",\"question\":\"...\",\"answer\":\"...\",\"evidence\":[{{\"passage\":\"p0\",\"quote\":\"exact quote\"}}]}}]}}. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
         prompt.qa_types.len(),
         instructions
     );
@@ -147,103 +141,19 @@ pub(crate) fn render_prepared_messages(
 }
 
 #[derive(Deserialize)]
-struct PreparedQaResponse {
-    pairs: Vec<PreparedQaPair>,
-}
-
-#[derive(Deserialize)]
-struct PreparedQaPair {
-    level: String,
-    question: String,
-    answer: String,
-    evidence: Vec<PreparedQaEvidence>,
-}
-
-#[derive(Deserialize)]
-struct PreparedQaEvidence {
-    passage: String,
-    quote: String,
-}
-
-pub(crate) fn prepared_qa_tool_definition() -> ChatToolDefinition {
-    ChatToolDefinition {
-        tool_type: "function".into(),
-        function: ChatToolFunction {
-            name: "emit_result".into(),
-            description: "Emit the complete source-grounded QA result.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "pairs": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "level": {"type": "string", "enum": ["factual", "conceptual", "analyze", "evaluate", "create"]},
-                                "question": {"type": "string"},
-                                "answer": {"type": "string"},
-                                "evidence": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "passage": {"type": "string"},
-                                            "quote": {"type": "string"}
-                                        },
-                                        "required": ["passage", "quote"],
-                                        "additionalProperties": false
-                                    }
-                                }
-                            },
-                            "required": ["level", "question", "answer", "evidence"],
-                            "additionalProperties": false
-                        }
-                    }
-                },
-                "required": ["pairs"],
-                "additionalProperties": false
-            }),
-        },
-    }
-}
-
-pub(crate) fn prepared_qa_payload_from_tool_calls(
-    tool_calls: &[StructuredToolCall],
-) -> Result<String, String> {
-    let [tool_call] = tool_calls else {
-        return Err(format!(
-            "expected exactly one emit_result tool call, received {}",
-            tool_calls.len()
-        ));
-    };
-    if tool_call.tool != "emit_result" {
-        return Err(format!(
-            "expected emit_result tool call, received '{}'",
-            tool_call.tool
-        ));
-    }
-    Ok(tool_call.args.to_string())
-}
+struct PreparedQaPair(String, String, String, Vec<(String, String)>);
 
 fn parse_prepared_qa_response(
     response: &str,
     prompt: &PreparedQaPrompt,
 ) -> Result<Vec<QaPair>, String> {
-    let value: serde_json::Value = serde_json::from_str(response)
+    let raw: Vec<PreparedQaPair> = serde_json::from_str(response)
         .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
-    if let Some(error) = value
-        .get("qa_contract_error")
-        .and_then(|error| error.as_str())
-    {
-        return Err(format!("structured QA contract failed: {error}"));
-    }
-    let raw: PreparedQaResponse = serde_json::from_value(value)
-        .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
-    if raw.pairs.len() != prompt.qa_types.len() {
+    if raw.len() != prompt.qa_types.len() {
         return Err(format!(
             "expected {} QA pairs, received {}",
             prompt.qa_types.len(),
-            raw.pairs.len()
+            raw.len()
         ));
     }
     let passages = prompt
@@ -251,55 +161,46 @@ fn parse_prepared_qa_response(
         .iter()
         .map(|passage| (passage.local_id.as_str(), passage))
         .collect::<HashMap<_, _>>();
-    raw.pairs
-        .into_iter()
+    raw.into_iter()
         .zip(&prompt.qa_types)
         .enumerate()
-        .map(|(index, (pair, expected))| {
-            let PreparedQaPair {
-                level,
-                question,
-                answer,
-                evidence,
-            } = pair;
-            if level != expected.as_str() {
-                return Err(format!(
-                    "pair {index} expected Bloom level '{}', received '{level}'",
-                    expected.as_str()
-                ));
-            }
-            if question.trim().is_empty() || answer.trim().is_empty() || evidence.is_empty() {
-                return Err(format!(
-                    "pair {index} needs nonblank question, answer, and evidence"
-                ));
-            }
-            let mut evidence_quotes = Vec::with_capacity(evidence.len());
-            for citation in evidence {
-                let PreparedQaEvidence {
-                    passage: local_id,
-                    quote,
-                } = citation;
-                let passage = passages
-                    .get(local_id.as_str())
-                    .ok_or_else(|| format!("pair {index} cites unknown passage '{local_id}'"))?;
-                if quote.trim().is_empty() || !passage.text.contains(&quote) {
+        .map(
+            |(index, (PreparedQaPair(level, question, answer, citations), expected))| {
+                if level != expected.as_str() {
                     return Err(format!(
-                        "pair {index} quote is not an exact substring of '{local_id}'"
+                        "pair {index} expected Bloom level '{}', received '{level}'",
+                        expected.as_str()
                     ));
                 }
-                evidence_quotes.push(hkask_types::corpus::QaEvidence {
-                    chunk_ref: passage.chunk_ref.clone(),
-                    source: passage.source.clone(),
-                    quote,
-                });
-            }
-            Ok(QaPair {
-                question,
-                answer,
-                bloom_level: level,
-                evidence_quotes,
-            })
-        })
+                if question.trim().is_empty() || answer.trim().is_empty() || citations.is_empty() {
+                    return Err(format!(
+                        "pair {index} needs nonblank question, answer, and evidence"
+                    ));
+                }
+                let mut evidence_quotes = Vec::with_capacity(citations.len());
+                for (local_id, quote) in citations {
+                    let passage = passages.get(local_id.as_str()).ok_or_else(|| {
+                        format!("pair {index} cites unknown passage '{local_id}'")
+                    })?;
+                    if quote.trim().is_empty() || !passage.text.contains(&quote) {
+                        return Err(format!(
+                            "pair {index} quote is not an exact substring of '{local_id}'"
+                        ));
+                    }
+                    evidence_quotes.push(hkask_types::corpus::QaEvidence {
+                        chunk_ref: passage.chunk_ref.clone(),
+                        source: passage.source.clone(),
+                        quote,
+                    });
+                }
+                Ok(QaPair {
+                    question,
+                    answer,
+                    bloom_level: level,
+                    evidence_quotes,
+                })
+            },
+        )
         .collect()
 }
 
@@ -478,11 +379,7 @@ impl<W: Write> QaOutput<W> {
             .map_err(|error| map_corpus_io_error(error, "Cannot flush QA output"))
     }
 
-    pub fn finish(
-        mut self,
-        output: &str,
-        batch_api: bool,
-    ) -> Result<serde_json::Value, McpToolError> {
+    pub fn finish(mut self, output: &str) -> Result<serde_json::Value, McpToolError> {
         self.flush()?;
         if self.prompts_succeeded + self.prompts_failed != self.prompts_total {
             return Err(McpToolError::internal(
@@ -512,7 +409,6 @@ impl<W: Write> QaOutput<W> {
             "reported_cost_usd": reported_cost_usd,
             "cost_reporting_complete": cost_reporting_complete,
             "output": output,
-            "batch_api": batch_api,
             "degraded": BatchOutcome::is_degraded(self.prompts_failed, self.prompts_total),
         }))
     }
@@ -533,77 +429,6 @@ pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
         typical_p: 0.0,
         thinking_allowed: false,
         ..Default::default()
-    }
-}
-
-/// Default Bloom's taxonomy levels when none are specified.
-pub(crate) fn default_bloom_levels() -> Vec<String> {
-    vec!["factual".to_string(), "conceptual".to_string()]
-}
-
-/// A formatted QA generation prompt.
-pub(crate) struct FormattedQaPrompt {
-    /// The full prompt text (template-rendered or inline fallback).
-    pub text: String,
-    /// The provenance identifier for the template used.
-    pub template_source: &'static str,
-}
-
-/// Format a single-chunk QA generation prompt.
-///
-/// Renders the `generate-qa` docproc template with the chunk's levels, id,
-/// and text. Falls back to an inline prompt when the template is unavailable.
-/// The text is NOT content-guarded here — callers guard their own input
-/// (the single-chunk path guards, the batch paths receive pre-composed text).
-pub(crate) fn format_single_chunk_prompt(
-    levels_str: &str,
-    chunk_id: &str,
-    text: &str,
-) -> FormattedQaPrompt {
-    let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    vars.insert("levels", levels_str.to_string());
-    vars.insert("chunk_id", chunk_id.to_string());
-    vars.insert("text", text.to_string());
-    vars.insert("response_contract", QA_RESPONSE_CONTRACT.to_string());
-    let tpl = render_docproc_template("generate-qa", &vars);
-    if tpl.is_empty() {
-        FormattedQaPrompt {
-            text: format!(
-                "{CONTENT_GUARD_INSTRUCTION}Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}; source identity unavailable):\n{text}\n\nReturn evidence_quotes: [] because no source identity was supplied.\n{QA_RESPONSE_CONTRACT}",
-            ),
-            template_source: "inline-fallback",
-        }
-    } else {
-        FormattedQaPrompt {
-            text: tpl,
-            template_source: "registry/templates/docproc/generate-qa.j2",
-        }
-    }
-}
-
-/// Format a cross-reference QA generation prompt (multi-passage synthesis).
-///
-/// Used only by `corpus_generate_qa` when `texts` is provided. Always inline
-/// — there is no template for the cross-reference format.
-pub(crate) fn format_cross_reference_prompt(
-    levels_str: &str,
-    chunk_id: &str,
-    passages: &[String],
-) -> FormattedQaPrompt {
-    let mut text = String::new();
-    for (i, p) in passages.iter().enumerate() {
-        text.push_str(&format!(
-            "[Chunk group {chunk_id}, passage {}; source identity unavailable]\n{}\n\n",
-            i + 1,
-            crate::guard_content(p)
-        ));
-    }
-    FormattedQaPrompt {
-        text: format!(
-            "{CONTENT_GUARD_INSTRUCTION}You are synthesizing knowledge across {n} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections.\n\nPassages (chunk group {chunk_id}):\n{text}\n\nSource identities were not supplied. Return evidence_quotes: []; do not turn passage numbers or the group name into invented sources.\n{QA_RESPONSE_CONTRACT}",
-            n = passages.len(),
-        ),
-        template_source: "inline-cross-reference",
     }
 }
 
@@ -657,47 +482,9 @@ mod tests {
         }
     }
 
-    /// expect: The QA provider returns one schema-bound named result instead of fragile positional text tuples.
-    /// [P9] Motivating: Every prompt receives a structurally complete terminal outcome.
-    /// pre: the prepared prompt requests one factual pair and the provider emits one `emit_result` call.
-    /// post: the payload parses and canonical evidence identity is restored only after exact quote validation.
-    #[test]
-    fn structured_tool_payload_restores_verified_evidence() {
-        let tool = prepared_qa_tool_definition();
-        assert_eq!(tool.function.name, "emit_result");
-        assert_eq!(tool.function.parameters["required"], json!(["pairs"]));
-
-        let payload = prepared_qa_payload_from_tool_calls(&[hkask_types::StructuredToolCall {
-            server: String::new(),
-            tool: "emit_result".into(),
-            args: json!({
-                "pairs": [{
-                    "level": "factual",
-                    "question": "What is grounded?",
-                    "answer": "The answer.",
-                    "evidence": [{"passage": "p0", "quote": "grounded"}]
-                }]
-            }),
-            call_id: Some("call-1".into()),
-        }])
-        .expect("one structured result");
-        let pairs = parse_prepared_qa_response(&payload, &prepared()).expect("parse payload");
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].evidence_quotes[0].chunk_ref, "chunk-1");
-        assert_eq!(pairs[0].evidence_quotes[0].source, "source.txt");
-    }
-
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
         Ok(QaCompletion {
-            text: json!({
-                "pairs": [{
-                    "level": "factual",
-                    "question": "Question?",
-                    "answer": "Answer.",
-                    "evidence": [{"passage": "p0", "quote": "grounded"}]
-                }]
-            })
-            .to_string(),
+            text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
             tokens_used: 10,
             completion_tokens: Some(5),
             finish_reason: Some("stop".into()),
@@ -797,14 +584,13 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         for response in [
             "not JSON",
-            r#"[["factual","question","answer",[["p0","grounded"]]]]"#,
-            r#"{"pairs":[]}"#,
-            r#"{"pairs":[{"level":"factual","question":"","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
-            r#"{"pairs":[{"level":"factual","question":"question","answer":" ","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
-            r#"{"pairs":[{"level":"create","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
-            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]},{"level":"factual","question":"extra","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
-            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p9","quote":"grounded"}]}]}"#,
-            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"not in passage"}]}]}"#,
+            "[]",
+            r#"[["factual","","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question"," ",[["p0","grounded"]]]]"#,
+            r#"[["create","question","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p0","grounded"]]],["factual","extra","answer",[["p0","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p9","grounded"]]]]"#,
+            r#"[["factual","question","answer",[["p0","not in passage"]]]]"#,
         ] {
             let mut bytes = Vec::new();
             let mut output = QaOutput::new(&mut bytes, 1);
@@ -857,15 +643,6 @@ mod tests {
     }
 
     #[test]
-    fn default_bloom_levels_are_factual_and_conceptual() {
-        let levels = default_bloom_levels();
-        assert_eq!(
-            levels,
-            vec!["factual".to_string(), "conceptual".to_string()]
-        );
-    }
-
-    #[test]
     fn prepared_contract_fuses_levels_and_restores_verified_canonical_evidence() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
@@ -879,22 +656,20 @@ mod tests {
         assert!(!rendered.contains("chunk-1"));
         assert!(!rendered.contains("source.txt"));
 
-        let response = json!({
-            "pairs": [
-                {
-                    "level": "factual",
-                    "question": "What is grounded?",
-                    "answer": "The answer.",
-                    "evidence": [{"passage": "p0", "quote": "answer"}]
-                },
-                {
-                    "level": "conceptual",
-                    "question": "How is it grounded?",
-                    "answer": "By evidence.",
-                    "evidence": [{"passage": "p0", "quote": "grounded"}]
-                }
+        let response = json!([
+            [
+                "factual",
+                "What is grounded?",
+                "The answer.",
+                [["p0", "answer"]]
+            ],
+            [
+                "conceptual",
+                "How is it grounded?",
+                "By evidence.",
+                [["p0", "grounded"]]
             ]
-        })
+        ])
         .to_string();
         let pairs = parse_prepared_qa_response(&response, &prompt).expect("parse");
         assert_eq!(pairs.len(), 2);
@@ -902,34 +677,5 @@ mod tests {
             assert_eq!(pair.evidence_quotes[0].chunk_ref, "chunk-1");
             assert_eq!(pair.evidence_quotes[0].source, "source.txt");
         }
-    }
-
-    #[test]
-    fn single_text_without_source_requests_no_citations() {
-        let result = format_single_chunk_prompt("factual", "chunk-1", "some text");
-        assert!(result.text.contains("some text"));
-        assert!(result.text.contains("chunk-1"));
-        assert!(result.text.contains("factual"));
-        assert!(result.text.contains("evidence_quotes: []"));
-    }
-
-    #[test]
-    fn format_cross_reference_prompt_includes_all_passages() {
-        let passages = vec!["first".to_string(), "second".to_string()];
-        let result = format_cross_reference_prompt("factual", "group-1", &passages);
-        assert!(
-            result
-                .text
-                .contains("[Chunk group group-1, passage 1; source identity unavailable]")
-        );
-        assert!(
-            result
-                .text
-                .contains("[Chunk group group-1, passage 2; source identity unavailable]")
-        );
-        assert!(result.text.contains("evidence_quotes: []"));
-        assert!(result.text.contains("first"));
-        assert!(result.text.contains("second"));
-        assert_eq!(result.template_source, "inline-cross-reference");
     }
 }

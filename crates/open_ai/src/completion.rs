@@ -272,7 +272,6 @@ pub fn into_open_ai_response(
         speed,
         compact_at_tokens,
         max_tokens: _,
-        response_format: _,
     } = request;
 
     let service_tier = service_tier_for(speed);

@@ -2621,7 +2621,8 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 "template_context":{
                     "exchanges":["US"],
                     "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
-                    "liquidity_min_usd":1_000_000.0
+                    "liquidity_min_usd":1_000_000.0,
+                    "target_return":0.15
                 },
                 "prompt":"","limit":10,"criteria_overrides":{}
             }))
@@ -2683,6 +2684,15 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             );
             assert_eq!(output["table"]["row_count"], json!(1));
             assert_eq!(output["table"]["row_ids"], json!(["LIQADR.US"]));
+            assert_eq!(
+                output["table"]["columns"]["investor_target_return"]["values"],
+                json!([0.15])
+            );
+            assert!(
+                output["table"]["columns"]["modified_wacc"]["values"][0]
+                    .as_f64()
+                    .is_some_and(|value| value > 0.0 && value <= 0.15)
+            );
             assert_eq!(
                 output["table"]["columns"]["actionable_symbol"]["values"],
                 json!(["LIQADR.US"])
@@ -3148,6 +3158,10 @@ fn extreme_sustainable_growth_is_model_sensitive() {
         profitability_gap_pp: None,
         book_value_per_share: None,
         sustainable_growth_rate: financial_model::IMPLIED_GROWTH_HI + 0.01,
+        investor_target_return: 0.15,
+        modified_wacc: 0.12,
+        equity_weight: 0.75,
+        debt_weight: 0.25,
     };
     let report = tools::expectations::build_gap_report(
         "EXTREME",
@@ -3190,6 +3204,10 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         profitability_gap_pp: Some(1.5),
         book_value_per_share: None,
         sustainable_growth_rate: 0.06864,
+        investor_target_return: 0.15,
+        modified_wacc: 0.12,
+        equity_weight: 0.75,
+        debt_weight: 0.25,
     };
     let report = tools::expectations::build_gap_report(
         "ACME",
@@ -3273,6 +3291,10 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         profitability_gap_pp: Some((0.16 - 0.1056) * 100.0),
         book_value_per_share: Some(242.0),
         sustainable_growth_rate: 0.06864,
+        investor_target_return: 0.15,
+        modified_wacc: 0.15,
+        equity_weight: 1.0,
+        debt_weight: 0.0,
     };
     let report = tools::expectations::build_gap_report(
         "BANK.OL",
@@ -3330,6 +3352,7 @@ fn solve_expectations_financial_sector_uses_roe_path() {
         &json!([]),
         &profile,
         20.0,
+        0.15,
     )
     .expect("financial solve");
     assert_eq!(solve.headline, "roe");
@@ -3361,7 +3384,7 @@ async fn saved_screen_cancel_is_bounded_and_durable() {
         let server = server(directory.path());
         let request = serde_json::from_value::<types::ScreenerRequest>(json!({
             "action":"calculate","template":"expectations_gap",
-            "template_context":{"exchanges":["US"],"market_cap_min":5_000_000_000.0,"market_cap_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0},
+            "template_context":{"exchanges":["US"],"market_cap_min":5_000_000_000.0,"market_cap_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0,"target_return":0.15},
             "prompt":"","limit":10,"criteria_overrides":{}
         })).expect("calculate request");
         let submitted = content(&server.company_screener(Parameters(request)).await.expect("submit"));

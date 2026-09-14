@@ -1,7 +1,7 @@
 # hkask-mcp-corpus
 
 Corpus processing, retrieval, evidence-carrying QA and style composition over
-MCP. The server has **24 registered tools**; parameters extend existing tools,
+MCP. The server has **23 registered tools**; parameters extend existing tools,
 not the tool count. The router and count test are in
 `src/hkask_mcp_corpus.rs:264–290`.
 
@@ -30,13 +30,13 @@ Source identity and derivation use [Dublin Core](https://www.dublincore.org/spec
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
 anchors do not turn generated assertions or exact citations into verified prose.
 
-## Tools (24)
+## Tools (23)
 
 | Group | Registered tools |
 |---|---|
 | Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
 | Process (9) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
-| QA output (5) | `corpus_build_prompts`, `corpus_generate_qa`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
+| QA output (4) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
@@ -215,24 +215,22 @@ Each line has five required fields: `prompt_id`, protocol
 `chunk_ref`/`source`, and text. Unknown or old rendered-message fields are rejected.
 
 The builder generates one deterministic `qa-<UUIDv5>` ID from source, chunk, the
-ordered level set, and ordinal zero. Both transports call the same deterministic
-renderer; provider batches use `custom_id=prompt_id`. Stored canonical identities
-are withheld from rendered model messages.
+ordered level set, and ordinal zero. Stored canonical identities are withheld
+from rendered model messages.
 
 ### Evidence and generated records
 
-Prepared inference returns one named object with pairs in requested-level order. Synchronous inference requires this object through a single `emit_result` function call; provider-batch inference returns the same object as text because its IPC contract has no tool channel.
+Prepared inference returns compact tuples in requested-level order:
 
 ```json
-{"pairs":[{"level":"factual","question":"What is the delay?","answer":"72 hours","evidence":[{"passage":"p0","quote":"The delay is 72 hours."}]},{"level":"conceptual","question":"Why does it matter?","answer":"It constrains timing.","evidence":[{"passage":"p0","quote":"delay is 72 hours"}]}]}
+[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
 ```
 
 Every pair must match its requested Bloom level and contain nonblank question,
 answer, and evidence. Every local ID must resolve to a prepared passage and every
 quote must be an exact substring. Only then does the server restore canonical
 `QaEvidence {chunk_ref, source, quote}`. Any bad pair rejects the whole prompt;
-answer entailment remains a separate semantic audit. Source-free
-`corpus_generate_qa` retains its empty-evidence contract.
+answer entailment remains a separate semantic audit.
 
 One accepted pair becomes one ingestible envelope:
 
@@ -254,26 +252,24 @@ Settings → Kask → Models → QA Generation Model (`kask.models.qa_generation
 injected as `HKASK_QA_GENERATION_MODEL`). The setting defaults empty. Missing or
 malformed configuration fails before output creation/inference; unresolved
 models fail at the bridge/provider. No chat, classifier, consolidation-model or
-training-base substitution. Both QA paths disable reasoning; `:batch` selects
-provider-batch transport. The QA model is not approval of a training base.
+training-base substitution. QA generation disables reasoning and has one
+synchronous transport. The QA model is not approval of a training base.
 
 Synchronous inference uses AIMD: starts at up to 2, adds one on success and halves
 on transient capacity failure, bounded by requested concurrency. Each retry gets
 its own slot. Only typed `Connection`, `Overloaded`, `Timeout` errors retry,
 with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures,
-open circuits and rejected/malformed QA do not retry. Provider-batch submission
-is not retried because acceptance may be unknown; it preserves typed tool errors
-(`src/batch.rs:73–153`; `src/services/qa_batch.rs:163–205`;
-`src/tools/semantic/batch_api.rs:31–38`).
+open circuits and rejected/malformed QA do not retry
+(`src/batch.rs`; `src/services/qa_batch.rs`).
 
-Before truncating output, both transports validate the entire input, resolve the
-model and reject input/output identity aliases, including symlinks and hard links.
+Before truncating output, the generator validates the entire input, resolves the
+model and rejects input/output identity aliases, including symlinks and hard links.
 A **process-wide canonical-path lease** excludes competing writers across service
-instances and transports, including unresolved destination symlinks. The lease
+instances, including unresolved destination symlinks. The lease
 is not a cross-process lock. Synchronous workers hold it until actually destroyed;
 requesting abort does not release ownership early. On cancellation/write failure,
 `JoinSet` aborts remaining local tasks; this is not a promise that remote work was
-cancelled (`src/services/qa_batch.rs:24–66,99–239`; `src/path_safety.rs`).
+cancelled (`src/services/qa_batch.rs`; `src/path_safety.rs`).
 
 Rows are written incrementally in synchronous completion order, directly to a
 file; flush occurs every 10 prompt completions and at finish. Provider results

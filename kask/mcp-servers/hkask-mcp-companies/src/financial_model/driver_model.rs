@@ -15,6 +15,8 @@ pub(crate) const IMPLIED_GROWTH_LO: f64 = -0.50;
 pub(crate) const IMPLIED_GROWTH_HI: f64 = 1.00;
 pub(crate) const IMPLIED_NET_MARGIN_LO: f64 = -0.30;
 pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
+/// MAIA investor hurdle documented in `MA_Guidebook_July23.md`.
+pub(crate) const MAIA_INVESTOR_TARGET_RETURN: f64 = 0.15;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) enum NwcMethod {
@@ -50,13 +52,17 @@ pub(crate) struct ProjectionAssumptions {
     pub interest_rate: f64,
     pub equity_issuance: f64,
     pub dividend_payout_ratio: f64,
+    /// Investor's required equity return. This replaces CAPM cost of equity.
+    pub investor_target_return: f64,
+    /// Modified WACC using the investor target return as the equity component.
     pub discount_rate: f64,
+    pub equity_weight: f64,
+    pub debt_weight: f64,
     pub terminal_growth: f64,
     pub total_years: u8,
     pub stage1_years: u8,
     pub is_financial_sector: bool,
     pub financial_roe: f64,
-    pub cost_of_equity: f64,
 }
 
 impl Default for ProjectionAssumptions {
@@ -84,13 +90,15 @@ impl Default for ProjectionAssumptions {
             interest_rate: 0.05,
             equity_issuance: 0.0,
             dividend_payout_ratio: 0.0,
-            discount_rate: 0.10,
+            investor_target_return: MAIA_INVESTOR_TARGET_RETURN,
+            discount_rate: MAIA_INVESTOR_TARGET_RETURN,
+            equity_weight: 1.0,
+            debt_weight: 0.0,
             terminal_growth: 0.025,
             total_years: 10,
             stage1_years: 3,
             is_financial_sector: false,
             financial_roe: 0.10,
-            cost_of_equity: 0.10,
         }
     }
 }
@@ -124,6 +132,8 @@ pub(crate) enum ProjectionError {
     InvalidTerminalSpread,
     #[error("capex_da_ratio must be finite and positive")]
     InvalidCapexDaRatio,
+    #[error("positive shareholder equity is required to calculate investor-modified WACC")]
+    InvalidCapitalStructure,
 }
 
 impl ProjectionAssumptions {
@@ -131,11 +141,21 @@ impl ProjectionAssumptions {
         let other_operating_expense_to_revenue = hist
             .other_operating_expense_to_revenue()
             .ok_or(ProjectionError::OperatingExpensesUnreconciled)?;
-        let interest_rate = if hist.latest_debt() > 0.0 {
-            (hist.interest_expense() / hist.latest_debt()).clamp(0.0, 0.30)
+        let debt = hist.latest_debt().max(0.0);
+        let equity = hist.latest_equity();
+        if !equity.is_finite() || equity <= 0.0 {
+            return Err(ProjectionError::InvalidCapitalStructure);
+        }
+        let interest_rate = if debt > 0.0 {
+            (hist.interest_expense() / debt).clamp(0.0, 0.30)
         } else {
             0.0
         };
+        let total_capital = debt + equity;
+        let equity_weight = equity / total_capital;
+        let debt_weight = debt / total_capital;
+        let discount_rate = equity_weight * MAIA_INVESTOR_TARGET_RETURN
+            + debt_weight * interest_rate * (1.0 - hist.tax_rate);
         let assumptions = Self {
             revenue_growth: hist.revenue_cagr(),
             gross_margin: hist.gross_margin(),
@@ -150,11 +170,33 @@ impl ProjectionAssumptions {
             nwc_to_revenue: hist.nwc_to_revenue(),
             interest_rate,
             dividend_payout_ratio: hist.dividend_payout_ratio(),
+            investor_target_return: MAIA_INVESTOR_TARGET_RETURN,
+            discount_rate,
+            equity_weight,
+            debt_weight,
             financial_roe: hist.roe(),
             ..Self::default()
         };
         assumptions.validate()?;
         Ok(assumptions)
+    }
+
+    pub(crate) fn with_investor_target_return(
+        mut self,
+        target_return: f64,
+    ) -> Result<Self, ProjectionError> {
+        if !target_return.is_finite() || !(0.0..=1.0).contains(&target_return) {
+            return Err(ProjectionError::InvalidRange {
+                field: "investor_target_return",
+                minimum: 0.0,
+                maximum: 1.0,
+            });
+        }
+        self.investor_target_return = target_return;
+        self.discount_rate = self.equity_weight * target_return
+            + self.debt_weight * self.interest_rate * (1.0 - self.tax_rate);
+        self.validate()?;
+        Ok(self)
     }
 
     pub(crate) fn from_history_with_overrides(
@@ -279,7 +321,21 @@ impl ProjectionAssumptions {
         range("discount_rate", self.discount_rate, 0.0, 1.0)?;
         range("terminal_growth", self.terminal_growth, 0.0, 0.20)?;
         range("financial_roe", self.financial_roe, -1.0, 2.0)?;
-        range("cost_of_equity", self.cost_of_equity, 0.0, 1.0)?;
+        range(
+            "investor_target_return",
+            self.investor_target_return,
+            0.0,
+            1.0,
+        )?;
+        range("equity_weight", self.equity_weight, 0.0, 1.0)?;
+        range("debt_weight", self.debt_weight, 0.0, 1.0)?;
+        if (self.equity_weight + self.debt_weight - 1.0).abs() > 1e-9 {
+            return Err(ProjectionError::InvalidRange {
+                field: "capital_weights_sum",
+                minimum: 1.0,
+                maximum: 1.0,
+            });
+        }
         for (field, value) in [
             ("revenue_explicit", self.revenue_explicit),
             ("capex_explicit", self.capex_explicit),
@@ -302,7 +358,8 @@ impl ProjectionAssumptions {
         if self.total_years < 2 || self.stage1_years == 0 || self.stage1_years > self.total_years {
             return Err(ProjectionError::InvalidHorizon);
         }
-        if self.discount_rate <= self.terminal_growth || self.cost_of_equity <= self.terminal_growth
+        if self.discount_rate <= self.terminal_growth
+            || self.investor_target_return <= self.terminal_growth
         {
             return Err(ProjectionError::InvalidTerminalSpread);
         }
@@ -552,8 +609,9 @@ fn project_financial(
         let dividends = net_income.max(0.0) * assumptions.dividend_payout_ratio;
         let equity = previous_equity + net_income - dividends + assumptions.equity_issuance;
         let residual_income =
-            (assumptions.financial_roe - assumptions.cost_of_equity) * previous_equity;
-        let discount_factor = 1.0 / (1.0 + assumptions.cost_of_equity).powf(period as f64 + 0.5);
+            (assumptions.financial_roe - assumptions.investor_target_return) * previous_equity;
+        let discount_factor =
+            1.0 / (1.0 + assumptions.investor_target_return).powf(period as f64 + 0.5);
         periods.push(ProjectedPeriod {
             period,
             year: (period + 1) as f64,
@@ -596,9 +654,9 @@ fn project_financial(
         .map(|period| period.free_cash_flow)
         .unwrap_or(0.0);
     let terminal_value = last_residual * (1.0 + assumptions.terminal_growth)
-        / (assumptions.cost_of_equity - assumptions.terminal_growth);
+        / (assumptions.investor_target_return - assumptions.terminal_growth);
     let terminal_pv = terminal_value
-        / (1.0 + assumptions.cost_of_equity).powf(f64::from(assumptions.total_years) - 0.5);
+        / (1.0 + assumptions.investor_target_return).powf(f64::from(assumptions.total_years) - 0.5);
     let equity_value = opening_equity
         + periods
             .iter()
@@ -779,6 +837,27 @@ mod tests {
         assert!((first.free_cash_flow - 130.0).abs() < 1e-10);
         // Gordon value at g=0 is FCF/r = 130/0.10 = 1300.
         assert!((model.terminal_value - 1300.0).abs() < 1e-8);
+    }
+
+    /// MAIA modified WACC: investor target return replaces CAPM cost of equity,
+    /// while issuer debt cost, tax shield, and capital weights remain observed.
+    #[test]
+    fn investor_target_return_drives_modified_wacc() {
+        let mut history = worked_history();
+        history.total_equity = vec![("2024".to_string(), 600.0), ("2025".to_string(), 600.0)];
+        history.long_term_debt = vec![("2024".to_string(), 400.0), ("2025".to_string(), 400.0)];
+        history.interest_expense = vec![("2024".to_string(), 32.0), ("2025".to_string(), 32.0)];
+        history.tax_rate = 0.20;
+        let assumptions =
+            ProjectionAssumptions::from_history(&history).expect("valid capital structure");
+        assert!((assumptions.equity_weight - 0.60).abs() < 1e-12);
+        assert!((assumptions.debt_weight - 0.40).abs() < 1e-12);
+        assert!((assumptions.investor_target_return - 0.15).abs() < 1e-12);
+        assert!((assumptions.discount_rate - 0.1156).abs() < 1e-12);
+        let higher_hurdle = assumptions
+            .with_investor_target_return(0.20)
+            .expect("valid investor hurdle");
+        assert!((higher_hurdle.discount_rate - 0.1456).abs() < 1e-12);
     }
 
     /// Wall Street Prep's published reverse-DCF case: $100m revenue, 40% EBIT

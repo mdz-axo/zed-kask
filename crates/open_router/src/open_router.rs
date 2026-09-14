@@ -182,9 +182,6 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
-    // zed-kask: D57 — provider-native schema contract for reserved results.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub response_format: Option<Value>,
     pub usage: RequestUsage,
     pub provider: Option<Provider>,
 }
@@ -218,10 +215,6 @@ pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
-    // zed-kask: D56 — reserved structured-result tools require provider-side
-    // schema enforcement; ordinary tools retain the provider default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strict: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

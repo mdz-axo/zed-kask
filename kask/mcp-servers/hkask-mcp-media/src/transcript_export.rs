@@ -54,20 +54,39 @@ impl TranscriptExportFormat {
 }
 
 struct DocumentPublicationCleanup {
-    paths: Vec<std::path::PathBuf>,
+    staged_dir: std::path::PathBuf,
+    published_dir: Option<std::path::PathBuf>,
     committed: bool,
 }
 
 impl DocumentPublicationCleanup {
-    fn new(paths: Vec<std::path::PathBuf>) -> Self {
+    fn new(staged_dir: std::path::PathBuf) -> Self {
         Self {
-            paths,
+            staged_dir,
+            published_dir: None,
             committed: false,
         }
     }
 
+    fn mark_published(&mut self, published_dir: std::path::PathBuf) {
+        self.published_dir = Some(published_dir);
+    }
+
     fn commit(&mut self) {
         self.committed = true;
+    }
+
+    fn remove_dir(path: &std::path::Path) {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media",
+                path = %path.display(),
+                %error,
+                "Failed to roll back transcript document publication"
+            ),
+        }
     }
 }
 
@@ -76,17 +95,9 @@ impl Drop for DocumentPublicationCleanup {
         if self.committed {
             return;
         }
-        for path in &self.paths {
-            match std::fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.media",
-                    path = %path.display(),
-                    %error,
-                    "Failed to roll back transcript document publication"
-                ),
-            }
+        Self::remove_dir(&self.staged_dir);
+        if let Some(published_dir) = self.published_dir.as_deref() {
+            Self::remove_dir(published_dir);
         }
     }
 }
@@ -125,16 +136,15 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
     effective_params: &T,
 ) -> Result<serde_json::Value, McpToolError> {
     std::fs::create_dir_all(dir).map_err(|error| document_io_error("create", dir, error))?;
-    let output = dir.join(format!("{export_id}.{}", format.extension()));
-    let metadata_path = dir.join(format!("{export_id}.json"));
-    let staged_output = dir.join(format!(".{export_id}.{}.staged", format.extension()));
-    let staged_metadata = dir.join(format!(".{export_id}.json.staged"));
-    let mut cleanup = DocumentPublicationCleanup::new(vec![
-        staged_output.clone(),
-        staged_metadata.clone(),
-        output.clone(),
-        metadata_path.clone(),
-    ]);
+    let published_dir = dir.join(export_id);
+    let staged_dir = dir.join(format!(".{export_id}.staged"));
+    std::fs::create_dir(&staged_dir)
+        .map_err(|error| document_io_error("create", &staged_dir, error))?;
+    let mut cleanup = DocumentPublicationCleanup::new(staged_dir.clone());
+    let output = published_dir.join(format!("document.{}", format.extension()));
+    let metadata_path = published_dir.join("metadata.json");
+    let staged_output = staged_dir.join(format!("document.{}", format.extension()));
+    let staged_metadata = staged_dir.join("metadata.json");
 
     let mut effective_value = serde_json::to_value(effective_params).map_err(|error| {
         map_media_error(MediaError::AssetPersistence(format!(
@@ -171,10 +181,9 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
         .map_err(|error| document_io_error("stage", &staged_output, error))?;
     std::fs::write(&staged_metadata, metadata_bytes)
         .map_err(|error| document_io_error("stage", &staged_metadata, error))?;
-    std::fs::rename(&staged_output, &output)
-        .map_err(|error| document_io_error("publish", &output, error))?;
-    std::fs::rename(&staged_metadata, &metadata_path)
-        .map_err(|error| document_io_error("publish", &metadata_path, error))?;
+    std::fs::rename(&staged_dir, &published_dir)
+        .map_err(|error| document_io_error("publish", &published_dir, error))?;
+    cleanup.mark_published(published_dir);
 
     let mut result = metadata;
     let Some(result_object) = result.as_object_mut() else {
@@ -380,12 +389,13 @@ mod tests {
     }
 
     #[test]
-    fn document_metadata_failure_rolls_back_published_content_and_staging()
+    fn document_publication_failure_rolls_back_the_staged_unit()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let export_id = "forced-metadata-failure";
-        let metadata_path = dir.path().join(format!("{export_id}.json"));
-        std::fs::create_dir(&metadata_path)?;
+        let export_id = "forced-publication-failure";
+        let published_dir = dir.path().join(export_id);
+        std::fs::create_dir(&published_dir)?;
+        std::fs::write(published_dir.join("sentinel"), b"pre-existing")?;
         let error = publish_document_in_dir(
             dir.path(),
             export_id,
@@ -394,23 +404,16 @@ mod tests {
             b"caption",
             &serde_json::json!({"cues": 1}),
         )
-        .expect_err("metadata promotion must fail");
+        .expect_err("directory promotion must fail");
 
         assert!(
-            error.to_string().contains("publish") && error.to_string().contains(".json"),
+            error.to_string().contains("publish") && error.to_string().contains(export_id),
             "filesystem publication cause was lost: {error}"
         );
-        assert!(!dir.path().join(format!("{export_id}.srt")).exists());
-        assert!(!dir.path().join(format!(".{export_id}.srt.staged")).exists());
-        assert!(
-            !dir.path()
-                .join(format!(".{export_id}.json.staged"))
-                .exists()
-        );
-        assert!(
-            metadata_path.is_dir(),
-            "pre-existing failure fixture was removed"
-        );
+        assert!(!dir.path().join(format!(".{export_id}.staged")).exists());
+        assert!(published_dir.join("sentinel").is_file());
+        assert!(!published_dir.join("document.srt").exists());
+        assert!(!published_dir.join("metadata.json").exists());
         Ok(())
     }
 

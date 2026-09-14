@@ -112,6 +112,8 @@ pub(crate) struct CharacteristicsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExpectationsGapRequest {
     pub symbol: String,
+    /// Investor's required equity return. Defaults to MAIA's documented 15% hurdle.
+    pub target_return: Option<f64>,
     /// Your estimate of sustainable revenue growth (0.0–1.0). Context
     /// annotation only — the gap axis is price-implied expectations vs
     /// demonstrated DuPont capability (operator ruling 2026-09-10).
@@ -760,6 +762,9 @@ pub(crate) struct ScreenTemplateContext {
     /// Minimum average daily traded value in reporting currency.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liquidity_min_usd: Option<f64>,
+    /// Investor's required equity return. Defaults to MAIA's documented 15% hurdle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_return: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

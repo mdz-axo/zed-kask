@@ -769,7 +769,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Render a stored EDL layer to a media file: the selection algebra maps the EDL's word ranges to time ranges, then the existing ffmpeg stream-copy path clips each range and concatenates them — lossless, no re-encode. Audio media (wav/mp3/…) uses the audio trim/concat path; everything else uses the video path. Defaults to the latest EDL layer."
+        description = "Render a stored EDL layer to one canonical durable gallery media asset: word ranges map to time ranges, ffmpeg clips and concatenates them losslessly, and temporary clips are removed. Audio sources publish WAV; other sources publish MP4. Defaults to the latest EDL layer."
     )]
     pub async fn educt_render_edl(
         &self,
@@ -779,7 +779,6 @@ impl MediaServer {
         }): Parameters<EductRenderEdlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_render_edl", async {
-            let gallery = self.capture_required_gallery()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -834,6 +833,7 @@ impl MediaServer {
                 .map(|(start_ms, end_ms)| (*start_ms as f64 / 1000.0, *end_ms as f64 / 1000.0))
                 .collect();
 
+            let gallery = self.capture_required_gallery()?;
             self.require_ffmpeg()?;
             let media_path = bundle.audio_path.clone();
             let audio = is_audio_path(&media_path);
@@ -902,7 +902,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Export a stored transcript in a shareable or ingestable format. \"srt\": caption file from the word timings (cues split at sentence punctuation). \"highlights_csv\": every stored highlight as CSV rows with time ranges. \"corpus_text\": the rendered transcript text for corpus ingestion — run corpus_convert → corpus_chunk → corpus_embed on the exported file; corpus_query hits map back to word ranges over the stored transcript (repository-wide semantic search, by composition)."
+        description = "Publish a stored transcript as a durable document with stable export_id and provenance metadata. \"srt\": caption cues from word timings. \"highlights_csv\": stored highlights with time ranges. \"corpus_text\": rendered text for corpus ingestion. Documents stay outside the playable-media gallery."
     )]
     pub async fn educt_export(
         &self,

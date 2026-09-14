@@ -5,6 +5,7 @@ contract:
     market_cap_min: number
     market_cap_max: number
     liquidity_min_usd: number
+    target_return: number
   server_input:
     as_of: string
 
@@ -43,6 +44,10 @@ visibility: Public
     {"id":"eligible_lines","label":"Eligible Traded Line Metadata","source":"eligible_lines","data_type":"array","unit":null},
     {"id":"market_capitalization_usd","label":"Issuer Market Capitalization","source":"market_capitalization_usd","data_type":"number","unit":"USD"},
     {"id":"average_daily_dollar_volume_usd","label":"Average Daily Dollar Volume","source":"average_daily_dollar_volume_usd","data_type":"number","unit":"USD"},
+    {"id":"investor_target_return","label":"Investor Target Return","source":"investor_target_return","data_type":"number","unit":"ratio"},
+    {"id":"modified_wacc","label":"Investor-Modified WACC","source":"modified_wacc","data_type":"number","unit":"ratio"},
+    {"id":"equity_weight","label":"Equity Capital Weight","source":"equity_weight","data_type":"number","unit":"ratio"},
+    {"id":"debt_weight","label":"Debt Capital Weight","source":"debt_weight","data_type":"number","unit":"ratio"},
     {"id":"demonstrated_profitability","label":"Demonstrated Profitability","source":"demonstrated_profitability","data_type":"number","unit":"ratio"},
     {"id":"demonstrated_growth","label":"Demonstrated Revenue CAGR","source":"demonstrated_growth","data_type":"number","unit":"ratio"},
     {"id":"sustainable_growth","label":"Sustainable Growth","source":"sustainable_growth","data_type":"number","unit":"ratio"},
@@ -62,11 +67,13 @@ visibility: Public
     "market_cap_min": {{ market_cap_min }},
     "market_cap_max": {{ market_cap_max }},
     "liquidity_min_usd": {{ liquidity_min_usd }},
+    "investor_target_return": {{ target_return }},
     "avg_volume_days": 200
   },
   "assertions": [
     {"name":"market_cap_bounds_ordered","form":"(and (> market_cap_min 0) (>= market_cap_max market_cap_min))"},
     {"name":"liquidity_threshold_positive","form":"(> liquidity_min_usd 0)"},
+    {"name":"investor_target_return_valid","form":"(and (> investor_target_return 0) (< investor_target_return 1))"},
     {"name":"average_volume_period","form":"(= avg_volume_days 200)"}
   ]
 }

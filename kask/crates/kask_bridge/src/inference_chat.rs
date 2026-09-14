@@ -233,17 +233,6 @@ impl StreamAccumulator {
                     call_id: Some(tool_use.id.to_string()),
                 });
             }
-            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                tool_name,
-                raw_input,
-                json_parse_error,
-                ..
-            }) => {
-                return Err(InferenceError::Generation(format!(
-                    "provider returned malformed arguments for tool '{tool_name}' ({} bytes): {json_parse_error}",
-                    raw_input.len()
-                )));
-            }
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
                 self.finish_reason = Some(
                     match reason {
@@ -736,18 +725,6 @@ impl LanguageModelInferencePort {
             })
             .collect();
 
-        let response_format = match tools.unwrap_or(&[]) {
-            [tool] if tool.function.name == "emit_result" => Some(serde_json::json!({
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "emit_result",
-                    "strict": true,
-                    "schema": tool.function.parameters.clone()
-                }
-            })),
-            _ => None,
-        };
-
         LanguageModelRequest {
             messages: req_messages,
             tools: req_tools,
@@ -762,7 +739,6 @@ impl LanguageModelInferencePort {
                 [tool] if tool.function.name == "emit_result" => Some(LanguageModelToolChoice::Any),
                 _ => Some(LanguageModelToolChoice::Auto),
             },
-            response_format,
             ..Default::default()
         }
     }
@@ -1082,28 +1058,6 @@ mod tests {
             .ensure_terminal_stop()
             .expect("explicit terminal stop");
         assert_eq!(complete.into_result().finish_reason, "stop");
-    }
-
-    /// expect: Malformed provider tool arguments surface their parser cause instead of a normal empty tool completion.
-    #[test]
-    fn malformed_tool_arguments_are_not_discarded() {
-        let mut accumulator = super::StreamAccumulator::new("test-model".to_string());
-        let error = accumulator
-            .process_event(Ok(
-                language_model_core::LanguageModelCompletionEvent::ToolUseJsonParseError {
-                    id: "call-1".into(),
-                    tool_name: "emit_result".into(),
-                    raw_input: r#"{"pairs":[{"level":"factual""#.into(),
-                    json_parse_error: "EOF while parsing an object".into(),
-                },
-            ))
-            .expect_err("malformed tool arguments must fail");
-        let InferenceError::Generation(detail) = error else {
-            panic!("tool JSON failure must surface as Generation")
-        };
-        assert!(detail.contains("emit_result"));
-        assert!(detail.contains("EOF while parsing an object"));
-        assert!(detail.contains("bytes"));
     }
 
     // ── Provider-rejection detail preservation (D43-adjacent, bridge path) ──

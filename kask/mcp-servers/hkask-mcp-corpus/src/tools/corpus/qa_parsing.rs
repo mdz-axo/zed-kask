@@ -145,17 +145,12 @@ mod tests {
         output.complete(
             &prompt,
             Ok(QaCompletion {
-                text: json!({
-                    "pairs": [{
-                        "level": "factual",
-                        "question": "Question?",
-                        "answer": "Answer.",
-                        "evidence": [
-                            {"passage": "p0", "quote": "Answer."},
-                            {"passage": "p1", "quote": "Other evidence."}
-                        ]
-                    }]
-                })
+                text: json!([[
+                    "factual",
+                    "Question?",
+                    "Answer.",
+                    [["p0", "Answer."], ["p1", "Other evidence."]]
+                ]])
                 .to_string(),
                 tokens_used: 10,
                 completion_tokens: Some(5),

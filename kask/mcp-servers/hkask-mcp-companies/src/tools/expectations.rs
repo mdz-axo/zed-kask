@@ -25,15 +25,10 @@ use crate::{
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
-/// Cost of equity for the financial-sector implied-ROE solve. Matches the
-/// reverse-DCF default discount rate; a bank's required return is equity's,
-/// not the WACC blend an FCF model uses.
-const DEFAULT_COST_OF_EQUITY: f64 = 0.10;
-
 #[tool_router(router = expectations_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Expectations gap analysis (Mauboussin's Expectations Investing). For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only."
+        description = "Expectations gap analysis from the investor perspective. The investor target return (MAIA default 15%, request-overridable) replaces CAPM cost of equity in modified WACC. For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only."
     )]
     pub async fn expectations_gap(
         &self,
@@ -67,6 +62,9 @@ impl CompaniesServer {
             // ── 2. Price-implied expectations vs demonstrated capability ──
 
             let mut price_source = "unavailable".to_string();
+            let investor_target_return = req
+                .target_return
+                .unwrap_or(financial_model::MAIA_INVESTOR_TARGET_RETURN);
             let analysis = match (
                 &req_income,
                 &req_balance,
@@ -90,6 +88,7 @@ impl CompaniesServer {
                                         met.raw(),
                                         prof,
                                         current_price,
+                                        investor_target_return,
                                     )
                                 }
                                 Err(error) => {
@@ -196,6 +195,10 @@ pub(crate) struct ExpectationsSolve {
     /// redundant with `capability`: the growth gap is defined against it,
     /// and the report surfaces it beside the implied growth it anchors.
     pub sustainable_growth_rate: f64,
+    pub investor_target_return: f64,
+    pub modified_wacc: f64,
+    pub equity_weight: f64,
+    pub debt_weight: f64,
 }
 
 /// Solve the expectations analysis from raw provider payloads. Returns
@@ -209,6 +212,7 @@ pub(crate) fn solve_expectations(
     metrics: &serde_json::Value,
     profile: &crate::CompanyProfile,
     current_price: f64,
+    investor_target_return: f64,
 ) -> Option<ExpectationsSolve> {
     let income_arr = income.as_array()?;
     let balance_arr = balance.as_array()?;
@@ -258,7 +262,7 @@ pub(crate) fn solve_expectations(
         let implied_roe = financial_model::implied_roe_from_price_to_book(
             current_price,
             book_value_per_share,
-            DEFAULT_COST_OF_EQUITY,
+            investor_target_return,
             sustainable_growth_rate,
         );
         let profitability_gap_pp = implied_roe.map(|roe| (roe - capability.roe) * 100.0);
@@ -274,6 +278,10 @@ pub(crate) fn solve_expectations(
             profitability_gap_pp,
             book_value_per_share: Some(book_value_per_share),
             sustainable_growth_rate,
+            investor_target_return,
+            modified_wacc: investor_target_return,
+            equity_weight: 1.0,
+            debt_weight: 0.0,
         })
     } else {
         // Non-financials: the FCF reverse DCF. Growth leg: implied revenue
@@ -286,7 +294,10 @@ pub(crate) fn solve_expectations(
         // like-for-like in net-income space. The enterprise model's gross
         // margin is an internal parameter only, reached through the identity
         // GM = NM/(1−tax) + SG&A% + interest% + D&A%.
-        let assumptions = financial_model::ProjectionAssumptions::from_history(&hist).ok()?;
+        let assumptions = financial_model::ProjectionAssumptions::from_history(&hist)
+            .ok()?
+            .with_investor_target_return(investor_target_return)
+            .ok()?;
         let sustainable_growth_rate = capability.sustainable_growth_rate;
         let demonstrated_revenue_growth = hist.demonstrated_revenue_cagr()?;
         let demonstrated_net_margin = capability.net_profit_margin;
@@ -326,6 +337,10 @@ pub(crate) fn solve_expectations(
             profitability_gap_pp,
             book_value_per_share: None,
             sustainable_growth_rate,
+            investor_target_return,
+            modified_wacc: assumptions.discount_rate,
+            equity_weight: assumptions.equity_weight,
+            debt_weight: assumptions.debt_weight,
         })
     }
 }
@@ -508,7 +523,7 @@ pub(crate) fn build_gap_report(
             "implied_roe": solve.implied_roe.map(|value| serde_json::json!({
                 "value": value,
                 "display": display_pct(value),
-                "source": format!("justified P/B identity at COE {:.0}% and the sustainable growth rate", DEFAULT_COST_OF_EQUITY * 100.0),
+                "source": format!("justified P/B identity at the investor target return of {:.1}% and the sustainable growth rate", solve.investor_target_return * 100.0),
             })).unwrap_or(serde_json::Value::Null),
             "book_value_per_share": solve.book_value_per_share,
         }),
@@ -543,8 +558,15 @@ pub(crate) fn build_gap_report(
 
     serde_json::json!({
         "symbol": symbol,
-        "framework": "Expectations gap = price-implied expectations vs demonstrated like-for-like financial performance. For non-financials, the primary growth gap compares implied revenue growth with demonstrated full-period revenue CAGR; Higgins sustainable growth remains a separately labeled financing-capacity diagnostic. Profitability compares implied net margin at demonstrated growth with demonstrated net margin. Financial-sector companies use the equity-based implied-ROE solve. Operator ruling 2026-09-14; Mauboussin & Rappaport (2001), DuPont analysis, and Higgins (1977).",
+        "framework": "Expectations gap = price-implied expectations vs demonstrated like-for-like financial performance. Discounting uses MAIA's investor perspective: the investor target return is the equity component of modified WACC, not CAPM cost of equity. For non-financials, the primary growth gap compares implied revenue growth with demonstrated full-period revenue CAGR; Higgins sustainable growth remains a separately labeled financing-capacity diagnostic. Profitability compares implied net margin at demonstrated growth with demonstrated net margin. Financial-sector companies use the equity-based implied-ROE solve. Operator ruling 2026-09-14; Mauboussin & Rappaport (2001), DuPont analysis, and Higgins (1977).",
         "capability": capability_json,
+        "discounting": analysis.as_ref().map(|solve| serde_json::json!({
+            "investor_target_return": solve.investor_target_return,
+            "modified_wacc": solve.modified_wacc,
+            "equity_weight": solve.equity_weight,
+            "debt_weight": solve.debt_weight,
+            "method": "MAIA investor perspective: equity weight × investor target return + debt weight × pre-tax debt cost × (1 − tax rate)",
+        })),
         "price_implied": price_implied_json,
         "gaps": gaps_json,
         "context": {
