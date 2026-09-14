@@ -1274,13 +1274,14 @@ fn asset_from_hint(hint: &str, tool: &SharedString) -> Option<MediaAsset> {
     payload.to_media_ref().ok()?;
     let kind = payload.kind;
     let src = payload.src;
+    let gallery_asset_id = payload.gallery_asset_id;
     Some(MediaAsset {
         body,
         src,
         kind,
         tool: tool.clone(),
         gallery_index: None,
-        gallery_asset_id: None,
+        gallery_asset_id,
     })
 }
 
@@ -1573,7 +1574,7 @@ mod tests {
         let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
         for kind in ["image", "svg", "video", "audio"] {
             let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
-                serde_json::json!({"output": source}),
+                serde_json::json!({"output": source, "gallery_asset_id": "asset-1"}),
                 "generate_image",
                 kind,
                 serde_json::json!({"prompt": "雪\n\""}),
@@ -1589,6 +1590,8 @@ mod tests {
             assert_eq!(body.to_media_ref()?.src(), source);
             assert_eq!(body.kind, kind);
             assert_eq!(body.ontology.as_deref(), Some("omc:CreativeWork"));
+            assert_eq!(body.gallery_asset_id.as_deref(), Some("asset-1"));
+            assert_eq!(asset.gallery_asset_id.as_deref(), Some("asset-1"));
             assert_eq!(body.provenance.tool.as_deref(), Some("generate_image"));
             assert_eq!(body.provenance.span_id.as_deref(), Some("span-1"));
             assert_eq!(

@@ -1394,6 +1394,7 @@ mod tests {
         MediaBlockBody {
             kind: "image".to_string(),
             src: "/tmp/img.png".to_string(),
+            gallery_asset_id: None,
             ontology: Some(ontology.to_string()),
             provenance: BlockProvenance {
                 tool: Some(tool.to_string()),
@@ -1409,6 +1410,7 @@ mod tests {
         MediaBlockBody {
             kind: "image".to_string(),
             src: "/tmp/img.png".to_string(),
+            gallery_asset_id: None,
             ontology: None,
             provenance: BlockProvenance::default(),
         }
