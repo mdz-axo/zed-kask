@@ -475,13 +475,14 @@ async fn stage_job_asset(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum LocalVideoFormat {
+pub(crate) enum LocalMediaFormat {
     Mp4,
     Gif,
+    Wav,
 }
 
-impl LocalVideoFormat {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+impl LocalMediaFormat {
+    pub(crate) fn parse_video_output(value: &str) -> Option<Self> {
         match value {
             "mp4" => Some(Self::Mp4),
             "gif" => Some(Self::Gif),
@@ -493,6 +494,7 @@ impl LocalVideoFormat {
         match self {
             Self::Mp4 => "mp4",
             Self::Gif => "gif",
+            Self::Wav => "wav",
         }
     }
 
@@ -500,6 +502,7 @@ impl LocalVideoFormat {
         match self {
             Self::Mp4 => "video",
             Self::Gif => "image",
+            Self::Wav => "audio",
         }
     }
 
@@ -512,9 +515,9 @@ impl LocalVideoFormat {
 /// publication owner used by background generation jobs. The processor's
 /// temporary file is consumed before this returns; no temp-runner lifetime is
 /// allowed to own the user-facing output.
-pub(crate) fn stage_local_video_publication(
+pub(crate) fn stage_local_media_publication(
     source_path: &std::path::Path,
-    format: LocalVideoFormat,
+    format: LocalMediaFormat,
 ) -> Result<StagedJobPublication, MediaError> {
     let mut source_cleanup = StagedPathCleanup::armed(source_path.to_path_buf());
     let bytes = std::fs::read(source_path).map_err(|error| {
@@ -556,6 +559,133 @@ pub(crate) fn stage_local_video_publication(
         assets: vec![asset],
         provider_metadata: serde_json::Map::new(),
     })
+}
+
+fn rollback_local_publication_error(
+    publication: &mut StagedJobPublication,
+    original: MediaError,
+) -> McpToolError {
+    let error = match publication.rollback() {
+        Ok(()) => original,
+        Err(rollback_error) => {
+            MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
+        }
+    };
+    map_media_error(error)
+}
+
+/// expect: My locally processed media is published under one durable gallery identity.
+/// [P1] Motivating: user work survives processor and server teardown.
+/// pre: a local processor produced a supported final format and an admission-time gallery was captured.
+/// post: file, gallery row, lineage, result id, provenance, and media-block id commit or roll back together.
+/// [P1] Constraining: source paths and indices never become parent identities.
+pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
+    gallery: &GalleryState,
+    gallery_store: &Arc<GalleryStore>,
+    output: &std::path::Path,
+    op: &str,
+    status: &str,
+    format: LocalMediaFormat,
+    effective_params: &T,
+) -> Result<serde_json::Value, McpToolError> {
+    let mut publication = stage_local_media_publication(output, format).map_err(map_media_error)?;
+    let mut effective_value = match serde_json::to_value(effective_params) {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!(
+                    "serialize {op} effective parameters: {error}"
+                )),
+            ));
+        }
+    };
+    let Some(effective_fields) = effective_value.as_object_mut() else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "serialize {op} effective parameters: expected an object"
+            )),
+        ));
+    };
+    effective_fields.insert(
+        "format".to_string(),
+        serde_json::Value::String(format.extension().to_string()),
+    );
+
+    let mut result = publication
+        .publish_and_slim(Some(gallery), gallery_store)
+        .map_err(map_media_error)?;
+    let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "{op} publication produced no gallery asset identity"
+            )),
+        ));
+    };
+
+    let lineage_params_json = match serde_json::to_string(&effective_value) {
+        Ok(json) => json,
+        Err(error) => {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!("serialize {op} lineage: {error}")),
+            ));
+        }
+    };
+    if let Err(lineage_error) = gallery_store.record_generation(
+        &gallery_asset_id,
+        op,
+        None,
+        None,
+        None,
+        None,
+        Some(&lineage_params_json),
+        None,
+        None,
+    ) {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
+        ));
+    }
+
+    let Some(effective_fields) = effective_value.as_object() else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "compose {op} result: effective parameters must be an object"
+            )),
+        ));
+    };
+    let Some(result_object) = result.as_object_mut() else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "compose {op} result: publication result must be an object"
+            )),
+        ));
+    };
+    result_object.extend(effective_fields.clone());
+    result_object.insert(
+        "status".to_string(),
+        serde_json::Value::String(status.to_string()),
+    );
+    result_object.insert("effective_params".to_string(), effective_value.clone());
+    result_object.insert(
+        "gallery_asset_id".to_string(),
+        serde_json::Value::String(gallery_asset_id),
+    );
+    let result = crate::media_block::enrich_with_omc_and_provenance(
+        result,
+        op,
+        format.block_kind(),
+        effective_value,
+        None,
+    );
+    publication.commit();
+    Ok(result)
 }
 
 async fn stage_job_asset_in_dir(

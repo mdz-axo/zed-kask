@@ -1,6 +1,29 @@
 //! Audio tools — voice design, speech generation, transcription, audio capture.
 use crate::*;
 
+const CAPTURE_SAMPLE_RATE: u32 = 16_000;
+const CAPTURE_CHANNELS: u32 = 1;
+
+#[derive(serde::Serialize)]
+struct AudioTrimEffectiveParams<'a> {
+    source: &'a str,
+    start_sec: f32,
+    end_sec: f32,
+    duration_sec: f32,
+}
+
+#[derive(serde::Serialize)]
+struct AudioConcatEffectiveParams<'a> {
+    sources: &'a [String],
+}
+
+#[derive(serde::Serialize)]
+struct AudioCaptureEffectiveParams {
+    duration_secs: f32,
+    sample_rate: u32,
+    channels: u32,
+}
+
 /// Parse provider word-timing entries into `TimedWord`s. Whisper-style
 /// providers prefix tokens with the separator (" And"); the
 /// rendered-form contract (words joined by single spaces, word-boundary
@@ -282,10 +305,7 @@ impl MediaServer {
     )]
     pub async fn audio_capture(
         &self,
-        Parameters(AudioCaptureRequest {
-            duration_secs,
-            output_path,
-        }): Parameters<AudioCaptureRequest>,
+        Parameters(AudioCaptureRequest { duration_secs }): Parameters<AudioCaptureRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_capture", async {
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
@@ -294,32 +314,28 @@ impl MediaServer {
                 ));
             }
 
+            let gallery = self.capture_required_gallery()?;
             self.require_ffmpeg()?;
-
+            let effective_params = AudioCaptureEffectiveParams {
+                duration_secs,
+                sample_rate: CAPTURE_SAMPLE_RATE,
+                channels: CAPTURE_CHANNELS,
+            };
             let path = self
                 .ffmpeg
-                .capture_audio(duration_secs, output_path.as_deref())
+                .capture_audio(effective_params.duration_secs)
                 .await
                 .map_err(map_media_error)?;
 
-            let args = serde_json::json!({
-                "duration_secs": duration_secs,
-                "output_path": output_path,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                serde_json::json!({
-                    "status": "captured",
-                    "duration_secs": duration_secs,
-                    "output": path.display().to_string(),
-                    "format": "wav",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                }),
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &path,
                 "audio_capture",
-                "audio",
-                args,
-                None,
-            ))
+                "captured",
+                crate::assets::LocalMediaFormat::Wav,
+                &effective_params,
+            )
         })
         .await
     }
@@ -345,7 +361,7 @@ impl MediaServer {
 
             let audio_path = self
                 .ffmpeg
-                .capture_audio(duration_secs, None)
+                .capture_audio(duration_secs)
                 .await
                 .map_err(map_media_error)?;
 
@@ -435,27 +451,40 @@ impl MediaServer {
         }): Parameters<AudioTrimRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_trim", async {
-            if !crate::is_local_media_path(&audio_url) {
-                validate_tool_url_with_dns(&audio_url).await?;
-            }
-            let ffmpeg = self.require_ffmpeg()?;
             if start_sec < 0.0 || end_sec <= start_sec {
                 return Err(McpToolError::invalid_argument(
                     "start_sec must be >= 0 and end_sec must be > start_sec",
                 ));
             }
-            let output = ffmpeg
-                .audio_trim(&audio_url, start_sec, end_sec)
+            let gallery = self.capture_required_gallery()?;
+            if !crate::is_local_media_path(&audio_url) {
+                validate_tool_url_with_dns(&audio_url).await?;
+            }
+            self.require_ffmpeg()?;
+            let effective_params = AudioTrimEffectiveParams {
+                source: &audio_url,
+                start_sec,
+                end_sec,
+                duration_sec: end_sec - start_sec,
+            };
+            let output = self
+                .ffmpeg
+                .audio_trim(
+                    effective_params.source,
+                    effective_params.start_sec,
+                    effective_params.end_sec,
+                )
                 .await
                 .map_err(map_media_error)?;
-            Ok(serde_json::json!({
-                "status": "trimmed",
-                "source": audio_url,
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-                "duration": end_sec - start_sec,
-                "output": output.display().to_string(),
-            }))
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                "audio_trim",
+                "trimmed",
+                crate::assets::LocalMediaFormat::Wav,
+                &effective_params,
+            )
         })
         .await
     }
@@ -475,21 +504,30 @@ impl MediaServer {
                     "audio_urls must not be empty",
                 ));
             }
+            let gallery = self.capture_required_gallery()?;
             for url in &audio_urls {
                 if !crate::is_local_media_path(url) {
                     validate_tool_url_with_dns(url).await?;
                 }
             }
-            let ffmpeg = self.require_ffmpeg()?;
-            let output = ffmpeg
-                .audio_concat(&audio_urls)
+            self.require_ffmpeg()?;
+            let effective_params = AudioConcatEffectiveParams {
+                sources: &audio_urls,
+            };
+            let output = self
+                .ffmpeg
+                .audio_concat(effective_params.sources)
                 .await
                 .map_err(map_media_error)?;
-            Ok(serde_json::json!({
-                "status": "concatenated",
-                "input_count": audio_urls.len(),
-                "output": output.display().to_string(),
-            }))
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                "audio_concat",
+                "concatenated",
+                crate::assets::LocalMediaFormat::Wav,
+                &effective_params,
+            )
         })
         .await
     }

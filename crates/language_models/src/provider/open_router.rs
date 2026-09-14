@@ -671,11 +671,15 @@ pub fn into_open_router(
                         return Err(anyhow::anyhow!("OpenRouter does not support custom tools"));
                     }
                 };
+                let strict = (tool.name == "emit_result").then_some(true);
                 Ok(open_router::ToolDefinition::Function {
                     function: open_router::FunctionDefinition {
                         name: tool.name,
                         description: Some(tool.description),
                         parameters: Some(input_schema),
+                        // zed-kask: D56 — `emit_result` is the reserved
+                        // schema-bound result channel, not an ordinary tool.
+                        strict,
                     },
                 })
             })
@@ -789,6 +793,41 @@ fn add_message_content_part(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// zed-kask: D56 — reserved structured results use OpenRouter's strict
+    /// function schema; ordinary tools retain the provider default.
+    #[test]
+    fn emit_result_is_strict_without_changing_ordinary_tools() {
+        let request = LanguageModelRequest {
+            tools: vec![
+                language_model::LanguageModelRequestTool::function(
+                    "emit_result".into(),
+                    "structured result".into(),
+                    serde_json::json!({"type": "object"}),
+                    false,
+                ),
+                language_model::LanguageModelRequestTool::function(
+                    "lookup".into(),
+                    "ordinary tool".into(),
+                    serde_json::json!({"type": "object"}),
+                    false,
+                ),
+            ],
+            ..Default::default()
+        };
+        let result = into_open_router(request, &Model::default(), None).expect("request");
+        let strict = result
+            .tools
+            .iter()
+            .map(|tool| match tool {
+                open_router::ToolDefinition::Function { function } => function.strict,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(strict, vec![Some(true), None]);
+        let wire = serde_json::to_value(result).expect("wire request");
+        assert_eq!(wire["tools"][0]["function"]["strict"], true);
+        assert!(wire["tools"][1]["function"].get("strict").is_none());
+    }
 
     #[gpui::test]
     async fn test_max_completion_tokens_from_api_becomes_request_budget() {

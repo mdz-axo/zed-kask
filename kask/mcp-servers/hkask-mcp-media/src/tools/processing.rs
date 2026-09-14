@@ -150,44 +150,16 @@ impl LocalVideoEffectiveParams<'_> {
         }
     }
 
-    const fn format(&self) -> crate::assets::LocalVideoFormat {
+    const fn format(&self) -> crate::assets::LocalMediaFormat {
         match self {
             Self::Gif(_) | Self::Remix(_) | Self::ImagesGif(_) => {
-                crate::assets::LocalVideoFormat::Gif
+                crate::assets::LocalMediaFormat::Gif
             }
             Self::Clip(_) | Self::Caption(_) | Self::ImagesMp4(_) | Self::Concat(_) => {
-                crate::assets::LocalVideoFormat::Mp4
+                crate::assets::LocalMediaFormat::Mp4
             }
         }
     }
-
-    fn to_value(&self) -> Result<serde_json::Value, MediaError> {
-        let mut value = serde_json::to_value(self).map_err(|error| {
-            MediaError::AssetPersistence(format!(
-                "serialize {} effective parameters: {error}",
-                self.op()
-            ))
-        })?;
-        let Some(object) = value.as_object_mut() else {
-            return Err(MediaError::AssetPersistence(format!(
-                "serialize {} effective parameters: expected an object",
-                self.op()
-            )));
-        };
-        object.insert(
-            "format".to_string(),
-            serde_json::Value::String(self.format().extension().to_string()),
-        );
-        Ok(value)
-    }
-}
-
-fn capture_required_local_gallery(server: &MediaServer) -> Result<GalleryState, McpToolError> {
-    server
-        .try_capture_gallery()
-        .map_err(map_media_error)?
-        .filter(|gallery| gallery.gallery_id.is_some())
-        .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))
 }
 
 pub(crate) fn resolve_image_path_in_gallery(
@@ -261,112 +233,21 @@ impl Drop for LocalVideoIntermediates {
     }
 }
 
-fn rollback_local_publication_error(
-    publication: &mut crate::assets::StagedJobPublication,
-    original: MediaError,
-) -> McpToolError {
-    let error = match publication.rollback() {
-        Ok(()) => original,
-        Err(rollback_error) => {
-            MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
-        }
-    };
-    map_media_error(error)
-}
-
-/// expect: My locally processed video or GIF is published under one durable gallery identity.
-/// [P1] Motivating: user work survives processor and server teardown.
-/// pre: FFmpeg produced a final MP4 or GIF and an admission-time gallery was captured.
-/// post: file, gallery row, lineage, result id, and media-block id commit together or roll back together.
-/// [P1] Constraining: source paths and indices never become parent identities.
 fn publish_local_video(
     server: &MediaServer,
     gallery: &GalleryState,
     output: &std::path::Path,
     effective_params: &LocalVideoEffectiveParams<'_>,
 ) -> Result<serde_json::Value, McpToolError> {
-    let op = effective_params.op();
-    let status = effective_params.status();
-    let format = effective_params.format();
-    let mut publication =
-        crate::assets::stage_local_video_publication(output, format).map_err(map_media_error)?;
-    let effective_value = match effective_params.to_value() {
-        Ok(value) => value,
-        Err(error) => return Err(rollback_local_publication_error(&mut publication, error)),
-    };
-    let mut result = publication
-        .publish_and_slim(Some(gallery), &server.gallery_store)
-        .map_err(map_media_error)?;
-    let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
-        return Err(rollback_local_publication_error(
-            &mut publication,
-            MediaError::AssetPersistence(format!(
-                "{op} publication produced no gallery asset identity"
-            )),
-        ));
-    };
-
-    let lineage_params_json = match serde_json::to_string(&effective_value) {
-        Ok(json) => json,
-        Err(error) => {
-            return Err(rollback_local_publication_error(
-                &mut publication,
-                MediaError::AssetPersistence(format!("serialize {op} lineage: {error}")),
-            ));
-        }
-    };
-    if let Err(lineage_error) = server.gallery_store.record_generation(
-        &gallery_asset_id,
-        op,
-        None,
-        None,
-        None,
-        None,
-        Some(&lineage_params_json),
-        None,
-        None,
-    ) {
-        return Err(rollback_local_publication_error(
-            &mut publication,
-            MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
-        ));
-    }
-
-    let Some(effective_fields) = effective_value.as_object() else {
-        return Err(rollback_local_publication_error(
-            &mut publication,
-            MediaError::AssetPersistence(format!(
-                "compose {op} result: effective parameters must be an object"
-            )),
-        ));
-    };
-    let Some(result_object) = result.as_object_mut() else {
-        return Err(rollback_local_publication_error(
-            &mut publication,
-            MediaError::AssetPersistence(format!(
-                "compose {op} result: publication result must be an object"
-            )),
-        ));
-    };
-    result_object.extend(effective_fields.clone());
-    result_object.insert(
-        "status".to_string(),
-        serde_json::Value::String(status.to_string()),
-    );
-    result_object.insert("effective_params".to_string(), effective_value.clone());
-    result_object.insert(
-        "gallery_asset_id".to_string(),
-        serde_json::Value::String(gallery_asset_id),
-    );
-    let result = crate::media_block::enrich_with_omc_and_provenance(
-        result,
-        op,
-        format.block_kind(),
-        effective_value,
-        None,
-    );
-    publication.commit();
-    Ok(result)
+    crate::assets::publish_local_media(
+        gallery,
+        &server.gallery_store,
+        output,
+        effective_params.op(),
+        effective_params.status(),
+        effective_params.format(),
+        effective_params,
+    )
 }
 
 #[tool_router(router = processing_router, vis = "pub")]
@@ -687,7 +568,7 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -745,7 +626,7 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
 
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -849,7 +730,7 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -897,7 +778,7 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -986,13 +867,13 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
             let requested_format = format.as_deref().unwrap_or("mp4");
-            let format =
-                crate::assets::LocalVideoFormat::parse(requested_format).ok_or_else(|| {
+            let format = crate::assets::LocalMediaFormat::parse_video_output(requested_format)
+                .ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
                         "Unsupported video format {requested_format:?}; expected mp4 or gif"
                     ))
                 })?;
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             pause_after_local_video_admission().await?;
             self.require_ffmpeg()?;
@@ -1014,10 +895,10 @@ impl MediaServer {
                 fps,
             };
             let effective_params = match format {
-                crate::assets::LocalVideoFormat::Mp4 => {
+                crate::assets::LocalMediaFormat::Mp4 => {
                     LocalVideoEffectiveParams::ImagesMp4(params)
                 }
-                crate::assets::LocalVideoFormat::Gif => {
+                crate::assets::LocalMediaFormat::Gif => {
                     LocalVideoEffectiveParams::ImagesGif(params)
                 }
             };
@@ -1044,7 +925,7 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = capture_required_local_gallery(self)?;
+            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]

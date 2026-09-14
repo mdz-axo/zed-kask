@@ -573,8 +573,6 @@ pub struct TranscribeAndStoreRequest {
 pub struct AudioCaptureRequest {
     /// Duration to record in seconds (max 3600 = 1 hour).
     pub duration_secs: f32,
-    /// Optional output path. Defaults to temp directory with UUID filename.
-    pub output_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

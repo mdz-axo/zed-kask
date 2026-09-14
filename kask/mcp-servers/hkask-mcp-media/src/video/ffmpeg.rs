@@ -386,20 +386,13 @@ impl FfmpegRunner {
     /// Capture audio from the default system input device.
     /// Uses ffmpeg to record from the platform-specific default audio source.
     /// Saves to a WAV file in the temp directory (or specified path).
-    pub async fn capture_audio(
-        &self,
-        duration_secs: f32,
-        output_path: Option<&str>,
-    ) -> Result<PathBuf, crate::MediaError> {
+    pub async fn capture_audio(&self, duration_secs: f32) -> Result<PathBuf, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
         self.ensure_temp_dir()?;
 
-        let output = match output_path {
-            Some(p) => PathBuf::from(p),
-            None => self.output_path("wav"),
-        };
+        let output = RollbackOwnedOutput::new(self.output_path("wav"));
 
         // Detect platform-specific audio input device
         let (input_format, input_device) = if cfg!(target_os = "linux") {
@@ -426,9 +419,10 @@ impl FfmpegRunner {
             .arg("1") // mono
             .arg("-ar")
             .arg("16000") // 16kHz sample rate (good for Whisper)
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "audio capture").await?;
 
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", duration = %duration_secs, output = %output.display(), "Audio captured");
         Ok(output)
     }
@@ -439,7 +433,7 @@ impl FfmpegRunner {
         &self,
         image_paths: &[PathBuf],
         fps: u32,
-        format: crate::assets::LocalVideoFormat,
+        format: crate::assets::LocalMediaFormat,
     ) -> Result<PathBuf, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
@@ -474,14 +468,14 @@ impl FfmpegRunner {
             .arg("-i")
             .arg(list_path.path());
         match format {
-            crate::assets::LocalVideoFormat::Mp4 => {
+            crate::assets::LocalMediaFormat::Mp4 => {
                 command
                     .arg("-c:v")
                     .arg("libx264")
                     .arg("-pix_fmt")
                     .arg("yuv420p");
             }
-            crate::assets::LocalVideoFormat::Gif => {
+            crate::assets::LocalMediaFormat::Gif => {
                 command.arg("-c:v").arg("gif");
             }
         }
@@ -588,9 +582,10 @@ impl FfmpegRunner {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
         self.ensure_temp_dir()?;
-        let output = self.output_path("wav");
+        let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let duration = end_sec - start_sec;
-        let status = Command::new(&self.ffmpeg_path)
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
             .arg("-t")
@@ -599,18 +594,10 @@ impl FfmpegRunner {
             .arg(input)
             .arg("-c")
             .arg("copy")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map_err(|e| crate::MediaError::Io(format!("ffmpeg audio_trim: {e}")))?;
-        if !status.success() {
-            return Err(crate::MediaError::FfmpegFailed(format!(
-                "ffmpeg audio_trim failed with exit code: {:?}",
-                status.code()
-            )));
-        }
+            .arg(output.path());
+        Self::run_to_completion(command, "audio trim").await?;
+
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, output = %output.display(), "Audio trimmed");
         Ok(output)
     }
@@ -818,7 +805,7 @@ mod tests {
                 .images_to_video(
                     &[std::path::PathBuf::from("frame.png")],
                     24,
-                    crate::assets::LocalVideoFormat::Mp4,
+                    crate::assets::LocalMediaFormat::Mp4,
                 )
                 .await
                 .expect_err("image sequence must surface injected failure"),

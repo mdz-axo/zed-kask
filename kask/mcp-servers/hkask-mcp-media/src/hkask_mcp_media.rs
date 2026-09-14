@@ -291,6 +291,14 @@ impl MediaServer {
             .map_err(|error| MediaError::Io(format!("Gallery state lock error: {error}")))
     }
 
+    /// Capture the immutable admission-time gallery required by local media processors.
+    pub(crate) fn capture_required_gallery(&self) -> Result<GalleryState, McpToolError> {
+        self.try_capture_gallery()
+            .map_err(map_media_error)?
+            .filter(|gallery| gallery.gallery_id.is_some())
+            .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))
+    }
+
     /// Lock the gallery and extract essential state. Drops the lock before
     /// returning, so the result is safe to hold across .await points.
     fn access_gallery(&self) -> Result<GalleryAccess, MediaError> {
@@ -1510,6 +1518,32 @@ mod tool_behavior_tests {
         ))
     }
 
+    async fn create_real_audio(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                path.to_str().ok_or("audio fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "real ffmpeg audio fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     async fn create_real_video(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         let output = tokio::process::Command::new("ffmpeg")
             .args([
@@ -1541,6 +1575,78 @@ mod tool_behavior_tests {
             .strip_suffix("\n```")
             .ok_or("missing closing media fence")?;
         Ok(serde_json::from_str(body)?)
+    }
+
+    /// dcterms:identifier: `MediaServer::audio_trim`
+    /// expect: My trimmed recording remains addressable by one stable gallery identity after teardown.
+    /// [P1] Motivating: completed audio work survives processor and server teardown.
+    /// pre: a real source WAV and active file-backed gallery exist.
+    /// post: the durable WAV, gallery row, lineage, result id, and media-block id agree.
+    /// [P1] Constraining: the source path never becomes a fabricated parent identity.
+    #[tokio::test]
+    async fn audio_trim_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.wav");
+        create_real_audio(&source).await?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .audio_trim(Parameters(AudioTrimRequest {
+                    audio_url: source.to_string_lossy().into_owned(),
+                    start_sec: 0.25,
+                    end_sec: 1.25,
+                }))
+                .await?,
+        );
+        drop(server);
+
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing audio display hint")?,
+        )?;
+        let expected = serde_json::json!({
+            "source": source.to_string_lossy(),
+            "start_sec": 0.25,
+            "end_sec": 1.25,
+            "duration_sec": 1.0,
+            "format": "wav",
+        });
+
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
+        assert!(output.is_file());
+        assert_eq!(hint["kind"], "audio");
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
+        assert_eq!(hint["gallery_asset_id"], asset_id);
+        assert_eq!(hint["provenance"]["args"], expected);
+        assert_eq!(content["effective_params"], expected);
+        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        assert_eq!(asset.format, "wav");
+        assert_eq!(asset.media_type, "audio");
+        assert_eq!(std::path::Path::new(&asset.absolute_path), output);
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("audio_trim lineage missing")?;
+        assert_eq!(lineage.op, "audio_trim");
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(params, expected);
+        Ok(())
     }
 
     /// dcterms:identifier: `MediaServer::video_clip`
@@ -1691,7 +1797,7 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// dcterms:identifier: `assets::stage_local_video_publication`
+    /// dcterms:identifier: `assets::stage_local_media_publication`
     /// expect: A durable-file publication failure removes the temporary clip produced on my behalf.
     /// [P1] Motivating: failed operations leave no hidden user-work residue.
     /// pre: real FFmpeg succeeds and the generated-assets destination rejects staging.
@@ -1721,9 +1827,9 @@ mod tool_behavior_tests {
             "real FFmpeg output must exist before staging"
         );
 
-        let error = match crate::assets::stage_local_video_publication(
+        let error = match crate::assets::stage_local_media_publication(
             &processor_output,
-            crate::assets::LocalVideoFormat::Mp4,
+            crate::assets::LocalMediaFormat::Mp4,
         ) {
             Ok(_) => return Err("blocked generated directory unexpectedly published".into()),
             Err(error) => error,
@@ -2184,7 +2290,7 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// dcterms:identifier: `assets::stage_local_video_publication`
+    /// dcterms:identifier: `assets::stage_local_media_publication`
     /// expect: Any local-video gallery failure rolls back the final file while preserving its original cause.
     /// [P1] Motivating: failed publication leaves no partial user work.
     /// pre: real FFmpeg produces a GIF but the admission-time gallery identity is invalid.
