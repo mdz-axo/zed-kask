@@ -12,9 +12,12 @@ use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
 use crate::tools::corpus::{QaType, qa_type_instruction};
 
-use crate::{McpToolError, extract_json_from_response};
+use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-evidence-candidates-v2";
+const EVIDENCE_CANDIDATE_WORDS: usize = 24;
+const EVIDENCE_CANDIDATE_OVERLAP_WORDS: usize = 6;
 
 struct QaPair {
     question: String,
@@ -44,6 +47,12 @@ pub(crate) struct PreparedQaPrompt {
     pub passages: Vec<PreparedQaPassage>,
     pub candidate_terms: Vec<String>,
     pub qa_types: Vec<QaType>,
+}
+
+#[derive(Debug, Clone)]
+struct EvidenceCandidate {
+    local_id: String,
+    quote: String,
 }
 
 impl PreparedQaPrompt {
@@ -103,20 +112,65 @@ impl PreparedQaPrompt {
     }
 }
 
-/// Render the one canonical model request used by both QA transports.
+fn evidence_candidates(prompt: &PreparedQaPrompt) -> Vec<EvidenceCandidate> {
+    let text = &prompt.primary().text;
+    let mut words = Vec::new();
+    let mut word_start = None;
+    for (offset, character) in text.char_indices() {
+        if character.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                words.push((start, offset));
+            }
+        } else if word_start.is_none() {
+            word_start = Some(offset);
+        }
+    }
+    if let Some(start) = word_start {
+        words.push((start, text.len()));
+    }
+
+    let stride = EVIDENCE_CANDIDATE_WORDS - EVIDENCE_CANDIDATE_OVERLAP_WORDS;
+    (0..words.len())
+        .step_by(stride)
+        .enumerate()
+        .map(|(index, start)| {
+            let end = (start + EVIDENCE_CANDIDATE_WORDS).min(words.len());
+            EvidenceCandidate {
+                local_id: format!("e{index}"),
+                quote: text[words[start].0..words[end - 1].1].to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Render the one canonical model request used by prepared QA generation.
 pub(crate) fn render_prepared_messages(
     prompt: &PreparedQaPrompt,
 ) -> Result<[ChatMessage; 2], McpToolError> {
     prompt.validate()?;
-    let instructions = prompt
+    let level_requirements = prompt
         .qa_types
         .iter()
-        .map(|qa_type| format!("{}: {}", qa_type.as_str(), qa_type_instruction(*qa_type)))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let passages = prompt
+        .map(|qa_type| {
+            json!({
+                "level": qa_type,
+                "requirement": qa_type_instruction(*qa_type),
+            })
+        })
+        .collect::<Vec<_>>();
+    let evidence_candidates = evidence_candidates(prompt)
+        .into_iter()
+        .map(|candidate| {
+            json!({
+                "id": candidate.local_id,
+                "text": crate::guard_content(&candidate.quote),
+            })
+        })
+        .collect::<Vec<_>>();
+    let context_passages = prompt
         .passages
         .iter()
+        .skip(1)
         .map(|passage| {
             json!({
                 "id": passage.local_id,
@@ -125,15 +179,17 @@ pub(crate) fn render_prepared_messages(
         })
         .collect::<Vec<_>>();
     let user = serde_json::to_string(&json!({
+        "generation_protocol": QA_GENERATION_PROTOCOL,
         "requested_levels": prompt.qa_types,
-        "candidate_terms": prompt.candidate_terms,
-        "passages": passages,
+        "level_requirements": level_requirements,
+        "candidate_term_hints": prompt.candidate_terms,
+        "evidence_candidates": evidence_candidates,
+        "context_passages": context_passages,
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer. Copy each evidence quote verbatim from p0. Do not paraphrase, normalize punctuation, or reconstruct it. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        "{CONTENT_GUARD_INSTRUCTION}Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order. Evidence candidates with eN IDs are server-owned exact contiguous excerpts from primary passage p0. Context passages can clarify meaning but are not evidence. Candidate-term hints are optional and must be ignored when unsupported. For each pair, first select one to three evidence IDs that directly support the answer; then write a concise answer using only that evidence; then write a concise question answered by it. Do not output this selection process. Return one complete compact JSON array on one line and nothing else. Each tuple has exactly this shape: [\"level\",\"question\",\"answer\",[\"e0\"]]. The evidence field contains eN IDs only, never quote text or passage IDs. Emit valid JSON string escaping, no markdown, no canonical source or chunk identities.",
         prompt.qa_types.len(),
-        instructions
     );
     Ok([
         ChatMessage {
@@ -148,7 +204,7 @@ pub(crate) fn render_prepared_messages(
 }
 
 #[derive(Deserialize)]
-struct PreparedQaPair(String, String, String, Vec<(String, String)>);
+struct PreparedQaPair(String, String, String, Vec<String>);
 
 fn parse_prepared_qa_response(
     response: &str,
@@ -163,41 +219,46 @@ fn parse_prepared_qa_response(
             raw.len()
         ));
     }
-    let passages = prompt
-        .passages
+    let candidates = evidence_candidates(prompt);
+    let candidates_by_id = candidates
         .iter()
-        .map(|passage| (passage.local_id.as_str(), passage))
+        .map(|candidate| (candidate.local_id.as_str(), candidate))
         .collect::<HashMap<_, _>>();
     raw.into_iter()
         .zip(&prompt.qa_types)
         .enumerate()
         .map(
-            |(index, (PreparedQaPair(level, question, answer, citations), expected))| {
+            |(index, (PreparedQaPair(level, question, answer, evidence_ids), expected))| {
                 if level != expected.as_str() {
                     return Err(format!(
                         "pair {index} expected Bloom level '{}', received '{level}'",
                         expected.as_str()
                     ));
                 }
-                if question.trim().is_empty() || answer.trim().is_empty() || citations.is_empty() {
+                if question.trim().is_empty()
+                    || answer.trim().is_empty()
+                    || evidence_ids.is_empty()
+                    || evidence_ids.len() > 3
+                {
                     return Err(format!(
-                        "pair {index} needs nonblank question, answer, and evidence"
+                        "pair {index} needs nonblank question and answer plus one to three evidence IDs"
                     ));
                 }
-                let mut evidence_quotes = Vec::with_capacity(citations.len());
-                for (local_id, quote) in citations {
-                    let passage = passages.get(local_id.as_str()).ok_or_else(|| {
-                        format!("pair {index} cites unknown passage '{local_id}'")
-                    })?;
-                    if quote.trim().is_empty() || !passage.text.contains(&quote) {
+                let mut seen = HashSet::with_capacity(evidence_ids.len());
+                let mut evidence_quotes = Vec::with_capacity(evidence_ids.len());
+                for evidence_id in evidence_ids {
+                    if !seen.insert(evidence_id.clone()) {
                         return Err(format!(
-                            "pair {index} quote is not an exact substring of '{local_id}'"
+                            "pair {index} repeats evidence candidate '{evidence_id}'"
                         ));
                     }
+                    let candidate = candidates_by_id.get(evidence_id.as_str()).ok_or_else(|| {
+                        format!("pair {index} cites unknown evidence candidate '{evidence_id}'")
+                    })?;
                     evidence_quotes.push(hkask_types::corpus::QaEvidence {
-                        chunk_ref: passage.chunk_ref.clone(),
-                        source: passage.source.clone(),
-                        quote,
+                        chunk_ref: prompt.primary().chunk_ref.clone(),
+                        source: prompt.primary().source.clone(),
+                        quote: candidate.quote.clone(),
                     });
                 }
                 Ok(QaPair {
@@ -450,7 +511,8 @@ fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> s
         },
         "provenance": {
             "generator_model": model,
-            "prompt_protocol": PREPARED_QA_PROTOCOL,
+            "prompt_protocol": QA_GENERATION_PROTOCOL,
+            "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,
             "prompt_id": prompt.prompt_id,
             "source_chunk_ref": prompt.primary().chunk_ref,
         },
@@ -469,24 +531,47 @@ mod tests {
         assert!(!parameters.thinking_allowed);
     }
 
-    /// expect: The compact contract asks for the shortest sufficient grounded output.
+    /// expect: The model selects server-owned evidence IDs instead of reproducing source bytes.
     #[test]
-    fn prepared_prompt_requires_concise_qa_and_evidence() -> Result<(), McpToolError> {
+    fn prepared_prompt_uses_guarded_evidence_candidates() -> Result<(), Box<dyn std::error::Error>>
+    {
         let messages = render_prepared_messages(&prepared())?;
-        assert!(messages[0].content.contains(
-            "Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer."
-        ));
+        assert!(messages[0].content.contains(CONTENT_GUARD_INSTRUCTION));
+        assert!(messages[0].content.contains("evidence IDs"));
+        let user: serde_json::Value = serde_json::from_str(&messages[1].content)?;
+        assert_eq!(user["evidence_candidates"][0]["id"], "e0");
+        assert!(
+            user["evidence_candidates"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("The answer is grounded here."))
+        );
+        assert!(messages[0].content.contains("[\"e0\"]"));
+        assert!(!messages[0].content.contains("exact quote"));
         Ok(())
     }
 
-    /// expect: Evidence is copied byte-for-byte rather than reconstructed by the model.
+    /// expect: Candidate quotes remain exact source substrings while covering the primary passage.
     #[test]
-    fn prepared_prompt_requires_verbatim_evidence_copying() -> Result<(), McpToolError> {
-        let messages = render_prepared_messages(&prepared())?;
-        assert!(messages[0].content.contains(
-            "Copy each evidence quote verbatim from p0. Do not paraphrase, normalize punctuation, or reconstruct it."
-        ));
-        Ok(())
+    fn evidence_candidates_are_exact_and_cover_primary_text() {
+        let mut prompt = prepared();
+        prompt.passages[0].text = (0..80)
+            .map(|index| format!("word{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let candidates = evidence_candidates(&prompt);
+        assert!(candidates.len() > 1);
+        assert_eq!(candidates[0].local_id, "e0");
+        assert!(candidates[0].quote.starts_with("word0 "));
+        assert!(
+            candidates
+                .last()
+                .is_some_and(|last| last.quote.ends_with("word79"))
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| prompt.primary().text.contains(&candidate.quote))
+        );
     }
 
     fn prepared() -> PreparedQaPrompt {
@@ -506,7 +591,7 @@ mod tests {
 
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
         Ok(QaCompletion {
-            text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
+            text: json!([["factual", "Question?", "Answer.", ["e0"]]]).to_string(),
             tokens_used: 10,
             completion_tokens: Some(5),
             finish_reason: Some("stop".into()),
@@ -607,12 +692,14 @@ mod tests {
         for response in [
             "not JSON",
             "[]",
-            r#"[["factual","","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question"," ",[["p0","grounded"]]]]"#,
-            r#"[["create","question","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p0","grounded"]]],["factual","extra","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p9","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p0","not in passage"]]]]"#,
+            r#"[["factual","","answer",["e0"]]]"#,
+            r#"[["factual","question"," ",["e0"]]]"#,
+            r#"[["create","question","answer",["e0"]]]"#,
+            r#"[["factual","question","answer",["e0"]],["factual","extra","answer",["e0"]]]"#,
+            r#"[["factual","question","answer",["e9"]]]"#,
+            r#"[["factual","question","answer",[]]]"#,
+            r#"[["factual","question","answer",["e0","e0"]]]"#,
+            r#"[["factual","question","answer",[["p0","grounded"]]]]"#,
         ] {
             let mut bytes = Vec::new();
             let mut output = QaOutput::new(&mut bytes, 1);
@@ -657,9 +744,9 @@ mod tests {
     }
 
     #[test]
-    fn qa_llm_parameters_match_historical_values() {
+    fn qa_llm_parameters_remain_deterministic() {
         let params = qa_llm_parameters();
-        assert_eq!(params.temperature, 0.3);
+        assert_eq!(params.temperature, 0.0);
         assert_eq!(params.top_p, 0.95);
         assert!(!params.thinking_allowed);
     }
@@ -679,18 +766,8 @@ mod tests {
         assert!(!rendered.contains("source.txt"));
 
         let response = json!([
-            [
-                "factual",
-                "What is grounded?",
-                "The answer.",
-                [["p0", "answer"]]
-            ],
-            [
-                "conceptual",
-                "How is it grounded?",
-                "By evidence.",
-                [["p0", "grounded"]]
-            ]
+            ["factual", "What is grounded?", "The answer.", ["e0"]],
+            ["conceptual", "How is it grounded?", "By evidence.", ["e0"]]
         ])
         .to_string();
         let pairs = parse_prepared_qa_response(&response, &prompt).expect("parse");

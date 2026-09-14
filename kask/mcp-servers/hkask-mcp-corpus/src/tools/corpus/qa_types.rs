@@ -59,10 +59,10 @@ pub(crate) fn parse_type_distribution(spec: &str) -> Vec<QaType> {
 pub(crate) fn qa_type_instruction(qt: QaType) -> &'static str {
     match qt {
         QaType::Factual => {
-            "Extract ONE fact from the passage. Generate a FACTUAL question that asks about a specific detail, definition, quantity, or claim stated in the text. The answer must be directly stated in the passage — no inference, no synthesis. No explanation. No elaboration. Answer states the fact concisely."
+            "Ask about one specific detail, definition, quantity, or claim explicitly stated by the selected evidence. Give the directly stated fact as a concise answer, with no inference, synthesis, explanation, or outside knowledge."
         }
         QaType::Conceptual => {
-            "Generate a CONCEPTUAL question: explain a mechanism, relationship, or framework described in the passage. How does one concept described in the text connect to another? What theoretical model does the passage present, and how do its components interact?"
+            "Ask about a definition, mechanism, relationship, distinction, purpose, or framework explicitly described by the selected evidence. If no mechanism is present, ask what a concept means or what role it plays according to the text. Answer only from the selected evidence, with no outside inference."
         }
         QaType::Analyze => {
             "Generate an ANALYZE question: compare or contrast ideas within the passage. Identify patterns, distinguish structural factors from situational ones, or break down the components of a system described in the text to understand how they interact."

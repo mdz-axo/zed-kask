@@ -220,22 +220,28 @@ from rendered model messages.
 
 ### Evidence and generated records
 
-Prepared inference returns compact tuples in requested-level order:
+The renderer partitions primary passage `p0` into overlapping exact source spans
+with local IDs `e0`, `e1`, etc. Context passages remain available for meaning but
+cannot supply evidence. Candidate terms are optional topic hints. Prepared
+inference selects one to three evidence IDs per pair and returns compact tuples in
+requested-level order:
 
 ```json
-[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
+[["factual","What is the delay?","72 hours",["e0"]],["conceptual","Why does the delay constrain timing?","It postpones the next step.",["e0","e1"]]]
 ```
 
-Every pair must match its requested Bloom level and contain nonblank question,
-answer, and evidence. Every local ID must resolve to a prepared passage and every
-quote must be an exact substring. Only then does the server restore canonical
-`QaEvidence {chunk_ref, source, quote}`. Any bad pair rejects the whole prompt;
-answer entailment remains a separate semantic audit.
+Every pair must match its requested Bloom level and contain a nonblank question,
+answer, and one to three unique, known evidence IDs. The model never reproduces
+quote text. The server resolves each ID to its immutable exact span and restores
+canonical `QaEvidence {chunk_ref, source, quote}` from `p0`. Any bad pair rejects
+the whole prompt; answer entailment remains a separate semantic audit. Generated
+rows identify this renderer as `prepared-qa-evidence-candidates-v2`; existing
+prepared JSONL remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-evidence-candidates-v2","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifier above is illustrative, not a configured default. Prompt

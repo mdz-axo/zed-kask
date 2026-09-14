@@ -78,6 +78,10 @@ pub struct MediaWidget {
     current_frame: Option<Arc<RenderImage>>,
     playback_task: Option<Task<()>>,
     playback_loop_active: bool,
+    /// True when an embedding surface hid this shared player. Suspension is
+    /// distinct from an operator pause: it is the lifecycle signal that no
+    /// hidden audio/decode polling may continue.
+    suspended: bool,
     /// Edit marks for interactive trimming: the in/out points the operator
     /// set on the transport, in playback-clock seconds. `None` until set.
     mark_in_secs: Option<f64>,
@@ -204,6 +208,7 @@ impl MediaWidget {
             current_frame: None,
             playback_task: None,
             playback_loop_active: false,
+            suspended: false,
             mark_in_secs: None,
             mark_out_secs: None,
             last_transport: None,
@@ -602,9 +607,31 @@ impl MediaWidget {
         transport_state.is_loading || transport_state.is_playing
     }
 
+    /// expect: Hidden media produces no audio, decode playback, or foreground polling.
+    /// [P1] Motivating: Switching surfaces cannot leave a ghost player running.
+    /// pre: the widget may be loading, paused, playing, completed, or failed.
+    /// post: loaded audio/video is paused and the playback timer task is cancelled; media and edit marks remain loaded.
+    pub fn suspend(&mut self, cx: &mut Context<Self>) {
+        self.suspended = true;
+        if let Some(player) = &self.audio_player {
+            player.pause();
+        }
+        if let Some(player) = &mut self.video_player {
+            player.pause();
+        }
+        self.playback_task = None;
+        self.playback_loop_active = false;
+        self.sync_transport_state(cx);
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        self.suspended
+    }
+
     fn handle_transport_event(&mut self, event: &TransportEvent, cx: &mut Context<Self>) {
         match event {
             TransportEvent::TogglePlay => {
+                self.suspended = false;
                 if let Some(player) = &self.audio_player {
                     player.toggle();
                 }
@@ -631,6 +658,7 @@ impl MediaWidget {
                 }
             }
             TransportEvent::Seek(fraction) => {
+                self.suspended = false;
                 if let Some(player) = &self.audio_player {
                     let duration = player.duration();
                     player.seek(Duration::from_secs_f32(duration.as_secs_f32() * fraction));
@@ -656,6 +684,7 @@ impl MediaWidget {
                 }
             }
             TransportEvent::Stop => {
+                self.suspended = false;
                 if let Some(player) = &self.audio_player {
                     player.stop();
                 }
@@ -1255,10 +1284,10 @@ mod tests {
     }
 
     /// expect: A loaded video displays a poster frame without polling until
-    /// the operator presses Play, and Pause cancels that polling task.
+    /// the operator presses Play, and hiding it suspends playback and polling.
     /// [P1] Motivating: media is inspectable without autoplay or idle work.
     /// pre: the video fixture is present and decodable.
-    /// post: load is paused with a frame; play owns one task; pause owns none.
+    /// post: load is paused with a frame; play owns one task; suspend pauses the player and owns none.
     /// [P2] Constraining: loading never produces unsolicited audio.
     #[gpui::test]
     async fn video_loads_first_frame_paused_and_polls_only_while_playing(cx: &mut TestAppContext) {
@@ -1271,8 +1300,9 @@ mod tests {
 
         cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
         let poster_deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while !widget.read_with(cx, |widget, _cx| widget.current_frame.is_some())
-            && std::time::Instant::now() < poster_deadline
+        while widget.read_with(cx, |widget, _cx| {
+            widget.current_frame.is_none() || widget.playback_loop_active
+        }) && std::time::Instant::now() < poster_deadline
         {
             let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
             timer.await;
@@ -1303,15 +1333,18 @@ mod tests {
             "Play starts polling"
         );
 
-        cx.update(|cx| {
-            widget.update(cx, |widget, cx| {
-                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
-            })
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.suspend(cx)));
+        let (is_playing, has_task) = widget.read_with(cx, |widget, _cx| {
+            (
+                widget
+                    .video_player
+                    .as_ref()
+                    .is_some_and(WidgetVideoPlayer::is_playing),
+                widget.playback_loop_active,
+            )
         });
-        assert!(
-            !widget.read_with(cx, |widget, _cx| widget.playback_loop_active),
-            "Pause cancels polling"
-        );
+        assert!(!is_playing, "suspension pauses video and its audio clock");
+        assert!(!has_task, "suspension cancels polling");
 
         cx.update(|cx| {
             widget.update(cx, |widget, cx| {

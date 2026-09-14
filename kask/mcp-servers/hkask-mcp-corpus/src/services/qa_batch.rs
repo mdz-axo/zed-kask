@@ -297,13 +297,13 @@ mod tests {
                             "factual",
                             "What is grounded?",
                             "Grounded answer one.",
-                            [["p0", "Grounded answer one."]]
+                            ["e0"]
                         ],
                         [
                             "conceptual",
                             "Why is it grounded?",
                             "Grounded answer two.",
-                            [["p0", "Grounded answer two."]]
+                            ["e0"]
                         ]
                     ])
                     .to_string()

@@ -22,3 +22,6 @@ hkask_media_widget.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

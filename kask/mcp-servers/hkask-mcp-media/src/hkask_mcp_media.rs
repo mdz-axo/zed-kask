@@ -3550,7 +3550,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn aligned_correction_drives_inspection_locate_and_srt_export() {
         let server = make_pass_server(
-            r#"{"edits": [{"start_word": 0, "end_word": 0, "replacement": "Alpha", "reason": "capitalization"}]}"#
+            r#"{"edits": [{"start_word": 0, "end_word": 0, "replacement": "  Alpha  ", "reason": "capitalization"}]}"#
                 .to_string(),
         );
         let transcript_id = store_two_word_transcript(&server).await;

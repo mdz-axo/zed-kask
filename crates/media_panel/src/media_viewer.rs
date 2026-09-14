@@ -123,6 +123,44 @@ impl MediaViewer {
         }
     }
 
+    fn suspend_media_widget(&mut self, cx: &mut Context<Self>) {
+        if let Some(widget) = &self.media_widget {
+            widget.update(cx, |widget, cx| widget.suspend(cx));
+        }
+    }
+
+    fn clear_media_widget(&mut self, cx: &mut Context<Self>) {
+        self.suspend_media_widget(cx);
+        self.media_widget = None;
+        self.media_widget_body = None;
+    }
+
+    fn set_selection(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        let next_body = selected
+            .and_then(|index| self.assets.get(index))
+            .map(|asset| asset.body.as_str());
+        if self.media_widget_body.as_deref() != next_body {
+            self.clear_media_widget(cx);
+        }
+        self.selected = selected;
+        self.detail = None;
+    }
+
+    fn activate_tab(&mut self, tab: ViewerTab, cx: &mut Context<Self>) {
+        if self.active_tab == ViewerTab::Media && tab != ViewerTab::Media {
+            self.suspend_media_widget(cx);
+        }
+        self.active_tab = tab;
+        self.confirm_delete = None;
+        match tab {
+            ViewerTab::Library => self.load_gallery(cx),
+            ViewerTab::Queue => self.load_jobs(cx),
+            ViewerTab::Detail => self.load_detail(cx),
+            ViewerTab::Media => {}
+        }
+        cx.notify();
+    }
+
     /// Scan an `AcpThread`'s tool results for display hints and merge the
     /// extracted assets. Deduplicates by body. A newly-seen asset
     /// auto-selects: the latest result is what the operator wants to see.
@@ -204,8 +242,7 @@ impl MediaViewer {
             new_selection = Some(self.assets.len() - 1);
         }
         if let Some(ix) = new_selection {
-            self.selected = Some(ix);
-            self.detail = None;
+            self.set_selection(Some(ix), cx);
             cx.notify();
         }
     }
@@ -313,9 +350,7 @@ impl MediaViewer {
                     && let Some(thread) = thread.upgrade()
                 {
                     self.assets.clear();
-                    self.selected = None;
-                    self.media_widget = None;
-                    self.media_widget_body = None;
+                    self.set_selection(None, cx);
                     self.ingest_thread(thread, cx);
                 } else {
                     self.status =
@@ -412,6 +447,7 @@ impl MediaViewer {
         let mut gallery_changed = false;
         if self.gallery_id.is_some() && listing_gallery != self.gallery_id {
             self.assets.retain(|asset| asset.gallery_index.is_none());
+            self.clear_media_widget(cx);
             self.selected = None;
             self.confirm_delete = None;
             self.detail = None;
@@ -447,6 +483,7 @@ impl MediaViewer {
         if let Some(src) = selected_src {
             self.selected = self.assets.iter().position(|asset| asset.src == src);
             if self.selected.is_none() {
+                self.clear_media_widget(cx);
                 self.detail = None; // the selected asset left the list
             }
         }
@@ -454,7 +491,7 @@ impl MediaViewer {
             self.confirm_delete = self.assets.iter().position(|asset| asset.src == src);
         }
         if !gallery_changed && self.selected.is_none() && !self.assets.is_empty() {
-            self.selected = Some(0);
+            self.set_selection(Some(0), cx);
         }
         cx.notify();
     }
@@ -672,16 +709,7 @@ impl MediaViewer {
                     }),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.active_tab = tab;
-                this.confirm_delete = None;
-                // Tab activation loads the real state it shows.
-                match tab {
-                    ViewerTab::Library => this.load_gallery(cx),
-                    ViewerTab::Queue => this.load_jobs(cx),
-                    ViewerTab::Detail => this.load_detail(cx),
-                    ViewerTab::Media => {}
-                }
-                cx.notify();
+                this.activate_tab(tab, cx);
             }))
     }
 
@@ -953,10 +981,8 @@ impl MediaViewer {
                                     .color(ui::Color::Hint),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.selected = Some(ix);
-                                this.detail = None;
-                                this.active_tab = ViewerTab::Media;
-                                cx.notify();
+                                this.set_selection(Some(ix), cx);
+                                this.activate_tab(ViewerTab::Media, cx);
                             })),
                     )
                     .child(
@@ -1370,6 +1396,36 @@ mod tests {
         format!("```media\n{body}\n```")
     }
 
+    /// dcterms:identifier: `MediaViewer::activate_tab`
+    /// expect: Leaving the Media tab suspends the shared player before the hidden tab renders.
+    /// [P1] Motivating: Panel navigation cannot leave ghost audio or playback polling behind.
+    #[gpui::test]
+    fn leaving_media_tab_suspends_retained_player(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| {
+            hkask_media_widget::MediaWidget::new(
+                hkask_media_widget::MediaRef::new(
+                    "/definitely/missing.png".into(),
+                    hkask_media_widget::MediaKind::Image,
+                ),
+                cx,
+            )
+        });
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, _cx| {
+            viewer.media_widget = Some(widget.clone());
+            viewer.media_widget_body = Some("asset-body".to_string());
+            viewer.active_tab = ViewerTab::Media;
+        });
+
+        viewer.update(cx, |viewer, cx| viewer.activate_tab(ViewerTab::Detail, cx));
+
+        assert!(widget.read_with(cx, |widget, _cx| widget.is_suspended()));
+        assert_eq!(
+            viewer.read_with(cx, |viewer, _cx| viewer.active_tab),
+            ViewerTab::Detail
+        );
+    }
+
     /// expect: [P7] MediaViewer::ingest_tool_result makes new artifacts visible
     /// without an unrelated render; replaying an existing artifact stays quiet.
     #[gpui::test]
@@ -1514,7 +1570,6 @@ mod tests {
         for response in [
             "not json",
             "{}",
-            r#"{"content":{"jobs":[]}}"#,
             r#"{"content":[{"id":"broken"}]}"#,
             r#"{"error":"job store unavailable","kind":"unavailable"}"#,
         ] {
@@ -1532,15 +1587,17 @@ mod tests {
                 }
             });
         }
-        hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
-            r#"{"content":[]}"#.into(),
-        ))));
-        viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
-        cx.run_until_parked();
-        viewer.update(cx, |viewer, _| {
-            assert!(viewer.jobs.is_empty());
-            assert!(viewer.status.is_none());
-        });
+        for response in [r#"{"content":{"jobs":[]}}"#, r#"{"content":[]}"#] {
+            hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
+                response.into(),
+            ))));
+            viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, _| {
+                assert!(viewer.jobs.is_empty());
+                assert!(viewer.status.is_none());
+            });
+        }
     }
 
     #[test]

@@ -128,17 +128,16 @@ fn working_transcript(
             "layer kind mismatch after correction filter",
         ));
     };
-    let text = crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits);
     match crate::transcript_layers::aligned_corrected_words(&bundle.words, &correction.edits) {
         Ok(words) => Ok(WorkingTranscript {
-            text,
+            text: crate::transcript_select::rendered_transcript(&words),
             words: Some(words),
             alignment: WorkingTranscriptAlignment::Aligned,
             correction_layer_id: Some(record.id),
             alignment_error: None,
         }),
         Err(error) => Ok(WorkingTranscript {
-            text,
+            text: crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits),
             words: None,
             alignment: WorkingTranscriptAlignment::Unaligned,
             correction_layer_id: Some(record.id),

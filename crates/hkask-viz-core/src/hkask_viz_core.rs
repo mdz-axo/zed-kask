@@ -27,19 +27,12 @@
 //! each time, creating a fresh widget entity that loses all state (audio
 //! playback position, graph pan/zoom/evidence) and restarts file I/O.
 //!
-//! To prevent this, `block_renderer()` maintains a thread-local LRU cache of
-//! widget entities keyed by a hash of the block body. On a cache hit, the
-//! cached entity is cloned (cheap — `Arc` handle) and returned as an element.
-//! The cache holds **strong** references, so the entity survives across renders
-//! even when the element tree is rebuilt and drops its clone. On a cache miss,
-//! a new entity is created (via a registered `VizWidget`)
-//! and inserted.
-//!
-//! Cache eviction: max 32 entries. When full, the oldest entry (by insertion
-//! order) is evicted. This bounds memory to 32 simultaneous widget entities —
-//! sufficient for a typical visible conversation. Off-screen widgets (scrolled
-//! out of view) lose their cache entry and recreate on next render, which is
-//! acceptable (the user isn't interacting with them).
+//! Non-media viz widgets use a thread-local 32-entry strong LRU keyed by body
+//! hash so graph/pan state survives parent re-renders. Media is different:
+//! hidden lifetime means possible ghost audio. Media widgets therefore use a
+//! weak registry keyed by stable gallery Asset ID (exact body when unindexed).
+//! Visible embedding surfaces own the strong entity; the registry coordinates
+//! one player across surfaces without extending its lifetime offscreen.
 #![warn(clippy::let_underscore_future)]
 
 use std::cell::RefCell;
@@ -251,30 +244,41 @@ thread_local! {
     /// LRU cache of widget entities, keyed by a hash of the block body.
     /// Thread-local because GPUI entities are not `Send` (single-threaded).
     static VIZ_CACHE: RefCell<VizCache> = RefCell::new(VizCache::new());
-    /// Media widgets by body hash, weak: the viz cache (or an embedding
-    /// surface like the media viewer) holds the strong reference. This is
-    /// the single-instance guarantee — one media widget per body, shared
+    /// Media widgets by stable Asset id (exact body when unindexed), weak:
+    /// visible embedding surfaces hold the strong reference. This is the
+    /// single-instance guarantee — one media widget per Asset, shared
     /// between the conversation-inline render and the viewer pane. Without
     /// it, both surfaces construct their own player for the same video and
     /// play TWO audio streams a few hundred ms apart.
-    static MEDIA_WIDGETS: RefCell<HashMap<u64, gpui::WeakEntity<hkask_media_widget::MediaWidget>>> =
+    static MEDIA_WIDGETS: RefCell<HashMap<String, gpui::WeakEntity<hkask_media_widget::MediaWidget>>> =
         RefCell::new(HashMap::default());
 }
 
-/// The single media widget for a block body — shared across every surface
-/// that renders it (conversation inline + viewer pane). Creates and
-/// registers it on first use; revives from the weak cache while any strong
-/// reference (viz cache LRU or viewer ownership) keeps it alive.
+fn media_widget_key(body: &str) -> String {
+    hkask_media_widget::MediaBlockBody::parse(body)
+        .ok()
+        .and_then(|block| block.gallery_asset_id)
+        .filter(|asset_id| !asset_id.trim().is_empty())
+        .map(|asset_id| format!("asset:{asset_id}"))
+        .unwrap_or_else(|| format!("body:{body}"))
+}
+
+/// The single media widget for a stable Asset identity — shared across every
+/// surface that renders it. The registry is weak and prunes released entries,
+/// so it coordinates identity without extending hidden-player lifetime.
 pub fn shared_media_widget(
     body: &str,
     window: &mut gpui::Window,
     cx: &mut gpui::App,
 ) -> Option<gpui::Entity<hkask_media_widget::MediaWidget>> {
-    let key = cache_key(body);
-    if let Some(existing) = MEDIA_WIDGETS.with(|cache| cache.borrow().get(&key).cloned())
-        && let Some(entity) = existing.upgrade()
-    {
-        return Some(entity);
+    let key = media_widget_key(body);
+    let existing = MEDIA_WIDGETS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|_, entity| entity.upgrade().is_some());
+        cache.get(&key).cloned()
+    });
+    if let Some(existing) = existing.and_then(|entity| entity.upgrade()) {
+        return Some(existing);
     }
     let entity = hkask_media_widget::create_media_widget(body, window, cx)?;
     MEDIA_WIDGETS.with(|cache| {
@@ -283,8 +287,8 @@ pub fn shared_media_widget(
     Some(entity)
 }
 
-/// Drop every cached widget entity so the next render of each block body
-/// constructs a fresh widget. Call when the environment a widget depends on
+/// Drop every strongly cached non-media viz entity so the next render of each
+/// block body constructs a fresh widget. Call when the environment a widget depends on
 /// changed out from under the cache (e.g. video decode was repaired, a
 /// decoder feature was enabled) — a cached widget built against the broken
 /// state keeps rendering broken until evicted.
@@ -359,15 +363,12 @@ pub fn block_renderer() -> BlockRenderer {
             return Some(element);
         }
 
-        // Cache miss — try media first (discriminates on `kind`, needs
-        // `Window`), through the shared-widget registry so the conversation
-        // inline render and the viewer pane share ONE player per body
-        // (two players = two audio streams desynced by a few hundred ms).
+        // Cache miss — try media first through the weak shared-widget
+        // registry. Do NOT insert media into the strong generic viz LRU:
+        // the visible embedding owns its entity, so offscreen release stops
+        // playback instead of leaving a cached ghost player alive.
         if let Some(entity) = shared_media_widget(body, window, cx) {
-            let cached = CachedWidget::new(entity);
-            let element = cached.render();
-            VIZ_CACHE.with(|cache| cache.borrow_mut().insert(key, cached));
-            return Some(element);
+            return Some(CachedWidget::new(entity).render());
         }
 
         for factory in factories {
@@ -385,6 +386,48 @@ pub fn block_renderer() -> BlockRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// dcterms:identifier: `hkask_viz_core::media_widget_key`
+    /// expect: One durable gallery Asset has one runtime player even when two surfaces carry different provenance bodies.
+    /// [P1] Motivating: Stable Asset identity prevents duplicate video/audio playback.
+    #[test]
+    fn media_runtime_identity_prefers_stable_asset_id_then_exact_body() {
+        let first = r#"{"kind":"video","src":"/tmp/a.mp4","gallery_asset_id":"asset-1","provenance":{"tool":"video_clip"}}"#;
+        let second = r#"{"kind":"video","src":"/tmp/a.mp4","gallery_asset_id":"asset-1","provenance":{"tool":"gallery_list"}}"#;
+        let other = r#"{"kind":"video","src":"/tmp/a.mp4","gallery_asset_id":"asset-2"}"#;
+        assert_eq!(media_widget_key(first), media_widget_key(second));
+        assert_ne!(media_widget_key(first), media_widget_key(other));
+
+        let unindexed = r#"{"kind":"video","src":"/tmp/a.mp4"}"#;
+        let different_body = r#"{"kind":"video", "src":"/tmp/a.mp4"}"#;
+        assert_eq!(media_widget_key(unindexed), media_widget_key(unindexed));
+        assert_ne!(
+            media_widget_key(unindexed),
+            media_widget_key(different_body)
+        );
+    }
+
+    struct DummyView;
+    impl Render for DummyView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// dcterms:identifier: `hkask_viz_core::block_renderer`
+    /// expect: Media playback lifetime belongs to visible embeddings, never the generic viz cache.
+    /// [P1] Motivating: Offscreen media must not remain alive solely because a cache owns its player.
+    #[gpui::test]
+    fn media_renderer_excludes_players_from_strong_viz_cache(cx: &mut gpui::TestAppContext) {
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let body = r#"{"kind":"video","src":"/definitely/missing.mp4","gallery_asset_id":"asset-release-test"}"#;
+        let element =
+            cx.update(|window, cx| block_renderer()(body, window, cx).expect("media element"));
+
+        let cached = VIZ_CACHE.with(|cache| cache.borrow().get(cache_key(body)).is_some());
+        assert!(!cached, "the generic viz cache retained a media player");
+        drop(element);
+    }
 
     #[test]
     fn cache_key_is_stable() {
