@@ -66,9 +66,9 @@ pub struct MediaViewer {
     /// forwarding the entity again.
     thread: Option<gpui::WeakEntity<acp_thread::AcpThread>>,
     /// The media widget for the currently-selected asset on the Media tab.
-    /// Owned directly (not via the viz cache) so the edit toolbar can reach
-    /// its playback clock and trim marks. Recreated when the selection's
-    /// body changes.
+    /// Owned directly (not via the strong viz cache) so the edit toolbar can
+    /// reach its playback clock and trim marks. A changed selection resolves
+    /// through the stable-Asset weak registry before replacing the entity.
     media_widget: Option<Entity<hkask_media_widget::MediaWidget>>,
     media_widget_body: Option<String>,
     /// Asset srcs queued for concatenation (`video_concat`). Two or more
@@ -334,10 +334,9 @@ impl MediaViewer {
         );
     }
 
-    /// Force-refresh the view pane: drop every cached viz widget (a widget
-    /// built against a broken environment — e.g. video decode before the
-    /// feature fix — keeps rendering broken until evicted) and reload the
-    /// active tab's data from its source.
+    /// Force-refresh the view pane: drop strongly cached non-media viz widgets,
+    /// suspend/release the selected media widget when refreshing Media, and
+    /// reload the active tab's data from its source.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         hkask_viz_core::clear_widget_cache();
         match self.active_tab {
@@ -730,9 +729,9 @@ impl MediaViewer {
 
         // The media widget for the selected asset — SHARED with the
         // conversation-inline render via the viz-core registry (one player
-        // per body; two players would play two audio streams). The viewer
-        // keeps the entity so the edit toolbar can reach its playback clock
-        // and trim marks. Recreated when the selection changes.
+        // per stable Asset, exact body when unindexed). The viewer keeps the
+        // entity so the edit toolbar can reach its playback clock and trim
+        // marks; selection changes suspend before resolving the next identity.
         if self.media_widget_body.as_deref() != Some(asset.body.as_str()) {
             match hkask_viz_core::shared_media_widget(&asset.body, window, cx) {
                 Some(widget) => {
