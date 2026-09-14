@@ -293,22 +293,26 @@ No routing or layout change is part of this repair.
 
 ### Async job queue (`tools/jobs.rs`, 4 tools)
 
-**Response contract (approved wire cleanup, 2026-09-05):** `job_list` retains
-its `{"content": [JobRecord, ...]}` envelope, newest first, with optional status
-filter and limit. There is no `jobs` wrapper. The Queue uses the existing
-`types::JobRecord` and `tools::jobs::parse_job_list_response`; malformed data
-and server errors produce a visible status while retaining the last good rows.
-An empty array is a valid empty queue. The actual server-response-to-decoder
-round-trip is pinned by `job_list_response_round_trips_through_client_decoder`;
-UI dispatch and state by `load_jobs_surfaces_array_rows_and_response_failures`
-in `crates/media_panel/src/media_viewer.rs`.
+**Lifecycle and response contract (2026-09-13):** the controller admits at
+most four active jobs and retains at most 256 terminal records. `job_cancel`
+enters `cancelling`, drops provider/staging work, rolls back staged or published
+files and gallery rows, releases its slot, and only then returns terminal
+`cancelled`; cleanup failure is surfaced instead of falsely acknowledging
+cancellation. Panic and task abort become terminal `failed` states and release
+the slot. `job_list` returns `{ jobs, history_scope, restart_behavior }`, newest
+first, with optional status and limit. The history scope is explicitly
+`ephemeral_process_local`; `job_list`, `job_status`, and `job_cancel` all expose
+that restart limitation. `parse_job_list_response` consumes the shared wire
+shape, and malformed data or tool errors remain visible at the panel boundary.
+The controller, cancellation, staged-publication, panic/abort, retention, and
+response contracts are pinned in `jobs.rs`, `tools/jobs.rs`, and `assets.rs`.
 
 | Tool | Line | Description |
 |------|------|-------------|
-| `job_submit` | 86 | Submit an async media generation job; returns a job ID immediately, poll `job_status` for completion. Accepts only asset-producing ops (generate_image, image_to_image, upscale, remove_background, generate_video, image_to_video, generate_speech). |
-| `job_list` | 239 | List generation jobs with status; optional filter (queued, running, completed, failed, cancelled). |
-| `job_status` | 268 | Status of a specific generation job by ID. |
-| `job_cancel` | 293 | Cancel a running or queued generation job by ID. |
+| `job_submit` | — | Admit a bounded async generation job; returns a job ID or a typed rate-limit error when four jobs are active. |
+| `job_list` | — | List retained jobs plus explicit process-local history scope and restart behavior. |
+| `job_status` | — | Return one job and explicit history scope; missing jobs name restart data loss. |
+| `job_cancel` | — | Cancel queued/running work and acknowledge only after teardown, rollback, and slot release. |
 
 ### Workflows (`tools/workflows.rs`, 4 tools)
 

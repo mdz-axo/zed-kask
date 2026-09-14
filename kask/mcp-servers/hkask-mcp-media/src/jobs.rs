@@ -5,9 +5,9 @@
 //! missing record is therefore surfaced as possible server restart data loss.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LockResult, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::types::JobRecord;
@@ -20,14 +20,19 @@ pub type JobStore = Arc<JobController>;
 
 pub struct JobController {
     records: Mutex<HashMap<String, JobRecord>>,
-    active: Mutex<HashMap<String, CancellationToken>>,
+    active: Mutex<HashMap<String, ActiveJob>>,
     slots: Arc<Semaphore>,
     #[cfg(test)]
-    persistence_gate: Mutex<Option<TestPersistenceGate>>,
+    publication_gate: Mutex<Option<TestPublicationGate>>,
+}
+
+struct ActiveJob {
+    token: CancellationToken,
+    completion: watch::Receiver<bool>,
 }
 
 #[cfg(test)]
-struct TestPersistenceGate {
+struct TestPublicationGate {
     entered: Arc<Semaphore>,
     release: Arc<Semaphore>,
 }
@@ -48,12 +53,17 @@ pub enum JobStoreError {
     AdmissionClosed,
     #[error("active job has no cancellation control: {0}")]
     MissingCancellationControl(String),
+    #[error("job {0} ended without signalling completion")]
+    CompletionSignalClosed(String),
+    #[error("job {job_id} cancellation cleanup failed: {detail}")]
+    CancellationCleanupFailed { job_id: String, detail: String },
 }
 
 pub enum JobOutcome {
     Completed(serde_json::Value),
     Failed(String),
     Cancelled,
+    CancellationFailed(String),
 }
 
 /// Owns one concurrency permit until the admitted task reaches cleanup.
@@ -61,6 +71,7 @@ pub struct JobLease {
     store: JobStore,
     pub job_id: String,
     token: CancellationToken,
+    completion: watch::Sender<bool>,
     permit: Option<OwnedSemaphorePermit>,
     finished: bool,
 }
@@ -72,13 +83,46 @@ impl JobController {
             active: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOBS)),
             #[cfg(test)]
-            persistence_gate: Mutex::new(None),
+            publication_gate: Mutex::new(None),
         }
     }
 
-    /// Preserve direct record locking for existing read/list callers.
-    pub fn lock(&self) -> LockResult<MutexGuard<'_, HashMap<String, JobRecord>>> {
-        self.records.lock()
+    /// Return cloned records without exposing the controller's mutable representation.
+    pub fn list(&self) -> Result<Vec<JobRecord>, JobStoreError> {
+        self.records
+            .lock()
+            .map(|records| records.values().cloned().collect())
+            .map_err(|error| JobStoreError::LockPoisoned {
+                part: "records",
+                detail: error.to_string(),
+            })
+    }
+
+    /// Return one cloned record without holding the controller lock across callers.
+    pub fn get(&self, job_id: &str) -> Result<Option<JobRecord>, JobStoreError> {
+        self.records
+            .lock()
+            .map(|records| records.get(job_id).cloned())
+            .map_err(|error| JobStoreError::LockPoisoned {
+                part: "records",
+                detail: error.to_string(),
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_record_for_test(&self, record: JobRecord) -> Result<(), JobStoreError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|error| JobStoreError::LockPoisoned {
+                part: "records",
+                detail: error.to_string(),
+            })?;
+        if records.contains_key(&record.id) {
+            return Err(JobStoreError::Duplicate(record.id));
+        }
+        records.insert(record.id.clone(), record);
+        Ok(())
     }
 
     /// Admit a job only when it can immediately own one of the bounded slots.
@@ -95,6 +139,7 @@ impl JobController {
             })?;
         let job_id = record.id.clone();
         let token = CancellationToken::new();
+        let (completion, completion_rx) = watch::channel(false);
         let mut active = self
             .active
             .lock()
@@ -112,7 +157,13 @@ impl JobController {
         if records.contains_key(&job_id) {
             return Err(JobStoreError::Duplicate(job_id));
         }
-        active.insert(job_id.clone(), token.clone());
+        active.insert(
+            job_id.clone(),
+            ActiveJob {
+                token: token.clone(),
+                completion: completion_rx,
+            },
+        );
         records.insert(job_id.clone(), record);
         drop(active);
         drop(records);
@@ -121,6 +172,7 @@ impl JobController {
             store: self.clone(),
             job_id,
             token,
+            completion,
             permit: Some(permit),
             finished: false,
         })
@@ -144,8 +196,96 @@ impl JobController {
         Ok(false)
     }
 
-    pub fn cancel(&self, job_id: &str) -> Result<(), JobStoreError> {
-        let active = self
+    /// Request cancellation and wait until task teardown has released its active slot.
+    pub async fn cancel(&self, job_id: &str) -> Result<(), JobStoreError> {
+        let mut completion = {
+            let active = self
+                .active
+                .lock()
+                .map_err(|error| JobStoreError::LockPoisoned {
+                    part: "active",
+                    detail: error.to_string(),
+                })?;
+            let mut records = self
+                .records
+                .lock()
+                .map_err(|error| JobStoreError::LockPoisoned {
+                    part: "records",
+                    detail: error.to_string(),
+                })?;
+            let job = records
+                .get_mut(job_id)
+                .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
+            match job.status.as_str() {
+                "queued" | "running" => {
+                    let control = active.get(job_id).ok_or_else(|| {
+                        JobStoreError::MissingCancellationControl(job_id.to_string())
+                    })?;
+                    job.status = "cancelling".to_string();
+                    job.completed_at = None;
+                    job.result = None;
+                    job.error = None;
+                    control.token.cancel();
+                    control.completion.clone()
+                }
+                "cancelling" => active
+                    .get(job_id)
+                    .ok_or_else(|| JobStoreError::MissingCancellationControl(job_id.to_string()))?
+                    .completion
+                    .clone(),
+                "completed" | "failed" | "cancelled" => {
+                    return Err(JobStoreError::AlreadyTerminal {
+                        job_id: job_id.to_string(),
+                        status: job.status.clone(),
+                    });
+                }
+                status => {
+                    return Err(JobStoreError::AlreadyTerminal {
+                        job_id: job_id.to_string(),
+                        status: status.to_string(),
+                    });
+                }
+            }
+        };
+
+        let is_complete = *completion.borrow();
+        if !is_complete {
+            completion
+                .changed()
+                .await
+                .map_err(|_| JobStoreError::CompletionSignalClosed(job_id.to_string()))?;
+        }
+        let job = self
+            .get(job_id)?
+            .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
+        if job.status == "cancelled" {
+            return Ok(());
+        }
+        Err(JobStoreError::CancellationCleanupFailed {
+            job_id: job_id.to_string(),
+            detail: job
+                .error
+                .unwrap_or_else(|| format!("job ended as {}", job.status)),
+        })
+    }
+
+    pub fn active_count(&self) -> Result<usize, JobStoreError> {
+        self.active
+            .lock()
+            .map(|active| active.len())
+            .map_err(|error| JobStoreError::LockPoisoned {
+                part: "active",
+                detail: error.to_string(),
+            })
+    }
+
+    fn finish_published(
+        &self,
+        job_id: &str,
+        result: serde_json::Value,
+        publication: &mut crate::assets::StagedJobPublication,
+    ) -> Result<bool, JobStoreError> {
+        let mut active = self
             .active
             .lock()
             .map_err(|error| JobStoreError::LockPoisoned {
@@ -162,37 +302,25 @@ impl JobController {
         let job = records
             .get_mut(job_id)
             .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
-        match job.status.as_str() {
-            "queued" | "running" => {
-                let token = active
-                    .get(job_id)
-                    .ok_or_else(|| JobStoreError::MissingCancellationControl(job_id.to_string()))?;
-                job.status = "cancelled".to_string();
-                job.completed_at = Some(hkask_types::time::now_rfc3339());
-                job.result = None;
-                job.error = None;
-                token.cancel();
-                Ok(())
-            }
-            "completed" | "failed" | "cancelled" => Err(JobStoreError::AlreadyTerminal {
+        if job.status == "cancelling" {
+            return Ok(false);
+        }
+        if !matches!(job.status.as_str(), "queued" | "running") {
+            return Err(JobStoreError::AlreadyTerminal {
                 job_id: job_id.to_string(),
                 status: job.status.clone(),
-            }),
-            status => Err(JobStoreError::AlreadyTerminal {
-                job_id: job_id.to_string(),
-                status: status.to_string(),
-            }),
+            });
         }
-    }
 
-    pub fn active_count(&self) -> Result<usize, JobStoreError> {
-        self.active
-            .lock()
-            .map(|active| active.len())
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "active",
-                detail: error.to_string(),
-            })
+        publication.commit();
+        job.status = "completed".to_string();
+        job.completed_at = Some(hkask_types::time::now_rfc3339());
+        job.result = Some(result);
+        job.error = None;
+        active.remove(job_id);
+        let active_ids = active.keys().cloned().collect::<Vec<_>>();
+        prune_terminal_records(&mut records, &active_ids);
+        Ok(true)
     }
 
     fn finish_job(&self, job_id: &str, outcome: JobOutcome) -> Result<(), JobStoreError> {
@@ -214,6 +342,13 @@ impl JobController {
             .get_mut(job_id)
             .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
         if job.status != "cancelled" {
+            let outcome = if job.status == "cancelling"
+                && !matches!(&outcome, JobOutcome::CancellationFailed(_))
+            {
+                JobOutcome::Cancelled
+            } else {
+                outcome
+            };
             job.completed_at = Some(hkask_types::time::now_rfc3339());
             match outcome {
                 JobOutcome::Completed(result) => {
@@ -231,6 +366,11 @@ impl JobController {
                     job.result = None;
                     job.error = None;
                 }
+                JobOutcome::CancellationFailed(error) => {
+                    job.status = "failed".to_string();
+                    job.result = None;
+                    job.error = Some(error);
+                }
             }
         }
         active.remove(job_id);
@@ -240,29 +380,29 @@ impl JobController {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_persistence_gate_for_test(
+    pub(crate) fn set_publication_gate_for_test(
         &self,
         entered: Arc<Semaphore>,
         release: Arc<Semaphore>,
     ) -> Result<(), JobStoreError> {
         let mut gate =
-            self.persistence_gate
+            self.publication_gate
                 .lock()
                 .map_err(|error| JobStoreError::LockPoisoned {
-                    part: "persistence gate",
+                    part: "publication gate",
                     detail: error.to_string(),
                 })?;
-        *gate = Some(TestPersistenceGate { entered, release });
+        *gate = Some(TestPublicationGate { entered, release });
         Ok(())
     }
 
     #[cfg(test)]
-    pub(crate) async fn persistence_checkpoint_for_test(&self) -> Result<(), JobStoreError> {
+    pub(crate) async fn publication_checkpoint_for_test(&self) -> Result<(), JobStoreError> {
         let gate = self
-            .persistence_gate
+            .publication_gate
             .lock()
             .map_err(|error| JobStoreError::LockPoisoned {
-                part: "persistence gate",
+                part: "publication gate",
                 detail: error.to_string(),
             })?
             .as_ref()
@@ -284,10 +424,29 @@ impl JobLease {
         self.token.clone()
     }
 
+    /// Atomically let completion or cancellation win while publication remains rollback-armed.
+    pub(crate) fn finish_published(
+        &mut self,
+        result: serde_json::Value,
+        publication: &mut crate::assets::StagedJobPublication,
+    ) -> Result<bool, JobStoreError> {
+        if !self
+            .store
+            .finish_published(&self.job_id, result, publication)?
+        {
+            return Ok(false);
+        }
+        self.finished = true;
+        self.permit.take();
+        self.completion.send_replace(true);
+        Ok(true)
+    }
+
     pub fn finish(mut self, outcome: JobOutcome) -> Result<(), JobStoreError> {
         self.store.finish_job(&self.job_id, outcome)?;
         self.finished = true;
         self.permit.take();
+        self.completion.send_replace(true);
         Ok(())
     }
 }
@@ -309,6 +468,7 @@ impl Drop for JobLease {
             );
         }
         self.permit.take();
+        self.completion.send_replace(true);
     }
 }
 
@@ -390,30 +550,34 @@ mod tests {
                 .finish(JobOutcome::Completed(serde_json::json!({"id": id})))?;
         }
 
-        let records = store.lock().map_err(|error| error.to_string())?;
+        let records = store.list()?;
         let terminal_count = records
-            .values()
+            .iter()
             .filter(|job| is_terminal_status(&job.status))
             .count();
         assert_eq!(terminal_count, MAX_TERMINAL_RECORDS);
-        assert!(records.contains_key(&active.job_id));
-        assert!(!records.contains_key("job-000"));
+        assert!(records.iter().any(|job| job.id == active.job_id));
+        assert!(!records.iter().any(|job| job.id == "job-000"));
         Ok(())
     }
 
     /// expect: Once cancellation is visible, later task cleanup cannot rewrite it.
-    #[test]
-    fn cancelled_state_is_stable() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn cancelled_state_is_stable() -> Result<(), Box<dyn std::error::Error>> {
         let store = new_job_store();
         let lease = store.admit(record(1))?;
-        store.cancel(&lease.job_id)?;
-        lease.finish(JobOutcome::Completed(
-            serde_json::json!({"unexpected": true}),
-        ))?;
+        let token = lease.cancellation_token();
+        let task = tokio::spawn(async move {
+            token.cancelled().await;
+            lease.finish(JobOutcome::Completed(
+                serde_json::json!({"unexpected": true}),
+            ))
+        });
+        store.cancel("job-001").await?;
+        task.await??;
 
-        let records = store.lock().map_err(|error| error.to_string())?;
-        let job = records
-            .get("job-001")
+        let job = store
+            .get("job-001")?
             .ok_or_else(|| "cancelled record was not retained".to_string())?;
         assert_eq!(job.status, "cancelled");
         assert!(job.result.is_none());
@@ -428,9 +592,8 @@ mod tests {
         store.mark_running(&lease.job_id)?;
         drop(lease);
 
-        let records = store.lock().map_err(|error| error.to_string())?;
-        let job = records
-            .get("job-001")
+        let job = store
+            .get("job-001")?
             .ok_or_else(|| "failed record was not retained".to_string())?;
         assert_eq!(job.status, "failed");
         assert!(
@@ -438,6 +601,71 @@ mod tests {
                 .as_deref()
                 .is_some_and(|error| error.contains("panic or abort"))
         );
+        Ok(())
+    }
+
+    /// expect: A panic in the actual spawned task records failure and immediately frees capacity.
+    #[tokio::test]
+    async fn spawned_task_panic_marks_failed_and_releases_slot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = new_job_store();
+        let lease = store.admit(record(1))?;
+        store.mark_running(&lease.job_id)?;
+        let handle = tokio::spawn(async move {
+            let _lease = lease;
+            panic!("intentional media job panic");
+        });
+        assert!(handle.await.is_err());
+
+        let job = store
+            .get("job-001")?
+            .ok_or_else(|| "panicked job record missing".to_string())?;
+        assert_eq!(job.status, "failed");
+        assert!(
+            job.error
+                .as_deref()
+                .is_some_and(|error| error.contains("panic or abort"))
+        );
+        assert_eq!(store.active_count()?, 0);
+        let replacement = store.admit(record(2))?;
+        assert_eq!(replacement.job_id, "job-002");
+        Ok(())
+    }
+
+    /// expect: Aborting the actual spawned task records failure and immediately frees capacity.
+    #[tokio::test]
+    async fn aborted_join_handle_marks_failed_and_releases_slot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = new_job_store();
+        let lease = store.admit(record(1))?;
+        store.mark_running(&lease.job_id)?;
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let _lease = lease;
+            if entered_tx.send(()).is_err() {
+                return;
+            }
+            std::future::pending::<()>().await;
+        });
+        entered_rx.await?;
+        handle.abort();
+        let join_error = handle
+            .await
+            .expect_err("aborted media task must report a cancelled join");
+        assert!(join_error.is_cancelled());
+
+        let job = store
+            .get("job-001")?
+            .ok_or_else(|| "aborted job record missing".to_string())?;
+        assert_eq!(job.status, "failed");
+        assert!(
+            job.error
+                .as_deref()
+                .is_some_and(|error| error.contains("panic or abort"))
+        );
+        assert_eq!(store.active_count()?, 0);
+        let replacement = store.admit(record(2))?;
+        assert_eq!(replacement.job_id, "job-002");
         Ok(())
     }
 }

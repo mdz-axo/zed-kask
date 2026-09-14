@@ -9,13 +9,16 @@ use crate::types::{
 };
 use crate::*;
 
-/// Decode the `job_list` wire contract at a client boundary. The payload is
-/// an array of complete job records, not an object containing `jobs`.
+const JOB_HISTORY_SCOPE: &str = "ephemeral_process_local";
+const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; all records are lost when the media server restarts.";
+
+/// Decode the `job_list` wire contract at a client boundary. New responses
+/// carry explicit history scope; legacy arrays remain readable by existing clients.
 ///
 /// expect: A broken queue response must not look like an empty queue.
 /// [P7] Motivating: server and panel share one response contract.
 /// pre: output is the tool's serialized response.
-/// post: valid arrays (including empty) decode; malformed data and tool errors fail.
+/// post: scoped job objects and legacy arrays decode; malformed data and tool errors fail.
 pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, JobListParseError> {
     let value: serde_json::Value =
         serde_json::from_str(output).map_err(JobListParseError::InvalidJson)?;
@@ -23,7 +26,12 @@ pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, JobListPa
     if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
         return Err(JobListParseError::ToolError(error.message));
     }
-    serde_json::from_value(payload).map_err(JobListParseError::ShapeMismatch)
+    let jobs = payload
+        .as_object()
+        .and_then(|object| object.get("jobs"))
+        .cloned()
+        .unwrap_or(payload);
+    serde_json::from_value(jobs).map_err(JobListParseError::ShapeMismatch)
 }
 
 /// `job_list` wire-contract decode failures. Shared by the server tests and
@@ -34,7 +42,7 @@ pub enum JobListParseError {
     InvalidJson(#[source] serde_json::Error),
     #[error("{0}")]
     ToolError(String),
-    #[error("invalid job_list response (expected an array of job records): {0}")]
+    #[error("invalid job_list response (expected scoped jobs or a legacy job array): {0}")]
     ShapeMismatch(#[source] serde_json::Error),
 }
 
@@ -43,14 +51,18 @@ fn map_job_store_error(error: crate::jobs::JobStoreError) -> McpToolError {
         crate::jobs::JobStoreError::Overloaded { .. } => {
             McpToolError::rate_limited(error.to_string())
         }
-        crate::jobs::JobStoreError::NotFound(_) => McpToolError::not_found(error.to_string()),
+        crate::jobs::JobStoreError::NotFound(_) => {
+            McpToolError::not_found(format!("{error}. {JOB_RESTART_BEHAVIOR}"))
+        }
         crate::jobs::JobStoreError::AlreadyTerminal { .. } => {
             McpToolError::invalid_argument(error.to_string())
         }
         crate::jobs::JobStoreError::LockPoisoned { .. }
         | crate::jobs::JobStoreError::Duplicate(_)
         | crate::jobs::JobStoreError::AdmissionClosed
-        | crate::jobs::JobStoreError::MissingCancellationControl(_) => {
+        | crate::jobs::JobStoreError::MissingCancellationControl(_)
+        | crate::jobs::JobStoreError::CompletionSignalClosed(_)
+        | crate::jobs::JobStoreError::CancellationCleanupFailed { .. } => {
             McpToolError::internal(error.to_string())
         }
     }
@@ -123,6 +135,7 @@ impl MediaServer {
             let kind_for_task = kind;
 
             tokio::spawn(async move {
+                let mut lease = lease;
                 let token = lease.cancellation_token();
                 let running = match job_store.mark_running(&job_id_for_task) {
                     Ok(running) => running,
@@ -136,53 +149,143 @@ impl MediaServer {
                         return;
                     }
                 };
+                if !running {
+                    if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
+                        tracing::warn!(
+                            target: "hkask.mcp.media.jobs",
+                            job_id = %job_id_for_task,
+                            error = %error,
+                            "Failed to record cancelled media job"
+                        );
+                    }
+                    return;
+                }
 
-                let outcome = if !running {
-                    crate::jobs::JobOutcome::Cancelled
-                } else {
-                    let generated = tokio::select! {
+                let generated = tokio::select! {
+                    biased;
+                    () = token.cancelled() => None,
+                    result = vision_port.media_generate(&op_for_task, &media_params) => Some(result),
+                };
+                let value = match generated {
+                    None => {
+                        if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancelled media job");
+                        }
+                        return;
+                    }
+                    Some(Err(error)) => {
+                        if let Err(finish_error) =
+                            lease.finish(crate::jobs::JobOutcome::Failed(error.to_string()))
+                        {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, error = %finish_error, "Failed to record provider failure");
+                        }
+                        return;
+                    }
+                    Some(Ok(value)) => value,
+                };
+
+                let staged = tokio::select! {
+                    biased;
+                    () = token.cancelled() => None,
+                    result = crate::assets::stage_job_publication(&value, kind_for_task) => Some(result),
+                };
+                let mut publication = match staged {
+                    None => {
+                        if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancelled media job");
+                        }
+                        return;
+                    }
+                    Some(Err(error)) => {
+                        if let Err(finish_error) = lease.finish(crate::jobs::JobOutcome::Failed(
+                            format!("asset not staged: {error}"),
+                        )) {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, error = %finish_error, "Failed to record staging failure");
+                        }
+                        return;
+                    }
+                    Some(Ok(publication)) => publication,
+                };
+
+                #[cfg(test)]
+                {
+                    let checkpoint = job_store.publication_checkpoint_for_test();
+                    let checkpoint_result = tokio::select! {
                         biased;
                         () = token.cancelled() => None,
-                        result = vision_port.media_generate(&op_for_task, &media_params) => Some(result),
+                        result = checkpoint => Some(result),
                     };
-                    match generated {
-                        None => crate::jobs::JobOutcome::Cancelled,
-                        Some(Err(error)) => crate::jobs::JobOutcome::Failed(error.to_string()),
-                        Some(Ok(value)) => {
-                            let persistence = async {
-                                #[cfg(test)]
-                                job_store
-                                    .persistence_checkpoint_for_test()
-                                    .await
-                                    .map_err(|error| format!("persistence checkpoint: {error}"))?;
-                                persist_and_slim_result(
-                                    gallery.as_ref(),
-                                    &gallery_store,
-                                    &value,
-                                    kind_for_task,
-                                )
-                                .await
-                                .map_err(|error| format!("asset not persisted: {error}"))
+                    match checkpoint_result {
+                        None => {
+                            let outcome = match publication.rollback() {
+                                Ok(()) => crate::jobs::JobOutcome::Cancelled,
+                                Err(error) => crate::jobs::JobOutcome::CancellationFailed(error.to_string()),
                             };
-                            tokio::select! {
-                                biased;
-                                () = token.cancelled() => crate::jobs::JobOutcome::Cancelled,
-                                result = persistence => match result {
-                                    Ok(slim) => crate::jobs::JobOutcome::Completed(slim),
-                                    Err(error) => crate::jobs::JobOutcome::Failed(error),
-                                },
+                            if let Err(error) = lease.finish(outcome) {
+                                tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancellation during staging");
                             }
+                            return;
                         }
+                        Some(Err(error)) => {
+                            let rollback_error = publication.rollback().err();
+                            let detail = match rollback_error {
+                                Some(rollback_error) => format!(
+                                    "publication checkpoint: {error}; {rollback_error}"
+                                ),
+                                None => format!("publication checkpoint: {error}"),
+                            };
+                            if let Err(finish_error) =
+                                lease.finish(crate::jobs::JobOutcome::Failed(detail))
+                            {
+                                tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, error = %finish_error, "Failed to record publication checkpoint failure");
+                            }
+                            return;
+                        }
+                        Some(Ok(())) => {}
+                    }
+                }
+
+                let slim = match publication.publish_and_slim(gallery.as_ref(), &gallery_store) {
+                    Ok(slim) => slim,
+                    Err(error) => {
+                        let outcome = if token.is_cancelled() {
+                            crate::jobs::JobOutcome::CancellationFailed(error.to_string())
+                        } else {
+                            crate::jobs::JobOutcome::Failed(format!(
+                                "asset not persisted: {error}"
+                            ))
+                        };
+                        if let Err(finish_error) = lease.finish(outcome) {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, error = %finish_error, "Failed to record publication failure");
+                        }
+                        return;
                     }
                 };
 
-                if let Err(error) = lease.finish(outcome) {
-                    tracing::warn!(
-                        target: "hkask.mcp.media.jobs",
-                        job_id = %job_id_for_task,
-                        error = %error,
-                        "Failed to record media job terminal outcome"
-                    );
+                match lease.finish_published(slim, &mut publication) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let outcome = match publication.rollback() {
+                            Ok(()) => crate::jobs::JobOutcome::Cancelled,
+                            Err(error) => {
+                                crate::jobs::JobOutcome::CancellationFailed(error.to_string())
+                            }
+                        };
+                        if let Err(error) = lease.finish(outcome) {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancellation after publication");
+                        }
+                    }
+                    Err(error) => {
+                        if let Err(rollback_error) = publication.rollback() {
+                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, error = %rollback_error, "Failed to roll back publication after terminalization error");
+                        }
+                        tracing::warn!(
+                            target: "hkask.mcp.media.jobs",
+                            job_id = %job_id_for_task,
+                            %error,
+                            "Failed to record media job completion"
+                        );
+                    }
                 }
             });
 
@@ -197,62 +300,75 @@ impl MediaServer {
 
     /// List generation jobs with their status. Optionally filter by status.
     #[tool(
-        description = "List generation jobs with their status. Optionally filter by status (queued, running, completed, failed, cancelled)."
+        description = "List process-local generation jobs with their status. History is ephemeral and lost when the media server restarts. Optionally filter by status (queued, running, cancelling, completed, failed, cancelled)."
     )]
     pub async fn job_list(
         &self,
         Parameters(JobListRequest { status, limit }): Parameters<JobListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "job_list", async {
-            let store = self
-                .job_store
-                .lock()
-                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
-
             let max = limit.unwrap_or(20);
-            let mut jobs: Vec<JobRecord> = store
-                .values()
-                .filter(|job| status.as_ref().map_or(true, |s| job.status == *s))
-                .cloned()
-                .collect();
+            let mut jobs = self
+                .job_store
+                .list()
+                .map_err(map_job_store_error)?
+                .into_iter()
+                .filter(|job| status.as_ref().is_none_or(|s| job.status == *s))
+                .collect::<Vec<_>>();
 
             // Sort by created_at descending (newest first).
             jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
             jobs.truncate(max);
 
-            serde_json::to_value(&jobs)
-                .map_err(|e| McpToolError::internal(format!("encode job list: {e}"))) // rr0044-ok: serde serialization of own data
+            Ok(serde_json::json!({
+                "jobs": jobs,
+                "history_scope": JOB_HISTORY_SCOPE,
+                "restart_behavior": JOB_RESTART_BEHAVIOR,
+            }))
         })
         .await
     }
 
     /// Get the status of a specific generation job by its ID.
-    #[tool(description = "Get the status of a specific generation job by its ID.")]
+    #[tool(
+        description = "Get a process-local generation job by ID. History is ephemeral and lost when the media server restarts."
+    )]
     pub async fn job_status(
         &self,
         Parameters(JobStatusRequest { job_id }): Parameters<JobStatusRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "job_status", async {
-            let store = self
+            let job = self
                 .job_store
-                .lock()
-                .map_err(|e| McpToolError::internal(format!("job store lock: {e}")))?; // rr0044-ok: lock-poisoning-after-panic
-            let job = store.get(&job_id).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "Job not found: {job_id}. The job store is in-memory — if the \
-                         media server restarted, all job records were lost (persistent \
-                         lineage survives in gallery_record_generation). Call job_list \
-                         to see known jobs."
-                ))
-            })?;
-            serde_json::to_value(job)
-                .map_err(|e| McpToolError::internal(format!("encode job status: {e}"))) // rr0044-ok: serde serialization of own data
+                .get(&job_id)
+                .map_err(map_job_store_error)?
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "Job not found: {job_id}. {JOB_RESTART_BEHAVIOR} Persistent lineage survives in gallery_record_generation; call job_list to see known jobs."
+                    ))
+                })?;
+            let mut value = serde_json::to_value(&job)
+                .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))?; // rr0044-ok: serde serialization of own data
+            let object = value
+                .as_object_mut()
+                .ok_or_else(|| McpToolError::internal("encoded job status was not an object"))?;
+            object.insert(
+                "history_scope".to_string(),
+                serde_json::Value::String(JOB_HISTORY_SCOPE.to_string()),
+            );
+            object.insert(
+                "restart_behavior".to_string(),
+                serde_json::Value::String(JOB_RESTART_BEHAVIOR.to_string()),
+            );
+            Ok(value)
         })
         .await
     }
 
     /// Cancel a running or queued generation job.
-    #[tool(description = "Cancel a running or queued generation job by its ID.")]
+    #[tool(
+        description = "Cancel a process-local running or queued generation job and wait for teardown. History is ephemeral and lost when the media server restarts."
+    )]
     pub async fn job_cancel(
         &self,
         Parameters(JobCancelRequest { job_id }): Parameters<JobCancelRequest>,
@@ -260,10 +376,13 @@ impl MediaServer {
         execute_tool(self, "job_cancel", async {
             self.job_store
                 .cancel(&job_id)
+                .await
                 .map_err(map_job_store_error)?;
             Ok(serde_json::json!({
                 "job_id": job_id,
                 "status": "cancelled",
+                "history_scope": JOB_HISTORY_SCOPE,
+                "restart_behavior": JOB_RESTART_BEHAVIOR,
             }))
         })
         .await
@@ -273,6 +392,7 @@ impl MediaServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jobs::MAX_CONCURRENT_JOBS;
 
     struct NoInference;
 
@@ -371,6 +491,40 @@ mod tests {
         }
     }
 
+    struct ErrorMedia {
+        message: &'static str,
+    }
+
+    impl hkask_types::InferencePort for ErrorMedia {
+        fn generate(
+            &self,
+            _: &str,
+            _: &hkask_types::template::LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            panic!("media job tests must use media_generate")
+        }
+
+        fn media_generate<'a>(
+            &'a self,
+            _: &str,
+            _: &hkask_types::MediaGenerateParams,
+        ) -> hkask_types::MediaFuture<'a> {
+            Box::pin(async move {
+                Err(hkask_types::InferenceError::Connection(
+                    self.message.to_string(),
+                ))
+            })
+        }
+    }
+
     fn server_with_port(
         port: Arc<dyn hkask_types::InferencePort>,
         job_store: crate::jobs::JobStore,
@@ -419,16 +573,17 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Cancelling a running media job drops provider work and cannot publish an asset.
+    /// expect: Cancelling one of four running jobs returns only after its provider future is
+    /// dropped, its active slot is released, and a fifth job can be admitted immediately.
     #[tokio::test]
-    async fn cancellation_drops_generation_and_skips_persistence()
+    async fn cancellation_acknowledges_only_after_teardown_and_slot_release()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new()?;
         let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
 
-        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let barrier = Arc::new(tokio::sync::Barrier::new(MAX_CONCURRENT_JOBS + 1));
         let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let store = crate::jobs::new_job_store();
         let server = server_with_port(
@@ -438,23 +593,32 @@ mod tests {
             }),
             store.clone(),
         )?;
-        let job_id = submit(&server).await?;
+        let mut job_ids = Vec::new();
+        for _ in 0..MAX_CONCURRENT_JOBS {
+            job_ids.push(submit(&server).await?);
+        }
         barrier.wait().await;
-        server
+
+        let cancel_response = server
             .job_cancel(Parameters(JobCancelRequest {
-                job_id: job_id.clone(),
+                job_id: job_ids[0].clone(),
             }))
             .await?;
-        wait_until(|| dropped.load(std::sync::atomic::Ordering::SeqCst)).await?;
+        let cancel_value: serde_json::Value = serde_json::from_str(&cancel_response)?;
+        let cancel_payload = hkask_types::tool_response::unwrap_tool_envelope(cancel_value);
+        assert_eq!(cancel_payload["history_scope"], JOB_HISTORY_SCOPE);
 
-        let records = store.lock().map_err(|error| error.to_string())?;
-        let job = records
-            .get(&job_id)
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(store.active_count()?, MAX_CONCURRENT_JOBS - 1);
+        let fifth_job_id = submit(&server).await?;
+        assert!(!fifth_job_id.is_empty());
+
+        let job = store
+            .get(&job_ids[0])?
             .ok_or_else(|| "cancelled job record missing".to_string())?;
         assert_eq!(job.status, "cancelled");
         assert!(job.result.is_none());
         assert_eq!(std::fs::read_dir(temp.path())?.count(), 0);
-        drop(records);
 
         match prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
@@ -463,9 +627,10 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Cancellation while persistence is pending leaves no result or file behind.
+    /// expect: Cancelling after bytes are staged but before publication removes staged/final
+    /// files and leaves no gallery row before acknowledging cancellation.
     #[tokio::test]
-    async fn cancellation_during_persistence_prevents_publication()
+    async fn cancellation_after_staging_rolls_back_file_and_gallery_publication()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new()?;
@@ -475,13 +640,38 @@ mod tests {
         let entered = Arc::new(tokio::sync::Semaphore::new(0));
         let release = Arc::new(tokio::sync::Semaphore::new(0));
         let store = crate::jobs::new_job_store();
-        store.set_persistence_gate_for_test(entered.clone(), release)?;
+        store.set_publication_gate_for_test(entered.clone(), release)?;
         let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
+        let gallery = server.gallery_store.open(
+            &temp.path().to_string_lossy(),
+            hkask_storage::GalleryMode::ReadOnly,
+        )?;
+        let mut state = GalleryState::new(
+            temp.path().to_path_buf(),
+            hkask_storage::GalleryMode::ReadOnly,
+        );
+        state.gallery_id = Some(gallery.id.clone());
+        *server
+            .gallery_state
+            .lock()
+            .map_err(|error| error.to_string())? = Some(state);
         let job_id = submit(&server).await?;
         let entered_permit =
             tokio::time::timeout(std::time::Duration::from_secs(2), entered.acquire_owned())
                 .await??;
         entered_permit.forget();
+        let staged_paths = std::fs::read_dir(crate::assets::generated_assets_dir())?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(staged_paths.len(), 1);
+        assert!(
+            staged_paths[0]
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".staged"))
+        );
+        assert_eq!(server.gallery_store.count_assets(&gallery.id)?, 0);
+
         server
             .job_cancel(Parameters(JobCancelRequest {
                 job_id: job_id.clone(),
@@ -489,19 +679,46 @@ mod tests {
             .await?;
         wait_until(|| store.active_count().is_ok_and(|count| count == 0)).await?;
 
-        let records = store.lock().map_err(|error| error.to_string())?;
-        let job = records
-            .get(&job_id)
+        let job = store
+            .get(&job_id)?
             .ok_or_else(|| "cancelled job record missing".to_string())?;
         assert_eq!(job.status, "cancelled");
         assert!(job.result.is_none());
-        assert_eq!(std::fs::read_dir(temp.path())?.count(), 0);
-        drop(records);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            0
+        );
+        assert_eq!(server.gallery_store.count_assets(&gallery.id)?, 0);
 
         match prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
             None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
         }
+        Ok(())
+    }
+
+    /// expect: Provider failures reach job status without being replaced by persistence text.
+    #[tokio::test]
+    async fn provider_error_is_preserved_in_failed_job_record()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const MESSAGE: &str = "provider sentinel: request rejected upstream";
+        let store = crate::jobs::new_job_store();
+        let server = server_with_port(Arc::new(ErrorMedia { message: MESSAGE }), store.clone())?;
+        let job_id = submit(&server).await?;
+        wait_until(|| {
+            store
+                .get(&job_id)
+                .ok()
+                .flatten()
+                .is_some_and(|job| job.status == "failed")
+        })
+        .await?;
+
+        let job = store
+            .get(&job_id)?
+            .ok_or_else(|| "failed provider job record missing".to_string())?;
+        let expected = hkask_types::InferenceError::Connection(MESSAGE.to_string()).to_string();
+        assert_eq!(job.error.as_deref(), Some(expected.as_str()));
         Ok(())
     }
 
@@ -556,25 +773,19 @@ mod tests {
             }))
             .await?;
         assert!(parse_job_list_response(&response)?.is_empty());
-        {
-            let mut store = server.job_store.lock().map_err(|error| error.to_string())?;
-            for (id, status, created_at) in [
-                ("older", "completed", "2026-09-04T00:00:00Z"),
-                ("newer", "running", "2026-09-05T00:00:00Z"),
-            ] {
-                store.insert(
-                    id.into(),
-                    JobRecord {
-                        id: id.into(),
-                        op: "generate_image".into(),
-                        status: status.into(),
-                        created_at: created_at.into(),
-                        completed_at: None,
-                        result: Some(serde_json::json!({"output": "/tmp/雪.png"})),
-                        error: None,
-                    },
-                );
-            }
+        for (id, status, created_at) in [
+            ("older", "completed", "2026-09-04T00:00:00Z"),
+            ("newer", "running", "2026-09-05T00:00:00Z"),
+        ] {
+            server.job_store.insert_record_for_test(JobRecord {
+                id: id.into(),
+                op: "generate_image".into(),
+                status: status.into(),
+                created_at: created_at.into(),
+                completed_at: None,
+                result: Some(serde_json::json!({"output": "/tmp/雪.png"})),
+                error: None,
+            })?;
         }
         let response = server
             .job_list(Parameters(JobListRequest {
@@ -599,23 +810,58 @@ mod tests {
         let jobs = parse_job_list_response(&response)?;
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].id, "older");
+
+        let response = server
+            .job_status(Parameters(JobStatusRequest {
+                job_id: "newer".to_string(),
+            }))
+            .await?;
+        let value: serde_json::Value = serde_json::from_str(&response)?;
+        let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+        assert_eq!(payload["history_scope"], JOB_HISTORY_SCOPE);
         Ok(())
     }
 
-    /// expect: A missing status explicitly warns that an in-memory restart may have lost records.
+    /// expect: After a restart, list, status, and cancel all explicitly disclose that job
+    /// history is ephemeral and process-local rather than implying durable history.
     #[tokio::test]
-    async fn missing_status_surfaces_ephemeral_restart_behavior()
+    async fn all_job_history_surfaces_disclose_ephemeral_restart_scope()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = server_with_port(Arc::new(NoInference), crate::jobs::new_job_store())?;
-        let error = server
-            .job_status(Parameters(JobStatusRequest {
-                job_id: "lost-after-restart".to_string(),
+        let response = server
+            .job_list(Parameters(JobListRequest {
+                status: None,
+                limit: None,
             }))
-            .await
-            .expect_err("unknown in-memory job must be visible as not found");
-        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
-        assert!(error.message.contains("in-memory"));
-        assert!(error.message.contains("restarted"));
+            .await?;
+        let value: serde_json::Value = serde_json::from_str(&response)?;
+        let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+        assert_eq!(payload["history_scope"], "ephemeral_process_local");
+        assert!(
+            payload["restart_behavior"]
+                .as_str()
+                .is_some_and(|message| message.contains("lost"))
+        );
+        assert_eq!(payload["jobs"], serde_json::json!([]));
+
+        for error in [
+            server
+                .job_status(Parameters(JobStatusRequest {
+                    job_id: "lost-after-restart".to_string(),
+                }))
+                .await
+                .expect_err("unknown in-memory job status must be not found"),
+            server
+                .job_cancel(Parameters(JobCancelRequest {
+                    job_id: "lost-after-restart".to_string(),
+                }))
+                .await
+                .expect_err("unknown in-memory job cancellation must be not found"),
+        ] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+            assert!(error.message.contains("ephemeral"));
+            assert!(error.message.contains("restart"));
+        }
         Ok(())
     }
 
@@ -623,14 +869,13 @@ mod tests {
     #[test]
     fn job_store_starts_empty() -> Result<(), Box<dyn std::error::Error>> {
         let store = crate::jobs::new_job_store();
-        let guard = store.lock().map_err(|error| error.to_string())?;
-        assert!(guard.is_empty());
+        assert!(store.list()?.is_empty());
         Ok(())
     }
 
-    /// expect: Existing callers can still lock records directly for convenient reads.
+    /// expect: Tests can seed records without exposing the controller's mutable map.
     #[test]
-    fn job_store_insert_and_get() -> Result<(), Box<dyn std::error::Error>> {
+    fn job_store_controlled_test_insert_and_cloned_get() -> Result<(), Box<dyn std::error::Error>> {
         let store = crate::jobs::new_job_store();
         let record = JobRecord {
             id: "test-job-1".to_string(),
@@ -641,14 +886,10 @@ mod tests {
             result: None,
             error: None,
         };
-        {
-            let mut guard = store.lock().map_err(|error| error.to_string())?;
-            guard.insert("test-job-1".to_string(), record);
-        }
-        let guard = store.lock().map_err(|error| error.to_string())?;
-        assert_eq!(guard.len(), 1);
-        let job = guard
-            .get("test-job-1")
+        store.insert_record_for_test(record)?;
+        assert_eq!(store.list()?.len(), 1);
+        let job = store
+            .get("test-job-1")?
             .ok_or_else(|| "inserted record missing".to_string())?;
         assert_eq!(job.op, "generate_image");
         Ok(())

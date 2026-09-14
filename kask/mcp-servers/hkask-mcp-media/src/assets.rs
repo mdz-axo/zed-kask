@@ -189,6 +189,398 @@ pub(crate) async fn persist_generated_asset(
     Ok(path)
 }
 
+/// A job asset whose final file and gallery row remain rollback-armed until the
+/// job controller atomically accepts completion over cancellation.
+pub(crate) struct StagedJobPublication {
+    assets: Vec<StagedJobAsset>,
+    provider_metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+struct StagedJobAsset {
+    staged_path: std::path::PathBuf,
+    final_path: std::path::PathBuf,
+    bytes: Vec<u8>,
+    ext: &'static str,
+    media_type: &'static str,
+    gallery_store: Option<Arc<GalleryStore>>,
+    gallery_image_id: Option<String>,
+    committed: bool,
+}
+
+struct StagedPathCleanup {
+    path: Option<std::path::PathBuf>,
+}
+
+impl StagedPathCleanup {
+    fn armed(path: std::path::PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for StagedPathCleanup {
+    fn drop(&mut self) {
+        let Some(path) = self.path.take() else {
+            return;
+        };
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.media.jobs",
+                    path = %path.display(),
+                    %error,
+                    "Failed to clean up partially written staged asset"
+                );
+            }
+        }
+    }
+}
+
+impl StagedJobAsset {
+    fn publish(
+        &mut self,
+        gallery: Option<&GalleryState>,
+        gallery_store: &Arc<GalleryStore>,
+    ) -> Result<(), MediaError> {
+        std::fs::rename(&self.staged_path, &self.final_path).map_err(|error| {
+            MediaError::AssetPersistence(format!("publish {}: {error}", self.final_path.display()))
+        })?;
+
+        let Some(gallery_id) = gallery.and_then(|state| state.gallery_id.as_deref()) else {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                "Gallery not initialized — generated {} not indexed",
+                self.media_type
+            );
+            return Ok(());
+        };
+        let hash = {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&self.bytes);
+            format!("{:x}", hasher.finalize())
+        };
+        let (width, height) = if self.media_type == "image" {
+            infer_image_dimensions(&self.bytes)
+        } else {
+            (0, 0)
+        };
+        let record = gallery_store
+            .add_media(
+                gallery_id,
+                &self.final_path.to_string_lossy(),
+                &hash,
+                width,
+                height,
+                self.ext,
+                self.bytes.len() as u64,
+                self.media_type,
+            )
+            .map_err(|error| {
+                MediaError::AssetPersistence(format!(
+                    "index staged asset {}: {error}",
+                    self.final_path.display()
+                ))
+            })?;
+        self.gallery_store = Some(gallery_store.clone());
+        self.gallery_image_id = Some(record.id);
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), MediaError> {
+        let mut first_error = None;
+        if let (Some(store), Some(image_id)) =
+            (self.gallery_store.as_ref(), self.gallery_image_id.clone())
+        {
+            match store.delete_image(&image_id) {
+                Ok(()) => self.gallery_image_id = None,
+                Err(error) => {
+                    first_error = Some(format!("delete gallery row {image_id}: {error}"));
+                }
+            }
+        }
+        for path in [&self.final_path, &self.staged_path] {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) if first_error.is_none() => {
+                    first_error = Some(format!("delete {}: {error}", path.display()));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.media.jobs",
+                        path = %path.display(),
+                        %error,
+                        "Additional staged publication rollback failure"
+                    );
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(MediaError::AssetPersistence(format!(
+                "staged publication rollback failed: {error}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StagedJobAsset {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        if let Err(error) = self.rollback() {
+            tracing::warn!(
+                target: "hkask.mcp.media.jobs",
+                path = %self.final_path.display(),
+                %error,
+                "Failed to roll back uncommitted staged publication"
+            );
+        }
+    }
+}
+
+impl StagedJobPublication {
+    /// Publish final paths and gallery rows while retaining rollback ownership.
+    pub(crate) fn publish_and_slim(
+        &mut self,
+        gallery: Option<&GalleryState>,
+        gallery_store: &Arc<GalleryStore>,
+    ) -> Result<serde_json::Value, MediaError> {
+        for asset in &mut self.assets {
+            if let Err(error) = asset.publish(gallery, gallery_store) {
+                let rollback_error = self.rollback().err();
+                return match rollback_error {
+                    Some(rollback_error) => Err(MediaError::AssetPersistence(format!(
+                        "{error}; {rollback_error}"
+                    ))),
+                    None => Err(error),
+                };
+            }
+        }
+        let Some(output_path) = self.assets.first().map(|asset| &asset.final_path) else {
+            return Err(MediaError::AssetPersistence(
+                "no assets staged — empty provider response".to_string(),
+            ));
+        };
+        let mut slim = self.provider_metadata.clone();
+        slim.insert(
+            "output".to_string(),
+            serde_json::Value::String(output_path.to_string_lossy().into_owned()),
+        );
+        if self.assets.len() > 1 {
+            slim.insert(
+                "outputs".to_string(),
+                serde_json::Value::Array(
+                    self.assets
+                        .iter()
+                        .map(|asset| {
+                            serde_json::Value::String(
+                                asset.final_path.to_string_lossy().into_owned(),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        Ok(serde_json::Value::Object(slim))
+    }
+
+    pub(crate) fn commit(&mut self) {
+        for asset in &mut self.assets {
+            asset.committed = true;
+        }
+    }
+
+    pub(crate) fn rollback(&mut self) -> Result<(), MediaError> {
+        let mut first_error = None;
+        for asset in &mut self.assets {
+            if let Err(error) = asset.rollback() {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                } else {
+                    tracing::warn!(
+                        target: "hkask.mcp.media.jobs",
+                        %error,
+                        "Additional staged publication rollback failure"
+                    );
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+/// Decode or download provider payloads and write hidden staging files. No
+/// final output path or gallery row is visible until `publish_and_slim` runs.
+pub(crate) async fn stage_job_publication(
+    result: &serde_json::Value,
+    kind: &str,
+) -> Result<StagedJobPublication, MediaError> {
+    let entries = if kind == "image" {
+        result
+            .get("data")
+            .and_then(|data| data.as_array())
+            .filter(|entries| entries.len() > 1)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| serde_json::json!({ "data": [entry] }))
+                    .collect::<Vec<_>>()
+            })
+    } else {
+        None
+    }
+    .unwrap_or_else(|| vec![result.clone()]);
+
+    let mut assets = Vec::with_capacity(entries.len());
+    for entry in entries {
+        assets.push(stage_job_asset(&entry, kind).await?);
+    }
+    let mut provider_metadata = serde_json::Map::new();
+    if let Some(object) = result.as_object() {
+        for (field, value) in object {
+            if !matches!(field.as_str(), "data" | "video_url" | "url" | "audio") {
+                provider_metadata.insert(field.clone(), value.clone());
+            }
+        }
+    }
+    Ok(StagedJobPublication {
+        assets,
+        provider_metadata,
+    })
+}
+
+async fn stage_job_asset(
+    result: &serde_json::Value,
+    kind: &str,
+) -> Result<StagedJobAsset, MediaError> {
+    stage_job_asset_in_dir(result, kind, &generated_assets_dir()).await
+}
+
+async fn stage_job_asset_in_dir(
+    result: &serde_json::Value,
+    kind: &str,
+    asset_dir: &std::path::Path,
+) -> Result<StagedJobAsset, MediaError> {
+    let (bytes, ext, media_type) = match kind {
+        "image" => {
+            if let Some(b64) = result
+                .get("data")
+                .and_then(|data| data.get(0))
+                .and_then(|data| data.get("b64_json"))
+                .and_then(|value| value.as_str())
+            {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|error| {
+                        MediaError::AssetPersistence(format!("decode b64_json: {error}"))
+                    })?;
+                let ext = image_ext_from_bytes(&bytes);
+                (bytes, ext, "image")
+            } else if let Some(url) = result
+                .get("data")
+                .and_then(|data| data.get(0))
+                .and_then(|data| data.get("url"))
+                .and_then(|value| value.as_str())
+            {
+                let bytes = download_asset(url).await?;
+                let ext = image_ext_from_bytes(&bytes);
+                (bytes, ext, "image")
+            } else {
+                return Err(MediaError::AssetPersistence(
+                    "unrecognized image provider response shape: no data[0].b64_json / data[0].url field"
+                        .to_string(),
+                ));
+            }
+        }
+        "video" => {
+            let url = result
+                .get("video_url")
+                .or_else(|| result.get("url"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    MediaError::AssetPersistence(
+                        "unrecognized video provider response shape: no video_url / url field"
+                            .to_string(),
+                    )
+                })?;
+            let (bytes, ext) = if url.starts_with("data:") {
+                decode_data_uri(url)?
+            } else {
+                (download_asset(url).await?, "mp4")
+            };
+            (bytes, ext, "video")
+        }
+        "audio" => {
+            let audio = result
+                .get("audio")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    MediaError::AssetPersistence(
+                        "unrecognized audio provider response shape: no audio field".to_string(),
+                    )
+                })?;
+            let (bytes, ext) = decode_data_uri(audio)?;
+            (bytes, ext, "audio")
+        }
+        _ => {
+            return Err(MediaError::AssetPersistence(format!(
+                "unknown asset kind '{kind}' (expected image, video, or audio)"
+            )));
+        }
+    };
+
+    let id = uuid::Uuid::new_v4();
+    let final_path = asset_dir.join(format!("{id}.{ext}"));
+    let staged_path = asset_dir.join(format!(".{id}.{ext}.staged"));
+    let mut staged_path_cleanup = StagedPathCleanup::armed(staged_path.clone());
+    write_staged_asset(&staged_path, &bytes).map_err(|error| {
+        MediaError::AssetPersistence(format!("stage {}: {error}", staged_path.display()))
+    })?;
+    let asset = StagedJobAsset {
+        staged_path,
+        final_path,
+        bytes,
+        ext,
+        media_type,
+        gallery_store: None,
+        gallery_image_id: None,
+        committed: false,
+    };
+    staged_path_cleanup.disarm();
+    Ok(asset)
+}
+
+#[cfg(test)]
+const PARTIAL_WRITE_FAILURE_DIR: &str = "inject-partial-staged-write-failure";
+
+fn write_staged_asset(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(test)]
+    if path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .is_some_and(|name| name == std::ffi::OsStr::new(PARTIAL_WRITE_FAILURE_DIR))
+    {
+        std::fs::write(path, &bytes[..bytes.len().min(1)])?;
+        return Err(std::io::Error::other(
+            "injected partial staged write failure",
+        ));
+    }
+
+    std::fs::write(path, bytes)
+}
+
 /// Map a `media_generate` op string to the asset kind its result persists
 /// as ("image", "video", or "audio"). Ops whose results carry no persisted
 /// asset (transcription, audio-chat, structured chat) return `None` — a job
@@ -305,7 +697,7 @@ pub(crate) async fn persist_slim_and_enrich(
     kind: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, McpToolError> {
-    let slim = persist_and_slim_result(gallery, gallery_store, result, kind)
+    let slim = crate::persist_and_slim_result(gallery, gallery_store, result, kind)
         .await
         .map_err(map_media_error)?;
     Ok(crate::media_block::enrich_with_omc_and_provenance(
@@ -408,7 +800,37 @@ pub(crate) fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::image_ext_from_bytes;
+    use super::{PARTIAL_WRITE_FAILURE_DIR, image_ext_from_bytes, stage_job_asset_in_dir};
+
+    #[tokio::test]
+    async fn partial_staged_write_failure_leaves_no_asset_and_preserves_error() {
+        let temp_dir = tempfile::tempdir().expect("create temporary assets directory");
+        let asset_dir = temp_dir.path().join(PARTIAL_WRITE_FAILURE_DIR);
+        std::fs::create_dir(&asset_dir).expect("create injected-failure assets directory");
+        let result = serde_json::json!({
+            "data": [{ "b64_json": "cGFydGlhbCBhc3NldA==" }]
+        });
+
+        let error = match stage_job_asset_in_dir(&result, "image", &asset_dir).await {
+            Ok(_) => panic!("partial staged write unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        let crate::error::MediaError::AssetPersistence(message) = error else {
+            panic!("unexpected error variant");
+        };
+        assert!(
+            message.ends_with(": injected partial staged write failure"),
+            "original write error was not preserved: {message}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&asset_dir)
+                .expect("read injected-failure assets directory")
+                .count(),
+            0,
+            "partial write left a staged or final asset behind"
+        );
+    }
 
     #[test]
     fn image_ext_from_bytes_sniffs_magic_numbers() {
