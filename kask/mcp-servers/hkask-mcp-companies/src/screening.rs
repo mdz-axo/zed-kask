@@ -32,7 +32,9 @@ const LISP_MAX_DEPTH: u64 = 256;
 const SCREEN_PASS_DEADLINE: Duration = Duration::from_secs(60);
 const ENRICHMENT_DEADLINE: Duration = Duration::from_secs(110);
 
-const ENRICHMENT_CONCURRENCY: usize = 96;
+const BULK_ANALYSIS_CONCURRENCY: usize = 96;
+const FALLBACK_ENRICHMENT_CONCURRENCY: usize = 12;
+const FALLBACK_ISSUER_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Deserialize)]
 struct ScreenTemplateMetadata {
@@ -1323,6 +1325,12 @@ async fn enrich_pending_issuers(
     }
     let groups: Vec<IssuerGroup> = decoded.iter().map(|(_, group)| group.clone()).collect();
     let mut bulk = fetch_bulk_fundamentals(server, &groups).await;
+    let bulk_available = bulk.values().any(Result::is_ok);
+    let concurrency = if bulk_available {
+        BULK_ANALYSIS_CONCURRENCY
+    } else {
+        FALLBACK_ENRICHMENT_CONCURRENCY
+    };
     let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
         let client = server.client.clone();
         let api_key = server.eodhd_api_key.clone();
@@ -1336,16 +1344,31 @@ async fn enrich_pending_issuers(
             if store.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::research_store::PortfolioError>(());
             }
+            let fundamentals = match fundamentals {
+                Ok(fundamentals) => Ok(fundamentals),
+                Err(bulk_reason) => {
+                    let actionable = group.securities.iter().max_by(|left, right| {
+                        left.average_daily_dollar_volume_usd
+                            .partial_cmp(&right.average_daily_dollar_volume_usd)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    match actionable {
+                        Some(security) => match tokio::time::timeout(
+                            FALLBACK_ISSUER_TIMEOUT,
+                            providers::fetch_eodhd_fundamentals(&client, &api_key, &security.symbol),
+                        ).await {
+                            Ok(Ok(fundamentals)) => Ok(fundamentals),
+                            Ok(Err(error)) => Err(format!("bulk unavailable ({bulk_reason}); single-symbol fallback failed: {error}")),
+                            Err(_) => Err(format!("bulk unavailable ({bulk_reason}); single-symbol fallback exceeded 15 seconds")),
+                        },
+                        None => Err("issuer group has no actionable security".to_string()),
+                    }
+                }
+            };
             let (row, error) = match fundamentals {
                 Ok(fundamentals) => match analyze_issuer_group(
-                    &client,
-                    &api_key,
-                    &fx_rates,
-                    &group,
-                    Some(fundamentals),
-                )
-                .await
-                {
+                    &client, &api_key, &fx_rates, &group, Some(fundamentals),
+                ).await {
                     Ok(row) => (row, None),
                     Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
                 },
@@ -1364,7 +1387,7 @@ async fn enrich_pending_issuers(
             )
         }
     }))
-    .buffer_unordered(ENRICHMENT_CONCURRENCY)
+    .buffer_unordered(concurrency)
     .collect::<Vec<_>>();
     tokio::pin!(work);
     let deadline = tokio::time::sleep(ENRICHMENT_DEADLINE);
