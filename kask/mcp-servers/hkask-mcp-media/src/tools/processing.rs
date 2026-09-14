@@ -1,6 +1,152 @@
 //! Processing tools — background removal, style transfer, collage, video editing, memes.
 use crate::*;
 
+struct LocalVideoIntermediates {
+    paths: Vec<std::path::PathBuf>,
+}
+
+impl LocalVideoIntermediates {
+    fn new() -> Self {
+        Self { paths: Vec::new() }
+    }
+
+    fn track(&mut self, path: std::path::PathBuf) {
+        self.paths.push(path);
+    }
+
+    fn cleanup(&mut self) -> Result<(), MediaError> {
+        let mut first_error = None;
+        let mut remaining = Vec::new();
+        for path in std::mem::take(&mut self.paths) {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(MediaError::Io(format!(
+                            "delete video remix intermediate {}: {error}",
+                            path.display()
+                        )));
+                    }
+                    remaining.push(path);
+                }
+            }
+        }
+        self.paths = remaining;
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for LocalVideoIntermediates {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                %error,
+                "Failed to clean up video remix intermediates"
+            );
+        }
+    }
+}
+
+fn rollback_local_publication_error(
+    publication: &mut crate::assets::StagedJobPublication,
+    original: MediaError,
+) -> McpToolError {
+    let error = match publication.rollback() {
+        Ok(()) => original,
+        Err(rollback_error) => {
+            MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
+        }
+    };
+    map_media_error(error)
+}
+
+/// expect: My locally processed video or GIF is published under one durable gallery identity.
+/// [P1] Motivating: user work survives processor and server teardown.
+/// pre: FFmpeg produced a final MP4 or GIF and an admission-time gallery was captured.
+/// post: file, gallery row, lineage, result id, and media-block id commit together or roll back together.
+/// [P1] Constraining: source paths and indices never become parent identities.
+fn publish_local_video_result(
+    server: &MediaServer,
+    gallery: &GalleryState,
+    output: &std::path::Path,
+    op: &str,
+    media_kind: &str,
+    result_fields: serde_json::Value,
+    args: serde_json::Value,
+    lineage_params: serde_json::Value,
+) -> Result<serde_json::Value, McpToolError> {
+    let mut publication =
+        crate::assets::stage_local_video_publication(output).map_err(map_media_error)?;
+    let mut result = publication
+        .publish_and_slim(Some(gallery), &server.gallery_store)
+        .map_err(map_media_error)?;
+    let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "{op} publication produced no gallery asset identity"
+            )),
+        ));
+    };
+
+    let lineage_params_json = match serde_json::to_string(&lineage_params) {
+        Ok(json) => json,
+        Err(error) => {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!("serialize {op} lineage: {error}")),
+            ));
+        }
+    };
+    if let Err(lineage_error) = server.gallery_store.record_generation(
+        &gallery_asset_id,
+        op,
+        None,
+        None,
+        None,
+        None,
+        Some(&lineage_params_json),
+        None,
+        None,
+    ) {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
+        ));
+    }
+
+    let Some(fields) = result_fields.as_object() else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "compose {op} result: result fields must be an object"
+            )),
+        ));
+    };
+    let Some(result_object) = result.as_object_mut() else {
+        return Err(rollback_local_publication_error(
+            &mut publication,
+            MediaError::AssetPersistence(format!(
+                "compose {op} result: publication result must be an object"
+            )),
+        ));
+    };
+    result_object.extend(fields.clone());
+    result_object.insert(
+        "gallery_asset_id".to_string(),
+        serde_json::Value::String(gallery_asset_id),
+    );
+    let result =
+        crate::media_block::enrich_with_omc_and_provenance(result, op, media_kind, args, None);
+    publication.commit();
+    Ok(result)
+}
+
 #[tool_router(router = processing_router, vis = "pub")]
 impl MediaServer {
     // ── Derivation tools ─────────────────────────────────────────────────────
@@ -334,77 +480,30 @@ impl MediaServer {
                 .clip(&video_url, start_sec, end_sec)
                 .await
                 .map_err(map_media_error)?;
-            let mut publication =
-                crate::assets::stage_local_video_publication(&output).map_err(map_media_error)?;
-            let mut result = publication
-                .publish_and_slim(Some(&gallery), &self.gallery_store)
-                .map_err(map_media_error)?;
-            let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
-                let original = MediaError::AssetPersistence(
-                    "video_clip publication produced no gallery asset identity".to_string(),
-                );
-                let error = match publication.rollback() {
-                    Ok(()) => original,
-                    Err(rollback_error) => {
-                        MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
-                    }
-                };
-                return Err(map_media_error(error));
-            };
-
-            let lineage_params = serde_json::json!({
-                "source": video_url,
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-            });
-            let lineage_params_json = serde_json::to_string(&lineage_params).map_err(|error| {
-                map_media_error(MediaError::AssetPersistence(format!(
-                    "serialize video_clip lineage: {error}"
-                )))
-            })?;
-            if let Err(lineage_error) = self.gallery_store.record_generation(
-                &gallery_asset_id,
-                "video_clip",
-                None,
-                None,
-                None,
-                None,
-                Some(&lineage_params_json),
-                None,
-                None,
-            ) {
-                let original = MediaError::AssetPersistence(format!(
-                    "record video_clip lineage: {lineage_error}"
-                ));
-                let error = match publication.rollback() {
-                    Ok(()) => original,
-                    Err(rollback_error) => {
-                        MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
-                    }
-                };
-                return Err(map_media_error(error));
-            }
-
-            result["status"] = serde_json::json!("clipped");
-            result["source"] = serde_json::json!(video_url);
-            result["start_sec"] = serde_json::json!(start_sec);
-            result["end_sec"] = serde_json::json!(end_sec);
-            result["duration"] = serde_json::json!(end_sec - start_sec);
-            result["gallery_asset_id"] = serde_json::json!(gallery_asset_id);
-            let args = serde_json::json!({
-                "video_url": video_url,
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-            });
-            let result = crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            publish_local_video_result(
+                self,
+                &gallery,
+                &output,
                 "video_clip",
                 "video",
-                args,
-                None,
-            );
-            publication.commit();
-            Ok(result)
+                serde_json::json!({
+                    "status": "clipped",
+                    "source": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "duration": end_sec - start_sec,
+                }),
+                serde_json::json!({
+                    "video_url": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                }),
+                serde_json::json!({
+                    "source": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                }),
+            )
         })
         .await
     }
@@ -425,8 +524,6 @@ impl MediaServer {
                 validate_tool_url_with_dns(&video_url).await?;
             }
 
-            self.require_ffmpeg()?;
-
             let start = start_sec.unwrap_or(0.0);
             let dur = duration_sec.unwrap_or(5.0);
             let w = width.unwrap_or(480);
@@ -446,35 +543,46 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
 
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            self.require_ffmpeg()?;
             let output = self
                 .ffmpeg
                 .to_gif(&video_url, start, dur, w, f)
                 .await
                 .map_err(map_media_error)?;
 
-            let result = serde_json::json!({
-                "status": "converted",
-                "source": video_url,
-                "start_sec": start,
-                "duration_sec": dur,
-                "width": w,
-                "fps": f,
-                "output": output.display().to_string(),
-            });
-            let args = serde_json::json!({
-                "video_url": video_url,
-                "start_sec": start,
-                "duration_sec": dur,
-                "width": w,
-                "fps": f,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            publish_local_video_result(
+                self,
+                &gallery,
+                &output,
                 "video_to_gif",
                 "image",
-                args,
-                None,
-            ))
+                serde_json::json!({
+                    "status": "converted",
+                    "source": video_url,
+                    "start_sec": start,
+                    "duration_sec": dur,
+                    "width": w,
+                    "fps": f,
+                }),
+                serde_json::json!({
+                    "video_url": video_url,
+                    "start_sec": start,
+                    "duration_sec": dur,
+                    "width": w,
+                    "fps": f,
+                }),
+                serde_json::json!({
+                    "source": video_url,
+                    "start_sec": start,
+                    "duration_sec": dur,
+                    "width": w,
+                    "fps": f,
+                }),
+            )
         })
         .await
     }
@@ -546,8 +654,6 @@ impl MediaServer {
                 validate_tool_url_with_dns(&video_url).await?;
             }
 
-            self.require_ffmpeg()?;
-
             let pos = position.as_deref().unwrap_or("bottom");
             let size = font_size.unwrap_or(24);
             if size == 0 {
@@ -556,33 +662,43 @@ impl MediaServer {
                 ));
             }
 
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            self.require_ffmpeg()?;
             let output = self
                 .ffmpeg
                 .add_caption(&video_url, &text, pos, size)
                 .await
                 .map_err(map_media_error)?;
 
-            let result = serde_json::json!({
-                "status": "captioned",
-                "source": video_url,
-                "text": text,
-                "position": pos,
-                "font_size": size,
-                "output": output.display().to_string(),
-            });
-            let args = serde_json::json!({
-                "video_url": video_url,
-                "text": text,
-                "position": pos,
-                "font_size": size,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            publish_local_video_result(
+                self,
+                &gallery,
+                &output,
                 "video_add_caption",
                 "video",
-                args,
-                None,
-            ))
+                serde_json::json!({
+                    "status": "captioned",
+                    "source": video_url,
+                    "text": text,
+                    "position": pos,
+                    "font_size": size,
+                }),
+                serde_json::json!({
+                    "video_url": video_url,
+                    "text": text,
+                    "position": pos,
+                    "font_size": size,
+                }),
+                serde_json::json!({
+                    "source": video_url,
+                    "text": text,
+                    "position": pos,
+                    "font_size": size,
+                }),
+            )
         })
         .await
     }
@@ -608,24 +724,33 @@ impl MediaServer {
                 ));
             }
 
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
             self.require_ffmpeg()?;
 
+            let mut intermediates = LocalVideoIntermediates::new();
             let clipped = self
                 .ffmpeg
                 .clip(&video_url, start_sec, end_sec)
                 .await
                 .map_err(map_media_error)?;
+            intermediates.track(clipped.clone());
 
             let captioned = if let Some(ref cap) = caption_text {
-                self.ffmpeg
+                let captioned = self
+                    .ffmpeg
                     .add_caption(&clipped.to_string_lossy(), cap, "bottom", 24)
                     .await
-                    .map_err(map_media_error)?
+                    .map_err(map_media_error)?;
+                intermediates.track(captioned.clone());
+                captioned
             } else {
                 clipped.clone()
             };
 
-            let gif_result = self
+            let gif = self
                 .ffmpeg
                 .to_gif(
                     &captioned.to_string_lossy(),
@@ -634,37 +759,38 @@ impl MediaServer {
                     480,
                     10,
                 )
-                .await;
+                .await
+                .map_err(map_media_error)?;
+            let mut final_cleanup = LocalVideoIntermediates::new();
+            final_cleanup.track(gif.clone());
+            intermediates.cleanup().map_err(map_media_error)?;
 
-            // Always clean up temp files regardless of outcome
-            let _ = std::fs::remove_file(&clipped);
-            if caption_text.is_some() {
-                let _ = std::fs::remove_file(&captioned);
-            }
-
-            let gif = gif_result.map_err(map_media_error)?;
-
-            let result = serde_json::json!({
-                "status": "remixed",
-                "source": video_url,
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-                "caption": caption_text,
-                "output": gif.display().to_string(),
-            });
-            let args = serde_json::json!({
-                "video_url": video_url,
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-                "caption_text": caption_text,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            publish_local_video_result(
+                self,
+                &gallery,
+                &gif,
                 "video_remix",
                 "image",
-                args,
-                None,
-            ))
+                serde_json::json!({
+                    "status": "remixed",
+                    "source": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "caption": caption_text,
+                }),
+                serde_json::json!({
+                    "video_url": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "caption_text": caption_text,
+                }),
+                serde_json::json!({
+                    "source": video_url,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "caption_text": caption_text,
+                }),
+            )
         })
         .await
     }
@@ -685,19 +811,25 @@ impl MediaServer {
                 ));
             }
 
+            let fps = fps.unwrap_or(24);
+            if fps == 0 {
+                return Err(McpToolError::invalid_argument("fps must be greater than 0"));
+            }
+            let fmt = format.as_deref().unwrap_or("mp4");
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
             self.require_ffmpeg()?;
 
             let mut paths = Vec::new();
             for idx in &image_indices {
                 paths.push(self.resolve_image_path(*idx).map_err(map_media_error)?);
             }
-
-            let fps = fps.unwrap_or(24);
-            let fmt = format.as_deref().unwrap_or("mp4");
-
-            if fps == 0 {
-                return Err(McpToolError::invalid_argument("fps must be greater than 0"));
-            }
+            let sources = paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
 
             let output = self
                 .ffmpeg
@@ -705,25 +837,31 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            let result = serde_json::json!({
-                "status": "created",
-                "frame_count": paths.len(),
-                "fps": fps,
-                "format": fmt,
-                "output": output.display().to_string(),
-            });
-            let args = serde_json::json!({
-                "image_indices": image_indices,
-                "fps": fps,
-                "format": fmt,
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            let media_kind = if fmt == "gif" { "image" } else { "video" };
+            publish_local_video_result(
+                self,
+                &gallery,
+                &output,
                 "video_from_images",
-                "video",
-                args,
-                None,
-            ))
+                media_kind,
+                serde_json::json!({
+                    "status": "created",
+                    "frame_count": paths.len(),
+                    "fps": fps,
+                    "format": fmt,
+                }),
+                serde_json::json!({
+                    "image_indices": image_indices,
+                    "fps": fps,
+                    "format": fmt,
+                }),
+                serde_json::json!({
+                    "sources": sources,
+                    "image_indices": image_indices,
+                    "fps": fps,
+                    "format": fmt,
+                }),
+            )
         })
         .await
     }
@@ -746,6 +884,10 @@ impl MediaServer {
                 }
             }
 
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
             self.require_ffmpeg()?;
 
             let output = self
@@ -754,19 +896,19 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            let result = serde_json::json!({
-                "status": "concatenated",
-                "clip_count": video_urls.len(),
-                "output": output.display().to_string(),
-            });
-            let args = serde_json::json!({ "video_urls": video_urls });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            publish_local_video_result(
+                self,
+                &gallery,
+                &output,
                 "video_concat",
                 "video",
-                args,
-                None,
-            ))
+                serde_json::json!({
+                    "status": "concatenated",
+                    "clip_count": video_urls.len(),
+                }),
+                serde_json::json!({ "video_urls": video_urls }),
+                serde_json::json!({ "sources": video_urls }),
+            )
         })
         .await
     }

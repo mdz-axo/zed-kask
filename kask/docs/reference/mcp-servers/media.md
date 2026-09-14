@@ -247,30 +247,38 @@ No routing or layout change is part of this repair.
 | `image_remove_background` | 11 | Remove background from a gallery image; delegates to the configured background-removal provider. |
 | `image_apply_style` | 53 | Apply style transfer to a gallery image; delegates to fal.ai Flux dev img2img. |
 | `image_create_collage` | 116 | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. |
-| `video_clip` | 301 | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the gallery active when the call was admitted. |
-| `video_to_gif` | 382 | Convert a video segment to GIF using local ffmpeg. |
-| `image_to_video` | 435 | Animate a gallery image into a short video clip; delegates to fal.ai Seedance 2.0. |
-| `video_add_caption` | 507 | Add a text caption overlay to a video using local ffmpeg. |
-| `video_remix` | 566 | Generate a video remix: clip, add caption, convert to GIF. |
-| `video_from_images` | 651 | Create a video or GIF from a sequence of gallery images using ffmpeg. |
-| `video_concat` | 715 | Concatenate multiple video clips into one using ffmpeg. |
+| `video_clip` | 447 | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the gallery active when the call was admitted. |
+| `video_to_gif` | 512 | Convert a video segment to GIF using local ffmpeg, then durably publish it in the admission-time gallery. |
+| `image_to_video` | 594 | Animate a gallery image into a short video clip; delegates to fal.ai Seedance 2.0. |
+| `video_add_caption` | 644 | Add a text caption overlay with local ffmpeg, then durably publish the MP4 in the admission-time gallery. |
+| `video_remix` | 709 | Clip, optionally caption, and convert to GIF; intermediates are removed before return and the final GIF is durably published. |
+| `video_from_images` | 801 | Create an MP4 or GIF from gallery images using ffmpeg, then durably publish it in the admission-time gallery. |
+| `video_concat` | 874 | Concatenate clips with ffmpeg, then durably publish the MP4 in the admission-time gallery. |
 | `video_caption` | 763 | Describe video content by extracting keyframes and analyzing them with a vision LLM. |
 | `video_extract_frames` | 833 | Extract keyframes from a video as searchable gallery assets, each with its own lineage. |
 | `video_meme` | 867 | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | 1009 | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
 | `video_fetch` | 1036 | Download a video from a URL (YouTube, Vimeo, direct file) to local storage, index it in the gallery, return a media block; requires yt-dlp for platform URLs. |
 
-`video_clip` requires an active gallery because its result contract includes a
-stable gallery identity. It captures that gallery before FFmpeg runs, promotes
-the temporary MP4 into `media-mcp/generated/`, indexes the durable path, and
-returns `gallery_asset_id` both in the result object and in the fenced media
-block. The two IDs identify the same row. It also records generation lineage
-with `op: "video_clip"` and `params` containing `source`, `start_sec`, and
-`end_sec`; `parent_image_id` remains unset because an input path alone is not a
-verified gallery identity. OMC (`omc:Sequence`) and invocation provenance stay
-in the media block. File publication, gallery insertion, and lineage recording
-are one rollback-armed operation: a failure at any step preserves the causal
-error and removes the generated file and coupled gallery row/lineage.
+The local final-media tools `video_clip`, `video_to_gif`,
+`video_add_caption`, `video_remix`, `video_from_images`, and `video_concat`
+require an active gallery because their result contract includes a stable
+identity. Each captures the admission-time gallery before FFmpeg runs, consumes
+the processor-owned temporary MP4 or GIF into `media-mcp/generated/`, indexes
+the durable path, and returns the same `gallery_asset_id` in the result object
+and fenced media block. The final file therefore survives `FfmpegRunner` and
+server teardown.
+
+Each operation records generation lineage under its own tool name with complete
+resolved source and effective parameter JSON. `parent_image_id` remains unset:
+a source path is not a verified gallery identity, and multiple image indices
+cannot truthfully become one parent. OMC (`omc:Sequence`) and invocation
+provenance remain in the media block. File publication, gallery insertion, and
+lineage recording form one rollback-armed operation: any failure preserves the
+causal error and removes the generated file and coupled gallery row/lineage.
+`video_remix` separately owns its clip, optional caption, and final-GIF temporary
+paths so all intermediates are removed on success and on every error path rather
+than waiting for server teardown.
 
 ### Generation (`tools/generation.rs`, 7 tools)
 

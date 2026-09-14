@@ -1743,6 +1743,476 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    fn assert_local_publication(
+        content: &serde_json::Value,
+        store: &GalleryStore,
+        gallery_id: &str,
+        expected_op: &str,
+        expected_extension: &str,
+        expected_lineage_params: &serde_json::Value,
+    ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let output_path =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing media display hint")?,
+        )?;
+
+        assert!(output_path.starts_with(crate::assets::generated_assets_dir()));
+        assert_eq!(
+            output_path.extension().and_then(std::ffi::OsStr::to_str),
+            Some(expected_extension)
+        );
+        assert!(output_path.is_file(), "durable publication is missing");
+        assert_eq!(hint["src"], content["output"]);
+        assert_eq!(hint["gallery_asset_id"], asset_id);
+        assert_eq!(hint["ontology"], "omc:Sequence");
+        assert_eq!(hint["provenance"]["tool"], expected_op);
+
+        let asset = store.get_by_id(gallery_id, asset_id)?;
+        assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("local video lineage missing")?;
+        assert_eq!(lineage.op, expected_op);
+        assert!(
+            lineage.parent_image_id.is_none(),
+            "source paths or indices must not be promoted to a parent identity"
+        );
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(&params, expected_lineage_params);
+        Ok(output_path)
+    }
+
+    fn add_test_image(
+        store: &GalleryStore,
+        gallery_id: &str,
+        path: &std::path::Path,
+        color: [u8; 3],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        image::RgbImage::from_pixel(64, 64, image::Rgb(color)).save(path)?;
+        let bytes = std::fs::read(path)?;
+        let hash = {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&bytes);
+            format!("{:x}", hasher.finalize())
+        };
+        store.add_media(
+            gallery_id,
+            &path.to_string_lossy(),
+            &hash,
+            64,
+            64,
+            "png",
+            bytes.len() as u64,
+            "image",
+        )?;
+        Ok(())
+    }
+
+    fn collect_temp_media_files(
+        root: &std::path::Path,
+        files: &mut std::collections::HashSet<std::path::PathBuf>,
+    ) -> Result<(), std::io::Error> {
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if path.is_dir() {
+                collect_temp_media_files(&path, files)?;
+            } else {
+                files.insert(path);
+            }
+        }
+        Ok(())
+    }
+
+    fn temp_media_files() -> Result<std::collections::HashSet<std::path::PathBuf>, std::io::Error> {
+        let mut files = std::collections::HashSet::new();
+        collect_temp_media_files(&std::env::temp_dir().join("hkask-media"), &mut files)?;
+        Ok(files)
+    }
+
+    /// dcterms:identifier: `MediaServer::video_to_gif`
+    /// expect: My converted GIF remains addressable by one stable gallery identity after restart.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: a real source video and active file-backed gallery exist.
+    /// post: the durable GIF, gallery row, lineage, result id, and media-block id agree after server drop.
+    /// [P1] Constraining: source paths never become parent identities.
+    #[tokio::test]
+    async fn video_to_gif_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .video_to_gif(Parameters(VideoToGifRequest {
+                    video_url: source.to_string_lossy().into_owned(),
+                    start_sec: Some(0.25),
+                    duration_sec: Some(1.0),
+                    width: Some(48),
+                    fps: Some(8),
+                }))
+                .await?,
+        );
+        drop(server);
+
+        assert_local_publication(
+            &content,
+            &store,
+            &gallery_id,
+            "video_to_gif",
+            "gif",
+            &serde_json::json!({
+                "source": source.to_string_lossy(),
+                "start_sec": 0.25,
+                "duration_sec": 1.0,
+                "width": 48,
+                "fps": 8,
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_add_caption`
+    /// expect: My captioned video remains addressable by one stable gallery identity after restart.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: a real source video and active file-backed gallery exist.
+    /// post: the durable MP4, gallery row, complete lineage, result id, and media-block id agree.
+    /// [P1] Constraining: source paths never become parent identities.
+    #[tokio::test]
+    async fn video_add_caption_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .video_add_caption(Parameters(VideoAddCaptionRequest {
+                    video_url: source.to_string_lossy().into_owned(),
+                    text: "durable caption".to_string(),
+                    position: Some("top".to_string()),
+                    font_size: Some(18),
+                }))
+                .await?,
+        );
+        drop(server);
+
+        assert_local_publication(
+            &content,
+            &store,
+            &gallery_id,
+            "video_add_caption",
+            "mp4",
+            &serde_json::json!({
+                "source": source.to_string_lossy(),
+                "text": "durable caption",
+                "position": "top",
+                "font_size": 18,
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_remix`
+    /// expect: My remixed GIF is durable and no temporary edit stages remain.
+    /// [P1] Motivating: completed work survives teardown without hidden residue.
+    /// pre: a real source video, caption, and active file-backed gallery exist.
+    /// post: one durable GIF is published with complete lineage and no new FFmpeg temp files.
+    /// [P1] Constraining: clip and caption intermediates are deleted before return.
+    #[tokio::test]
+    async fn video_remix_publishes_durable_asset_and_cleans_intermediates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let before = temp_media_files()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .video_remix(Parameters(VideoRemixRequest {
+                    video_url: source.to_string_lossy().into_owned(),
+                    start_sec: 0.0,
+                    end_sec: 1.0,
+                    caption_text: Some("remix caption".to_string()),
+                }))
+                .await?,
+        );
+        let output = assert_local_publication(
+            &content,
+            &store,
+            &gallery_id,
+            "video_remix",
+            "gif",
+            &serde_json::json!({
+                "source": source.to_string_lossy(),
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "caption_text": "remix caption",
+            }),
+        )?;
+        let after = temp_media_files()?;
+        assert_eq!(
+            after.difference(&before).count(),
+            0,
+            "remix left FFmpeg intermediates: {:?}",
+            after.difference(&before).collect::<Vec<_>>()
+        );
+        drop(server);
+        assert!(output.is_file(), "server drop removed remixed publication");
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_from_images`
+    /// expect: My image sequence becomes one durable gallery video with traceable sources.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: indexed source images and an active file-backed gallery exist.
+    /// post: the durable MP4 and its complete source/parameter lineage survive server drop.
+    /// [P1] Constraining: multiple source indices do not fabricate one parent identity.
+    #[tokio::test]
+    async fn video_from_images_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let first = gallery_root.path().join("first.png");
+        let second = gallery_root.path().join("second.png");
+        add_test_image(&store, &gallery.id, &first, [255, 0, 0])?;
+        add_test_image(&store, &gallery.id, &second, [0, 255, 0])?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .video_from_images(Parameters(VideoFromImagesRequest {
+                    image_indices: vec![0, 1],
+                    fps: Some(2),
+                    format: Some("mp4".to_string()),
+                }))
+                .await?,
+        );
+        drop(server);
+
+        assert_local_publication(
+            &content,
+            &store,
+            &gallery_id,
+            "video_from_images",
+            "mp4",
+            &serde_json::json!({
+                "sources": [first.to_string_lossy(), second.to_string_lossy()],
+                "image_indices": [0, 1],
+                "fps": 2,
+                "format": "mp4",
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_concat`
+    /// expect: My concatenated clips become one durable gallery video with traceable sources.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: two real source videos and an active file-backed gallery exist.
+    /// post: the durable MP4 and complete ordered source lineage survive server drop.
+    /// [P1] Constraining: source paths never become parent identities.
+    #[tokio::test]
+    async fn video_concat_publishes_durable_asset_and_lineage_after_server_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let first = gallery_root.path().join("first.mp4");
+        let second = gallery_root.path().join("second.mp4");
+        create_real_video(&first).await?;
+        create_real_video(&second).await?;
+        let sources = vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+        ];
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let content = content_of(
+            &server
+                .video_concat(Parameters(VideoConcatRequest {
+                    video_urls: sources.clone(),
+                }))
+                .await?,
+        );
+        drop(server);
+
+        assert_local_publication(
+            &content,
+            &store,
+            &gallery_id,
+            "video_concat",
+            "mp4",
+            &serde_json::json!({"sources": sources}),
+        )?;
+        Ok(())
+    }
+
+    /// dcterms:identifier: `assets::stage_local_video_publication`
+    /// expect: Any local-video gallery failure rolls back the final file while preserving its original cause.
+    /// [P1] Motivating: failed publication leaves no partial user work.
+    /// pre: real FFmpeg produces a GIF but the admission-time gallery identity is invalid.
+    /// post: the original gallery cause is returned and no generated file, gallery row, or lineage remains.
+    /// [P1] Constraining: rollback stays armed through lineage publication.
+    #[tokio::test]
+    async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let before = temp_media_files()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id;
+        let server = server_with_gallery(
+            store.clone(),
+            "missing-admission-gallery".to_string(),
+            gallery_root.path(),
+        );
+
+        let error = server
+            .video_remix(Parameters(VideoRemixRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+                caption_text: Some("rollback caption".to_string()),
+            }))
+            .await
+            .expect_err("gallery publication must fail");
+
+        assert!(
+            error.to_string().contains("missing-admission-gallery"),
+            "original gallery cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            0
+        );
+        let after = temp_media_files()?;
+        assert_eq!(
+            after.difference(&before).count(),
+            0,
+            "failed remix left FFmpeg files: {:?}",
+            after.difference(&before).collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `publish_local_video_result`
+    /// expect: A lineage failure removes the migrated operation's final file and gallery identity.
+    /// [P1] Motivating: provenance failure cannot leave partially published user work.
+    /// pre: real FFmpeg, durable GIF staging, and gallery insertion succeed before lineage is rejected.
+    /// post: the original lineage cause is surfaced and file, gallery row, and lineage are absent.
+    /// [P1] Constraining: commit occurs only after lineage is durable.
+    #[tokio::test]
+    async fn local_video_lineage_failure_rolls_back_file_gallery_and_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        driver.execute(
+            "CREATE TRIGGER fail_local_video_lineage BEFORE INSERT ON gallery_generation \
+             WHEN NEW.op = 'video_to_gif' BEGIN SELECT RAISE(ABORT, 'injected migrated lineage failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+
+        let error = server
+            .video_to_gif(Parameters(VideoToGifRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: Some(0.0),
+                duration_sec: Some(1.0),
+                width: Some(48),
+                fps: Some(8),
+            }))
+            .await
+            .expect_err("lineage publication must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("injected migrated lineage failure"),
+            "original lineage failure cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            0
+        );
+        Ok(())
+    }
+
     /// A mock inference port returning canned responses on both paths —
     /// `generate` (the text passes) and `media_generate` (the audio-chat
     /// path) — so the full pass pipelines run end-to-end without a live

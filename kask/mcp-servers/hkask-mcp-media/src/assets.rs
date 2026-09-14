@@ -510,12 +510,17 @@ pub(crate) fn stage_local_video_publication(
     })?;
     source_cleanup.disarm();
 
+    let media_type = if ext.eq_ignore_ascii_case("gif") {
+        "image"
+    } else {
+        "video"
+    };
     let asset = StagedJobAsset {
         staged_path,
         final_path,
         bytes,
         ext,
-        media_type: "video",
+        media_type,
         gallery_store: None,
         gallery_image_id: None,
         committed: false,
