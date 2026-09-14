@@ -2619,7 +2619,7 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// dcterms:identifier: `publish_local_video`
+    /// dcterms:identifier: `assets::publish_local_media`
     /// expect: A lineage failure removes the migrated operation's final file and gallery identity.
     /// [P1] Motivating: provenance failure cannot leave partially published user work.
     /// pre: real FFmpeg, durable GIF staging, and gallery insertion succeed before lineage is rejected.

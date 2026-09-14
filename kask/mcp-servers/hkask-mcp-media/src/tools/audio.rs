@@ -354,7 +354,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Capture audio from the default system microphone. Records to a WAV file optimized for Whisper transcription (16kHz mono)."
+        description = "Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono)."
     )]
     pub async fn audio_capture(
         &self,
@@ -495,7 +495,7 @@ impl MediaServer {
     /// Trim an audio file to specified start/end times. Uses ffmpeg stream
     /// copy for fast, lossless trimming.
     #[tool(
-        description = "Trim an audio file to specified start/end times. Uses ffmpeg stream copy for fast, lossless trimming."
+        description = "Trim an audio file to specified start/end times and publish a canonical durable WAV asset using lossless ffmpeg stream copy."
     )]
     pub async fn audio_trim(
         &self,
@@ -549,7 +549,7 @@ impl MediaServer {
     /// Concatenate multiple audio files into one. Uses the ffmpeg concat
     /// demuxer for fast, lossless joining.
     #[tool(
-        description = "Concatenate multiple audio files into one. Uses the ffmpeg concat demuxer for fast, lossless joining."
+        description = "Concatenate audio files and publish one canonical durable WAV asset using the lossless ffmpeg concat demuxer."
     )]
     pub async fn audio_concat(
         &self,

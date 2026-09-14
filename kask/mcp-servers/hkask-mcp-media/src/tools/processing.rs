@@ -233,23 +233,6 @@ impl Drop for LocalVideoIntermediates {
     }
 }
 
-fn publish_local_video(
-    server: &MediaServer,
-    gallery: &GalleryState,
-    output: &std::path::Path,
-    effective_params: &LocalVideoEffectiveParams<'_>,
-) -> Result<serde_json::Value, McpToolError> {
-    crate::assets::publish_local_media(
-        gallery,
-        &server.gallery_store,
-        output,
-        effective_params.op(),
-        effective_params.status(),
-        effective_params.format(),
-        effective_params,
-    )
-}
-
 #[tool_router(router = processing_router, vis = "pub")]
 impl MediaServer {
     // ── Derivation tools ─────────────────────────────────────────────────────
@@ -590,7 +573,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Clip(params);
-            publish_local_video(self, &gallery, &output, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }
@@ -654,7 +645,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Gif(params);
-            publish_local_video(self, &gallery, &output, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }
@@ -756,7 +755,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Caption(params);
-            publish_local_video(self, &gallery, &output, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }
@@ -841,7 +848,15 @@ impl MediaServer {
             intermediates.cleanup().map_err(map_media_error)?;
 
             let effective_params = LocalVideoEffectiveParams::Remix(params);
-            publish_local_video(self, &gallery, &gif, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &gif,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }
@@ -908,7 +923,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            publish_local_video(self, &gallery, &output, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }
@@ -946,7 +969,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Concat(params);
-            publish_local_video(self, &gallery, &output, &effective_params)
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output,
+                effective_params.op(),
+                effective_params.status(),
+                effective_params.format(),
+                &effective_params,
+            )
         })
         .await
     }

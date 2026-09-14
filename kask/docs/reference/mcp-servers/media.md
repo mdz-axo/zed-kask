@@ -298,11 +298,11 @@ than waiting for server teardown.
 | `voice_design` | 11 | Design a synthetic voice profile from a character description; returns a `VoiceDesign` JSON for `generate_speech`. |
 | `generate_speech` | 59 | Generate speech audio from text using a voice design; returns the persisted audio file path. |
 | `transcribe_bundle` | 158 | Transcribe audio into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
-| `audio_capture` | 250 | Capture audio from the default system microphone to a WAV file optimized for Whisper transcription (16 kHz mono). |
+| `audio_capture` | 359 | Capture audio from the default microphone and publish it as a canonical durable WAV asset (16 kHz mono); callers cannot select an output path. |
 | `record_and_transcribe` | 302 | Record from microphone and transcribe in one call; returns linked audio file path and transcript. |
 | `transcribe_and_store` | 225 | Transcribe audio AND store the `TranscriptBundle` server-side in one call, returning only the transcript summary (id, words_count, has_word_timings) — the ingest entry point when the educt layers will be used afterwards. |
-| `audio_trim` | 451 | Trim an audio file to start/end times; ffmpeg stream copy, fast and lossless. |
-| `audio_concat` | 493 | Concatenate audio files; ffmpeg concat demuxer, fast and lossless. |
+| `audio_trim` | 500 | Trim an audio file to start/end times and publish the result as a canonical durable WAV asset; ffmpeg stream copy is fast and lossless. |
+| `audio_concat` | 554 | Concatenate audio files and publish one canonical durable WAV asset; ffmpeg uses the lossless concat demuxer. |
 
 ### Model browser (`tools/models.rs`, 2 tools)
 

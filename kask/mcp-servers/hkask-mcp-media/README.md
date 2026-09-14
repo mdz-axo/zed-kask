@@ -37,7 +37,7 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 | `voice_design` | Design a synthetic voice profile from a character description. Returns a VoiceDesign JSON for use with generate_speech |
 | `generate_speech` | Generate speech audio from text using a voice design. Returns audio as base64 data URI |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
-| `audio_capture` | Capture audio from the default system microphone. Records to a WAV file optimized for Whisper transcription (16kHz mono) |
+| `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
 | `generate_image` | Generate an image from a text prompt. Describe what you want to see |
 | `transform_image` | Transform an existing image with a text prompt. Describe the change you want |
