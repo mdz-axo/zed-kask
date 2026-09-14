@@ -2620,7 +2620,7 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                     .expect("submit"),
             );
             let job_id = submitted["job_id"].as_str().expect("job id").to_string();
-            let mut completed = false;
+            let mut completed_status = None;
             for _ in 0..150 {
                 let request = serde_json::from_value::<types::ScreenerRequest>(json!({
                     "action":"status","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
@@ -2634,12 +2634,18 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 );
                 assert_ne!(status["status"], json!("failed"), "screen failed: {status}");
                 if status["status"] == json!("completed") {
-                    completed = true;
+                    completed_status = Some(status);
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
-            assert!(completed, "expectations screen must complete");
+            let completed_status = completed_status.expect("expectations screen must complete");
+            assert_eq!(completed_status["processed"], json!(1));
+            assert_eq!(completed_status["total"], json!(1));
+            assert!(completed_status["heartbeat_at"].is_string());
+            let artifact_path = completed_status["artifact_path"].as_str().expect("canonical report path");
+            assert!(std::path::Path::new(artifact_path).is_file());
+            std::fs::remove_file(artifact_path).expect("remove test report artifact");
             let request = serde_json::from_value::<types::ScreenerRequest>(json!({
                 "action":"results","job_id":job_id,"cursor":0,"prompt":"","limit":10,
                 "criteria_overrides":{}
@@ -3327,4 +3333,41 @@ fn solve_expectations_financial_sector_uses_roe_path() {
         "{implied_roe} vs {expected}"
     );
     assert_eq!(solve.book_value_per_share, Some(9.68));
+}
+
+/// expect: A running saved screen acknowledges cancellation immediately and reaches a durable cancelled state without waiting for a stalled provider.
+#[tokio::test]
+async fn saved_screen_cancel_is_bounded_and_durable() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start_async(|_path| async {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        (200, json!({"data":[]}))
+    }).await;
+    providers::TEST_HTTP_ORIGIN.scope(fixture.origin.clone(), async {
+        let server = server(directory.path());
+        let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+            "action":"calculate","template":"expectations_gap",
+            "template_context":{"exchanges":["US"],"market_cap_min":5_000_000_000.0,"market_cap_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0},
+            "prompt":"","limit":10,"criteria_overrides":{}
+        })).expect("calculate request");
+        let submitted = content(&server.company_screener(Parameters(request)).await.expect("submit"));
+        let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+        let cancel = serde_json::from_value::<types::ScreenerRequest>(json!({
+            "action":"cancel","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
+        })).expect("cancel request");
+        let acknowledged = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            server.company_screener(Parameters(cancel)),
+        ).await.expect("cancel acknowledgement bound").expect("cancel tool");
+        assert_eq!(content(&acknowledged)["accepted"], json!(true));
+        for _ in 0..30 {
+            let status = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"status","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
+            })).expect("status request");
+            let value = content(&server.company_screener(Parameters(status)).await.expect("status"));
+            if value["status"] == json!("cancelled") { return; }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("cancelled state was not persisted");
+    }).await;
 }

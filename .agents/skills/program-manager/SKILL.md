@@ -148,21 +148,34 @@ each one structurally impossible to repeat:
 
 ### Phase 3 — Execute (governed coding)
 
-1. Make surgical edits inside the Phase 2 boundary. Prefer existing
+1. Before a nontrivial mutation or validation call, run a read-only
+   execution preflight:
+   - Discover the current file path, symbol location, test target, or
+     output shape; do not infer it from convention.
+   - Check arguments against the current tool schema or CLI syntax.
+     Cargo receives at most one positional test filter per command.
+   - Write terminal commands for POSIX `sh`; use explicit `bash -lc`
+     only when Bash behavior is intentionally required.
+   - Count edit-target matches before grouped edits. Split repeated or
+     formatting-sensitive replacements into separate calls.
+   - Keep each command centered on one primary observation; split
+     hashing, building, restarting, and verification when one can
+     prevent later evidence from being reached.
+2. Make surgical edits inside the Phase 2 boundary. Prefer existing
    patterns and dependencies; add dependencies only when the task
    justifies them.
-2. Enforce the anti-hack constraints (see Constraints). On any tool
+3. Enforce the anti-hack constraints (see Constraints). On any tool
    failure, call `curator_report_skill_use_issue` with
    `skill_name: "program-manager"`, then fix or halt — never silently
    continue with degraded input.
-3. If delegating code work to sub-agents: give each delegate the
+4. If delegating code work to sub-agents: give each delegate the
    design record's boundary and invariants, assign disjoint write
    scopes, and require validation evidence in their report. A delegate
    without a boundary will improvise one.
-4. Never leave the tree broken mid-refactor. If the change cannot be
+5. Never leave the tree broken mid-refactor. If the change cannot be
    completed in one pass, gate it, branch it, or revert it. A
    build-breaking half-edit blocks every other stream.
-5. Timebox: if the same approach fails 3 times without new state, STOP.
+6. Timebox: if the same approach fails 3 times without new state, STOP.
    Summarize what was tried and escalate to the operator. Do not
    generate a fourth hypothesis.
 

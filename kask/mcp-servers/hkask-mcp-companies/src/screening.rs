@@ -338,11 +338,30 @@ async fn calculate_job(
                 .unwrap_or_else(|| "unknown panic payload".to_string()),
         ),
     };
-    if let Some(error) = failure
-        && let Err(store_error) =
-            store.finish_screen_job(&job_id, "failed", None, Some(&error), None)
-    {
-        tracing::error!(job_id, "failed to persist screen failure: {store_error}");
+    if let Some(error) = failure {
+        let cancelled = match store.screen_cancel_requested(&job_id) {
+            Ok(cancelled) => cancelled,
+            Err(store_error) => {
+                tracing::warn!(
+                    job_id,
+                    "failed to read cancellation after screen failure: {store_error}"
+                );
+                false
+            }
+        };
+        let (status, persisted_error) = if cancelled {
+            ("cancelled", None)
+        } else {
+            ("failed", Some(error.as_str()))
+        };
+        if let Err(store_error) =
+            store.finish_screen_job(&job_id, status, None, persisted_error, None)
+        {
+            tracing::error!(
+                job_id,
+                "failed to persist screen terminal state: {store_error}"
+            );
+        }
     }
 }
 
@@ -385,11 +404,19 @@ async fn run_screen_job(
             )
             .await
         };
-        let prepared = tokio::time::timeout(Duration::from_secs(60), pass_stage)
-            .await
-            .map_err(|_| {
-                McpToolError::unavailable("financial screen did not complete within 60 seconds")
-            })??;
+        let prepared = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(60), pass_stage) => {
+                result.map_err(|_| {
+                    McpToolError::unavailable("financial screen did not complete within 60 seconds")
+                })??
+            }
+            cancellation = wait_for_screen_cancel(&server.research, job_id) => {
+                cancellation?;
+                server.research.finish_screen_job(job_id, "cancelled", None, None, None)
+                    .map_err(crate::map_portfolio_error)?;
+                return Ok(());
+            }
+        };
         let items: Vec<ScreenJobItemRecord> = prepared
             .groups
             .iter()
@@ -1143,6 +1170,18 @@ impl RequestRateLimiter {
     }
 }
 
+async fn wait_for_screen_cancel(store: &ResearchStore, job_id: &str) -> Result<(), McpToolError> {
+    loop {
+        if store
+            .screen_cancel_requested(job_id)
+            .map_err(crate::map_portfolio_error)?
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 async fn enrich_pending_issuers(
     server: &CompaniesServer,
     job_id: &str,
@@ -1890,6 +1929,33 @@ mod tests {
             Some("screen calculation panicked: calculation exploded")
         );
         Ok(())
+    }
+
+    /// expect: Enrichment failure retains every financially qualified security in an explicit unavailable issuer row.
+    #[test]
+    fn unavailable_issuer_row_preserves_the_financial_pass_set() {
+        let group = IssuerGroup {
+            issuer_key: "name:acme".to_string(),
+            issuer_key_provenance: "normalized_name".to_string(),
+            issuer_identity_provenance: "normalized_name_fallback".to_string(),
+            securities: vec![MaterializedSecurity {
+                symbol: "ACME.US".to_string(),
+                name: "Acme".to_string(),
+                market_capitalization_usd: 10_000_000_000.0,
+                average_daily_dollar_volume_usd: 2_000_000.0,
+                adjusted_close: 20.0,
+                currency_symbol: "USD".to_string(),
+                issuer_key: "name:acme".to_string(),
+                lei: None,
+                primary_ticker: None,
+                isin: None,
+                normalized_issuer_name: "acme".to_string(),
+            }],
+        };
+        let row = unavailable_issuer_row(&group, "fundamentals unavailable");
+        assert_eq!(row["data_quality_status"], json!("unavailable"));
+        assert_eq!(row["eligible_symbols"], json!(["ACME.US"]));
+        assert_eq!(row["unavailable_reason"], json!("fundamentals unavailable"));
     }
 
     #[test]

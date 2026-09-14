@@ -541,18 +541,27 @@ mod tests {
 
     #[test]
     fn all_registry_template_contract_headers_parse() {
-        fn collect_templates(directory: &std::path::Path, templates: &mut Vec<std::path::PathBuf>) {
-            let Ok(entries) = std::fs::read_dir(directory) else {
-                return;
-            };
-            for entry in entries.flatten() {
+        fn collect_templates(
+            directory: &std::path::Path,
+            templates: &mut Vec<std::path::PathBuf>,
+        ) -> Result<(), String> {
+            let entries = std::fs::read_dir(directory)
+                .map_err(|error| format!("failed to read {}: {error}", directory.display()))?;
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "failed to read an entry in {}: {error}",
+                        directory.display()
+                    )
+                })?;
                 let path = entry.path();
                 if path.is_dir() {
-                    collect_templates(&path, templates);
+                    collect_templates(&path, templates)?;
                 } else if path.extension().is_some_and(|extension| extension == "j2") {
                     templates.push(path);
                 }
             }
+            Ok(())
         }
 
         let base = std::path::PathBuf::from("kask/registry/templates");
@@ -560,21 +569,25 @@ mod tests {
             return;
         }
         let mut templates = Vec::new();
-        collect_templates(&base, &mut templates);
+        if let Err(error) = collect_templates(&base, &mut templates) {
+            panic!("{error}");
+        }
         assert!(!templates.is_empty(), "registry template census is empty");
 
         for path in templates {
-            let content = std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) => panic!("failed to read {}: {error}", path.display()),
+            };
             let Some(header) = template_metadata_header(&content) else {
                 continue;
             };
-            serde_yaml::from_str::<serde_yaml::Value>(header).unwrap_or_else(|error| {
+            if let Err(error) = serde_yaml::from_str::<serde_yaml::Value>(header) {
                 panic!(
                     "failed to parse contract header in {}: {error}",
                     path.display()
-                )
-            });
+                );
+            }
         }
     }
 

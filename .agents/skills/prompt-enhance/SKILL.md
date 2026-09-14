@@ -79,9 +79,10 @@ Single-pass by design (DR-S13a exempt class: documented single-pass) — the ver
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
-1. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
-2. Always include a change log: summary, audit findings table by constraint force, grill verdict + ratings, mutations applied, deferred findings, residual risks.
-3. This step is a `render` action (no LLM call) — the change log is templated from structured data. The former LLM-call version was the single largest source of process failures (empty output → JSON parse error after 4 successful LLM calls).
+1. Map the verify result into the render contract's flat inputs before calling `render_template`: `grill_verdict = verification.verdict` and `grill_ratings = verification.ratings`. At low effort use `grill_verdict = "skipped"` and `grill_ratings = []`; never pass the nested `verification` object in place of these fields.
+2. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
+3. Always include a change log: summary, audit findings table by constraint force, grill verdict + ratings, mutations applied, deferred findings, residual risks.
+4. This step is a `render` action (no LLM call) — the change log is templated from structured data. The former LLM-call version was the single largest source of process failures (empty output → JSON parse error after 4 successful LLM calls).
 
 ## Registry Templates
 

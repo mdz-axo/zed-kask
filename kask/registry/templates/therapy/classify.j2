@@ -16,6 +16,10 @@ Forgetting (purging/condensing source memories after reification) is a hygiene s
 
 ## Classification instructions
 
+### Skill-use attribution gate
+
+For every skill-use finding, verify `failure_origin` before proposing a remedy. `skill_contract` and repeated `agent_execution` can produce skill changes. `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, and `expected_absence` route to those owners. `unknown` remains unresolved. Attribution changes ownership; it never suppresses the raw failure or removes it from the total count.
+
 ### Memory hygiene — contradictions (Festinger's three dissonance strategies)
 
 1. **Reduce importance** — both memories are plausible, can't determine which is correct.
@@ -82,6 +86,8 @@ Produce a JSON object:
       "strategy": "reduce_importance|add_consonant|remove_dissonant|merge|link|keep|raise_confidence|lower_confidence|reset_confidence|create_skill|create_template|create_rule|purge|condense|keep_sources",
       "action": "<specific tool call(s)>",
       "h_mem_ids": ["<ID>"],
+      "failure_origin": "<skill-use attribution value; omit for other findings>",
+      "owner": "<skill|tool|provider|environment|operator|unresolved>",
       "reification_target": "<skill/template/rule name and content summary, if applicable>",
       "reason": "<why this resolution, citing the finding and grounding>",
       "requires_approval": true

@@ -31,7 +31,7 @@ prediction calibration.
 ### Step 0 — Read prior calibration (execute)
 
 1. Read prior calibration from the scenarios MCP forecast store via `scenario_calibration` — the Brier score history and overconfidence_bias from all resolved forecasts.
-2. The overconfidence_bias feeds the grasp-current step so the agent knows its historical calibration. On failure, the Kata cycle proceeds without calibration context.
+2. The overconfidence_bias feeds the grasp-current step so the agent knows its historical calibration. "No stored forecasts" is an expected empty calibration state: record calibration context as unavailable and continue without reporting a skill-use failure. Other failures remain visible, and the Kata cycle proceeds without calibration context.
 
 ### meta-grasp-current (Kata Step 1: Grasp Current Condition)
 

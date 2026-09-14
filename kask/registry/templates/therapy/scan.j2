@@ -58,6 +58,10 @@ Prefer a complete read-only SQL audit (sqlcipher, mode=ro) over sampling via rec
 
 Each wiring finding records the data symptom, the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed before or alongside memory hygiene — a writer bug re-corrupts cleaned rows.
 
+### Skill-use attribution gate
+
+Before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
+
 ## Output format
 
 Produce a JSON object:
@@ -73,6 +77,7 @@ Produce a JSON object:
       "entity": "<entity>",
       "attribute": "<attribute>",
       "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate|system_defect",
+      "failure_origin": "<skill-use attribution value; omit for other findings>",
       "description": "<what the issue is>",
       "root_cause": "<for system_defect findings: file:line of the writing path>",
       "contradicting_h_mem_ids": ["<ID>", "<ID>"],

@@ -122,6 +122,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 
    Each wiring finding records the data symptom (from the scan), the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed BEFORE or alongside memory hygiene — a writer bug re-corrupts cleaned rows (the 2026-09-01 recalibration set every row to 0.5; the skill-use reporting path then re-created 1.0 rows because the recalibration fixed the rows, not the writer).
 
+   **Skill-use attribution gate:** before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
+
    Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path. Direct SQL WRITES to `hmems` bypass the `value` column's JSON serialization — the 2026-09-01 session's bare-string values corrupted 4 rows and broke the first full-store scan (2026-09-04, surfaced by the backfill tool's dry run); if a SQL write is ever unavoidable, `json_quote` the value, and audit prior SQL-written rows with `json_valid(value)` before any full-store scan.
 
 3. Collect all findings as structured data. Each finding includes:
@@ -129,6 +131,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - `entity`: the entity of the h_mem.
    - `attribute`: the attribute.
    - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate" | "system_defect".
+   - `failure_origin`: for skill-use findings, the attribution-gate value; omit for other findings.
    - `root_cause`: for system_defect findings, the file:line of the writing path that produces the bad rows.
    - `description`: what the issue is.
    - `contradicting_h_mem_ids`: for contradictions, the IDs of the contradicting h_mems.
@@ -148,7 +151,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - template: `therapy/classify.j2`
    - variables: { "findings": <scan findings>, "target": "<target name>" }
 
-2. Following the template's guidance, classify each finding:
+2. Following the template's guidance, classify each finding. For a skill-use finding, verify `failure_origin` first: `skill_contract` and repeated `agent_execution` can produce skill changes; `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, and `expected_absence` route to those owners; `unknown` remains unresolved. Attribution changes ownership, never suppresses the raw failure.
 
    **For contradictions** — Festinger's three dissonance resolution strategies:
 
