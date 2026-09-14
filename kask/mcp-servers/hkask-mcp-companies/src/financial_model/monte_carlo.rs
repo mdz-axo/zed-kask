@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 
-use super::{HistoricalSnapshot, ProjectionAssumptionError, ProjectionAssumptions, project_model};
+use super::{HistoricalSnapshot, ProjectionAssumptions, ProjectionError, project_financial_model};
 /// Distribution of intrinsic values from Monte Carlo simulation.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MonteCarloResult {
@@ -41,7 +41,7 @@ pub(crate) struct McRange {
 
 impl McRange {
     /// Validate Monte Carlo perturbation widths before sampling.
-    pub fn validate(&self) -> Result<(), ProjectionAssumptionError> {
+    pub fn validate(&self) -> Result<(), ProjectionError> {
         for (field, value) in [
             ("range_revenue_growth", self.revenue_growth),
             ("range_gross_margin", self.gross_margin),
@@ -51,7 +51,7 @@ impl McRange {
             ("range_discount_rate", self.discount_rate),
         ] {
             if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-                return Err(ProjectionAssumptionError::NotFiniteOrOutOfRange {
+                return Err(ProjectionError::NotFiniteOrOutOfRange {
                     field,
                     min: 0.0,
                     max: 1.0,
@@ -63,9 +63,9 @@ impl McRange {
 }
 
 /// Validate the relative sensitivity range before varying assumptions.
-pub(crate) fn validate_sensitivity_range(range_pct: f64) -> Result<(), ProjectionAssumptionError> {
+pub(crate) fn validate_sensitivity_range(range_pct: f64) -> Result<(), ProjectionError> {
     if !range_pct.is_finite() || !(0.0..=1.0).contains(&range_pct) {
-        return Err(ProjectionAssumptionError::NotFiniteOrOutOfRange {
+        return Err(ProjectionError::NotFiniteOrOutOfRange {
             field: "range_pct",
             min: 0.0,
             max: 1.0,
@@ -104,9 +104,9 @@ pub(crate) fn monte_carlo_dcf(
     ranges: &McRange,
     current_price: f64,
     rng: &mut impl rand::Rng,
-) -> MonteCarloResult {
+) -> Result<MonteCarloResult, ProjectionError> {
     let simulations = simulations.clamp(MC_MIN_SIMULATIONS, MC_MAX_SIMULATIONS);
-    let base = project_model(hist, base_assumptions, current_price);
+    let base = project_financial_model(hist, base_assumptions)?;
     let mut values: Vec<f64> = Vec::with_capacity(simulations);
 
     for _ in 0..simulations {
@@ -122,7 +122,7 @@ pub(crate) fn monte_carlo_dcf(
             sample_uniform(rng, a.nwc_to_revenue, ranges.nwc_to_revenue).clamp(-0.20, 0.50);
         a.discount_rate = sample_uniform(rng, a.discount_rate, ranges.discount_rate)
             .clamp((a.terminal_growth + 0.0001).max(0.05), 0.30);
-        values.push(project_model(hist, &a, current_price).intrinsic_per_share);
+        values.push(project_financial_model(hist, &a)?.intrinsic_per_share);
     }
 
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -132,8 +132,14 @@ pub(crate) fn monte_carlo_dcf(
     let std_dev = variance.sqrt();
 
     // Histogram with 10 buckets
-    let min_val = values[0];
-    let max_val = values[n - 1];
+    let min_val = values
+        .first()
+        .copied()
+        .ok_or(ProjectionError::InsufficientHistory)?;
+    let max_val = values
+        .last()
+        .copied()
+        .ok_or(ProjectionError::InsufficientHistory)?;
     let bucket_width = (max_val - min_val) / 10.0;
     let mut histogram: Vec<(String, usize)> = Vec::new();
     if bucket_width > 0.0 {
@@ -154,21 +160,21 @@ pub(crate) fn monte_carlo_dcf(
         0.0
     };
 
-    MonteCarloResult {
+    Ok(MonteCarloResult {
         simulations: n,
         base_intrinsic: base.intrinsic_per_share,
         mean_intrinsic: mean,
         std_dev,
-        min_intrinsic: values[0],
+        min_intrinsic: min_val,
         p10: percentile(&values, 0.10),
         p25: percentile(&values, 0.25),
         median: percentile(&values, 0.50),
         p75: percentile(&values, 0.75),
         p90: percentile(&values, 0.90),
-        max_intrinsic: values[n - 1],
+        max_intrinsic: max_val,
         prob_undervalued,
         histogram,
-    }
+    })
 }
 
 fn sample_uniform(rng: &mut impl rand::Rng, center: f64, range: f64) -> f64 {

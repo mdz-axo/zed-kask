@@ -1,6 +1,215 @@
 //! Processing tools — background removal, style transfer, collage, video editing, memes.
 use crate::*;
 
+const REMIX_CAPTION_POSITION: &str = "bottom";
+const REMIX_CAPTION_FONT_SIZE: u32 = 24;
+const REMIX_GIF_START_SEC: f32 = 0.0;
+const REMIX_GIF_WIDTH: u32 = 480;
+const REMIX_GIF_FPS: u32 = 10;
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct LocalVideoValidationGate {
+    pub(crate) entered: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) resume: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) bypass_dns: bool,
+}
+
+#[cfg(test)]
+static LOCAL_VIDEO_VALIDATION_GATE: std::sync::LazyLock<
+    std::sync::Mutex<Option<LocalVideoValidationGate>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) struct LocalVideoValidationGateGuard;
+
+#[cfg(test)]
+impl Drop for LocalVideoValidationGateGuard {
+    fn drop(&mut self) {
+        match LOCAL_VIDEO_VALIDATION_GATE.lock() {
+            Ok(mut gate) => *gate = None,
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media",
+                %error,
+                "Failed to clear local-video validation test gate"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_local_video_validation_gate(
+    gate: LocalVideoValidationGate,
+) -> Result<LocalVideoValidationGateGuard, MediaError> {
+    let mut installed = LOCAL_VIDEO_VALIDATION_GATE
+        .lock()
+        .map_err(|error| MediaError::Io(format!("local-video validation gate lock: {error}")))?;
+    *installed = Some(gate);
+    Ok(LocalVideoValidationGateGuard)
+}
+
+#[cfg(test)]
+async fn pause_after_local_video_admission() -> Result<bool, McpToolError> {
+    let gate = LOCAL_VIDEO_VALIDATION_GATE
+        .lock()
+        .map_err(|error| {
+            McpToolError::internal(format!("local-video validation gate lock: {error}"))
+        })?
+        .clone();
+    let Some(gate) = gate else {
+        return Ok(false);
+    };
+    gate.entered.notify_one();
+    gate.resume.notified().await;
+    Ok(gate.bypass_dns)
+}
+
+#[derive(serde::Serialize)]
+struct ClipEffectiveParams<'a> {
+    source: &'a str,
+    start_sec: f32,
+    end_sec: f32,
+    duration_sec: f32,
+}
+
+#[derive(serde::Serialize)]
+struct GifEffectiveParams<'a> {
+    source: &'a str,
+    start_sec: f32,
+    duration_sec: f32,
+    width: u32,
+    fps: u32,
+}
+
+#[derive(serde::Serialize)]
+struct CaptionEffectiveParams<'a> {
+    source: &'a str,
+    text: &'a str,
+    position: &'a str,
+    font_size: u32,
+}
+
+#[derive(serde::Serialize)]
+struct RemixEffectiveParams<'a> {
+    source: &'a str,
+    start_sec: f32,
+    end_sec: f32,
+    caption_text: Option<&'a str>,
+    caption_position: &'static str,
+    caption_font_size: u32,
+    gif_start_sec: f32,
+    gif_duration_sec: f32,
+    gif_width: u32,
+    gif_fps: u32,
+}
+
+#[derive(serde::Serialize)]
+struct ImagesEffectiveParams<'a> {
+    sources: &'a [String],
+    image_indices: &'a [usize],
+    fps: u32,
+}
+
+#[derive(serde::Serialize)]
+struct ConcatEffectiveParams<'a> {
+    sources: &'a [String],
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum LocalVideoEffectiveParams<'a> {
+    Clip(ClipEffectiveParams<'a>),
+    Gif(GifEffectiveParams<'a>),
+    Caption(CaptionEffectiveParams<'a>),
+    Remix(RemixEffectiveParams<'a>),
+    ImagesMp4(ImagesEffectiveParams<'a>),
+    ImagesGif(ImagesEffectiveParams<'a>),
+    Concat(ConcatEffectiveParams<'a>),
+}
+
+impl LocalVideoEffectiveParams<'_> {
+    const fn op(&self) -> &'static str {
+        match self {
+            Self::Clip(_) => "video_clip",
+            Self::Gif(_) => "video_to_gif",
+            Self::Caption(_) => "video_add_caption",
+            Self::Remix(_) => "video_remix",
+            Self::ImagesMp4(_) | Self::ImagesGif(_) => "video_from_images",
+            Self::Concat(_) => "video_concat",
+        }
+    }
+
+    const fn status(&self) -> &'static str {
+        match self {
+            Self::Clip(_) => "clipped",
+            Self::Gif(_) => "converted",
+            Self::Caption(_) => "captioned",
+            Self::Remix(_) => "remixed",
+            Self::ImagesMp4(_) | Self::ImagesGif(_) => "created",
+            Self::Concat(_) => "concatenated",
+        }
+    }
+
+    const fn format(&self) -> crate::assets::LocalVideoFormat {
+        match self {
+            Self::Gif(_) | Self::Remix(_) | Self::ImagesGif(_) => {
+                crate::assets::LocalVideoFormat::Gif
+            }
+            Self::Clip(_) | Self::Caption(_) | Self::ImagesMp4(_) | Self::Concat(_) => {
+                crate::assets::LocalVideoFormat::Mp4
+            }
+        }
+    }
+
+    fn to_value(&self) -> Result<serde_json::Value, MediaError> {
+        let mut value = serde_json::to_value(self).map_err(|error| {
+            MediaError::AssetPersistence(format!(
+                "serialize {} effective parameters: {error}",
+                self.op()
+            ))
+        })?;
+        let Some(object) = value.as_object_mut() else {
+            return Err(MediaError::AssetPersistence(format!(
+                "serialize {} effective parameters: expected an object",
+                self.op()
+            )));
+        };
+        object.insert(
+            "format".to_string(),
+            serde_json::Value::String(self.format().extension().to_string()),
+        );
+        Ok(value)
+    }
+}
+
+fn capture_required_local_gallery(server: &MediaServer) -> Result<GalleryState, McpToolError> {
+    server
+        .try_capture_gallery()
+        .map_err(map_media_error)?
+        .filter(|gallery| gallery.gallery_id.is_some())
+        .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))
+}
+
+pub(crate) fn resolve_image_path_in_gallery(
+    server: &MediaServer,
+    gallery: &GalleryState,
+    image_index: usize,
+) -> Result<std::path::PathBuf, MediaError> {
+    let gallery_id = gallery
+        .gallery_id
+        .as_deref()
+        .ok_or(MediaError::GalleryNotInitialized)?;
+    let image = server
+        .gallery_store
+        .get_image(gallery_id, Some(image_index), None)
+        .map_err(|error| {
+            MediaError::ImageNotFound(format!(
+                "Image not found at index {image_index} in captured gallery {gallery_id}: {error}"
+            ))
+        })?;
+    Ok(std::path::PathBuf::from(image.absolute_path))
+}
+
 struct LocalVideoIntermediates {
     paths: Vec<std::path::PathBuf>,
 }
@@ -74,14 +283,17 @@ fn publish_local_video_result(
     server: &MediaServer,
     gallery: &GalleryState,
     output: &std::path::Path,
-    op: &str,
-    media_kind: &str,
-    result_fields: serde_json::Value,
-    args: serde_json::Value,
-    lineage_params: serde_json::Value,
+    effective_params: &LocalVideoEffectiveParams<'_>,
 ) -> Result<serde_json::Value, McpToolError> {
+    let op = effective_params.op();
+    let status = effective_params.status();
+    let format = effective_params.format();
     let mut publication =
-        crate::assets::stage_local_video_publication(output).map_err(map_media_error)?;
+        crate::assets::stage_local_video_publication(output, format).map_err(map_media_error)?;
+    let effective_value = match effective_params.to_value() {
+        Ok(value) => value,
+        Err(error) => return Err(rollback_local_publication_error(&mut publication, error)),
+    };
     let mut result = publication
         .publish_and_slim(Some(gallery), &server.gallery_store)
         .map_err(map_media_error)?;
@@ -94,7 +306,7 @@ fn publish_local_video_result(
         ));
     };
 
-    let lineage_params_json = match serde_json::to_string(&lineage_params) {
+    let lineage_params_json = match serde_json::to_string(&effective_value) {
         Ok(json) => json,
         Err(error) => {
             return Err(rollback_local_publication_error(
@@ -120,11 +332,11 @@ fn publish_local_video_result(
         ));
     }
 
-    let Some(fields) = result_fields.as_object() else {
+    let Some(effective_fields) = effective_value.as_object() else {
         return Err(rollback_local_publication_error(
             &mut publication,
             MediaError::AssetPersistence(format!(
-                "compose {op} result: result fields must be an object"
+                "compose {op} result: effective parameters must be an object"
             )),
         ));
     };
@@ -136,13 +348,23 @@ fn publish_local_video_result(
             )),
         ));
     };
-    result_object.extend(fields.clone());
+    result_object.extend(effective_fields.clone());
+    result_object.insert(
+        "status".to_string(),
+        serde_json::Value::String(status.to_string()),
+    );
+    result_object.insert("effective_params".to_string(), effective_value.clone());
     result_object.insert(
         "gallery_asset_id".to_string(),
         serde_json::Value::String(gallery_asset_id),
     );
-    let result =
-        crate::media_block::enrich_with_omc_and_provenance(result, op, media_kind, args, None);
+    let result = crate::media_block::enrich_with_omc_and_provenance(
+        result,
+        op,
+        format.block_kind(),
+        effective_value,
+        None,
+    );
     publication.commit();
     Ok(result)
 }
@@ -453,10 +675,6 @@ impl MediaServer {
         }): Parameters<VideoClipRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_clip", async {
-            if !crate::is_local_media_path(&video_url) {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-
             if start_sec < 0.0 || end_sec <= 0.0 {
                 return Err(McpToolError::invalid_argument(
                     "timestamps must be non-negative",
@@ -469,41 +687,29 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            let bypass_dns = pause_after_local_video_admission().await?;
+            #[cfg(not(test))]
+            let bypass_dns = false;
+            if !crate::is_local_media_path(&video_url) && !bypass_dns {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             self.require_ffmpeg()?;
 
+            let params = ClipEffectiveParams {
+                source: &video_url,
+                start_sec,
+                end_sec,
+                duration_sec: end_sec - start_sec,
+            };
             let output = self
                 .ffmpeg
-                .clip(&video_url, start_sec, end_sec)
+                .clip(params.source, params.start_sec, params.end_sec)
                 .await
                 .map_err(map_media_error)?;
-            publish_local_video_result(
-                self,
-                &gallery,
-                &output,
-                "video_clip",
-                "video",
-                serde_json::json!({
-                    "status": "clipped",
-                    "source": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "duration": end_sec - start_sec,
-                }),
-                serde_json::json!({
-                    "video_url": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                }),
-                serde_json::json!({
-                    "source": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                }),
-            )
+            let effective_params = LocalVideoEffectiveParams::Clip(params);
+            publish_local_video_result(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -520,10 +726,6 @@ impl MediaServer {
         }): Parameters<VideoToGifRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_to_gif", async {
-            if !crate::is_local_media_path(&video_url) {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-
             let start = start_sec.unwrap_or(0.0);
             let dur = duration_sec.unwrap_or(5.0);
             let w = width.unwrap_or(480);
@@ -543,46 +745,35 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
 
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            let bypass_dns = pause_after_local_video_admission().await?;
+            #[cfg(not(test))]
+            let bypass_dns = false;
+            if !crate::is_local_media_path(&video_url) && !bypass_dns {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             self.require_ffmpeg()?;
+            let params = GifEffectiveParams {
+                source: &video_url,
+                start_sec: start,
+                duration_sec: dur,
+                width: w,
+                fps: f,
+            };
             let output = self
                 .ffmpeg
-                .to_gif(&video_url, start, dur, w, f)
+                .to_gif(
+                    params.source,
+                    params.start_sec,
+                    params.duration_sec,
+                    params.width,
+                    params.fps,
+                )
                 .await
                 .map_err(map_media_error)?;
-
-            publish_local_video_result(
-                self,
-                &gallery,
-                &output,
-                "video_to_gif",
-                "image",
-                serde_json::json!({
-                    "status": "converted",
-                    "source": video_url,
-                    "start_sec": start,
-                    "duration_sec": dur,
-                    "width": w,
-                    "fps": f,
-                }),
-                serde_json::json!({
-                    "video_url": video_url,
-                    "start_sec": start,
-                    "duration_sec": dur,
-                    "width": w,
-                    "fps": f,
-                }),
-                serde_json::json!({
-                    "source": video_url,
-                    "start_sec": start,
-                    "duration_sec": dur,
-                    "width": w,
-                    "fps": f,
-                }),
-            )
+            let effective_params = LocalVideoEffectiveParams::Gif(params);
+            publish_local_video_result(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -650,10 +841,6 @@ impl MediaServer {
         }): Parameters<VideoAddCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_add_caption", async {
-            if !crate::is_local_media_path(&video_url) {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-
             let pos = position.as_deref().unwrap_or("bottom");
             let size = font_size.unwrap_or(24);
             if size == 0 {
@@ -662,43 +849,33 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            let bypass_dns = pause_after_local_video_admission().await?;
+            #[cfg(not(test))]
+            let bypass_dns = false;
+            if !crate::is_local_media_path(&video_url) && !bypass_dns {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             self.require_ffmpeg()?;
+            let params = CaptionEffectiveParams {
+                source: &video_url,
+                text: &text,
+                position: pos,
+                font_size: size,
+            };
             let output = self
                 .ffmpeg
-                .add_caption(&video_url, &text, pos, size)
+                .add_caption(
+                    params.source,
+                    params.text,
+                    params.position,
+                    params.font_size,
+                )
                 .await
                 .map_err(map_media_error)?;
-
-            publish_local_video_result(
-                self,
-                &gallery,
-                &output,
-                "video_add_caption",
-                "video",
-                serde_json::json!({
-                    "status": "captioned",
-                    "source": video_url,
-                    "text": text,
-                    "position": pos,
-                    "font_size": size,
-                }),
-                serde_json::json!({
-                    "video_url": video_url,
-                    "text": text,
-                    "position": pos,
-                    "font_size": size,
-                }),
-                serde_json::json!({
-                    "source": video_url,
-                    "text": text,
-                    "position": pos,
-                    "font_size": size,
-                }),
-            )
+            let effective_params = LocalVideoEffectiveParams::Caption(params);
+            publish_local_video_result(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -714,34 +891,51 @@ impl MediaServer {
         }): Parameters<VideoRemixRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_remix", async {
-            if !crate::is_local_media_path(&video_url) {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-
             if start_sec >= end_sec {
                 return Err(McpToolError::invalid_argument(
                     "start_sec must be less than end_sec.",
                 ));
             }
 
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            let bypass_dns = pause_after_local_video_admission().await?;
+            #[cfg(not(test))]
+            let bypass_dns = false;
+            if !crate::is_local_media_path(&video_url) && !bypass_dns {
+                validate_tool_url_with_dns(&video_url).await?;
+            }
             self.require_ffmpeg()?;
 
+            let params = RemixEffectiveParams {
+                source: &video_url,
+                start_sec,
+                end_sec,
+                caption_text: caption_text.as_deref(),
+                caption_position: REMIX_CAPTION_POSITION,
+                caption_font_size: REMIX_CAPTION_FONT_SIZE,
+                gif_start_sec: REMIX_GIF_START_SEC,
+                gif_duration_sec: end_sec - start_sec,
+                gif_width: REMIX_GIF_WIDTH,
+                gif_fps: REMIX_GIF_FPS,
+            };
             let mut intermediates = LocalVideoIntermediates::new();
             let clipped = self
                 .ffmpeg
-                .clip(&video_url, start_sec, end_sec)
+                .clip(params.source, params.start_sec, params.end_sec)
                 .await
                 .map_err(map_media_error)?;
             intermediates.track(clipped.clone());
 
-            let captioned = if let Some(ref cap) = caption_text {
+            let captioned = if let Some(cap) = params.caption_text {
                 let captioned = self
                     .ffmpeg
-                    .add_caption(&clipped.to_string_lossy(), cap, "bottom", 24)
+                    .add_caption(
+                        &clipped.to_string_lossy(),
+                        cap,
+                        params.caption_position,
+                        params.caption_font_size,
+                    )
                     .await
                     .map_err(map_media_error)?;
                 intermediates.track(captioned.clone());
@@ -754,10 +948,10 @@ impl MediaServer {
                 .ffmpeg
                 .to_gif(
                     &captioned.to_string_lossy(),
-                    0.0,
-                    end_sec - start_sec,
-                    480,
-                    10,
+                    params.gif_start_sec,
+                    params.gif_duration_sec,
+                    params.gif_width,
+                    params.gif_fps,
                 )
                 .await
                 .map_err(map_media_error)?;
@@ -765,32 +959,8 @@ impl MediaServer {
             final_cleanup.track(gif.clone());
             intermediates.cleanup().map_err(map_media_error)?;
 
-            publish_local_video_result(
-                self,
-                &gallery,
-                &gif,
-                "video_remix",
-                "image",
-                serde_json::json!({
-                    "status": "remixed",
-                    "source": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "caption": caption_text,
-                }),
-                serde_json::json!({
-                    "video_url": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "caption_text": caption_text,
-                }),
-                serde_json::json!({
-                    "source": video_url,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "caption_text": caption_text,
-                }),
-            )
+            let effective_params = LocalVideoEffectiveParams::Remix(params);
+            publish_local_video_result(self, &gallery, &gif, &effective_params)
         })
         .await
     }
@@ -815,53 +985,49 @@ impl MediaServer {
             if fps == 0 {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
-            let fmt = format.as_deref().unwrap_or("mp4");
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
+            let requested_format = format.as_deref().unwrap_or("mp4");
+            let format =
+                crate::assets::LocalVideoFormat::parse(requested_format).ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "Unsupported video format {requested_format:?}; expected mp4 or gif"
+                    ))
+                })?;
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            pause_after_local_video_admission().await?;
             self.require_ffmpeg()?;
 
             let mut paths = Vec::new();
             for idx in &image_indices {
-                paths.push(self.resolve_image_path(*idx).map_err(map_media_error)?);
+                paths.push(
+                    resolve_image_path_in_gallery(self, &gallery, *idx).map_err(map_media_error)?,
+                );
             }
             let sources = paths
                 .iter()
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
 
+            let params = ImagesEffectiveParams {
+                sources: &sources,
+                image_indices: &image_indices,
+                fps,
+            };
+            let effective_params = match format {
+                crate::assets::LocalVideoFormat::Mp4 => {
+                    LocalVideoEffectiveParams::ImagesMp4(params)
+                }
+                crate::assets::LocalVideoFormat::Gif => {
+                    LocalVideoEffectiveParams::ImagesGif(params)
+                }
+            };
             let output = self
                 .ffmpeg
-                .images_to_video(&paths, fps, fmt)
+                .images_to_video(&paths, fps, effective_params.format())
                 .await
                 .map_err(map_media_error)?;
 
-            let media_kind = if fmt == "gif" { "image" } else { "video" };
-            publish_local_video_result(
-                self,
-                &gallery,
-                &output,
-                "video_from_images",
-                media_kind,
-                serde_json::json!({
-                    "status": "created",
-                    "frame_count": paths.len(),
-                    "fps": fps,
-                    "format": fmt,
-                }),
-                serde_json::json!({
-                    "image_indices": image_indices,
-                    "fps": fps,
-                    "format": fmt,
-                }),
-                serde_json::json!({
-                    "sources": sources,
-                    "image_indices": image_indices,
-                    "fps": fps,
-                    "format": fmt,
-                }),
-            )
+            publish_local_video_result(self, &gallery, &output, &effective_params)
         })
         .await
     }
@@ -878,37 +1044,28 @@ impl MediaServer {
                 ));
             }
 
+            let gallery = capture_required_local_gallery(self)?;
+            #[cfg(test)]
+            let bypass_dns = pause_after_local_video_admission().await?;
+            #[cfg(not(test))]
+            let bypass_dns = false;
             for url in &video_urls {
-                if !crate::is_local_media_path(url) {
+                if !crate::is_local_media_path(url) && !bypass_dns {
                     validate_tool_url_with_dns(url).await?;
                 }
             }
-
-            let gallery = self
-                .capture_gallery()
-                .filter(|gallery| gallery.gallery_id.is_some())
-                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
             self.require_ffmpeg()?;
 
+            let params = ConcatEffectiveParams {
+                sources: &video_urls,
+            };
             let output = self
                 .ffmpeg
-                .concat(&video_urls)
+                .concat(params.sources)
                 .await
                 .map_err(map_media_error)?;
-
-            publish_local_video_result(
-                self,
-                &gallery,
-                &output,
-                "video_concat",
-                "video",
-                serde_json::json!({
-                    "status": "concatenated",
-                    "clip_count": video_urls.len(),
-                }),
-                serde_json::json!({ "video_urls": video_urls }),
-                serde_json::json!({ "sources": video_urls }),
-            )
+            let effective_params = LocalVideoEffectiveParams::Concat(params);
+            publish_local_video_result(self, &gallery, &output, &effective_params)
         })
         .await
     }

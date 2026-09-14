@@ -481,6 +481,14 @@ pub(crate) enum LocalVideoFormat {
 }
 
 impl LocalVideoFormat {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mp4" => Some(Self::Mp4),
+            "gif" => Some(Self::Gif),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn extension(self) -> &'static str {
         match self {
             Self::Mp4 => "mp4",

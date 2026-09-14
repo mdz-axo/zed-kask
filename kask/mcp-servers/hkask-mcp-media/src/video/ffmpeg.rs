@@ -435,7 +435,7 @@ impl FfmpegRunner {
 
     /// Create a video from a sequence of images.
     /// Images are concatenated at the specified frame rate.
-    pub async fn images_to_video(
+    pub(crate) async fn images_to_video(
         &self,
         image_paths: &[PathBuf],
         fps: u32,
@@ -472,15 +472,20 @@ impl FfmpegRunner {
             .arg("-r")
             .arg(fps.to_string())
             .arg("-i")
-            .arg(list_path.path())
-            .arg("-c:v")
-            .arg(match format {
-                crate::assets::LocalVideoFormat::Mp4 => "libx264",
-                crate::assets::LocalVideoFormat::Gif => "gif",
-            })
-            .arg("-pix_fmt")
-            .arg("yuv420p")
-            .arg(output.path());
+            .arg(list_path.path());
+        match format {
+            crate::assets::LocalVideoFormat::Mp4 => {
+                command
+                    .arg("-c:v")
+                    .arg("libx264")
+                    .arg("-pix_fmt")
+                    .arg("yuv420p");
+            }
+            crate::assets::LocalVideoFormat::Gif => {
+                command.arg("-c:v").arg("gif");
+            }
+        }
+        command.arg(output.path());
         Self::run_to_completion(command, "images_to_video").await?;
 
         let output = output.commit();
@@ -748,5 +753,82 @@ mod tests {
             .expect("concat must run ffmpeg to completion");
         let size = concatenated.metadata().map(|m| m.len()).unwrap_or(0);
         assert!(size > 0, "concatenated output is empty");
+    }
+
+    /// expect: A failed FFmpeg process cannot leave a partial output or concat-list file behind.
+    /// pre: the subprocess writes its output path, then exits non-zero.
+    /// post: every local-video primitive returns its causal failure and its owned temp directory is empty.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_ffmpeg_rolls_back_partial_outputs_and_lists()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir()?;
+        let fake_ffmpeg = root.path().join("partial-then-fail.sh");
+        std::fs::write(
+            &fake_ffmpeg,
+            "#!/bin/sh\nfor arg do output=$arg; done\nprintf partial > \"$output\"\nprintf 'injected partial-output failure' >&2\nexit 23\n",
+        )?;
+        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
+        let output_dir = root.path().join("outputs");
+        let runner = FfmpegRunner::with_binary(
+            fake_ffmpeg.to_string_lossy().into_owned(),
+            output_dir.clone(),
+        );
+
+        let assert_rolled_back =
+            |error: crate::MediaError| -> Result<(), Box<dyn std::error::Error>> {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("injected partial-output failure"),
+                    "FFmpeg stderr cause was lost: {error}"
+                );
+                assert_eq!(
+                    std::fs::read_dir(&output_dir)?.count(),
+                    0,
+                    "failed FFmpeg operation left rollback-owned files"
+                );
+                Ok(())
+            };
+
+        assert_rolled_back(
+            runner
+                .clip("input.mp4", 0.0, 1.0)
+                .await
+                .expect_err("clip must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .to_gif("input.mp4", 0.0, 1.0, 320, 10)
+                .await
+                .expect_err("GIF conversion must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .add_caption("input.mp4", "caption", "bottom", 24)
+                .await
+                .expect_err("caption must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .images_to_video(
+                    &[std::path::PathBuf::from("frame.png")],
+                    24,
+                    crate::assets::LocalVideoFormat::Mp4,
+                )
+                .await
+                .expect_err("image sequence must surface injected failure"),
+        )?;
+        assert_rolled_back(
+            runner
+                .concat(&["first.mp4".to_string(), "second.mp4".to_string()])
+                .await
+                .expect_err("concat must surface injected failure"),
+        )?;
+        Ok(())
     }
 }

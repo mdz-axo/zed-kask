@@ -5,7 +5,7 @@
 //! engines retain their distinct models and reuse only historical extraction.
 
 use crate::data_quality::ModelInputQuality;
-use crate::financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
+use crate::financial_model::{HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions};
 
 /// Extract non-empty financial statement arrays and the profile object from
 /// the raw provider responses. Returns `None` if any required array is empty
@@ -49,7 +49,7 @@ pub(crate) fn build_dcf_response(
     symbol: &str,
     forecast_id: &str,
     revision_of: &Option<String>,
-    model: &ProjectedModel,
+    model: &ProjectedFinancialModel,
     assumptions: &ProjectionAssumptions,
     hist: &HistoricalSnapshot,
     signal_quality: &ModelInputQuality,
@@ -198,7 +198,7 @@ pub(crate) struct PreparedDcf {
     pub history: HistoricalSnapshot,
     pub signal_quality: ModelInputQuality,
     pub assumptions: ProjectionAssumptions,
-    pub model: ProjectedModel,
+    pub model: ProjectedFinancialModel,
     pub current_price: f64,
     pub provenance: serde_json::Value,
     pub warnings: Vec<String>,
@@ -262,7 +262,13 @@ pub(crate) async fn prepare_dcf(
         .map_err(|error| {
             hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string())
         })?;
-    let model = crate::financial_model::project_model(&history, &assumptions, current_price);
+    let model = crate::financial_model::project_financial_model(&history, &assumptions).map_err(
+        |error| {
+            DcfPreparationError::Unavailable(
+                serde_json::json!({"symbol": symbol, "error": error.to_string()}),
+            )
+        },
+    )?;
     Ok(PreparedDcf {
         history,
         signal_quality,

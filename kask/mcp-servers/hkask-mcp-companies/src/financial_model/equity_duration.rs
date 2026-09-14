@@ -1,10 +1,10 @@
 //! Macaulay-style equity duration — extracted from `financial_model.rs`
 //! (deep-module split: the cash-flow-weighted duration computation is a pure
-//! function of a `ProjectedModel`, independent of the projection machinery).
+//! function of a `ProjectedFinancialModel`, independent of the projection machinery).
 
 use serde::{Deserialize, Serialize};
 
-use super::ProjectedModel;
+use super::ProjectedFinancialModel;
 
 /// Cash-flow-weighted (Macaulay-style) equity duration of a projected model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ pub struct EquityDuration {
 
 /// Compute Macaulay-style equity duration from a projected model.
 /// Returns `None` when total PV is zero (duration undefined — never fabricate).
-pub fn equity_duration(model: &ProjectedModel, stage1_years: u8) -> Option<EquityDuration> {
+pub fn equity_duration(model: &ProjectedFinancialModel, stage1_years: u8) -> Option<EquityDuration> {
     let horizon_years = model.periods.len() as u8;
     let explicit_pv: f64 = model.periods.iter().map(|p| p.present_value).sum();
     let total_pv = explicit_pv + model.terminal_pv;

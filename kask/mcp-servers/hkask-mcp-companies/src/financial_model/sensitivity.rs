@@ -1,11 +1,11 @@
 //! DCF sensitivity (tornado) analysis — extracted from `financial_model.rs`
 //! (deep-module split: varying each assumption +/- `range_pct` and ranking by
-//! intrinsic-value delta re-runs `project_model` per driver; the fibo concept
+//! intrinsic-value delta re-runs `project_financial_model` per driver; the fibo concept
 //! labels come from `crate::fibo`).
 
 use serde::Serialize;
 
-use super::{HistoricalSnapshot, ProjectionAssumptions, project_model};
+use super::{HistoricalSnapshot, ProjectionAssumptions, ProjectionError, project_financial_model};
 use crate::fibo::{
     METRIC_CAPITAL_EXPENDITURE, METRIC_DEPRECIATION_AND_AMORTIZATION, METRIC_DISCOUNT_RATE,
     METRIC_GROSS_PROFIT_MARGIN, METRIC_NET_WORKING_CAPITAL, METRIC_REVENUE_GROWTH_RATE,
@@ -34,8 +34,8 @@ pub(crate) fn sensitivity_analysis(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     range_pct: f64,
-) -> Vec<SensitivityResult> {
-    let base = project_model(hist, base_assumptions, 0.0);
+) -> Result<Vec<SensitivityResult>, ProjectionError> {
+    let base = project_financial_model(hist, base_assumptions)?;
     let base_intrinsic = base.intrinsic_per_share;
 
     let drivers: [(
@@ -97,11 +97,11 @@ pub(crate) fn sensitivity_analysis(
 
         let mut low_a = base_assumptions.clone();
         setter(&mut low_a, low_val);
-        let intrinsic_low = project_model(hist, &low_a, 0.0).intrinsic_per_share;
+        let intrinsic_low = project_financial_model(hist, &low_a)?.intrinsic_per_share;
 
         let mut high_a = base_assumptions.clone();
         setter(&mut high_a, high_val);
-        let intrinsic_high = project_model(hist, &high_a, 0.0).intrinsic_per_share;
+        let intrinsic_high = project_financial_model(hist, &high_a)?.intrinsic_per_share;
 
         let delta_pct = if base_intrinsic > 0.0 {
             (intrinsic_high - intrinsic_low) / base_intrinsic
@@ -124,8 +124,9 @@ pub(crate) fn sensitivity_analysis(
 
     results.sort_by(|a, b| {
         b.delta_pct
-            .partial_cmp(&a.delta_pct)
+            .abs()
+            .partial_cmp(&a.delta_pct.abs())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    results
+    Ok(results)
 }

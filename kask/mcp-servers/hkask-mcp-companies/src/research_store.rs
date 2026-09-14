@@ -1086,71 +1086,53 @@ mod tests {
         Ok(())
     }
 
-    fn screen_job(id: &str) -> ScreenJobRecord {
-        ScreenJobRecord {
-            id: id.to_string(),
+    #[test]
+    fn reopening_store_fails_only_interrupted_screen_jobs() -> Result<(), PortfolioError> {
+        let directory = tempfile::tempdir()
+            .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
+        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
+        let definition = json!({"name":"restart-contract"});
+
+        for (id, status) in [("queued-job", "queued"), ("executing-job", "executing")] {
+            store.insert_screen_job(&ScreenJobRecord {
+                id: id.to_string(),
+                status: status.to_string(),
+                definition: definition.clone(),
+                result: None,
+                error: None,
+                created_at: "2026-09-13T00:00:00Z".to_string(),
+                updated_at: "2026-09-13T00:00:00Z".to_string(),
+            })?;
+        }
+
+        store.insert_screen_job(&ScreenJobRecord {
+            id: "completed-job".to_string(),
             status: "queued".to_string(),
-            definition: json!({"name":"restart-contract"}),
+            definition,
             result: None,
             error: None,
             created_at: "2026-09-13T00:00:00Z".to_string(),
             updated_at: "2026-09-13T00:00:00Z".to_string(),
-            stage: "queued".to_string(),
-            processed: 0,
-            total: 0,
-            complete_count: 0,
-            partial_count: 0,
-            unavailable_count: 0,
-            model_sensitive_count: 0,
-            heartbeat_at: None,
-            cancel_requested: false,
-            checkpoint: None,
-            artifact_path: None,
-        }
-    }
-
-    /// expect: Restart keeps a committed pass set resumable instead of reacquiring its universe.
-    #[test]
-    fn reopening_store_preserves_checkpointed_screen_jobs() -> Result<(), PortfolioError> {
-        let directory = tempfile::tempdir()
-            .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
-        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
-        store.insert_screen_job(&screen_job("resumable-job"))?;
-        store.persist_screen_pass_set(
-            "resumable-job",
-            &json!({"candidate_count":2,"exclusions":[]}),
-            &[
-                ScreenJobItemRecord::pending("issuer:a", 0, json!({"issuer_key":"issuer:a"})),
-                ScreenJobItemRecord::pending("issuer:b", 1, json!({"issuer_key":"issuer:b"})),
-            ],
-        )?;
+        })?;
+        let completed_result = json!({"rows":[{"symbol":"TEST.US"}]});
+        store.update_screen_job("completed-job", "completed", Some(&completed_result), None)?;
         drop(store);
 
         let reopened = ResearchStore::with_dir(directory.path().to_path_buf())?;
-        let job = reopened
-            .get_screen_job("resumable-job")?
-            .ok_or_else(|| PortfolioError::from("missing resumable screen job".to_string()))?;
-        assert_eq!(job.status, "queued");
-        assert_eq!(job.stage, "enrichment");
-        assert_eq!(job.processed, 0);
-        assert_eq!(job.total, 2);
-        assert!(job.checkpoint.is_some());
-        assert_eq!(reopened.pending_screen_jobs()?.len(), 1);
-        assert_eq!(reopened.pending_screen_items("resumable-job")?.len(), 2);
-        Ok(())
-    }
+        for id in ["queued-job", "executing-job"] {
+            let job = reopened
+                .get_screen_job(id)?
+                .ok_or_else(|| PortfolioError::from(format!("missing screen job {id}")))?;
+            assert_eq!(job.status, "failed");
+            assert_eq!(job.result, None);
+            assert_eq!(job.error.as_deref(), Some(SCREEN_JOB_RESTART_ERROR));
+        }
 
-    /// expect: The complete issuer pass set becomes visible atomically and contains one item per issuer.
-    #[test]
-    fn pass_set_commit_is_atomic_and_issuer_unique() -> Result<(), PortfolioError> {
-        let directory = tempfile::tempdir()
-            .map_err(|error| PortfolioError::from(format!("create temp directory: {error}")))?;
-        let store = ResearchStore::with_dir(directory.path().to_path_buf())?;
-        store.insert_screen_job(&screen_job("atomic-job"))?;
-        let duplicate = [
-            ScreenJobItemRecord::pending("issuer:a", 0, json!({"line":"A.US"})),
-            ScreenJobItemRecord::pending("issuer:a", 1, json!({"line":"A.LSE"})),
-        ];
+        let completed = reopened
+            .get_screen_job("completed-job")?
+            .ok_or_else(|| PortfolioError::from("missing completed screen job".to_string()))?;
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.result, Some(completed_result));
         assert!(
             store
                 .persist_screen_pass_set("atomic-job", &json!({"candidate_count":2}), &duplicate)

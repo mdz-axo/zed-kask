@@ -26,7 +26,7 @@
 //! in a path. Modified assumptions are clamped to valid ranges before
 //! running the DCF.
 
-use super::{HistoricalSnapshot, ProjectionAssumptions, project_model};
+use super::{HistoricalSnapshot, ProjectionAssumptions, ProjectionError, project_financial_model};
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of scenario nodes (2^N path enumeration limit).
@@ -225,6 +225,8 @@ pub(crate) enum ScenarioImpactError {
     InvalidTopoOrder(String, String),
     #[error("all path probabilities are zero")]
     ZeroProbability,
+    #[error("financial projection unavailable: {0}")]
+    Projection(#[from] ProjectionError),
 }
 
 // ── Core computation ───────────────────────────────────────────────────────
@@ -346,7 +348,7 @@ pub(crate) fn scenario_impact_dcf(
         .collect();
 
     // Base case DCF (no deltas applied).
-    let base_model = project_model(hist, base_assumptions, current_price);
+    let base_model = project_financial_model(hist, base_assumptions)?;
     let base_intrinsic = base_model.intrinsic_per_share;
 
     // Enumerate all 2^n leaf paths.
@@ -379,7 +381,7 @@ pub(crate) fn scenario_impact_dcf(
         }
         clamp_assumptions(&mut modified);
 
-        let model = project_model(hist, &modified, current_price);
+        let model = project_financial_model(hist, &modified)?;
 
         let outcomes: Vec<PathOutcome> = nodes
             .iter()
@@ -571,7 +573,7 @@ fn clamp_assumptions(assumptions: &mut ProjectionAssumptions) {
     assumptions.discount_rate = assumptions.discount_rate.clamp(0.05, 0.30);
     assumptions.terminal_growth = assumptions.terminal_growth.clamp(0.00, 0.10);
     // Guard against division by zero in the terminal value formula
-    // (project_model divides by discount_rate - terminal_growth).
+    // (project_financial_model divides by discount_rate - terminal_growth).
     if assumptions.terminal_growth >= assumptions.discount_rate {
         assumptions.terminal_growth = assumptions.discount_rate * 0.5;
     }

@@ -7,7 +7,9 @@
 //! Reference: Schwartz, "The Art of the Long View"
 
 use crate::fibo::{METRIC_GROSS_PROFIT_MARGIN, METRIC_REVENUE_GROWTH_RATE};
-use crate::financial_model::{self, HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
+use crate::financial_model::{
+    self, HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions,
+};
 
 // ── 2x2 Matrix ────────────────────────────────────────────────────────────
 
@@ -105,7 +107,7 @@ impl ScenarioMatrix {
 #[derive(Debug, Clone)]
 pub(crate) struct ScenarioResult {
     pub scenario: Scenario,
-    pub model: ProjectedModel,
+    pub model: ProjectedFinancialModel,
     pub applied_growth: f64,
     pub applied_margin: f64,
     pub intrinsic_per_share: f64,
@@ -116,7 +118,7 @@ pub(crate) fn run_scenario_analysis(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
     matrix: &ScenarioMatrix,
-) -> Vec<ScenarioResult> {
+) -> Result<Vec<ScenarioResult>, financial_model::ProjectionError> {
     let mut results = Vec::with_capacity(4);
 
     for scenario in &matrix.scenarios {
@@ -127,7 +129,7 @@ pub(crate) fn run_scenario_analysis(
         assumptions.revenue_growth = applied_growth;
         assumptions.gross_margin = applied_margin;
 
-        let model = financial_model::project_model(hist, &assumptions, 0.0);
+        let model = financial_model::project_financial_model(hist, &assumptions)?;
 
         results.push(ScenarioResult {
             scenario: scenario.clone(),
@@ -138,7 +140,7 @@ pub(crate) fn run_scenario_analysis(
         });
     }
 
-    results
+    Ok(results)
 }
 
 /// Summarize scenario results with range and dispersion.

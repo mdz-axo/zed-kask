@@ -15,7 +15,7 @@
 
 use crate::{
     CompaniesServer,
-    financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions},
+    financial_model::{HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions},
 };
 use hkask_mcp_server::server::McpToolError;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// A stored forecast model for later decomposition during `forecast_record`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredForecast {
-    pub model: ProjectedModel,
+    pub model: ProjectedFinancialModel,
     pub assumptions: ProjectionAssumptions,
     pub current_price: f64,
     pub intrinsic_per_share: f64,
@@ -50,7 +50,7 @@ impl StoredForecast {
 /// value divided by the last projected period's free cash flow. Returns 0.0
 /// when there are no periods or the last FCF is non-positive (the division
 /// would be undefined or misleading).
-pub(crate) fn projected_terminal_multiple(model: &ProjectedModel) -> f64 {
+pub(crate) fn projected_terminal_multiple(model: &ProjectedFinancialModel) -> f64 {
     if let Some(last) = model.periods.last() {
         if last.free_cash_flow > 0.0 {
             model.terminal_value / last.free_cash_flow

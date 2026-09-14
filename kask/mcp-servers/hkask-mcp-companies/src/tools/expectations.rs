@@ -286,7 +286,7 @@ pub(crate) fn solve_expectations(
         // like-for-like in net-income space. The enterprise model's gross
         // margin is an internal parameter only, reached through the identity
         // GM = NM/(1−tax) + SG&A% + interest% + D&A%.
-        let assumptions = financial_model::ProjectionAssumptions::from_history(&hist);
+        let assumptions = financial_model::ProjectionAssumptions::from_history(&hist).ok()?;
         let sustainable_growth_rate = capability.sustainable_growth_rate;
         let demonstrated_revenue_growth = hist.demonstrated_revenue_cagr()?;
         let demonstrated_net_margin = capability.net_profit_margin;

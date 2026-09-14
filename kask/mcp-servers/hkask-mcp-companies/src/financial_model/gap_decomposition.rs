@@ -1,11 +1,14 @@
 //! Forecast-vs-actual return-gap decomposition — extracted from
 //! `financial_model.rs` (deep-module split: decomposing the intrinsic-value
-//! gap into line-item drivers re-runs `project_model` per driver and is
+//! gap into line-item drivers re-runs `project_financial_model` per driver and is
 //! independent of the projection core).
 
 use serde::Serialize;
 
-use super::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions, project_model};
+use super::{
+    HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions, ProjectionError,
+    project_financial_model,
+};
 
 /// Result of decomposing a forecast-vs-actual return gap.
 #[derive(Debug, Clone, Serialize)]
@@ -26,14 +29,14 @@ pub(crate) struct GapDecomposition {
 /// projection model with only that one assumption changed to the actual,
 /// and measuring the intrinsic value delta.
 pub(crate) fn decompose_gap(
-    projected: &ProjectedModel,
+    projected: &ProjectedFinancialModel,
     projected_assumptions: &ProjectionAssumptions,
     actual_hist: &HistoricalSnapshot,
     actual_price: f64,
     actual_multiple: f64,
     _projected_intrinsic: f64,
     projected_price: f64,
-) -> GapDecomposition {
+) -> Result<GapDecomposition, ProjectionError> {
     // Baseline: the original projection gives projected_intrinsic_per_share
     let base_intrinsic = projected.intrinsic_per_share;
     let base_price = projected_price;
@@ -62,36 +65,36 @@ pub(crate) fn decompose_gap(
     // Now: recompute the base from actual_hist with the original assumptions,
     // so each delta is pure driver effect.
     let base_from_actual =
-        project_model(actual_hist, projected_assumptions, 0.0).intrinsic_per_share;
-    let compute_delta = |assumptions: &ProjectionAssumptions| -> f64 {
-        let alt_model = project_model(actual_hist, assumptions, 0.0);
-        alt_model.intrinsic_per_share - base_from_actual
+        project_financial_model(actual_hist, projected_assumptions)?.intrinsic_per_share;
+    let compute_delta = |assumptions: &ProjectionAssumptions| -> Result<f64, ProjectionError> {
+        let alternative = project_financial_model(actual_hist, assumptions)?;
+        Ok(alternative.intrinsic_per_share - base_from_actual)
     };
 
     // Revenue growth contribution: use actual CAGR vs projected CAGR
     let mut growth_assumptions = projected_assumptions.clone();
     growth_assumptions.revenue_growth = actual_hist.revenue_cagr();
-    let revenue_growth_delta = compute_delta(&growth_assumptions);
+    let revenue_growth_delta = compute_delta(&growth_assumptions)?;
 
     // Gross margin contribution
     let mut gm_assumptions = projected_assumptions.clone();
     gm_assumptions.gross_margin = actual_hist.gross_margin();
-    let gross_margin_delta = compute_delta(&gm_assumptions);
+    let gross_margin_delta = compute_delta(&gm_assumptions)?;
 
     // D&A contribution
     let mut da_assumptions = projected_assumptions.clone();
     da_assumptions.da_to_revenue = actual_hist.da_to_revenue();
-    let da_delta = compute_delta(&da_assumptions);
+    let da_delta = compute_delta(&da_assumptions)?;
 
     // Capex contribution
     let mut capex_assumptions = projected_assumptions.clone();
     capex_assumptions.capex_to_revenue = actual_hist.capex_to_revenue();
-    let capex_delta = compute_delta(&capex_assumptions);
+    let capex_delta = compute_delta(&capex_assumptions)?;
 
     // NWC contribution
     let mut nwc_assumptions = projected_assumptions.clone();
     nwc_assumptions.nwc_to_revenue = actual_hist.nwc_to_revenue();
-    let nwc_delta = compute_delta(&nwc_assumptions);
+    let nwc_delta = compute_delta(&nwc_assumptions)?;
 
     // Multiple contribution: (actual multiple - projected multiple) * actual_fcf
     let projected_multiple = if let Some(last) = projected.periods.last() {
@@ -122,7 +125,7 @@ pub(crate) fn decompose_gap(
     let residual =
         (actual_return * base_price) - (projected_return * base_price) - sum_contributions;
 
-    GapDecomposition {
+    Ok(GapDecomposition {
         total_return_gap,
         revenue_growth_contribution: revenue_growth_delta,
         gross_margin_contribution: gross_margin_delta,
@@ -132,5 +135,5 @@ pub(crate) fn decompose_gap(
         multiple_contribution: multiple_delta,
         net_debt_contribution: net_debt_delta,
         residual,
-    }
+    })
 }

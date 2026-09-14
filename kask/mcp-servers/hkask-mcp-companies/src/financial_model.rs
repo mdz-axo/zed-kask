@@ -1,22 +1,9 @@
-//! Simplified 11-line-item financial model.
+//! Historical financial normalization and the authoritative driver-model facade.
 //!
-//! Projects income statement, balance sheet, and cash flow items
-//! to derive free cash flow for DCF valuation. All key drivers
-//! are calibrated from historical company performance.
-//!
-//!   Item                          Source (FMP/EODHD field)
-//!   ──────────────────────────    ────────────────────────
-//!   1. Revenue                    income_statement.revenue
-//!   2. COGS                       income_statement.costOfRevenue
-//!   3. D&A                        income_statement.depreciationAndAmortization
-//!   4. Capex                      cash_flow_statement.capitalExpenditure
-//!   5. Assets                     balance_sheet.totalAssets
-//!   6. NWC (net of cash)         currentAssets - currentLiabilities - cash
-//!   7. Cash                       balance_sheet.cashAndCashEquivalents
-//!   8. Long-term debt             balance_sheet.longTermDebt
-//!   9. Owner's equity             balance_sheet.totalStockholdersEquity
-//!  10. Shares outstanding         key_metrics.weightedAverageShsOut or profile
-//!  11. Tax rate                   incomeTaxExpense / incomeBeforeTax
+//! The projection implementation lives in `financial_model/driver_model.rs`.
+//! Historical operating expenses must reconcile to reported operating income
+//! before a non-financial valuation can run; missing components are unavailable,
+//! not silently converted into a complete model.
 
 use crate::providers::CompanyProfile;
 use crate::types::ProjectionAssumptionOverrides;
@@ -127,6 +114,14 @@ fn parse_financial_field(entry: &serde_json::Value, field: &str) -> f64 {
 /// Like `parse_financial_field` but with a custom fallback (e.g. 1.0 for
 /// pre-tax income, where 0 would cause a division-by-zero in the tax-rate
 /// computation).
+fn parse_optional_financial_field(entry: &serde_json::Value, fields: &[&str]) -> Option<f64> {
+    fields
+        .iter()
+        .find_map(|field| entry.get(*field))
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
 fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f64) -> f64 {
     match entry.get(field) {
         Some(v) => match v.as_f64() {
@@ -154,8 +149,9 @@ pub(crate) struct HistoricalSnapshot {
     pub da: Vec<(String, f64)>,
     pub capex: Vec<(String, f64)>,
     /// SG&A expenses (sellingGeneralAndAdministrativeExpenses from FMP).
-    /// Added to fix the SG&A omission defect (H1) in the original model.
     pub sga: Vec<(String, f64)>,
+    /// Reported EBIT/operating income. Required to reconcile operating expenses.
+    pub operating_income: Vec<(String, f64)>,
 
     pub current_assets: Vec<(String, f64)>,
     pub current_liabilities: Vec<(String, f64)>,
@@ -239,6 +235,7 @@ impl HistoricalSnapshot {
         let mut cogs: Vec<(String, f64)> = Vec::new();
         let mut da: Vec<(String, f64)> = Vec::new();
         let mut sga: Vec<(String, f64)> = Vec::new();
+        let mut operating_income: Vec<(String, f64)> = Vec::new();
         let mut interest_expense: Vec<(String, f64)> = Vec::new();
         let mut net_income: Vec<(String, f64)> = Vec::new();
         let mut tax_expense: Vec<f64> = Vec::new();
@@ -255,6 +252,10 @@ impl HistoricalSnapshot {
             let c = parse_financial_field(entry, "costOfRevenue");
             let d = parse_financial_field(entry, "depreciationAndAmortization");
             let s = parse_financial_field(entry, "sellingGeneralAndAdministrativeExpenses");
+            let reported_operating_income = parse_optional_financial_field(
+                entry,
+                &["operatingIncome", "operatingIncomeLoss", "ebit"],
+            );
             let ie = parse_financial_field(entry, "interestExpense");
             let te = parse_financial_field(entry, "incomeTaxExpense");
             let pi = parse_financial_field_or(entry, "incomeBeforeTax", 1.0);
@@ -267,6 +268,9 @@ impl HistoricalSnapshot {
             cogs.push((year.to_string(), c));
             da.push((year.to_string(), d));
             sga.push((year.to_string(), s));
+            if let Some(value) = reported_operating_income {
+                operating_income.push((year.to_string(), value));
+            }
             interest_expense.push((year.to_string(), ie));
             net_income.push((year.to_string(), ni));
             tax_expense.push(te);
@@ -402,6 +406,7 @@ impl HistoricalSnapshot {
             da,
             capex,
             sga,
+            operating_income,
 
             current_assets,
             current_liabilities,
@@ -642,11 +647,36 @@ impl HistoricalSnapshot {
 
     /// SG&A as percentage of revenue.
     pub fn sga_to_revenue(&self) -> f64 {
-        let rev = self.latest_revenue();
-        if rev <= 0.0 {
-            return 0.15;
+        let revenue = self.latest_revenue();
+        if revenue <= 0.0 {
+            return 0.0;
         }
-        self.latest_sga() / rev
+        self.latest_sga() / revenue
+    }
+
+    /// Residual operating expense share required to reconcile gross profit to
+    /// reported operating income after SG&A and D&A. A negative residual means
+    /// the provider components overlap or disagree and is therefore unavailable.
+    pub fn other_operating_expense_to_revenue(&self) -> Option<f64> {
+        let revenue = self.latest_revenue();
+        let operating_income = self.operating_income.last().map(|(_, value)| *value)?;
+        if revenue <= 0.0 {
+            return None;
+        }
+        let residual = self.latest_revenue()
+            - self.latest_cogs()
+            - self.latest_sga()
+            - self.latest_da()
+            - operating_income;
+        let ratio = residual / revenue;
+        (ratio.is_finite() && ratio >= -1e-6).then_some(ratio.max(0.0))
+    }
+
+    pub fn latest_total_assets(&self) -> f64 {
+        self.total_assets
+            .last()
+            .map(|(_, value)| *value)
+            .unwrap_or(0.0)
     }
 
     /// Latest total stockholders equity.
@@ -687,37 +717,34 @@ impl HistoricalSnapshot {
         self.dividends_paid.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
-    /// Dividend payout ratio: dividends / net income.
-    /// Net income approximated as revenue - cogs - sga - da - interest - tax.
+    /// Dividend payout ratio from reported net income.
     pub fn dividend_payout_ratio(&self) -> f64 {
-        let rev = self.latest_revenue();
-        let ni = (rev
-            - self.latest_cogs()
-            - self.latest_sga()
-            - self.latest_da()
-            - self.interest_expense())
-            * (1.0 - self.tax_rate);
-        if ni > 0.0 {
-            (self.latest_dividends() / ni).clamp(0.0, 1.0)
+        let net_income = self
+            .net_income
+            .last()
+            .map(|(_, value)| *value)
+            .unwrap_or(0.0);
+        if net_income > 0.0 {
+            (self.latest_dividends() / net_income).clamp(0.0, 1.0)
         } else {
             0.0
         }
     }
 
-    /// ROE: return on equity = net income / total equity.
+    /// ROE from reported net income and latest equity. DuPont reporting uses
+    /// average balances separately; this accessor seeds forward projections.
     pub fn roe(&self) -> f64 {
         let equity = self.latest_equity();
-        if equity <= 0.0 {
-            return 0.10;
+        let net_income = self
+            .net_income
+            .last()
+            .map(|(_, value)| *value)
+            .unwrap_or(0.0);
+        if equity > 0.0 {
+            net_income / equity
+        } else {
+            0.0
         }
-        let rev = self.latest_revenue();
-        let ni = (rev
-            - self.latest_cogs()
-            - self.latest_sga()
-            - self.latest_da()
-            - self.interest_expense())
-            * (1.0 - self.tax_rate);
-        ni / equity
     }
 
     /// Days sales outstanding: AR / (revenue / 365).
@@ -829,502 +856,6 @@ impl HistoricalSnapshot {
     }
 }
 
-// ── Projected line item ────────────────────────────────────────────────────
-
-/// One period in the projected financial statements.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectedLineItems {
-    pub period: usize,
-    pub year: f64,
-    pub revenue: f64,
-    pub cogs: f64,
-    pub gross_profit: f64,
-    pub sga: f64,
-    pub da: f64,
-    pub ebit: f64,
-    pub tax: f64,
-    pub nopat: f64,
-    pub capex: f64,
-    pub change_in_nwc: f64,
-    pub free_cash_flow: f64,
-    pub discount_factor: f64,
-    pub present_value: f64,
-}
-
-/// The full projected model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectedModel {
-    pub periods: Vec<ProjectedLineItems>,
-    pub terminal_value: f64,
-    pub terminal_pv: f64,
-    pub enterprise_value: f64,
-    pub net_debt: f64,
-    pub equity_value: f64,
-    pub intrinsic_per_share: f64,
-}
-
-/// Projection assumptions — overrideable by the user or calibrated from history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectionAssumptions {
-    /// Revenue growth rate (annual).
-    pub revenue_growth: f64,
-    /// Gross margin: (revenue - cogs) / revenue.
-    pub gross_margin: f64,
-    /// D&A as % of revenue.
-    pub da_to_revenue: f64,
-    /// Capex as % of revenue.
-    pub capex_to_revenue: f64,
-    /// NWC as % of revenue.
-    pub nwc_to_revenue: f64,
-    /// Effective tax rate.
-    pub tax_rate: f64,
-    /// Discount rate (required return).
-    pub discount_rate: f64,
-    /// Terminal growth rate.
-    pub terminal_growth: f64,
-    /// Projection years.
-    pub total_years: u8,
-    /// Stage 1 years (growth phase).
-    pub stage1_years: u8,
-}
-
-impl Default for ProjectionAssumptions {
-    fn default() -> Self {
-        Self {
-            revenue_growth: 0.08,
-            gross_margin: 0.40,
-            da_to_revenue: 0.03,
-            capex_to_revenue: 0.03,
-            nwc_to_revenue: 0.10,
-            tax_rate: 0.21,
-            discount_rate: 0.10,
-            terminal_growth: 0.025,
-            total_years: 10,
-            stage1_years: 3,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub(crate) enum ProjectionAssumptionError {
-    #[error("{field} must be finite")]
-    NotFinite { field: &'static str },
-    #[error("{field} must be within {min}..={max}")]
-    OutOfRange {
-        field: &'static str,
-        min: f64,
-        max: f64,
-    },
-    #[error("{field} must be finite and within {min}..={max}")]
-    NotFiniteOrOutOfRange {
-        field: &'static str,
-        min: f64,
-        max: f64,
-    },
-    #[error("projection horizon exceeds u8 capacity")]
-    HorizonOverflow,
-    #[error("discount_rate must be greater than terminal_growth")]
-    DiscountNotGreaterThanTerminalGrowth,
-}
-
-impl ProjectionAssumptions {
-    const REVENUE_GROWTH: (f64, f64) = (-0.50, 1.00);
-    const GROSS_MARGIN: (f64, f64) = (0.05, 0.95);
-    const DA_TO_REVENUE: (f64, f64) = (0.00, 0.20);
-    const CAPEX_TO_REVENUE: (f64, f64) = (0.00, 0.30);
-    const NWC_TO_REVENUE: (f64, f64) = (-0.20, 0.50);
-    const TAX_RATE: (f64, f64) = (0.00, 1.00);
-    const DISCOUNT_RATE: (f64, f64) = (0.05, 0.30);
-    const TERMINAL_GROWTH: (f64, f64) = (0.00, 0.10);
-    const STAGE1_YEARS: (u8, u8) = (1, 3);
-    const STAGE2_YEARS: (u8, u8) = (2, 7);
-
-    /// Build assumptions calibrated from history for internal model calculations.
-    pub fn from_history(hist: &HistoricalSnapshot) -> Self {
-        Self {
-            revenue_growth: hist.revenue_cagr(),
-            gross_margin: hist.gross_margin(),
-            da_to_revenue: hist.da_to_revenue(),
-            capex_to_revenue: hist.capex_to_revenue(),
-            nwc_to_revenue: hist.nwc_to_revenue(),
-            tax_rate: hist.tax_rate,
-            ..Self::default()
-        }
-    }
-
-    /// Construct validated DCF assumptions from history and explicit overrides.
-    pub fn from_history_with_overrides(
-        hist: &HistoricalSnapshot,
-        overrides: ProjectionAssumptionOverrides,
-    ) -> Result<Self, ProjectionAssumptionError> {
-        Self::from_history(hist).with_overrides(overrides)
-    }
-
-    /// Apply and validate DCF input overrides.
-    pub fn with_overrides(
-        mut self,
-        overrides: ProjectionAssumptionOverrides,
-    ) -> Result<Self, ProjectionAssumptionError> {
-        let stage1_years = overrides.stage1_years.unwrap_or(self.stage1_years);
-        let stage2_years = overrides
-            .stage2_years
-            .unwrap_or(self.total_years - self.stage1_years);
-        if !(Self::STAGE1_YEARS.0..=Self::STAGE1_YEARS.1).contains(&stage1_years) {
-            return Err(ProjectionAssumptionError::OutOfRange {
-                field: "stage1_years",
-                min: Self::STAGE1_YEARS.0 as f64,
-                max: Self::STAGE1_YEARS.1 as f64,
-            });
-        }
-        if !(Self::STAGE2_YEARS.0..=Self::STAGE2_YEARS.1).contains(&stage2_years) {
-            return Err(ProjectionAssumptionError::OutOfRange {
-                field: "stage2_years",
-                min: Self::STAGE2_YEARS.0 as f64,
-                max: Self::STAGE2_YEARS.1 as f64,
-            });
-        }
-        self.stage1_years = stage1_years;
-        self.total_years = stage1_years
-            .checked_add(stage2_years)
-            .ok_or(ProjectionAssumptionError::HorizonOverflow)?;
-
-        macro_rules! apply {
-            ($field:ident) => {
-                if let Some(value) = overrides.$field {
-                    self.$field = value;
-                }
-            };
-        }
-        apply!(revenue_growth);
-        apply!(gross_margin);
-        apply!(da_to_revenue);
-        apply!(capex_to_revenue);
-        apply!(nwc_to_revenue);
-        apply!(tax_rate);
-        apply!(discount_rate);
-        apply!(terminal_growth);
-
-        self.validate(stage2_years)?;
-        Ok(self)
-    }
-
-    fn validate(&self, stage2_years: u8) -> Result<(), ProjectionAssumptionError> {
-        fn validate_range(
-            field: &'static str,
-            value: f64,
-            range: (f64, f64),
-        ) -> Result<(), ProjectionAssumptionError> {
-            if !value.is_finite() {
-                return Err(ProjectionAssumptionError::NotFinite { field });
-            }
-            if !(range.0..=range.1).contains(&value) {
-                return Err(ProjectionAssumptionError::OutOfRange {
-                    field,
-                    min: range.0,
-                    max: range.1,
-                });
-            }
-            Ok(())
-        }
-
-        validate_range("revenue_growth", self.revenue_growth, Self::REVENUE_GROWTH)?;
-        validate_range("gross_margin", self.gross_margin, Self::GROSS_MARGIN)?;
-        validate_range("da_to_revenue", self.da_to_revenue, Self::DA_TO_REVENUE)?;
-        validate_range(
-            "capex_to_revenue",
-            self.capex_to_revenue,
-            Self::CAPEX_TO_REVENUE,
-        )?;
-        validate_range("nwc_to_revenue", self.nwc_to_revenue, Self::NWC_TO_REVENUE)?;
-        validate_range("tax_rate", self.tax_rate, Self::TAX_RATE)?;
-        validate_range("discount_rate", self.discount_rate, Self::DISCOUNT_RATE)?;
-        validate_range(
-            "terminal_growth",
-            self.terminal_growth,
-            Self::TERMINAL_GROWTH,
-        )?;
-
-        if !(Self::STAGE1_YEARS.0..=Self::STAGE1_YEARS.1).contains(&self.stage1_years) {
-            return Err(ProjectionAssumptionError::OutOfRange {
-                field: "stage1_years",
-                min: Self::STAGE1_YEARS.0 as f64,
-                max: Self::STAGE1_YEARS.1 as f64,
-            });
-        }
-        if !(Self::STAGE2_YEARS.0..=Self::STAGE2_YEARS.1).contains(&stage2_years) {
-            return Err(ProjectionAssumptionError::OutOfRange {
-                field: "stage2_years",
-                min: Self::STAGE2_YEARS.0 as f64,
-                max: Self::STAGE2_YEARS.1 as f64,
-            });
-        }
-        if self.discount_rate <= self.terminal_growth {
-            return Err(ProjectionAssumptionError::DiscountNotGreaterThanTerminalGrowth);
-        }
-        Ok(())
-    }
-}
-
-// ── Projection engine ──────────────────────────────────────────────────────
-
-/// Project financial statements and compute free cash flow.
-pub fn project_model(
-    hist: &HistoricalSnapshot,
-    assumptions: &ProjectionAssumptions,
-    _current_price: f64,
-) -> ProjectedModel {
-    let stage2_years = assumptions.total_years - assumptions.stage1_years;
-    let total_years = assumptions.total_years as usize;
-
-    // Stage 1 growth → midpoint between historical growth and terminal
-    let stage1_start = assumptions.revenue_growth;
-    let stage1_mid = (stage1_start + assumptions.terminal_growth) / 2.0;
-
-    let mut periods = Vec::with_capacity(total_years);
-    let mut revenue = hist.latest_revenue();
-    let mut prev_nwc = hist.latest_nwc();
-    let mut prev_revenue = revenue;
-
-    for p in 0..total_years {
-        let progress = if p < assumptions.stage1_years as usize {
-            let s1_p = p as f64 / (assumptions.stage1_years as f64 - 1.0).max(1.0);
-            stage1_start + (stage1_mid - stage1_start) * s1_p
-        } else {
-            let s2_p = (p - assumptions.stage1_years as usize) as f64
-                / (stage2_years as f64 - 1.0).max(1.0);
-            let stage1_end = stage1_start
-                + (stage1_mid - stage1_start)
-                    * ((assumptions.stage1_years - 1) as f64
-                        / (assumptions.stage1_years as f64 - 1.0).max(1.0));
-            stage1_end + (assumptions.terminal_growth - stage1_end) * s2_p
-        };
-
-        revenue = prev_revenue * (1.0 + progress);
-
-        let cogs = revenue * (1.0 - assumptions.gross_margin);
-        let gross_profit = revenue - cogs;
-        let sga = revenue * hist.sga_to_revenue();
-        let da = revenue * assumptions.da_to_revenue;
-        let ebit = gross_profit - sga - da;
-        let tax = ebit * assumptions.tax_rate;
-        let nopat = ebit - tax;
-        let capex = revenue * assumptions.capex_to_revenue;
-        let nwc = revenue * assumptions.nwc_to_revenue;
-        let change_in_nwc = nwc - prev_nwc;
-        let fcf = nopat + da - capex - change_in_nwc;
-
-        let df = 1.0 / (1.0 + assumptions.discount_rate).powi((p + 1) as i32);
-        let pv = fcf * df;
-
-        periods.push(ProjectedLineItems {
-            period: p,
-            year: (p + 1) as f64,
-            revenue,
-            cogs,
-            gross_profit,
-            sga,
-            da,
-            ebit,
-            tax,
-            nopat,
-            capex,
-            change_in_nwc,
-            free_cash_flow: fcf,
-            discount_factor: df,
-            present_value: pv,
-        });
-
-        prev_revenue = revenue;
-        prev_nwc = nwc;
-    }
-
-    // Terminal value (Gordon Growth perpetuity)
-    let last_fcf = periods.last().map(|p| p.free_cash_flow).unwrap_or(0.0);
-    let terminal_value = last_fcf * (1.0 + assumptions.terminal_growth)
-        / (assumptions.discount_rate - assumptions.terminal_growth);
-    let terminal_df = 1.0 / (1.0 + assumptions.discount_rate).powi(total_years as i32);
-    let terminal_pv = terminal_value * terminal_df;
-
-    // Enterprise to equity
-    let sum_pv: f64 = periods.iter().map(|p| p.present_value).sum();
-    let enterprise_value = sum_pv + terminal_pv;
-    let net_debt = hist.net_debt();
-    let equity_value = enterprise_value - net_debt;
-    let intrinsic_per_share = if hist.shares_outstanding > 0.0 {
-        equity_value / hist.shares_outstanding
-    } else {
-        0.0
-    };
-
-    ProjectedModel {
-        periods,
-        terminal_value,
-        terminal_pv,
-        enterprise_value,
-        net_debt,
-        equity_value,
-        intrinsic_per_share,
-    }
-}
-
-// ── Implied growth (reverse DCF) ───────────────────────────────────────────
-
-/// The growth-rate search bounds used by the reverse DCF. Callers verify the
-/// price is bracketed by these bounds before searching.
-pub(crate) const IMPLIED_GROWTH_LO: f64 = -0.50;
-pub(crate) const IMPLIED_GROWTH_HI: f64 = 1.00;
-
-/// Solve for the revenue-growth rate at which the projected intrinsic value
-/// equals `current_price` (the Mauboussin reverse DCF).
-///
-/// Bisection is monotone in the right direction because intrinsic value is
-/// increasing in `revenue_growth`: when the model's intrinsic exceeds the
-/// price, the growth guess was too *high*, so the upper bound must shrink.
-/// Getting this comparison backwards makes the search diverge from the root
-/// while still returning a plausible-looking number, so it is expressed once
-/// here rather than at each call site.
-///
-/// Returns `None` when `current_price` is not positive, or when the price is
-/// not bracketed by `[IMPLIED_GROWTH_LO, IMPLIED_GROWTH_HI]` (the root lies
-/// outside the searchable range — never fabricate an in-range answer).
-pub(crate) fn implied_growth(
-    hist: &HistoricalSnapshot,
-    assumptions: &ProjectionAssumptions,
-    current_price: f64,
-) -> Option<f64> {
-    if current_price <= 0.0 {
-        return None;
-    }
-
-    let at_growth = |growth: f64| {
-        project_model(
-            hist,
-            &ProjectionAssumptions {
-                revenue_growth: growth,
-                ..*assumptions
-            },
-            current_price,
-        )
-        .intrinsic_per_share
-    };
-
-    if at_growth(IMPLIED_GROWTH_LO) > current_price || at_growth(IMPLIED_GROWTH_HI) < current_price
-    {
-        return None;
-    }
-
-    let mut lo = IMPLIED_GROWTH_LO;
-    let mut hi = IMPLIED_GROWTH_HI;
-    let mut implied = 0.0_f64;
-    for _ in 0..50 {
-        let mid = (lo + hi) / 2.0;
-        implied = mid;
-        let intrinsic = at_growth(mid);
-        if (intrinsic - current_price).abs() < 0.0001 {
-            break;
-        }
-        if intrinsic > current_price {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    Some(implied)
-}
-
-/// Net-margin search bounds for the profitability leg of the expectations
-/// gap. Net margin is NET INCOME / revenue — the equity holder's margin,
-/// after SG&A, interest at demonstrated leverage, D&A, and tax. The floor
-/// allows loss-making margins; the ceiling bounds the bisection over
-/// economically meaningful profitability.
-pub(crate) const IMPLIED_NET_MARGIN_LO: f64 = -0.30;
-pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
-
-/// Solve for the NET margin (net income / revenue) at `growth` at which
-/// the projected equity value equals `current_price` — the profitability
-/// leg of the expectations gap: the net income margin the price demands
-/// when growth is held at the company's sustainable (self-funding) rate.
-///
-/// Net margin is the solve variable and the reported quantity. The
-/// enterprise model's gross margin is an internal projection parameter
-/// only, reached through the per-revenue income-statement identity
-/// `GM = NM/(1−tax) + SG&A% + interest% + D&A%` with expenses held at their
-/// demonstrated revenue shares. The solved NM therefore satisfies
-/// `NI = (EBIT − interest) × (1 − tax)` by construction. Debt is carried at
-/// demonstrated net debt in the equity bridge, not through the margin.
-///
-/// Intrinsic value is increasing in net margin, so the same bisection
-/// direction discipline as `implied_growth` applies. Returns `None` when
-/// the price is not bracketed by `[IMPLIED_NET_MARGIN_LO,
-/// IMPLIED_NET_MARGIN_HI]` — never fabricate an in-range answer.
-pub(crate) fn implied_net_margin_at_growth(
-    hist: &HistoricalSnapshot,
-    assumptions: &ProjectionAssumptions,
-    growth: f64,
-    current_price: f64,
-) -> Option<f64> {
-    if current_price <= 0.0 {
-        return None;
-    }
-    let revenue = hist.latest_revenue();
-    if revenue <= 0.0 {
-        return None;
-    }
-    let interest_pct = hist
-        .interest_expense
-        .last()
-        .map(|(_, value)| *value)
-        .unwrap_or(0.0)
-        / revenue;
-    let tax_rate = hist.tax_rate;
-    if (1.0 - tax_rate) <= 0.01 {
-        return None;
-    }
-    let sga_pct = hist.sga_to_revenue();
-    // NM → the model's internal gross margin, exactly: the solved NM is
-    // net income / revenue after demonstrated SG&A, interest, D&A, and tax.
-    let net_margin_to_gross = |net_margin: f64| {
-        net_margin / (1.0 - tax_rate) + sga_pct + interest_pct + assumptions.da_to_revenue
-    };
-
-    let at_margin = |net_margin: f64| {
-        project_model(
-            hist,
-            &ProjectionAssumptions {
-                revenue_growth: growth,
-                gross_margin: net_margin_to_gross(net_margin),
-                ..*assumptions
-            },
-            current_price,
-        )
-        .intrinsic_per_share
-    };
-
-    if at_margin(IMPLIED_NET_MARGIN_LO) > current_price
-        || at_margin(IMPLIED_NET_MARGIN_HI) < current_price
-    {
-        return None;
-    }
-
-    let mut lo = IMPLIED_NET_MARGIN_LO;
-    let mut hi = IMPLIED_NET_MARGIN_HI;
-    let mut implied = 0.0_f64;
-    for _ in 0..50 {
-        let mid = (lo + hi) / 2.0;
-        implied = mid;
-        let intrinsic = at_margin(mid);
-        if (intrinsic - current_price).abs() < 0.0001 {
-            break;
-        }
-        if intrinsic > current_price {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    Some(implied)
-}
-
 /// Closed-form implied ROE from the justified price-to-book identity
 /// P/B = (ROE − g) / (COE − g) — residual income on equity, the standard
 /// reverse solve for financial-sector companies whose FCF is not
@@ -1369,8 +900,10 @@ pub(crate) use scenario_impact::{
     scenario_impact_dcf,
 };
 
-// ── Driver-based three-statement model — `financial_model/driver_model.rs`
+// ── Authoritative driver-based financial model
 mod driver_model;
 pub(crate) use driver_model::{
-    DriverAssumptions, NwcMethod, generate_markdown_report, project_driver_model,
+    IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, IMPLIED_NET_MARGIN_HI, IMPLIED_NET_MARGIN_LO, NwcMethod,
+    ProjectedFinancialModel, ProjectedPeriod, ProjectionAssumptions, ProjectionError,
+    implied_growth, implied_net_margin_at_growth, project_financial_model,
 };

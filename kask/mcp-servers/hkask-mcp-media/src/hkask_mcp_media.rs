@@ -272,14 +272,23 @@ impl MediaServer {
     /// through inference, downloads, and every variant. [P1: user work is not
     /// redirected by a concurrent root switch]
     pub(crate) fn capture_gallery(&self) -> Option<GalleryState> {
+        match self.try_capture_gallery() {
+            Ok(gallery) => gallery,
+            Err(error) => {
+                tracing::warn!(target: "hkask.mcp.media", %error, "Gallery state capture failed — generation proceeds gallery-less");
+                None
+            }
+        }
+    }
+
+    /// Fallible admission-time capture for operations that require a gallery.
+    /// Unlike optional provider-generation publication, local processors must
+    /// surface damaged shared state rather than misclassify it as no gallery.
+    pub(crate) fn try_capture_gallery(&self) -> Result<Option<GalleryState>, MediaError> {
         self.gallery_state
             .lock()
-            .map_err(|error| {
-                tracing::warn!(target: "hkask.mcp.media", %error, "Gallery state lock poisoned — generation proceeds gallery-less");
-                error
-            })
-            .ok()
-            .and_then(|guard| guard.clone())
+            .map(|guard| guard.clone())
+            .map_err(|error| MediaError::Io(format!("Gallery state lock error: {error}")))
     }
 
     /// Lock the gallery and extract essential state. Drops the lock before
@@ -1481,6 +1490,26 @@ mod tool_behavior_tests {
         server_with_gallery_state(store, gallery_id, gallery_root).0
     }
 
+    #[cfg(unix)]
+    fn fake_successful_ffmpeg(
+        root: &std::path::Path,
+    ) -> Result<video::ffmpeg::FfmpegRunner, Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = root.join("fake-ffmpeg.sh");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nfor arg do output=$arg; done\nprintf fake-media > \"$output\"\n",
+        )?;
+        let mut permissions = std::fs::metadata(&executable)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions)?;
+        Ok(video::ffmpeg::FfmpegRunner::with_binary(
+            executable.to_string_lossy().into_owned(),
+            root.join("ffmpeg-output"),
+        ))
+    }
+
     async fn create_real_video(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         let output = tokio::process::Command::new("ffmpeg")
             .args([
@@ -1602,6 +1631,8 @@ mod tool_behavior_tests {
         assert_eq!(params["source"], source.to_string_lossy().as_ref());
         assert_eq!(params["start_sec"], 0.25);
         assert_eq!(params["end_sec"], 1.25);
+        assert_eq!(params["duration_sec"], 1.0);
+        assert_eq!(params["format"], "mp4");
         Ok(())
     }
 
@@ -1684,7 +1715,10 @@ mod tool_behavior_tests {
             "real FFmpeg output must exist before staging"
         );
 
-        let error = match crate::assets::stage_local_video_publication(&processor_output) {
+        let error = match crate::assets::stage_local_video_publication(
+            &processor_output,
+            crate::assets::LocalVideoFormat::Mp4,
+        ) {
             Ok(_) => return Err("blocked generated directory unexpectedly published".into()),
             Err(error) => error,
         };
@@ -1759,7 +1793,8 @@ mod tool_behavior_tests {
         gallery_id: &str,
         expected_op: &str,
         expected_extension: &str,
-        expected_lineage_params: &serde_json::Value,
+        expected_media_type: &str,
+        expected_effective_params: &serde_json::Value,
     ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
         let output_path =
             std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
@@ -1781,10 +1816,21 @@ mod tool_behavior_tests {
         assert_eq!(hint["src"], content["output"]);
         assert_eq!(hint["gallery_asset_id"], asset_id);
         assert_eq!(hint["ontology"], "omc:Sequence");
+        assert_eq!(hint["kind"], expected_media_type);
         assert_eq!(hint["provenance"]["tool"], expected_op);
+        assert_eq!(
+            hint["provenance"]["args"], *expected_effective_params,
+            "media-block provenance must use the authoritative effective parameters"
+        );
+        assert_eq!(
+            content["effective_params"], *expected_effective_params,
+            "result metadata must use the authoritative effective parameters"
+        );
 
         let asset = store.get_by_id(gallery_id, asset_id)?;
         assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
+        assert_eq!(asset.format, expected_extension);
+        assert_eq!(asset.media_type, expected_media_type);
         let lineage = store
             .get_generation(asset_id)?
             .ok_or("local video lineage missing")?;
@@ -1795,7 +1841,7 @@ mod tool_behavior_tests {
         );
         let params: serde_json::Value =
             serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
-        assert_eq!(&params, expected_lineage_params);
+        assert_eq!(&params, expected_effective_params);
         Ok(output_path)
     }
 
@@ -1893,12 +1939,14 @@ mod tool_behavior_tests {
             &gallery_id,
             "video_to_gif",
             "gif",
+            "image",
             &serde_json::json!({
                 "source": source.to_string_lossy(),
                 "start_sec": 0.25,
                 "duration_sec": 1.0,
                 "width": 48,
                 "fps": 8,
+                "format": "gif",
             }),
         )?;
         Ok(())
@@ -1944,11 +1992,13 @@ mod tool_behavior_tests {
             &gallery_id,
             "video_add_caption",
             "mp4",
+            "video",
             &serde_json::json!({
                 "source": source.to_string_lossy(),
                 "text": "durable caption",
                 "position": "top",
                 "font_size": 18,
+                "format": "mp4",
             }),
         )?;
         Ok(())
@@ -1993,11 +2043,19 @@ mod tool_behavior_tests {
             &gallery_id,
             "video_remix",
             "gif",
+            "image",
             &serde_json::json!({
                 "source": source.to_string_lossy(),
                 "start_sec": 0.0,
                 "end_sec": 1.0,
                 "caption_text": "remix caption",
+                "caption_position": "bottom",
+                "caption_font_size": 24,
+                "gif_start_sec": 0.0,
+                "gif_duration_sec": 1.0,
+                "gif_width": 480,
+                "gif_fps": 10,
+                "format": "gif",
             }),
         )?;
         let after = temp_media_files()?;
@@ -2036,30 +2094,38 @@ mod tool_behavior_tests {
         add_test_image(&store, &gallery.id, &second, [0, 255, 0])?;
         let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
-        let content = content_of(
-            &server
-                .video_from_images(Parameters(VideoFromImagesRequest {
-                    image_indices: vec![0, 1],
-                    fps: Some(2),
-                    format: Some("mp4".to_string()),
-                }))
-                .await?,
-        );
+        let sources = serde_json::json!([first.to_string_lossy(), second.to_string_lossy()]);
+        let mut outputs = Vec::new();
+        for (format, media_type) in [("mp4", "video"), ("gif", "image")] {
+            let content = content_of(
+                &server
+                    .video_from_images(Parameters(VideoFromImagesRequest {
+                        image_indices: vec![0, 1],
+                        fps: Some(2),
+                        format: Some(format.to_string()),
+                    }))
+                    .await?,
+            );
+            outputs.push(assert_local_publication(
+                &content,
+                &store,
+                &gallery_id,
+                "video_from_images",
+                format,
+                media_type,
+                &serde_json::json!({
+                    "sources": sources.clone(),
+                    "image_indices": [0, 1],
+                    "fps": 2,
+                    "format": format,
+                }),
+            )?);
+        }
         drop(server);
-
-        assert_local_publication(
-            &content,
-            &store,
-            &gallery_id,
-            "video_from_images",
-            "mp4",
-            &serde_json::json!({
-                "sources": [first.to_string_lossy(), second.to_string_lossy()],
-                "image_indices": [0, 1],
-                "fps": 2,
-                "format": "mp4",
-            }),
-        )?;
+        assert!(
+            outputs.iter().all(|output| output.is_file()),
+            "server drop removed an image-sequence publication"
+        );
         Ok(())
     }
 
@@ -2106,7 +2172,8 @@ mod tool_behavior_tests {
             &gallery_id,
             "video_concat",
             "mp4",
-            &serde_json::json!({"sources": sources}),
+            "video",
+            &serde_json::json!({"sources": sources, "format": "mp4"}),
         )?;
         Ok(())
     }
@@ -2275,6 +2342,184 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::video_clip`
+    /// expect: A remote video operation remains bound to the gallery active before validation begins.
+    /// [P1] Motivating: an in-flight root switch cannot redirect user work.
+    /// pre: Gallery A is active, remote validation is delayed, and Gallery B becomes active before processing resumes.
+    /// post: the durable output exists only in Gallery A and carries A's asset identity.
+    /// [P1] Constraining: gallery admission precedes every await, including remote validation.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_video_remote_validation_preserves_admission_gallery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_a_root = tempfile::tempdir()?;
+        let gallery_b_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery_a = store.open(
+            gallery_a_root
+                .path()
+                .to_str()
+                .ok_or("gallery A root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_b = store.open(
+            gallery_b_root
+                .path()
+                .to_str()
+                .ok_or("gallery B root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_a_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_a.id.clone()),
+        })));
+        let server = Arc::new(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state.clone(),
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        ));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let _gate = crate::tools::processing::install_local_video_validation_gate(
+            crate::tools::processing::LocalVideoValidationGate {
+                entered: entered.clone(),
+                resume: resume.clone(),
+                bypass_dns: true,
+            },
+        )?;
+        let operation = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .video_clip(Parameters(VideoClipRequest {
+                        video_url: "https://example.com/source.mp4".to_string(),
+                        start_sec: 0.0,
+                        end_sec: 1.0,
+                    }))
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
+            path: gallery_b_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_b.id.clone()),
+        });
+        resume.notify_one();
+        let content = content_of(&operation.await??);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing gallery asset id")?;
+
+        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
+        assert_eq!(store.count_assets(&gallery_b.id)?, 0);
+        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
+        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_from_images`
+    /// expect: Image indices and their generated output resolve against one captured gallery.
+    /// [P1] Motivating: a root switch cannot combine sources from one gallery with output identity from another.
+    /// pre: Gallery A and B each have index 0, A is admitted, and B activates before source lookup.
+    /// post: source metadata and the durable output both belong only to Gallery A.
+    /// [P1] Constraining: positional indices are interpreted within the immutable admission snapshot.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn video_from_images_uses_one_gallery_snapshot_for_sources_and_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_a_root = tempfile::tempdir()?;
+        let gallery_b_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery_a = store.open(
+            gallery_a_root
+                .path()
+                .to_str()
+                .ok_or("gallery A root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_b = store.open(
+            gallery_b_root
+                .path()
+                .to_str()
+                .ok_or("gallery B root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let source_a = gallery_a_root.path().join("source-a.png");
+        let source_b = gallery_b_root.path().join("source-b.png");
+        add_test_image(&store, &gallery_a.id, &source_a, [255, 0, 0])?;
+        add_test_image(&store, &gallery_b.id, &source_b, [0, 255, 0])?;
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_a_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_a.id.clone()),
+        })));
+        let server = Arc::new(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state.clone(),
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        ));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let _gate = crate::tools::processing::install_local_video_validation_gate(
+            crate::tools::processing::LocalVideoValidationGate {
+                entered: entered.clone(),
+                resume: resume.clone(),
+                bypass_dns: false,
+            },
+        )?;
+        let operation = {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .video_from_images(Parameters(VideoFromImagesRequest {
+                        image_indices: vec![0],
+                        fps: Some(2),
+                        format: Some("mp4".to_string()),
+                    }))
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
+            path: gallery_b_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_b.id.clone()),
+        });
+        resume.notify_one();
+        let content = content_of(&operation.await??);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing gallery asset id")?;
+
+        assert_eq!(
+            content["effective_params"]["sources"][0],
+            source_a.to_string_lossy().as_ref()
+        );
+        assert_eq!(store.count_assets(&gallery_a.id)?, 2);
+        assert_eq!(store.count_assets(&gallery_b.id)?, 1);
+        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
+        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
+        Ok(())
+    }
+
     /// dcterms:identifier: `MediaServer::video_from_images`
     /// expect: Image-sequence publication accepts only its two real final formats.
     /// [P1] Motivating: every accepted format has one truthful output identity.
@@ -2297,7 +2542,7 @@ mod tool_behavior_tests {
         add_test_image(&store, &gallery.id, &image, [255, 0, 0])?;
         let server = server_with_gallery(store, gallery.id, gallery_root.path());
 
-        for format in ["avi", "webp"] {
+        for format in ["avi", "webp", "MP4", "", "   ", "mp4\0gif", ".gif"] {
             let error = server
                 .video_from_images(Parameters(VideoFromImagesRequest {
                     image_indices: vec![0],

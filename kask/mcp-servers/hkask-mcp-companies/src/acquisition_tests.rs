@@ -2954,9 +2954,9 @@ async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
 fn dupont_fixture(dividend_ratio: f64) -> Value {
     json!({
         "income": [
-            {"calendarYear": "2025", "revenue": 1210.0, "netIncome": 121.0, "sellingGeneralAndAdministrativeExpenses": 121.0, "interestExpense": 60.5, "incomeTaxExpense": 24.2, "incomeBeforeTax": 121.0, "weightedAverageShsOut": 100.0},
-            {"calendarYear": "2024", "revenue": 1100.0, "netIncome": 110.0, "sellingGeneralAndAdministrativeExpenses": 110.0, "interestExpense": 55.0},
-            {"calendarYear": "2023", "revenue": 1000.0, "netIncome": 100.0, "sellingGeneralAndAdministrativeExpenses": 100.0, "interestExpense": 50.0},
+            {"calendarYear": "2025", "revenue": 1210.0, "netIncome": 121.0, "sellingGeneralAndAdministrativeExpenses": 121.0, "operatingIncome": 1089.0, "interestExpense": 60.5, "incomeTaxExpense": 24.2, "incomeBeforeTax": 121.0, "weightedAverageShsOut": 100.0},
+            {"calendarYear": "2024", "revenue": 1100.0, "netIncome": 110.0, "sellingGeneralAndAdministrativeExpenses": 110.0, "operatingIncome": 990.0, "interestExpense": 55.0},
+            {"calendarYear": "2023", "revenue": 1000.0, "netIncome": 100.0, "sellingGeneralAndAdministrativeExpenses": 100.0, "operatingIncome": 900.0, "interestExpense": 50.0},
         ],
         "balance": [
             {"calendarYear": "2025", "totalAssets": 2420.0, "totalStockholdersEquity": 968.0},
@@ -3053,18 +3053,19 @@ fn implied_net_margin_solve_carries_all_modeled_expenses() {
     // Tax = 20%, SG&A/revenue = 10%, interest/revenue = 5%, D&A = 0%.
     assert!((snapshot.tax_rate - 0.2).abs() < 1e-12);
     assert!((snapshot.sga_to_revenue() - 0.10).abs() < 1e-12);
-    let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot);
+    let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot)
+        .expect("reported operating income reconciles");
     // Known net margin 8%: GM = NM/(1−tax) + SG&A% + interest% + D&A%
     // = 0.08/0.8 + 0.10 + 0.05 = 0.25.
-    let intrinsic = financial_model::project_model(
+    let intrinsic = financial_model::project_financial_model(
         &snapshot,
         &financial_model::ProjectionAssumptions {
             revenue_growth: 0.05,
             gross_margin: 0.25,
             ..assumptions
         },
-        100.0,
     )
+    .expect("canonical projection")
     .intrinsic_per_share;
     assert!(intrinsic.is_finite() && intrinsic > 0.0, "{intrinsic}");
     let solved =

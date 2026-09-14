@@ -678,23 +678,23 @@ impl CompaniesServer {
                 Some(growth) => growth,
                 None => {
                     let at = |growth: f64| {
-                        financial_model::project_model(
+                        financial_model::project_financial_model(
                             &hist,
                             &financial_model::ProjectionAssumptions {
                                 revenue_growth: growth,
                                 ..assumptions.clone()
                             },
-                            current_price,
                         )
-                        .intrinsic_per_share
+                        .map(|model| model.intrinsic_per_share)
+                        .map_err(|error| McpToolError::invalid_argument(error.to_string()))
                     };
-                    let lo_intrinsic = at(financial_model::IMPLIED_GROWTH_LO);
+                    let lo_intrinsic = at(financial_model::IMPLIED_GROWTH_LO)?;
                     if lo_intrinsic > current_price {
                         return Err(McpToolError::invalid_argument(format!(
                             "price ({current_price:.2}) below intrinsic ({lo_intrinsic:.2}) at -50% growth - stock may be distressed or data inconsistent"
                         )));
                     }
-                    let hi_intrinsic = at(financial_model::IMPLIED_GROWTH_HI);
+                    let hi_intrinsic = at(financial_model::IMPLIED_GROWTH_HI)?;
                     return Err(McpToolError::invalid_argument(format!(
                         "price ({current_price:.2}) implies growth > 100% - intrinsic at +100% growth is {hi_intrinsic:.2}"
                     )));
@@ -704,7 +704,8 @@ impl CompaniesServer {
             // Final model at implied growth
             let mut final_a = assumptions.clone();
             final_a.revenue_growth = implied_growth;
-            let result = financial_model::project_model(&hist, &final_a, current_price);
+            let result = financial_model::project_financial_model(&hist, &final_a)
+                .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
             let output = serde_json::json!({
                 "symbol": req.symbol,
@@ -796,7 +797,8 @@ impl CompaniesServer {
             let current_price = profile.price().unwrap_or(0.0);
 
             let matrix = scenarios::ScenarioMatrix::growth_x_margin(assumptions.revenue_growth, assumptions.gross_margin);
-            let results = scenarios::run_scenario_analysis(&hist, &assumptions, &matrix);
+            let results = scenarios::run_scenario_analysis(&hist, &assumptions, &matrix)
+                .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
             let summary = scenarios::scenario_summary(&results);
 
