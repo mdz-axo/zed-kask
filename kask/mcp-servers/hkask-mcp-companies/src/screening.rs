@@ -14,7 +14,6 @@ use std::future::Future;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     panic::AssertUnwindSafe,
-    sync::Arc,
     time::Duration,
 };
 
@@ -32,7 +31,7 @@ const LISP_MAX_STEPS: u64 = 100_000;
 const LISP_MAX_DEPTH: u64 = 256;
 const SCREEN_PASS_DEADLINE: Duration = Duration::from_secs(60);
 const ENRICHMENT_DEADLINE: Duration = Duration::from_secs(110);
-const ISSUER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 const ENRICHMENT_CONCURRENCY: usize = 96;
 
 #[derive(Deserialize)]
@@ -634,7 +633,9 @@ async fn calculate_expectations_gap(
     let mut rows = Vec::with_capacity(prepared.groups.len());
     for group in prepared.groups {
         let row =
-            match analyze_issuer_group(client, eodhd_api_key, &prepared.fx_rates, &group).await {
+            match analyze_issuer_group(client, eodhd_api_key, &prepared.fx_rates, &group, None)
+                .await
+            {
                 Ok(row) => row,
                 Err(reason) => unavailable_issuer_row(&group, &reason),
             };
@@ -1000,6 +1001,7 @@ async fn analyze_issuer_group(
     eodhd_api_key: &str,
     fx_rates: &HashMap<String, f64>,
     issuer_group: &IssuerGroup,
+    fundamentals: Option<Value>,
 ) -> Result<Value, String> {
     let group = &issuer_group.securities;
     let actionable = group
@@ -1011,9 +1013,12 @@ async fn analyze_issuer_group(
         })
         .ok_or_else(|| "issuer group is empty".to_string())?;
     let analysis_symbol = actionable.symbol.as_str();
-    let fundamentals = providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol)
-        .await
-        .map_err(|error| error.to_string())?;
+    let fundamentals = match fundamentals {
+        Some(fundamentals) => fundamentals,
+        None => providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol)
+            .await
+            .map_err(|error| error.to_string())?,
+    };
     let primary = fundamentals
         .pointer("/General/PrimaryTicker")
         .and_then(Value::as_str)
@@ -1194,29 +1199,6 @@ fn unavailable_issuer_row(group: &IssuerGroup, reason: &str) -> Value {
     })
 }
 
-struct RequestRateLimiter {
-    next: tokio::sync::Mutex<tokio::time::Instant>,
-}
-
-impl RequestRateLimiter {
-    fn new() -> Self {
-        Self {
-            next: tokio::sync::Mutex::new(tokio::time::Instant::now()),
-        }
-    }
-
-    async fn acquire(&self) {
-        let scheduled = {
-            let mut next = self.next.lock().await;
-            let now = tokio::time::Instant::now();
-            let scheduled = (*next).max(now);
-            *next = scheduled + Duration::from_millis(63);
-            scheduled
-        };
-        tokio::time::sleep_until(scheduled).await;
-    }
-}
-
 async fn wait_for_screen_cancel(store: &ResearchStore, job_id: &str) -> Result<(), McpToolError> {
     loop {
         if store
@@ -1227,6 +1209,92 @@ async fn wait_for_screen_cancel(store: &ResearchStore, job_id: &str) -> Result<(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+async fn fetch_bulk_fundamentals(
+    server: &CompaniesServer,
+    groups: &[IssuerGroup],
+) -> HashMap<String, Result<Value, String>> {
+    let mut by_exchange: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for group in groups {
+        let actionable = group.securities.iter().max_by(|left, right| {
+            left.average_daily_dollar_volume_usd
+                .partial_cmp(&right.average_daily_dollar_volume_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if let Some(security) = actionable {
+            let exchange = security
+                .symbol
+                .rsplit_once('.')
+                .map_or("US", |(_, exchange)| exchange);
+            by_exchange
+                .entry(exchange.to_string())
+                .or_default()
+                .push((group.issuer_key.clone(), security.symbol.clone()));
+        }
+    }
+    let mut batches = Vec::new();
+    for (exchange, issuers) in by_exchange {
+        for chunk in issuers.chunks(500) {
+            batches.push((exchange.clone(), chunk.to_vec()));
+        }
+    }
+    let outcomes = futures::stream::iter(batches.into_iter().map(|(exchange, issuers)| {
+        let client = server.client.clone();
+        let api_key = server.eodhd_api_key.clone();
+        async move {
+            let symbols: Vec<String> = issuers.iter().map(|(_, symbol)| symbol.clone()).collect();
+            let result =
+                providers::fetch_eodhd_bulk_fundamentals(&client, &api_key, &exchange, &symbols)
+                    .await;
+            (issuers, result)
+        }
+    }))
+    .buffer_unordered(8)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut fundamentals = HashMap::new();
+    for (issuers, outcome) in outcomes {
+        match outcome {
+            Ok(value) => {
+                let Some(rows) = value.as_array() else {
+                    for (issuer_key, _) in issuers {
+                        fundamentals.insert(
+                            issuer_key,
+                            Err("bulk fundamentals response is not an array".to_string()),
+                        );
+                    }
+                    continue;
+                };
+                let by_code: HashMap<&str, &Value> = rows
+                    .iter()
+                    .filter_map(|row| {
+                        row.pointer("/General/Code")
+                            .and_then(Value::as_str)
+                            .map(|code| (code, row))
+                    })
+                    .collect();
+                for (issuer_key, symbol) in issuers {
+                    let code = symbol
+                        .split_once('.')
+                        .map_or(symbol.as_str(), |(code, _)| code);
+                    let result = by_code
+                        .get(code)
+                        .map(|row| (*row).clone())
+                        .ok_or_else(|| format!("bulk fundamentals omitted {symbol}"));
+                    fundamentals.insert(issuer_key, result);
+                }
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                for (issuer_key, _) in issuers {
+                    fundamentals.insert(issuer_key, Err(reason.clone()));
+                }
+            }
+        }
+    }
+    fundamentals
 }
 
 async fn enrich_pending_issuers(
@@ -1246,40 +1314,42 @@ async fn enrich_pending_issuers(
             .unwrap_or(Value::Null),
     )
     .map_err(|error| McpToolError::internal(format!("invalid FX checkpoint: {error}")))?;
-    let limiter = Arc::new(RequestRateLimiter::new());
-    let work = futures::stream::iter(pending.into_iter().map(|item| {
+    let mut decoded = Vec::with_capacity(pending.len());
+    for item in pending {
+        let group: IssuerGroup = serde_json::from_value(item.payload.clone()).map_err(|error| {
+            McpToolError::internal(format!("decode issuer checkpoint: {error}"))
+        })?;
+        decoded.push((item, group));
+    }
+    let groups: Vec<IssuerGroup> = decoded.iter().map(|(_, group)| group.clone()).collect();
+    let mut bulk = fetch_bulk_fundamentals(server, &groups).await;
+    let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
         let client = server.client.clone();
         let api_key = server.eodhd_api_key.clone();
         let store = server.research.clone();
         let fx_rates = fx_rates.clone();
-        let limiter = limiter.clone();
         let job_id = job_id.to_string();
+        let fundamentals = bulk
+            .remove(&item.issuer_key)
+            .unwrap_or_else(|| Err("bulk fundamentals result missing issuer".to_string()));
         async move {
             if store.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::research_store::PortfolioError>(());
             }
-            limiter.acquire().await;
-            if store.screen_cancel_requested(&job_id)? {
-                return Ok(());
-            }
-            let group: IssuerGroup =
-                serde_json::from_value(item.payload.clone()).map_err(|error| {
-                    crate::research_store::PortfolioError::from(format!(
-                        "decode issuer checkpoint: {error}"
-                    ))
-                })?;
-            let (row, error) = match tokio::time::timeout(
-                ISSUER_REQUEST_TIMEOUT,
-                analyze_issuer_group(&client, &api_key, &fx_rates, &group),
-            )
-            .await
-            {
-                Ok(Ok(row)) => (row, None),
-                Ok(Err(reason)) => (unavailable_issuer_row(&group, &reason), Some(reason)),
-                Err(_) => {
-                    let reason = "issuer enrichment request exceeded 5 seconds".to_string();
-                    (unavailable_issuer_row(&group, &reason), Some(reason))
-                }
+            let (row, error) = match fundamentals {
+                Ok(fundamentals) => match analyze_issuer_group(
+                    &client,
+                    &api_key,
+                    &fx_rates,
+                    &group,
+                    Some(fundamentals),
+                )
+                .await
+                {
+                    Ok(row) => (row, None),
+                    Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
+                },
+                Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
             };
             let classification = row
                 .get("data_quality_status")

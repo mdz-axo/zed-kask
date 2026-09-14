@@ -1827,6 +1827,30 @@ pub async fn fetch_eodhd_common_stocks(
     .await
 }
 
+/// Fetch up to 500 selected symbols through EODHD's Extended Fundamentals bulk endpoint.
+/// Official contract: `/api/bulk-fundamentals/{exchange}`, JSON version 1.2.
+pub async fn fetch_eodhd_bulk_fundamentals(
+    client: &reqwest::Client,
+    eodhd_api_key: &str,
+    exchange: &str,
+    symbols: &[String],
+) -> Result<Value, McpToolError> {
+    if symbols.is_empty() || symbols.len() > 500 {
+        return Err(McpToolError::invalid_argument(
+            "bulk fundamentals requires between 1 and 500 symbols",
+        ));
+    }
+    let symbols = symbols.join(",");
+    eodhd_get(
+        client,
+        "/bulk-fundamentals",
+        eodhd_api_key,
+        exchange,
+        &[("symbols", symbols.as_str()), ("version", "1.2")],
+    )
+    .await
+}
+
 pub async fn fetch_eodhd_fundamentals(
     client: &reqwest::Client,
     eodhd_api_key: &str,

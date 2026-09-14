@@ -2566,6 +2566,19 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 {"Code":"ILL","Name":"Illiquid Issuer","Exchange":"NASDAQ","Currency":"USD","Type":"Common Stock","Isin":"US0000000002"}
             ]));
         }
+        if path.starts_with("/eodhd/bulk-fundamentals/US") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("LIQADR");
+            value["General"]["Name"] = json!("Liquid Issuer ADR");
+            value["General"]["Type"] = json!("Common Stock");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["ISIN"] = json!("US0000000003");
+            value["General"]["PrimaryTicker"] = json!("LIQADR.US");
+            value["General"]["IsDelisted"] = json!(false);
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            return (200, json!([value]));
+        }
         if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
             let mut value = eodhd_fixture();
             value["General"]["Code"] = json!("LIQADR");
@@ -2695,11 +2708,11 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             let fundamental_calls = fixture
                 .requests()
                 .iter()
-                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+                .filter(|path| path.starts_with("/eodhd/bulk-fundamentals/"))
                 .count();
             assert_eq!(
                 fundamental_calls, 1,
-                "financial filtering and issuer grouping must precede one fundamentals request per issuer"
+                "financial filtering and issuer grouping must precede bounded bulk fundamentals acquisition"
             );
             let history_calls = fixture
                 .requests()
