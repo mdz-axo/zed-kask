@@ -385,6 +385,17 @@ pub(crate) fn kask_string_input(
                                         .chronic_staleness_days = Some(v);
                                 }
                             }
+                            ("companies", "investor_required_return") => {
+                                if let Ok(value) = parsed.parse::<f64>()
+                                    && value.is_finite()
+                                    && value > 0.0
+                                    && value < 1.0
+                                {
+                                    kask.companies
+                                        .get_or_insert_default()
+                                        .investor_required_return = Some(value);
+                                }
+                            }
                             ("companies", "fermi_defaults") => {
                                 kask.companies.get_or_insert_default().fermi_defaults =
                                     Some(parsed.clone());

@@ -1051,7 +1051,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Get complete details for a gallery asset — record, tags, lineage, and face associations in a single call. The inspector-panel data source."
+        description = "Get complete details for a gallery asset — record, tags, lineage, OMC creation graph, and face associations in a single call. The inspector-panel data source."
     )]
     pub async fn gallery_asset_detail(
         &self,
@@ -1083,6 +1083,20 @@ impl MediaServer {
                 .gallery_store
                 .get_generation(&image.id)
                 .map_err(|e| map_media_error(e.into()))?;
+            let omc_creation_graph =
+                self.gallery_store
+                    .get_omc_creation_graph(&image.id)
+                    .map_err(|e| map_media_error(e.into()))?
+                    .map(|record| {
+                        serde_json::from_str::<crate::omc::CreationGraph>(&record.graph_json)
+                            .map_err(|error| {
+                                McpToolError::internal(format!(
+                                    "stored OMC creation graph for {} is invalid: {error}",
+                                    image.id
+                                )) // rr0044-ok: stored server-owned graph failed its typed decode
+                            })
+                    })
+                    .transpose()?;
             let faces = self
                 .gallery_store
                 .get_faces_for_image(&image.id)
@@ -1091,6 +1105,7 @@ impl MediaServer {
                 "image": &image,
                 "tags": &tags,
                 "lineage": &lineage,
+                "omc_creation_graph": &omc_creation_graph,
                 "faces": &faces,
             }))
         })

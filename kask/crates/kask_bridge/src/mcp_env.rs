@@ -143,6 +143,10 @@ pub(crate) fn emit_companies_env(
             companies.chronic_staleness_days.to_string(),
         );
     }
+    env.insert(
+        "HKASK_INVESTOR_REQUIRED_RETURN".to_string(),
+        companies.investor_required_return.to_string(),
+    );
     if !companies.fermi_defaults.is_empty() {
         env.insert(
             "HKASK_FERMI_DEFAULTS".to_string(),

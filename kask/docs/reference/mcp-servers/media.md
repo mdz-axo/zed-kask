@@ -229,7 +229,7 @@ No routing or layout change is part of this repair.
 | `gallery_timeline` | 927 | Organize gallery images by time period using EXIF dates; grouped by year, month, or decade. |
 | `gallery_record_generation` | 1026 | Record generation lineage for a gallery image (prompt, model, provider, seed, params) so it can be reproduced or varied later; image must already be indexed. |
 | `gallery_lineage` | 1079 | Show the recorded generation lineage for a gallery image; `lineage: null` if none recorded. |
-| `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing records and status flags; the inspector-panel data source. |
+| `gallery_asset_detail` | 1108 | Complete details by active `image_index` or stable `image_id` (exactly one), including missing/status fields, lineage, and the structured OMC v2.8 creation graph; the inspector-panel data source. |
 | `gallery_reproduce` | 1107 | Re-run the generation that produced a gallery image from its stored lineage; the current image is the source for image-ops. |
 | `gallery_delete_image` | 1176 | Delete an image from the gallery index by stable `image_id` or active `image_index` (exactly one); by default index-only, `delete_file=true` also removes the file. |
 | `gallery_add_media` | 1256 | Import a video or audio file into the gallery index (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
@@ -374,6 +374,8 @@ Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`sr
 | `omc:Shot` | `video_extract_frames` |
 | `omc:Task` | lineage (`gallery_record_generation`, `gallery_lineage`, `gallery_reproduce`), job queue (`job_submit` … `job_cancel`), workflows (`workflow_save` … `workflow_delete`) |
 | `omc:Participant` | `model_list`, `model_info` — the model/provider is a participant in the creation task |
+
+Canonical publication persists a typed creation graph per output asset using official OMC v2.8 relationships: `Asset → hasProvenance → Provenance`, `Asset → isCreatedByTask → Task`, `Task → hasState → State → hasStateDescriptor → StateDescriptor`, `Provenance → isCreatedBy → Participant`, and `Role → hasTask/hasParticipant → Task/Participant`. The participant is the hkask media service for local operations. The graph is returned by `gallery_asset_detail` and cascades with asset deletion.
 
 Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every registered tool maps to a concept — catches a new tool added without an `omc::tool_to_omc` arm, `src/hkask_mcp_media.rs`), `omc_mapping_distinguishes_tool_families` (nine families map to nine distinct concepts, `src/hkask_mcp_media.rs`), and `omc_module_present_with_consumer` (the `media_block::enrich_with_omc_and_provenance` call site must keep referencing `omc::tool_to_omc` — a module without a consumer is dead surface, `src/hkask_mcp_media.rs`).
 

@@ -201,7 +201,7 @@ pub(crate) async fn execute(
 
 async fn submit(server: &CompaniesServer, req: ScreenerRequest) -> Result<Value, McpToolError> {
     let acquisition_date = chrono::Utc::now().date_naive().to_string();
-    let definition = resolve_definition(&req, &acquisition_date)?;
+    let definition = resolve_definition(&req, &acquisition_date, server.investor_required_return)?;
     validate_definition(&definition, &acquisition_date)?;
     let verification = verify_assertions(&definition)?;
     let definition_value = serde_json::to_value(&definition)
@@ -1570,11 +1570,15 @@ fn load_job(store: &ResearchStore, job_id: &str) -> Result<ScreenJobRecord, McpT
 fn resolve_definition(
     req: &ScreenerRequest,
     acquisition_date: &str,
+    investor_required_return: f64,
 ) -> Result<ScreenDefinition, McpToolError> {
     match (&req.template, &req.screen_definition) {
-        (Some(name), None) => {
-            render_template(name, req.template_context.as_ref(), acquisition_date)
-        }
+        (Some(name), None) => render_template(
+            name,
+            req.template_context.as_ref(),
+            acquisition_date,
+            investor_required_return,
+        ),
         (None, Some(value)) => serde_json::from_value(value.0.clone()).map_err(|error| {
             McpToolError::invalid_argument(format!("invalid screen_definition: {error}"))
         }),
@@ -1631,6 +1635,7 @@ fn render_template(
     name: &str,
     context: Option<&ScreenTemplateContext>,
     acquisition_date: &str,
+    investor_required_return: f64,
 ) -> Result<ScreenDefinition, McpToolError> {
     let source = SCREEN_TEMPLATES
         .iter()
@@ -1651,6 +1656,7 @@ fn render_template(
         McpToolError::internal(format!("screen template {name:?} context is not an object"))
     })?;
     context_object.insert("as_of".to_string(), json!(acquisition_date));
+    context_object.insert("target_return".to_string(), json!(investor_required_return));
     let missing_context_variables: Vec<&str> = metadata
         .contract
         .input
@@ -2023,9 +2029,8 @@ mod tests {
             market_cap_min: Some(5_000_000_000.0),
             market_cap_max: Some(50_000_000_000.0),
             liquidity_min_usd: Some(1_000_000.0),
-            target_return: Some(0.15),
         };
-        match render_template("expectations_gap", Some(&context), as_of) {
+        match render_template("expectations_gap", Some(&context), as_of, 0.15) {
             Ok(definition) => definition,
             Err(error) => panic!("expectations template must render: {error}"),
         }
@@ -2304,7 +2309,7 @@ mod tests {
             Ok(request) => request,
             Err(error) => panic!("template request must deserialize: {error}"),
         };
-        let error = match resolve_definition(&request, "2026-09-13") {
+        let error = match resolve_definition(&request, "2026-09-13", 0.15) {
             Ok(_) => panic!("missing template context must be rejected"),
             Err(error) => error,
         };
@@ -2329,8 +2334,7 @@ mod tests {
                 "exchanges",
                 "liquidity_min_usd",
                 "market_cap_max",
-                "market_cap_min",
-                "target_return"
+                "market_cap_min"
             ]))
         );
     }
@@ -2350,7 +2354,8 @@ mod tests {
             "criteria_overrides":{}
         }))
         .expect("template request");
-        let rendered = resolve_definition(&templated, "2026-09-13").expect("rendered definition");
+        let rendered =
+            resolve_definition(&templated, "2026-09-13", 0.15).expect("rendered definition");
         assert_eq!(rendered.as_of, "2026-09-13");
         let rendered_value = serde_json::to_value(&rendered).expect("definition JSON");
         let direct: ScreenerRequest = serde_json::from_value(json!({
@@ -2361,7 +2366,7 @@ mod tests {
             "criteria_overrides":{}
         }))
         .expect("direct request");
-        let direct = resolve_definition(&direct, "2026-09-13").expect("direct definition");
+        let direct = resolve_definition(&direct, "2026-09-13", 0.15).expect("direct definition");
         assert_eq!(
             serde_json::to_value(rendered).expect("rendered JSON"),
             serde_json::to_value(direct).expect("direct JSON")

@@ -117,8 +117,13 @@ legitimate empty face/object detections are valid results. Generated assets capt
 the gallery at operation admission, before the first inference await: the snapshot
 travels immutably through inference, downloads, and every variant, so a root switch
 mid-flight never retargets an in-flight generation (background jobs capture at
-submission). Keyframes are copied into durable artifacts before indexing, not
-indexed as soon-to-be-deleted extraction scratch files.
+submission). Canonically published media also persist an OMC v2.8 creation graph:
+the output Asset links to its creation Task and Provenance; the Task links to its
+completed State/StateDescriptor; and an OMC Role links that Task to the responsible
+hkask media Service/Participant. `gallery_asset_detail` returns this structured
+`omc_creation_graph`, and deleting the asset cascades the graph. Keyframes are copied
+into durable artifacts before indexing, not indexed as soon-to-be-deleted extraction
+scratch files.
 
 An absent file's canonicalization resolves its existing symlink ancestors (the
 deepest existing prefix is canonicalized, the absent remainder appended

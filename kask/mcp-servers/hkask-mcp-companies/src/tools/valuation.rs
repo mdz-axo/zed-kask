@@ -354,6 +354,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
@@ -455,6 +456,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
             let model = financial_model::project_financial_model(&hist, &assumptions)
@@ -563,6 +565,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
             let ranges = financial_model::McRange {
@@ -665,6 +668,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
@@ -938,6 +942,7 @@ impl CompaniesServer {
             let mut assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 

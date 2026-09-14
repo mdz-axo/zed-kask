@@ -762,9 +762,6 @@ pub(crate) struct ScreenTemplateContext {
     /// Minimum average daily traded value in reporting currency.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liquidity_min_usd: Option<f64>,
-    /// Investor's required equity return. Defaults to MAIA's documented 15% hurdle.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_return: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

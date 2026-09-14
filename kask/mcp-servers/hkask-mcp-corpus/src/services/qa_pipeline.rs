@@ -1,5 +1,5 @@
-//! Canonical prepared QA records and completion/output accounting for both
-//! batch transports. Single-chunk generation retains its own prompt formatter.
+//! Canonical prepared QA records, validation, and completion accounting for
+//! the synchronous generation path.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
@@ -11,10 +11,17 @@ use serde_json::json;
 use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
 use crate::tools::corpus::{QaType, qa_type_instruction};
-use crate::tools::semantic::qa::QaPair;
+
 use crate::{McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
+
+struct QaPair {
+    question: String,
+    answer: String,
+    bloom_level: String,
+    evidence_quotes: Vec<hkask_types::corpus::QaEvidence>,
+}
 
 /// One server-owned passage identity. Only `local_id` and guarded `text` enter
 /// the model prompt; canonical identity is restored after quote verification.
@@ -428,11 +435,7 @@ pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
 /// The envelope format matches what `corpus_ingest_qa`'s `parse_qa_record`
 /// expects: primary identity, QA type, response, canonical evidence and
 /// provenance. Prompt-level token usage stays in the batch summary.
-pub(crate) fn qa_result_envelope(
-    prompt: &PreparedQaPrompt,
-    pair: QaPair,
-    model: &str,
-) -> serde_json::Value {
+fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> serde_json::Value {
     json!({
         "prompt_id": prompt.prompt_id,
         "chunk_ref": prompt.primary().chunk_ref,

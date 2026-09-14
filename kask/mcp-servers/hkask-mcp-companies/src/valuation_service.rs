@@ -261,10 +261,12 @@ pub(crate) async fn prepare_dcf(
     };
     let history = inputs.history(symbol)?;
     let signal_quality = history.signal_quality();
-    let assumptions = ProjectionAssumptions::from_history_with_overrides(&history, overrides)
-        .map_err(|error| {
-            hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string())
-        })?;
+    let assumptions = ProjectionAssumptions::from_history_with_overrides(
+        &history,
+        overrides,
+        server.investor_required_return,
+    )
+    .map_err(|error| hkask_mcp_server::server::McpToolError::invalid_argument(error.to_string()))?;
     let model = crate::financial_model::project_financial_model(&history, &assumptions).map_err(
         |error| {
             DcfPreparationError::Unavailable(

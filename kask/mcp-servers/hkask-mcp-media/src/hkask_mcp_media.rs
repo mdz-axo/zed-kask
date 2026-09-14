@@ -1608,7 +1608,6 @@ mod tool_behavior_tests {
                 }))
                 .await?,
         );
-        drop(server);
 
         let output =
             std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
@@ -1635,6 +1634,20 @@ mod tool_behavior_tests {
         assert_eq!(hint["gallery_asset_id"], asset_id);
         assert_eq!(hint["provenance"]["args"], expected);
         assert_eq!(content["effective_params"], expected);
+        let detail = content_of(
+            &server
+                .gallery_asset_detail(Parameters(GalleryAssetDetailRequest {
+                    image_index: None,
+                    image_id: Some(asset_id.to_string()),
+                }))
+                .await?,
+        );
+        assert_eq!(detail["omc_creation_graph"]["asset_id"], asset_id);
+        assert_eq!(
+            detail["omc_creation_graph"]["task_id"],
+            content["omc_task_id"]
+        );
+        drop(server);
         let asset = store.get_by_id(&gallery_id, asset_id)?;
         assert_eq!(asset.format, "wav");
         assert_eq!(asset.media_type, "audio");
@@ -1912,6 +1925,65 @@ mod tool_behavior_tests {
         assert!(
             error.to_string().contains("injected audio lineage failure"),
             "original lineage cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            0
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `assets::publish_local_media`
+    /// expect: An OMC graph failure leaves no published media or database residue.
+    /// [P1] Motivating: semantic persistence is part of the asset's atomic commit.
+    /// pre: capture, gallery insertion, and lineage succeed before graph insertion is rejected.
+    /// post: the graph cause is surfaced and file, asset row, lineage, and graph are absent.
+    /// [P1] Constraining: publication remains rollback-armed until the graph is durable.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn omc_graph_failure_rolls_back_file_asset_lineage_and_graph()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        driver.execute(
+            "CREATE TRIGGER fail_omc_graph BEFORE INSERT ON gallery_omc_creation_graph \
+             BEGIN SELECT RAISE(ABORT, 'injected OMC graph failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery.id),
+        })));
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state,
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        );
+        let error = server
+            .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
+            .await
+            .expect_err("OMC graph publication must fail");
+
+        assert!(
+            error.to_string().contains("injected OMC graph failure"),
+            "original graph cause was not preserved: {error}"
         );
         assert_eq!(store.count_assets(&gallery_id)?, 0);
         assert_eq!(
@@ -2226,6 +2298,14 @@ mod tool_behavior_tests {
         let params: serde_json::Value =
             serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
         assert_eq!(&params, expected_effective_params);
+        let graph_record = store
+            .get_omc_creation_graph(asset_id)?
+            .ok_or("OMC creation graph missing")?;
+        let graph: crate::omc::CreationGraph = serde_json::from_str(&graph_record.graph_json)?;
+        assert_eq!(graph.asset_id, asset_id);
+        assert_eq!(graph.task_id, lineage.id);
+        assert_eq!(graph.participant_id, "service:hkask-mcp-media");
+        assert_eq!(graph.relationships.len(), 7);
         Ok(output_path)
     }
 

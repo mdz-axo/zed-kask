@@ -15,8 +15,6 @@ pub(crate) const IMPLIED_GROWTH_LO: f64 = -0.50;
 pub(crate) const IMPLIED_GROWTH_HI: f64 = 1.00;
 pub(crate) const IMPLIED_NET_MARGIN_LO: f64 = -0.30;
 pub(crate) const IMPLIED_NET_MARGIN_HI: f64 = 0.50;
-/// MAIA investor hurdle documented in `MA_Guidebook_July23.md`.
-pub(crate) const MAIA_INVESTOR_TARGET_RETURN: f64 = 0.15;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(crate) enum NwcMethod {
@@ -90,8 +88,8 @@ impl Default for ProjectionAssumptions {
             interest_rate: 0.05,
             equity_issuance: 0.0,
             dividend_payout_ratio: 0.0,
-            investor_target_return: MAIA_INVESTOR_TARGET_RETURN,
-            discount_rate: MAIA_INVESTOR_TARGET_RETURN,
+            investor_target_return: 0.0,
+            discount_rate: 0.0,
             equity_weight: 1.0,
             debt_weight: 0.0,
             terminal_growth: 0.025,
@@ -137,7 +135,10 @@ pub(crate) enum ProjectionError {
 }
 
 impl ProjectionAssumptions {
-    pub(crate) fn from_history(hist: &HistoricalSnapshot) -> Result<Self, ProjectionError> {
+    pub(crate) fn from_history(
+        hist: &HistoricalSnapshot,
+        investor_required_return: f64,
+    ) -> Result<Self, ProjectionError> {
         let other_operating_expense_to_revenue = hist
             .other_operating_expense_to_revenue()
             .ok_or(ProjectionError::OperatingExpensesUnreconciled)?;
@@ -154,7 +155,7 @@ impl ProjectionAssumptions {
         let total_capital = debt + equity;
         let equity_weight = equity / total_capital;
         let debt_weight = debt / total_capital;
-        let discount_rate = equity_weight * MAIA_INVESTOR_TARGET_RETURN
+        let discount_rate = equity_weight * investor_required_return
             + debt_weight * interest_rate * (1.0 - hist.tax_rate);
         let assumptions = Self {
             revenue_growth: hist.revenue_cagr(),
@@ -170,7 +171,7 @@ impl ProjectionAssumptions {
             nwc_to_revenue: hist.nwc_to_revenue(),
             interest_rate,
             dividend_payout_ratio: hist.dividend_payout_ratio(),
-            investor_target_return: MAIA_INVESTOR_TARGET_RETURN,
+            investor_target_return: investor_required_return,
             discount_rate,
             equity_weight,
             debt_weight,
@@ -202,8 +203,9 @@ impl ProjectionAssumptions {
     pub(crate) fn from_history_with_overrides(
         hist: &HistoricalSnapshot,
         overrides: ProjectionAssumptionOverrides,
+        investor_required_return: f64,
     ) -> Result<Self, ProjectionError> {
-        let mut assumptions = Self::from_history(hist)?;
+        let mut assumptions = Self::from_history(hist, investor_required_return)?;
         if let Some(value) = overrides.revenue_growth {
             assumptions.revenue_growth = value;
         }
@@ -822,7 +824,7 @@ mod tests {
     fn fcff_and_terminal_value_match_worked_equations() {
         let history = worked_history();
         let mut assumptions =
-            ProjectionAssumptions::from_history(&history).expect("worked history reconciles");
+            ProjectionAssumptions::from_history(&history, 0.15).expect("worked history reconciles");
         assumptions.revenue_growth = 0.0;
         assumptions.terminal_growth = 0.0;
         assumptions.discount_rate = 0.10;
@@ -849,7 +851,7 @@ mod tests {
         history.interest_expense = vec![("2024".to_string(), 32.0), ("2025".to_string(), 32.0)];
         history.tax_rate = 0.20;
         let assumptions =
-            ProjectionAssumptions::from_history(&history).expect("valid capital structure");
+            ProjectionAssumptions::from_history(&history, 0.15).expect("valid capital structure");
         assert!((assumptions.equity_weight - 0.60).abs() < 1e-12);
         assert!((assumptions.debt_weight - 0.40).abs() < 1e-12);
         assert!((assumptions.investor_target_return - 0.15).abs() < 1e-12);
@@ -928,7 +930,7 @@ mod tests {
     fn revenue_growth_fades_to_terminal_growth_after_stage_one() {
         let history = worked_history();
         let mut assumptions =
-            ProjectionAssumptions::from_history(&history).expect("worked history reconciles");
+            ProjectionAssumptions::from_history(&history, 0.15).expect("worked history reconciles");
         assumptions.revenue_growth = 0.10;
         assumptions.terminal_growth = 0.02;
         assumptions.total_years = 3;

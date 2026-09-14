@@ -508,6 +508,7 @@ impl CompaniesServer {
                 &req.symbol,
                 &profile,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .await
             {
@@ -639,6 +640,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
@@ -791,6 +793,7 @@ impl CompaniesServer {
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
+                self.investor_required_return,
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 

@@ -121,6 +121,7 @@ hkask_mcp_server::mcp_server!(
         pub research: ResearchStore,
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
+        pub investor_required_return: f64,
         pub fibo_cache: Option<fibo_cache::FiboDataCache>,
     }
 );
@@ -344,6 +345,25 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // could never arrive and corpus-mode transcript search was
             // permanently unavailable (RR-0061).
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
+            let investor_required_return = std::env::var("HKASK_INVESTOR_REQUIRED_RETURN")
+                .map_err(|error| hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "HKASK_INVESTOR_REQUIRED_RETURN setting".to_string(),
+                    detail: error.to_string(),
+                })?
+                .parse::<f64>()
+                .map_err(|error| hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "HKASK_INVESTOR_REQUIRED_RETURN setting".to_string(),
+                    detail: error.to_string(),
+                })?;
+            if !investor_required_return.is_finite()
+                || investor_required_return <= 0.0
+                || investor_required_return >= 1.0
+            {
+                return Err(hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "HKASK_INVESTOR_REQUIRED_RETURN setting".to_string(),
+                    detail: "value must be finite and between 0 and 1".to_string(),
+                });
+            }
             // FIBO financial data cache — stores raw API responses and FIBO-tagged
             // concept points in SQLite. Failures are non-fatal: the server runs
             // without caching (every fetch hits the API), but logs a warning.
@@ -402,6 +422,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     LearningState::with_staleness_days(days)
                 })),
                 superforecast::FermiDefaults::from_env(),
+                investor_required_return,
                 fibo_cache,
             );
             screening::resume_pending_jobs(&server);
@@ -467,6 +488,7 @@ mod tool_behavior_tests {
             ResearchStore::new(WebID::new()).expect("research store init"),
             std::sync::Arc::new(std::sync::Mutex::new(LearningState::default())),
             superforecast::FermiDefaults::from_env(),
+            0.15,
             None,
         )
     }

@@ -2031,7 +2031,7 @@ mod tests {
             )
             .expect("add asset");
         let graph_json =
-            r#"{"entities":[{"id":"asset","types":["omc:Asset"]}],"relationships":[]}"#;
+            r#"{"entities":[{"id":"asset","types":["fixture-asset-type"]}],"relationships":[]}"#;
         store
             .record_omc_creation_graph(&image.id, graph_json)
             .expect("record graph");

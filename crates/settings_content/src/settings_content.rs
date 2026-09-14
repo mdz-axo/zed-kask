@@ -1811,6 +1811,7 @@ pub struct KaskResearchSettingsContent {
 pub struct KaskCompaniesSettingsContent {
     pub chronic_staleness_days: Option<u32>,
     pub fermi_defaults: Option<String>,
+    pub investor_required_return: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

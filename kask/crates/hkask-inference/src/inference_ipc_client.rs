@@ -198,13 +198,6 @@ fn ipc_read_timeout() -> std::time::Duration {
     }
 }
 
-/// Timeout for batch IPC roundtrips. Batch API calls can take hours to
-/// complete (OpenRouter/DeepInfra process asynchronously), so this is
-/// much longer than the default `ipc_read_timeout`. Matches
-/// `MAX_BATCH_WAIT` in `batch.rs` (6 hours) plus the same grace margin.
-const IPC_BATCH_READ_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(6 * 60 * 60 + 60);
-
 /// Read one newline-delimited response from the socket, capped at
 /// `MAX_IPC_LINE_BYTES`. Returns `None` when the server closed the
 /// connection before sending any bytes; a line without a terminating
@@ -213,9 +206,7 @@ async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, s
     read_response_line_with_timeout(stream, ipc_read_timeout()).await
 }
 
-/// Read one newline-delimited response with an explicit timeout. Used by
-/// `call_generate_batch` which needs a much longer timeout (batch API can
-/// take hours) than the default `ipc_read_timeout` (~330s).
+/// Read one newline-delimited response with an explicit timeout.
 async fn read_response_line_with_timeout(
     stream: &mut UnixStream,
     timeout: std::time::Duration,
@@ -453,98 +444,9 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
-            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
-            )),
             InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
             )),
-        }
-    }
-
-    /// Send a batch generation request and receive the results.
-    ///
-    /// The zed side holds the API keys and handles submission to the
-    /// provider's Batch API (OpenRouter or DeepInfra). The MCP server
-    /// never sees the credentials.
-    pub async fn call_generate_batch(
-        &self,
-        model: &str,
-        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
-        max_tokens: u32,
-        temperature: f32,
-    ) -> Result<Vec<hkask_types::inference_ipc::BatchResultEntry>, InferenceError> {
-        let method = InferenceMethod::GenerateBatch;
-        let params = InferenceParams {
-            model_override: Some(model.to_string()),
-            batch_prompts: Some(prompts.to_vec()),
-            batch_max_tokens: Some(max_tokens),
-            parameters: LLMParameters {
-                temperature,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        // Batch requests use a much longer read timeout than standard IPC
-        // calls — the batch API processes asynchronously and can take hours.
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = InferenceRequest {
-            id,
-            method: method.clone(),
-            params,
-        };
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| IpcTransportError::Json(format!("IPC serialize failed: {e}")))?;
-
-        let mut stream = UnixStream::connect(&*self.socket_path)
-            .await
-            .map_err(|e| IpcTransportError::Connection(format!("IPC connect failed: {e}")))?;
-        stream
-            .write_all(request_json.as_bytes())
-            .await
-            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .write_all(b"\n")
-            .await
-            .map_err(|e| IpcTransportError::Connection(format!("IPC write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| IpcTransportError::Connection(format!("IPC flush failed: {e}")))?;
-
-        let line = read_response_line_with_timeout(&mut stream, IPC_BATCH_READ_TIMEOUT)
-            .await
-            .map_err(|e| IpcTransportError::Connection(format!("IPC read failed: {e}")))?;
-        let line = match line {
-            Some(line) => line,
-            None => {
-                return Err(
-                    IpcTransportError::Connection("IPC socket closed by server".into()).into(),
-                );
-            }
-        };
-
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| IpcTransportError::Json(format!("IPC deserialize failed: {e}")))?;
-
-        if response.id != id {
-            return Err(IpcTransportError::Connection(format!(
-                "IPC ID mismatch: expected {id}, got {}",
-                response.id
-            ))
-            .into());
-        }
-
-        match response.outcome {
-            InferenceOutcome::BatchResults { results } => Ok(results),
-            InferenceOutcome::Error { error } => Err(InferenceError::Connection(format!(
-                "{}: {}",
-                error.code, error.message
-            ))),
-            _ => Err(InferenceError::Connection(unexpected_outcome_msg(
-                &method,
-                "unexpected outcome",
-            ))),
         }
     }
 
@@ -580,9 +482,6 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::BatchResults { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
             )),
             InferenceOutcome::RerankScores { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
@@ -629,9 +528,6 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
-            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
-            )),
             InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
             )),
@@ -672,9 +568,6 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
             )),
         }
     }
@@ -734,9 +627,6 @@ impl InferenceIpcClient {
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
-            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
-            )),
             InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
             )),
@@ -778,9 +668,6 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::BatchResults { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "BatchResults"),
             )),
             InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
@@ -922,32 +809,6 @@ impl InferencePort for InferenceIpcClient {
                     }
                 })
                 .collect())
-        })
-    }
-
-    fn generate_batch<'a>(
-        &'a self,
-        model: &str,
-        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
-        max_tokens: u32,
-        temperature: f32,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        Vec<hkask_types::inference_ipc::BatchResultEntry>,
-                        InferenceError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    > {
-        let this = self.clone();
-        let model = model.to_string();
-        let prompts = prompts.to_vec();
-        Box::pin(async move {
-            this.call_generate_batch(&model, &prompts, max_tokens, temperature)
-                .await
         })
     }
 }

@@ -227,6 +227,7 @@ impl QaBatchService {
 mod tests {
     use super::*;
     use crate::services::qa_pipeline::{PREPARED_QA_PROTOCOL, PreparedQaPassage};
+    use crate::tools::corpus::QaType;
     use hkask_types::template::LLMParameters;
     use hkask_types::{
         ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,

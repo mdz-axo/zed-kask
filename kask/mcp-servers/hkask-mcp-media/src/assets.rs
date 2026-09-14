@@ -658,7 +658,7 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
             ));
         }
     };
-    if let Err(lineage_error) = gallery_store.record_generation(
+    let generation = match gallery_store.record_generation(
         &gallery_asset_id,
         op,
         None,
@@ -669,9 +669,29 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
         None,
         None,
     ) {
+        Ok(generation) => generation,
+        Err(lineage_error) => {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
+            ));
+        }
+    };
+    let creation_graph =
+        crate::omc::creation_graph(&gallery_asset_id, &generation.id, &generation.created_at);
+    let graph_json = match serde_json::to_string(&creation_graph) {
+        Ok(graph_json) => graph_json,
+        Err(error) => {
+            return Err(rollback_local_publication_error(
+                &mut publication,
+                MediaError::AssetPersistence(format!("serialize {op} OMC creation graph: {error}")),
+            ));
+        }
+    };
+    if let Err(error) = gallery_store.record_omc_creation_graph(&gallery_asset_id, &graph_json) {
         return Err(rollback_local_publication_error(
             &mut publication,
-            MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
+            MediaError::AssetPersistence(format!("record {op} OMC creation graph: {error}")),
         ));
     }
 
@@ -700,6 +720,10 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
     result_object.insert(
         "gallery_asset_id".to_string(),
         serde_json::Value::String(gallery_asset_id),
+    );
+    result_object.insert(
+        "omc_task_id".to_string(),
+        serde_json::Value::String(generation.id),
     );
     let result = crate::media_block::enrich_with_omc_and_provenance(
         result,

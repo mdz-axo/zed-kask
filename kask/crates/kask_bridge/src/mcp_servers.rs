@@ -108,6 +108,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_ARTIFACTS_DIR",
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
+            "HKASK_INVESTOR_REQUIRED_RETURN",
         ]),
     },
     BuiltinMcpServer {

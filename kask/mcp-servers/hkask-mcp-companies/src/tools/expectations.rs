@@ -62,9 +62,7 @@ impl CompaniesServer {
             // ── 2. Price-implied expectations vs demonstrated capability ──
 
             let mut price_source = "unavailable".to_string();
-            let investor_target_return = req
-                .target_return
-                .unwrap_or(financial_model::MAIA_INVESTOR_TARGET_RETURN);
+            let investor_target_return = req.target_return.unwrap_or(self.investor_required_return);
             let analysis = match (
                 &req_income,
                 &req_balance,
@@ -294,10 +292,9 @@ pub(crate) fn solve_expectations(
         // like-for-like in net-income space. The enterprise model's gross
         // margin is an internal parameter only, reached through the identity
         // GM = NM/(1−tax) + SG&A% + interest% + D&A%.
-        let assumptions = financial_model::ProjectionAssumptions::from_history(&hist)
-            .ok()?
-            .with_investor_target_return(investor_target_return)
-            .ok()?;
+        let assumptions =
+            financial_model::ProjectionAssumptions::from_history(&hist, investor_target_return)
+                .ok()?;
         let sustainable_growth_rate = capability.sustainable_growth_rate;
         let demonstrated_revenue_growth = hist.demonstrated_revenue_cagr()?;
         let demonstrated_net_margin = capability.net_profit_margin;

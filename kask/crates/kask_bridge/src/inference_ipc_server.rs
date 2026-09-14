@@ -32,8 +32,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
-    BatchResultEntry, InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest,
-    InferenceResponse, ModelListEntry, WorktreeThreadInfo,
+    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
+    ModelListEntry, WorktreeThreadInfo,
 };
 use hkask_types::process_global::ProcessGlobal;
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
@@ -118,7 +118,7 @@ pub(crate) fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
 ///
 /// The socket file is intentionally leaked: `start` spawns a detached tokio
 /// task that owns the `UnixListener`, and the GPUI-side channel tasks
-/// (list_models, worktree_spawn, batch_credential) are **detached** in
+/// (list_models, worktree_spawn, provider_credential) are **detached** in
 /// `start` so they run for the process lifetime. This is load-bearing: a
 /// GPUI `Task` is cancelled immediately when its handle is dropped (unlike a
 /// tokio `JoinHandle`, whose drop detaches) — storing the handles in this
@@ -442,14 +442,14 @@ impl InferenceIpcServer {
         // keychain and returns them via the oneshot reply channel. The tokio-
         // side dispatch uses this to get the provider API key for batch
         // inference calls — the key never leaves the zed process.
-        let (batch_credential_tx, mut batch_credential_rx) =
+        let (provider_credential_tx, mut provider_credential_rx) =
             tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
         // Detached: see the list_models task above. This is the channel the
         // rerank dispatch reads the OpenRouter key through — if this task
         // dies, every deep-strategy rerank fails with "GPUI-side credential
         // task dropped".
         cx.spawn(async move |cx| {
-            while let Some((credential_url, reply)) = batch_credential_rx.recv().await {
+            while let Some((credential_url, reply)) = provider_credential_rx.recv().await {
                 let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                 let result = credentials_provider
                     .read_credentials(&credential_url, cx)
@@ -473,7 +473,7 @@ impl InferenceIpcServer {
             }
         })
         .detach();
-        let batch_credential_tx = Arc::new(batch_credential_tx);
+        let provider_credential_tx = Arc::new(provider_credential_tx);
 
         let task = tokio_handle.spawn(async move {
             loop {
@@ -484,7 +484,7 @@ impl InferenceIpcServer {
                         let tools = tools.clone();
                         let list_models_tx = list_models_tx.clone();
                         let worktree_spawn_tx = worktree_spawn_tx.clone();
-                        let batch_credential_tx = batch_credential_tx.clone();
+                        let provider_credential_tx = provider_credential_tx.clone();
                         tokio::spawn(async move {
                             handle_connection(
                                 stream,
@@ -493,7 +493,7 @@ impl InferenceIpcServer {
                                 tools,
                                 list_models_tx,
                                 Some(worktree_spawn_tx),
-                                batch_credential_tx,
+                                provider_credential_tx,
                             )
                             .await;
                         });
@@ -547,7 +547,7 @@ async fn handle_connection(
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
     worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
-    batch_credential_tx: Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
+    provider_credential_tx: Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
 ) {
     if !peer_is_owner(&stream) {
         return;
@@ -599,7 +599,7 @@ async fn handle_connection(
         // pending so dropping a client cancels queued/provider work immediately.
         let outcome = tokio::select! {
             result = dispatch(&port, embedding_port.as_ref(), tool_port.as_ref(),
-                &list_models_tx, worktree_spawn_tx.as_ref(), &batch_credential_tx, request) => result,
+                &list_models_tx, worktree_spawn_tx.as_ref(), &provider_credential_tx, request) => result,
             next = reader.read_line() => {
                 match next {
                     Ok(None) => tracing::debug!(target: "reg.inference", "IPC caller disconnected; local dispatch cancelled"),
@@ -678,7 +678,7 @@ async fn dispatch(
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
     worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
-    batch_credential_tx: &Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
+    provider_credential_tx: &Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
@@ -912,152 +912,6 @@ async fn dispatch(
         };
     }
 
-    // GenerateBatch requests are dispatched to the provider's Batch API
-    // (OpenRouter or DeepInfra). The zed side reads the API key from the
-    // keychain via the GPUI-side credential channel, then calls
-    // `hkask_inference::batch::submit_batch`. The MCP server never sees the
-    // API key.
-    if matches!(request.method, InferenceMethod::GenerateBatch) {
-        let model = params.model_override.as_deref().unwrap_or("");
-        let prompts = params.batch_prompts.as_deref().unwrap_or(&[]);
-        let max_tokens = params.batch_max_tokens.unwrap_or(2000);
-        let temperature = params.parameters.temperature;
-
-        if prompts.is_empty() {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "InvalidArgument".to_string(),
-                    message: "batch_prompts is empty — cannot submit an empty batch".to_string(),
-                },
-            };
-        }
-
-        // Detect the provider from the model name
-        let Some((provider, clean_model)) = hkask_inference::batch::detect_batch_provider(model)
-        else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "InvalidArgument".to_string(),
-                    message: format!(
-                        "model '{model}' is not batch-eligible — use a ':batch' suffix \
-                         (OpenRouter) or 'DeepInfra/' prefix (DeepInfra), or set \
-                         HKASK_BATCH_PROVIDER"
-                    ),
-                },
-            };
-        };
-
-        // Read the API key from the keychain via the GPUI-side channel. One
-        // key, one location: the provider's key lives at its `api_url`
-        // keychain slot — the same slot zed's `ApiKeyState`, MCP env
-        // injection, and the settings UI read.
-        let credential_key = match provider {
-            hkask_inference::batch::BatchProvider::OpenRouter => "openrouter",
-            hkask_inference::batch::BatchProvider::DeepInfra => "deepinfra",
-        };
-        let Some(provider_descriptor) =
-            crate::inference_providers::provider_by_credential_key(credential_key)
-        else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Internal".to_string(),
-                    message: format!(
-                        "batch provider credential key '{credential_key}' has no \
-                         INFERENCE_PROVIDERS entry — the descriptor table and \
-                         hkask-inference's BatchProvider enum diverged"
-                    ),
-                },
-            };
-        };
-        let credential_url = provider_descriptor.api_url;
-        let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
-        if batch_credential_tx
-            .send((credential_url.to_string(), tx_reply))
-            .is_err()
-        {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "GPUI-side credential task dropped — channel closed \
-                         (task cancelled or app shutting down)"
-                        .to_string(),
-                },
-            };
-        }
-        let api_key = match rx_reply.await {
-            Ok(Ok(key)) => key,
-            Ok(Err(e)) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "PermissionDenied".to_string(),
-                        message: format!(
-                            "batch API requires {} (keychain slot {credential_url}): \
-                             {e}. Set the API key via Settings → AI → LLM Providers.",
-                            provider_descriptor.env_var
-                        ),
-                    },
-                };
-            }
-            Err(e) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Connection".to_string(),
-                        message: format!("credential channel failed: {e}"),
-                    },
-                };
-            }
-        };
-
-        // Submit the batch and wait for results — pass the IPC
-        // `BatchPromptEntry` directly; `submit_batch` accepts it.
-        match hkask_inference::batch::submit_batch(
-            provider,
-            &api_key,
-            &clean_model,
-            prompts,
-            max_tokens,
-            temperature,
-        )
-        .await
-        {
-            Ok(batch_result) => {
-                let results: Vec<BatchResultEntry> = batch_result
-                    .results
-                    .into_iter()
-                    .map(|(custom_id, r)| match r {
-                        Ok(success) => BatchResultEntry {
-                            custom_id,
-                            text: Some(success.text),
-                            total_tokens: success.total_tokens,
-                            error: None,
-                        },
-                        Err(err_msg) => BatchResultEntry {
-                            custom_id,
-                            text: None,
-                            total_tokens: 0,
-                            error: Some(err_msg),
-                        },
-                    })
-                    .collect();
-                tracing::info!(
-                    target: "hkask.inference.batch",
-                    succeeded = batch_result.succeeded,
-                    failed = batch_result.failed,
-                    "Batch completed"
-                );
-                return InferenceOutcome::BatchResults { results };
-            }
-            Err(e) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Internal".to_string(),
-                        message: format!("batch API failed: {e}"),
-                    },
-                };
-            }
-        }
-    }
-
     // Rerank requests are dispatched to the provider's rerank endpoint
     // (OpenRouter `/api/v1/rerank`). The zed side reads the API key from the
     // keychain via the GPUI-side credential channel, then calls
@@ -1113,7 +967,7 @@ async fn dispatch(
         };
         let credential_url = openrouter_descriptor.api_url;
         let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
-        if batch_credential_tx
+        if provider_credential_tx
             .send((credential_url.to_string(), tx_reply))
             .is_err()
         {
@@ -1220,7 +1074,6 @@ async fn dispatch(
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
         | InferenceMethod::CreateWorktreeThread
-        | InferenceMethod::GenerateBatch
         | InferenceMethod::Rerank => {
             tracing::error!(
                 target: "reg.inference",
@@ -1380,7 +1233,7 @@ mod tests {
                 Some(&tools),
                 &make_list_models_tx(),
                 None,
-                &make_batch_credential_tx(),
+                &make_provider_credential_tx(),
                 request,
             )
             .await;
@@ -1400,7 +1253,7 @@ mod tests {
                 Some(&tools),
                 &make_list_models_tx(),
                 None,
-                &make_batch_credential_tx(),
+                &make_provider_credential_tx(),
                 request
             )
             .await,
@@ -1470,7 +1323,7 @@ mod tests {
                 None,
                 make_list_models_tx(),
                 None,
-                make_batch_credential_tx(),
+                make_provider_credential_tx(),
             ));
             let request = InferenceRequest {
                 id: 1,
@@ -1569,7 +1422,7 @@ mod tests {
         Arc::new(tx)
     }
 
-    fn make_batch_credential_tx() -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
+    fn make_provider_credential_tx() -> Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>
     {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<BatchCredentialRequest>();
         Arc::new(tx)
@@ -1600,7 +1453,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = make_tool_invoke_request(
             "kanban",
@@ -1614,7 +1467,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1639,7 +1492,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
 
@@ -1649,7 +1502,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1669,7 +1522,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
 
@@ -1679,7 +1532,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1700,7 +1553,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let mut request = make_tool_invoke_request(
             "kanban",
@@ -1719,7 +1572,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1739,7 +1592,7 @@ mod tests {
     async fn dispatch_tool_invoke_errors_without_tool_port() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = make_tool_invoke_request(
             "kanban",
@@ -1753,7 +1606,7 @@ mod tests {
             None, // no tool port
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1791,7 +1644,7 @@ mod tests {
             None,
             &make_list_models_tx(),
             None,
-            &make_batch_credential_tx(),
+            &make_provider_credential_tx(),
             InferenceRequest {
                 id: 1,
                 method: InferenceMethod::Embed,
@@ -1814,7 +1667,7 @@ mod tests {
     async fn dispatch_embed_errors_without_embedding_port() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1832,7 +1685,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1854,7 +1707,7 @@ mod tests {
         // called and the result is returned as `InferenceOutcome::Result`.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 42,
@@ -1872,7 +1725,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1890,7 +1743,7 @@ mod tests {
     async fn dispatch_generate_with_messages_returns_canned_result() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1911,7 +1764,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1928,7 +1781,7 @@ mod tests {
     async fn dispatch_generate_vision_returns_canned_result() {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1947,7 +1800,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -1967,7 +1820,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -1986,7 +1839,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -2005,7 +1858,7 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -2024,7 +1877,7 @@ mod tests {
             Some(&tool_port),
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -2068,7 +1921,7 @@ mod tests {
         )>();
         drop(rx);
         let list_models_tx = Arc::new(tx);
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -2082,7 +1935,7 @@ mod tests {
             None,
             &list_models_tx,
             None,
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -2109,7 +1962,7 @@ mod tests {
         // `CreateWorktreeThread`.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -2127,7 +1980,7 @@ mod tests {
             None,
             &list_models_tx,
             None, // no worktree spawn port
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;
@@ -2152,7 +2005,7 @@ mod tests {
         // return a Connection error — not reach the defensive arm.
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
-        let batch_credential_tx = make_batch_credential_tx();
+        let provider_credential_tx = make_provider_credential_tx();
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
         drop(rx);
@@ -2174,7 +2027,7 @@ mod tests {
             None,
             &list_models_tx,
             Some(&worktree_spawn_tx),
-            &batch_credential_tx,
+            &provider_credential_tx,
             request,
         )
         .await;

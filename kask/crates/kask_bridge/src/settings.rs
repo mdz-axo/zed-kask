@@ -321,7 +321,7 @@ pub struct KaskResearchSettings {
 }
 
 /// Companies MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskCompaniesSettings {
     /// Chronic staleness threshold in days for superforecasting learning state.
     pub chronic_staleness_days: u32,
@@ -329,6 +329,19 @@ pub struct KaskCompaniesSettings {
     /// Fermi decomposition defaults as JSON (growth + margin question arrays).
     /// When empty, uses hardcoded defaults.
     pub fermi_defaults: String,
+
+    /// Investor's required equity return used in companies-MCP modified WACC.
+    pub investor_required_return: f64,
+}
+
+impl Default for KaskCompaniesSettings {
+    fn default() -> Self {
+        Self {
+            chronic_staleness_days: 0,
+            fermi_defaults: String::new(),
+            investor_required_return: 0.15,
+        }
+    }
 }
 
 /// Corpus MCP server configuration.
@@ -877,6 +890,9 @@ impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
                 .chronic_staleness_days
                 .unwrap_or(default.chronic_staleness_days),
             fermi_defaults: c.fermi_defaults.unwrap_or(default.fermi_defaults),
+            investor_required_return: c
+                .investor_required_return
+                .unwrap_or(default.investor_required_return),
         }
     }
 }

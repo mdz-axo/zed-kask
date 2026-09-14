@@ -101,6 +101,7 @@ pub(super) fn server(directory: &std::path::Path) -> CompaniesServer {
         ResearchStore::with_dir(directory.join("research")).expect("research fixture"),
         Arc::new(Mutex::new(LearningState::default())),
         superforecast::FermiDefaults::from_env(),
+        0.15,
         Some(fibo_cache::FiboDataCache::open(&directory.join("cache.db")).expect("cache fixture")),
     )
 }
@@ -2627,8 +2628,7 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 "template_context":{
                     "exchanges":["US"],
                     "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
-                    "liquidity_min_usd":1_000_000.0,
-                    "target_return":0.15
+                    "liquidity_min_usd":1_000_000.0
                 },
                 "prompt":"","limit":10,"criteria_overrides":{}
             }))
@@ -3096,7 +3096,7 @@ fn implied_net_margin_solve_carries_all_modeled_expenses() {
     // Tax = 20%, SG&A/revenue = 10%, interest/revenue = 5%, D&A = 0%.
     assert!((snapshot.tax_rate - 0.2).abs() < 1e-12);
     assert!((snapshot.sga_to_revenue() - 0.10).abs() < 1e-12);
-    let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot)
+    let assumptions = financial_model::ProjectionAssumptions::from_history(&snapshot, 0.15)
         .expect("reported operating income reconciles");
     // Known net margin 8%: GM = NM/(1−tax) + SG&A% + interest% + D&A%
     // = 0.08/0.8 + 0.10 + 0.05 = 0.25.
@@ -3391,7 +3391,7 @@ async fn saved_screen_cancel_is_bounded_and_durable() {
         let server = server(directory.path());
         let request = serde_json::from_value::<types::ScreenerRequest>(json!({
             "action":"calculate","template":"expectations_gap",
-            "template_context":{"exchanges":["US"],"market_cap_min":5_000_000_000.0,"market_cap_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0,"target_return":0.15},
+            "template_context":{"exchanges":["US"],"market_cap_min":5_000_000_000.0,"market_cap_max":50_000_000_000.0,"liquidity_min_usd":1_000_000.0},
             "prompt":"","limit":10,"criteria_overrides":{}
         })).expect("calculate request");
         let submitted = content(&server.company_screener(Parameters(request)).await.expect("submit"));

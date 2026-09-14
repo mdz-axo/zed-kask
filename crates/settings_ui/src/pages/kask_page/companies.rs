@@ -1,4 +1,4 @@
-//! Companies sub-page — superforecasting staleness and Fermi defaults.
+//! Companies sub-page — investor return and forecasting settings.
 
 use super::*;
 
@@ -15,6 +15,7 @@ pub(crate) fn render_companies_page(
         .map(Into::into)
         .unwrap_or_default();
     let staleness_days = companies.chronic_staleness_days.to_string();
+    let investor_required_return = companies.investor_required_return.to_string();
     let fermi_defaults = companies.fermi_defaults;
 
     let staleness_input = kask_string_input(
@@ -24,6 +25,14 @@ pub(crate) fn render_companies_page(
         staleness_days,
         "companies",
         "chronic_staleness_days",
+    );
+    let investor_return_input = kask_string_input(
+        "kask-companies-investor-required-return",
+        "Investor Required Return",
+        "0.15",
+        investor_required_return,
+        "companies",
+        "investor_required_return",
     );
     let fermi_input = kask_string_input(
         "kask-companies-fermi-defaults",
@@ -66,6 +75,18 @@ pub(crate) fn render_companies_page(
                         .color(Color::Muted),
                 )
                 .child(staleness_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Investor Required Return"))
+                .child(
+                    Label::new("Equity hurdle used in investor-modified WACC. Enter a decimal such as 0.15 for 15%.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(investor_return_input),
         )
         .child(Divider::horizontal())
         .child(
