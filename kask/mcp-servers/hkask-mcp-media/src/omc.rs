@@ -11,12 +11,84 @@ use hkask_bridge_ontology::omc::OmcConcept;
 // fixture-guarded constants the mapping returns (the fixture pins the
 // URI's reality; the test pins the tool→concept mapping).
 pub use hkask_bridge_ontology::omc::{
-    ASSET, CAPTURE, CREATIVE_WORK, PARTICIPANT, SCENE, SEQUENCE, SHOT, TASK, VERSION_INFO,
+    ASSET, CAPTURE, CREATED_ON, CREATIVE_WORK, HAS_PARTICIPANT, HAS_PROVENANCE, HAS_STATE,
+    HAS_STATE_DESCRIPTOR, HAS_TASK, IS_CREATED_BY, IS_CREATED_BY_TASK, MEDIA_CREATION_CONTEXT,
+    PARTICIPANT, PROVENANCE, ROLE, SCENE, SEQUENCE, SERVICE, SHOT, STATE, STATE_DESCRIPTOR, TASK,
+    VERSION_INFO,
 };
 
 // Re-export the shared explain-tool dispatch so the media server's tests and
 // any in-server consumers reference the single source of truth.
 pub use hkask_bridge_ontology::omc::explain_tool_for;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct CreationEntity {
+    pub id: String,
+    pub types: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct CreationRelationship {
+    pub subject_id: String,
+    pub predicate: String,
+    pub object_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct CreationGraph {
+    pub asset_id: String,
+    pub task_id: String,
+    pub participant_id: String,
+    pub state_id: String,
+    pub provenance_id: String,
+    pub created_at: String,
+    pub entities: Vec<CreationEntity>,
+    pub relationships: Vec<CreationRelationship>,
+}
+
+pub fn creation_graph(asset_id: &str, task_id: &str, created_at: &str) -> CreationGraph {
+    let participant_id = "service:hkask-mcp-media".to_string();
+    let role_id = format!("{task_id}:role");
+    let state_id = format!("{task_id}:state");
+    let state_descriptor_id = format!("{task_id}:state-descriptor:completed");
+    let provenance_id = format!("{task_id}:provenance");
+    let entity = |id: String, types: &[&str]| CreationEntity {
+        id,
+        types: types.iter().map(|value| (*value).to_string()).collect(),
+    };
+    let relationship = |subject_id: &str, predicate: &str, object_id: &str| CreationRelationship {
+        subject_id: subject_id.to_string(),
+        predicate: predicate.to_string(),
+        object_id: object_id.to_string(),
+    };
+
+    CreationGraph {
+        asset_id: asset_id.to_string(),
+        task_id: task_id.to_string(),
+        participant_id: participant_id.clone(),
+        state_id: state_id.clone(),
+        provenance_id: provenance_id.clone(),
+        created_at: created_at.to_string(),
+        entities: vec![
+            entity(asset_id.to_string(), &[ASSET]),
+            entity(task_id.to_string(), &[TASK]),
+            entity(participant_id.clone(), &[PARTICIPANT, SERVICE]),
+            entity(role_id.clone(), &[ROLE]),
+            entity(state_id.clone(), &[STATE]),
+            entity(state_descriptor_id.clone(), &[STATE_DESCRIPTOR]),
+            entity(provenance_id.clone(), &[PROVENANCE]),
+        ],
+        relationships: vec![
+            relationship(asset_id, HAS_PROVENANCE, &provenance_id),
+            relationship(asset_id, IS_CREATED_BY_TASK, task_id),
+            relationship(task_id, HAS_STATE, &state_id),
+            relationship(&state_id, HAS_STATE_DESCRIPTOR, &state_descriptor_id),
+            relationship(&provenance_id, IS_CREATED_BY, &participant_id),
+            relationship(&role_id, HAS_TASK, task_id),
+            relationship(&role_id, HAS_PARTICIPANT, &participant_id),
+        ],
+    }
+}
 
 /// Map a media-tool name to its OMC concept URI.
 ///
@@ -107,6 +179,50 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creation_graph_uses_official_task_asset_participant_state_and_provenance_edges() {
+        let graph = creation_graph("asset-1", "task-1", "2026-09-14T00:00:00Z");
+        let types = graph
+            .entities
+            .iter()
+            .flat_map(|entity| entity.types.iter().map(String::as_str))
+            .collect::<std::collections::HashSet<_>>();
+        for expected in [
+            ASSET,
+            TASK,
+            PARTICIPANT,
+            SERVICE,
+            ROLE,
+            STATE,
+            STATE_DESCRIPTOR,
+            PROVENANCE,
+        ] {
+            assert!(
+                types.contains(expected),
+                "missing OMC entity type {expected}"
+            );
+        }
+        let predicates = graph
+            .relationships
+            .iter()
+            .map(|relationship| relationship.predicate.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        for expected in [
+            HAS_PROVENANCE,
+            IS_CREATED_BY_TASK,
+            HAS_STATE,
+            HAS_STATE_DESCRIPTOR,
+            IS_CREATED_BY,
+            HAS_TASK,
+            HAS_PARTICIPANT,
+        ] {
+            assert!(
+                predicates.contains(expected),
+                "missing OMC relationship {expected}"
+            );
+        }
+    }
 
     #[test]
     fn generation_tools_map_to_creative_work() {

@@ -205,7 +205,7 @@ Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_faile
 `qa_rows_written`, prompt-level `tokens_used`, `completion_tokens_used`,
 `completion_token_reporting_complete`, `finish_reason_counts`,
 `finish_reason_reporting_complete`, `provider_responses`, `reported_cost_usd`,
-`cost_reporting_complete`, `output`, `batch_api`, and `degraded`, with total =
+`cost_reporting_complete`, `output`, and `degraded`, with total =
 succeeded + failed. Null/incomplete cost or completion telemetry is unknown, never
 zero. Rejected-response rows retain provider `completion_tokens` and
 `finish_reason`; transport failures without a provider response record nulls. A

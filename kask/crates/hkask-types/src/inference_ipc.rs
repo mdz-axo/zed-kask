@@ -72,34 +72,6 @@ pub const TOOL_GRANT_ENV: &str = "HKASK_TOOL_GRANT";
 /// conservative default — never to zero.
 pub const INFERENCE_TIMEOUT_ENV: &str = "HKASK_INFERENCE_TIMEOUT_SECS";
 
-/// A single prompt entry for `InferenceMethod::GenerateBatch`.
-///
-/// Carries the `custom_id` (for matching results to prompts), the system
-/// message, and the user message. The zed side formats these as OpenAI
-/// Batch API JSONL and submits them to the provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchPromptEntry {
-    /// Unique identifier for this prompt (returned in results for matching).
-    pub custom_id: String,
-    /// System message content.
-    pub system: String,
-    /// User message content.
-    pub user: String,
-}
-
-/// A single result from a batch inference call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchResultEntry {
-    /// The `custom_id` from the corresponding `BatchPromptEntry`.
-    pub custom_id: String,
-    /// The generated text (on success).
-    pub text: Option<String>,
-    /// Total tokens used (on success).
-    pub total_tokens: u64,
-    /// Error message (on failure).
-    pub error: Option<String>,
-}
-
 /// A request from the MCP server to the zed inference bridge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceRequest {
@@ -137,13 +109,7 @@ pub enum InferenceMethod {
     /// isolate spawned agents in a separate worktree (P1: worktree/terminal
     /// model).
     CreateWorktreeThread,
-    /// Submit a batch of prompts to the provider's Batch API (OpenRouter
-    /// `/api/beta/batches` or DeepInfra `/v1/openai/batches`). The zed side
-    /// holds the API keys and handles submission, polling, and download —
-    /// the MCP server never sees the credentials. Uses `batch_prompts` and
-    /// `model_override` from `InferenceParams`. The result is returned as
-    /// `InferenceOutcome::BatchResults`.
-    GenerateBatch,
+
     /// Rerank documents against a query with a dedicated reranker via the
     /// provider's rerank endpoint (OpenRouter `/api/v1/rerank`). Uses
     /// `rerank_model`, `rerank_query`, `rerank_documents` from
@@ -166,14 +132,7 @@ pub struct InferenceParams {
     pub embed_model: Option<String>,
     /// Texts to embed for `InferenceMethod::Embed`.
     pub embed_texts: Option<Vec<String>>,
-    /// Batch prompts for `InferenceMethod::GenerateBatch`. Each entry is a
-    /// `(custom_id, system, user)` tuple. The zed side submits these to the
-    /// provider's Batch API and returns results keyed by `custom_id`.
-    #[serde(default)]
-    pub batch_prompts: Option<Vec<BatchPromptEntry>>,
-    /// Max output tokens per prompt for `InferenceMethod::GenerateBatch`.
-    #[serde(default)]
-    pub batch_max_tokens: Option<u32>,
+
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
     pub tool_server: Option<String>,
     /// Tool name to invoke.
@@ -263,14 +222,7 @@ pub enum InferenceOutcome {
         #[serde(rename = "worktree_thread")]
         thread: WorktreeThreadInfo,
     },
-    /// Batch inference results from `InferenceMethod::GenerateBatch`.
-    /// The zed side submits all prompts to the provider's Batch API,
-    /// polls until completion, downloads results, and returns them here.
-    /// The MCP server never sees the API keys.
-    BatchResults {
-        #[serde(rename = "batch_results")]
-        results: Vec<BatchResultEntry>,
-    },
+
     /// Rerank scores from `InferenceMethod::Rerank`. One entry per scored
     /// document, sorted by descending relevance by the provider.
     RerankScores {

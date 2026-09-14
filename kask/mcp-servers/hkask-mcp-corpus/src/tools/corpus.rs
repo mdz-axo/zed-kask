@@ -306,7 +306,7 @@ impl CorpusServer {
                 // column rather than the value blob: a generated QA pair is
                 // both a document (state axis: BIBO type + concepts as
                 // subject) and the product of a procedure (process axis:
-                // `corpus_generate_qa`, with the source chunk as the step).
+                // `corpus_generate_qa_batch`, with the source chunk as the step).
                 // The value blob's former nested `"ontology"` object was not
                 // queryable — this is.
                 let mut ontology = hkask_types::HMemOntology::state(
@@ -314,7 +314,7 @@ impl CorpusServer {
                     qa.concepts.clone(),
                     qa.source.clone(),
                 );
-                ontology.pko_procedure = Some("corpus_generate_qa".to_string());
+                ontology.pko_procedure = Some("corpus_generate_qa_batch".to_string());
                 ontology.pko_step = qa.chunk_ref.clone();
                 let h_mem = hkask_storage::HMem::new(&entity, "training_qa_pair", v, webid)
                     .with_visibility(hkask_types::Visibility::Public)

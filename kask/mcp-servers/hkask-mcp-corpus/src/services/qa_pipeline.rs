@@ -243,14 +243,6 @@ pub(crate) struct QaCompletion {
 /// never matches variants.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum QaCompletionError {
-    #[error("Batch API returned no result for prompt")]
-    BatchNoResult,
-    #[error("Batch provider error: {0}")]
-    BatchProvider(String),
-    #[error("Malformed batch result: expected exactly one of text or error")]
-    BatchMalformed,
-    #[error("Batch API returned {0} duplicate results for prompt")]
-    BatchDuplicates(usize),
     #[error("LLM failed after {0} retries: {1}")]
     LlmFailed(usize, String),
     #[error("QA task join failed: {0}")]
@@ -416,8 +408,7 @@ impl<W: Write> QaOutput<W> {
 
 /// The LLM parameters used by all QA generation paths.
 ///
-/// Single source of truth — previously duplicated in `corpus_generate_qa`
-/// and the synchronous batch path with identical values.
+/// Single source of truth for prepared QA generation.
 pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
     hkask_types::template::LLMParameters {
         temperature: 0.3,
@@ -528,7 +519,7 @@ mod tests {
                 .complete(&prepared(), accepted(), "offline-model")
                 .expect_err("write must fail");
             assert!(error.to_string().contains("injected write failure"));
-            assert!(output.finish("unused", false).is_err());
+            assert!(output.finish("unused").is_err());
         }
         let mut output = QaOutput::new(
             RejectingWriter {
@@ -537,7 +528,7 @@ mod tests {
             1,
         );
         output.complete(&prepared(), accepted(), "offline-model")?;
-        let error = output.finish("unused", false).expect_err("flush must fail");
+        let error = output.finish("unused").expect_err("flush must fail");
         assert!(error.to_string().contains("injected flush failure"));
         Ok(())
     }
@@ -570,7 +561,7 @@ mod tests {
             output
                 .complete(
                     &prepared(),
-                    Err(QaCompletionError::BatchProvider("provider failure".into())),
+                    Err(QaCompletionError::LlmFailed(1, "provider failure".into())),
                     "offline-model",
                 )
                 .is_err()
@@ -605,7 +596,7 @@ mod tests {
                 }),
                 "offline-model",
             )?;
-            let summary = output.finish("unused", true)?;
+            let summary = output.finish("unused")?;
             assert_eq!(summary["prompts_total"], 1);
             assert_eq!(summary["prompts_succeeded"], 0);
             assert_eq!(summary["prompts_failed"], 1);
@@ -631,7 +622,7 @@ mod tests {
     #[test]
     fn unfinished_accounting_is_not_success() {
         let output = QaOutput::new(Vec::new(), 1);
-        assert!(output.finish("unused", false).is_err());
+        assert!(output.finish("unused").is_err());
     }
 
     #[test]

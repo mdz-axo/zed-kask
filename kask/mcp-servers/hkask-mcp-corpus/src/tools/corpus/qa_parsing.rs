@@ -165,10 +165,10 @@ mod tests {
         };
         output.complete(
             &failed,
-            Err(QaCompletionError::BatchProvider("failed inference".into())),
+            Err(QaCompletionError::LlmFailed(1, "failed inference".into())),
             "offline-model",
         )?;
-        assert_eq!(output.finish("unused", false)?["qa_rows_written"], 1);
+        assert_eq!(output.finish("unused")?["qa_rows_written"], 1);
         let text = String::from_utf8(bytes)?;
         let mut lines = text.lines();
         let first = lines.next().ok_or("missing QA row")?;

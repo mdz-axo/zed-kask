@@ -212,7 +212,7 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
         assert_eq!(ontology.pko_step.as_deref(), expected["chunk_ref"].as_str());
         assert_eq!(
             ontology.pko_procedure.as_deref(),
-            Some("corpus_generate_qa")
+            Some("corpus_generate_qa_batch")
         );
     }
     // Dry-run over an existing DB must also leave it untouched.

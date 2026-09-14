@@ -500,8 +500,8 @@ fn eodhd_fixture() -> Value {
         "Highlights":{"MarketCapitalization":3000000000.0,"DividendYield":0.02,"EBITDA":300000000.0},
         "Financials":{
             "Income_Statement":{"yearly":{
-                "2025-12-31":{"totalRevenue":"1000000000.00","grossProfit":"400000000.00","costOfRevenue":"600000000.00","sellingGeneralAdministrative":"100000000.00","netIncome":"150000000.00"},
-                "2024-12-31":{"totalRevenue":"900000000.00","grossProfit":"360000000.00","costOfRevenue":"540000000.00","sellingGeneralAdministrative":"90000000.00","netIncome":"135000000.00"}
+                "2025-12-31":{"totalRevenue":"1000000000.00","grossProfit":"400000000.00","costOfRevenue":"600000000.00","sellingGeneralAdministrative":"100000000.00","operatingIncome":"300000000.00","netIncome":"150000000.00"},
+                "2024-12-31":{"totalRevenue":"900000000.00","grossProfit":"360000000.00","costOfRevenue":"540000000.00","sellingGeneralAdministrative":"90000000.00","operatingIncome":"270000000.00","netIncome":"135000000.00"}
             }},
             "Balance_Sheet":{"yearly":{
                 "2025-12-31":{"totalAssets":"1200000000.00","totalStockholderEquity":"750000000.00","netInvestedCapital":"900000000.00","netDebt":"150000000.00","accountsPayable":"50000000.00","netReceivables":"100000000.00","inventory":"50000000.00","commonStockSharesOutstanding":"100000000.00"},
@@ -2577,6 +2577,12 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             value["General"]["IsDelisted"] = json!(false);
             value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
             value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Cash_Flow"] = json!({
+                "currency_symbol":"USD","yearly":{
+                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+                }
+            });
             return (200, json!([value]));
         }
         if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
@@ -2686,7 +2692,8 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             assert_eq!(output["table"]["row_ids"], json!(["LIQADR.US"]));
             assert_eq!(
                 output["table"]["columns"]["investor_target_return"]["values"],
-                json!([0.15])
+                json!([0.15]),
+                "{output}"
             );
             assert!(
                 output["table"]["columns"]["modified_wacc"]["values"][0]
@@ -3363,7 +3370,7 @@ fn solve_expectations_financial_sector_uses_roe_path() {
     // SGR uses average equity: (110 / ((800 + 880) / 2)) × 60% retention.
     let implied_roe = solve.implied_roe.expect("roe");
     let sustainable_growth = (110.0 / 840.0) * 0.60;
-    let expected = (20.0 / 9.68) * (0.10 - sustainable_growth) + sustainable_growth;
+    let expected = (20.0 / 9.68) * (0.15 - sustainable_growth) + sustainable_growth;
     assert!(
         (implied_roe - expected).abs() < 1e-12,
         "{implied_roe} vs {expected}"

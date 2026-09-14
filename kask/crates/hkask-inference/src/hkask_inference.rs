@@ -26,7 +26,6 @@
 //! provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
 //! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`).
 
-pub mod batch;
 pub mod config;
 pub mod inference_ipc_client;
 pub mod media_providers;
@@ -356,38 +355,6 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
-    fn generate_batch<'a>(
-        &'a self,
-        model: &str,
-        prompts: &[hkask_types::inference_ipc::BatchPromptEntry],
-        max_tokens: u32,
-        temperature: f32,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        Vec<hkask_types::inference_ipc::BatchResultEntry>,
-                        hkask_types::InferenceError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    > {
-        let model = model.to_string();
-        let prompts = prompts.to_vec();
-        Box::pin(async move {
-            // Batch API requires the IPC bridge — no direct fallback.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
-                return client
-                    .call_generate_batch(&model, &prompts, max_tokens, temperature)
-                    .await;
-            }
-            Err(hkask_types::InferenceError::Connection(format!(
-                "batch inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
-            )))
-        })
-    }
-
     fn media_generate<'a>(
         &'a self,
         op: &str,
@@ -409,7 +376,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
     }
 }
 // `LazyInferencePort` overrides the trait defaults for `generate_vision`,
-// `embed`, `list_models`, and `generate_batch` so every method tries the
+// `embed`, and `list_models` so every method tries the
 // IPC bridge first and names the missing socket in its fallback error.
 // `media_generate` is the exception: it is child-local (see
 // `LOCAL_MEDIA_ROUTER`) because media APIs are not LanguageModel calls.

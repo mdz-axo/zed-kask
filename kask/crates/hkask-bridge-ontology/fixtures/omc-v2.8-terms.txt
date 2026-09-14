@@ -16,6 +16,19 @@ omc:Capture
 omc:Asset
 omc:Task
 omc:Provenance
+omc:Service
+omc:Role
+omc:State
+omc:StateDescriptor
+omc:MediaCreationContext
+omc:hasProvenance
+omc:isCreatedByTask
+omc:hasState
+omc:hasStateDescriptor
+omc:isCreatedBy
+omc:hasTask
+omc:hasParticipant
+omc:createdOn
 omc:VersionInfo
 #
 # Notably NOT in official OMC v2.8 (do not use):

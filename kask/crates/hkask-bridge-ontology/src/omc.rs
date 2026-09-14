@@ -58,6 +58,33 @@ pub const TASK: OmcConcept = "omc:Task";
 /// The origin and creation account attached to a media asset.
 /// OMC: `omc:Provenance`, linked from `omc:Asset` by `omc:hasProvenance`.
 pub const PROVENANCE: OmcConcept = "omc:Provenance";
+/// A service participating in media creation.
+pub const SERVICE: OmcConcept = "omc:Service";
+/// A participant's production role, connecting one participant to one task.
+pub const ROLE: OmcConcept = "omc:Role";
+/// The current lifecycle state of a task.
+pub const STATE: OmcConcept = "omc:State";
+/// A controlled descriptor attached to a task state.
+pub const STATE_DESCRIPTOR: OmcConcept = "omc:StateDescriptor";
+/// Information defining the scope of constructing a creative work.
+pub const MEDIA_CREATION_CONTEXT: OmcConcept = "omc:MediaCreationContext";
+
+/// Asset → provenance.
+pub const HAS_PROVENANCE: OmcConcept = "omc:hasProvenance";
+/// Asset → task that created it.
+pub const IS_CREATED_BY_TASK: OmcConcept = "omc:isCreatedByTask";
+/// Task → current state.
+pub const HAS_STATE: OmcConcept = "omc:hasState";
+/// State → controlled descriptor.
+pub const HAS_STATE_DESCRIPTOR: OmcConcept = "omc:hasStateDescriptor";
+/// Provenance → responsible participant.
+pub const IS_CREATED_BY: OmcConcept = "omc:isCreatedBy";
+/// Role → task.
+pub const HAS_TASK: OmcConcept = "omc:hasTask";
+/// Role → participant.
+pub const HAS_PARTICIPANT: OmcConcept = "omc:hasParticipant";
+/// Provenance creation timestamp.
+pub const CREATED_ON: OmcConcept = "omc:createdOn";
 /// A derived or modified form of a creative work — an upscale, transform,
 /// or remix output. OMC: `omc:VersionInfo` (a description of a version of
 /// an asset; OMC v2.8 publishes no `Version` class — versioning is modeled
@@ -75,6 +102,19 @@ pub const ALL_CONCEPTS: &[OmcConcept] = &[
     ASSET,
     TASK,
     PROVENANCE,
+    SERVICE,
+    ROLE,
+    STATE,
+    STATE_DESCRIPTOR,
+    MEDIA_CREATION_CONTEXT,
+    HAS_PROVENANCE,
+    IS_CREATED_BY_TASK,
+    HAS_STATE,
+    HAS_STATE_DESCRIPTOR,
+    IS_CREATED_BY,
+    HAS_TASK,
+    HAS_PARTICIPANT,
+    CREATED_ON,
     VERSION_INFO,
 ];
 

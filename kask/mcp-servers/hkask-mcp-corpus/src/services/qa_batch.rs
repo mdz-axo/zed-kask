@@ -206,7 +206,7 @@ impl QaBatchService {
                 })?;
                 completions.complete(&prompt, completion, selected_model)?;
             }
-            completions.finish(output, false)
+            completions.finish(output)
         }
         .await;
         let result = result.map_err(|mut error: McpToolError| {

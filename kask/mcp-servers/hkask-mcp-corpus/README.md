@@ -22,7 +22,7 @@ the current code contract, not a completed live corpus run.
 | Durable passage publication and warm/DB retrieval | `src/index.rs`, `src/tools/storage.rs` |
 | Source-scoped context and prepared prompts | `src/services/prompt_builder.rs` |
 | QA validation, envelope and accounting | `src/services/qa_pipeline.rs`, `src/tools/semantic/qa.rs` |
-| Output ownership, transport and retry | `src/services/qa_batch.rs`, `src/tools/semantic/batch_api.rs`, `src/batch.rs`, `src/path_safety.rs` |
+| Output ownership, transport and retry | `src/services/qa_batch.rs`, `src/batch.rs`, `src/path_safety.rs` |
 | QA ingestion and retained metadata | `src/tools/corpus.rs`, `src/tools/corpus/qa_parsing.rs` |
 | Style selection, centroid and validation | `src/compose.rs`, `src/tools/compose_tools.rs`, `hkask-memory/src/memory_store.rs` |
 
@@ -287,7 +287,7 @@ errors. Join failures retain prompt identity for a failed-prompt row.
 | `completion_tokens_used`, `completion_token_reporting_complete` | Completion-token coverage; incomplete reporting is unknown, never zero |
 | `finish_reason_counts`, `finish_reason_reporting_complete` | Provider stop-reason distribution and whether every provider response reported one |
 | `provider_responses`, `reported_cost_usd`, `cost_reporting_complete` | Cost coverage; null/incomplete cost is unknown, never zero |
-| `output`, `batch_api` | Requested destination and selected transport |
+| `output` | Requested destination |
 | `degraded` | Shared failure-rate classification, at least 10%; not completeness |
 
 Every successful return reconciles `prompts_total = prompts_succeeded +

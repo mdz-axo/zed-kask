@@ -215,6 +215,7 @@ mod tests {
             ),
             ("assertion", "domain_supplement", "SEPIO", sepio::ASSERTION),
             ("Provenance", "domain_supplement", "OMC", "omc:Provenance"),
+            ("State", "domain_supplement", "OMC", "omc:State"),
             ("net margin", "derived", "derived", "net_margin"),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),

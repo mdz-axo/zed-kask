@@ -275,6 +275,14 @@ pub struct GenerationRecord {
     pub parent_image_id: Option<String>,
     pub created_at: String,
 }
+
+/// Canonical MovieLabs OMC creation graph for one gallery asset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OmcCreationGraphRecord {
+    pub image_id: String,
+    pub graph_json: String,
+    pub created_at: String,
+}
 define_driver_store!(GalleryStore);
 impl GalleryStore {
     /// Initialize gallery tables in the database.
@@ -345,6 +353,7 @@ impl GalleryStore {
                 CREATE TABLE IF NOT EXISTS gallery_workflow (id TEXT PRIMARY KEY, graph_json TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS gallery_generation (id TEXT PRIMARY KEY, image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE, op TEXT NOT NULL, prompt TEXT, model TEXT, provider TEXT, seed INTEGER, params TEXT, workflow_id TEXT REFERENCES gallery_workflow(id) ON DELETE SET NULL, parent_image_id TEXT, created_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(image_id);
+                CREATE TABLE IF NOT EXISTS gallery_omc_creation_graph (image_id TEXT PRIMARY KEY REFERENCES gallery_images(id) ON DELETE CASCADE, graph_json TEXT NOT NULL, created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS gallery_albums (
                 id TEXT PRIMARY KEY,
                 gallery_id TEXT NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
@@ -1337,6 +1346,43 @@ impl GalleryStore {
         )?)
     }
 
+    /// Store or replace the canonical OMC creation graph for an asset.
+    pub fn record_omc_creation_graph(
+        &self,
+        image_id: &str,
+        graph_json: &str,
+    ) -> std::result::Result<OmcCreationGraphRecord, GalleryStoreError> {
+        let created_at = now_rfc3339();
+        self.driver.execute(
+            "INSERT INTO gallery_omc_creation_graph (image_id, graph_json, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(image_id) DO UPDATE SET graph_json = excluded.graph_json, created_at = excluded.created_at",
+            &[
+                DbValue::Text(image_id.to_string()),
+                DbValue::Text(graph_json.to_string()),
+                DbValue::Text(created_at.clone()),
+            ],
+        )?;
+        Ok(OmcCreationGraphRecord {
+            image_id: image_id.to_string(),
+            graph_json: graph_json.to_string(),
+            created_at,
+        })
+    }
+
+    /// Read an asset's canonical OMC creation graph, if one was recorded.
+    pub fn get_omc_creation_graph(
+        &self,
+        image_id: &str,
+    ) -> std::result::Result<Option<OmcCreationGraphRecord>, GalleryStoreError> {
+        Ok(query_row(
+            &*self.driver,
+            "SELECT image_id, graph_json, created_at FROM gallery_omc_creation_graph WHERE image_id = ?1",
+            &[DbValue::Text(image_id.to_string())],
+            Self::omc_creation_graph_from_row,
+        )?)
+    }
+
     // ── Album CRUD ──────────────────────────────────────────────────────
 
     /// Create a new album in a gallery.
@@ -1546,6 +1592,16 @@ impl GalleryStore {
                 _ => None,
             },
             created_at: row.get_str(10)?.to_string(),
+        })
+    }
+
+    fn omc_creation_graph_from_row(
+        row: &crate::database::value::DbRow,
+    ) -> std::result::Result<OmcCreationGraphRecord, crate::database::types::DbError> {
+        Ok(OmcCreationGraphRecord {
+            image_id: row.get_str(0)?.to_string(),
+            graph_json: row.get_str(1)?.to_string(),
+            created_at: row.get_str(2)?.to_string(),
         })
     }
 
@@ -1951,6 +2007,49 @@ mod tests {
             )
             .unwrap();
         assert!(store.get_generation(&img.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn omc_creation_graph_round_trips_and_cascades_with_asset_deletion() {
+        let store = setup();
+        let root = tempfile::tempdir().expect("gallery root");
+        let gallery = store
+            .open(
+                root.path().to_str().expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .expect("open gallery");
+        let image = store
+            .add_image(
+                &gallery.id,
+                &root.path().join("asset.wav").to_string_lossy(),
+                "hash",
+                0,
+                0,
+                "wav",
+                128,
+            )
+            .expect("add asset");
+        let graph_json =
+            r#"{"entities":[{"id":"asset","types":["omc:Asset"]}],"relationships":[]}"#;
+        store
+            .record_omc_creation_graph(&image.id, graph_json)
+            .expect("record graph");
+        let graph = store
+            .get_omc_creation_graph(&image.id)
+            .expect("read graph")
+            .expect("graph exists");
+        assert_eq!(graph.image_id, image.id);
+        assert_eq!(graph.graph_json, graph_json);
+
+        store.delete_image(&image.id).expect("delete asset");
+        assert!(
+            store
+                .get_omc_creation_graph(&image.id)
+                .expect("read deleted graph")
+                .is_none(),
+            "OMC graph must cascade with its asset"
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ struct StoredPassage {
 }
 
 /// One compact prepared-request builder. Provider messages are rendered later
-/// from the stored protocol and variables by both transports identically.
+/// from the stored protocol and variables by the generation path.
 pub(crate) struct PromptBuilderService;
 
 impl PromptBuilderService {

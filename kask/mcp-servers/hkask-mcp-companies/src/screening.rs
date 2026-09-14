@@ -2329,7 +2329,8 @@ mod tests {
                 "exchanges",
                 "liquidity_min_usd",
                 "market_cap_max",
-                "market_cap_min"
+                "market_cap_min",
+                "target_return"
             ]))
         );
     }
