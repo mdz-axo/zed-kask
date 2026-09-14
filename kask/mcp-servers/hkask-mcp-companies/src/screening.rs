@@ -30,6 +30,10 @@ const SCREEN_TEMPLATES: &[(&str, &str)] = &[
 ];
 const LISP_MAX_STEPS: u64 = 100_000;
 const LISP_MAX_DEPTH: u64 = 256;
+const SCREEN_PASS_DEADLINE: Duration = Duration::from_secs(60);
+const ENRICHMENT_DEADLINE: Duration = Duration::from_secs(110);
+const ISSUER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const ENRICHMENT_CONCURRENCY: usize = 96;
 
 #[derive(Deserialize)]
 struct ScreenTemplateMetadata {
@@ -405,7 +409,7 @@ async fn run_screen_job(
             .await
         };
         let prepared = tokio::select! {
-            result = tokio::time::timeout(Duration::from_secs(60), pass_stage) => {
+            result = tokio::time::timeout(SCREEN_PASS_DEADLINE, pass_stage) => {
                 result.map_err(|_| {
                     McpToolError::unavailable("financial screen did not complete within 60 seconds")
                 })??
@@ -434,6 +438,7 @@ async fn run_screen_job(
             "exclusions": prepared.exclusions,
             "fx_rates": prepared.fx_rates,
             "logic_verification": verification,
+            "pass_set_persisted_at": now_rfc3339(),
         });
         server
             .research
@@ -1263,11 +1268,19 @@ async fn enrich_pending_issuers(
                         "decode issuer checkpoint: {error}"
                     ))
                 })?;
-            let (row, error) =
-                match analyze_issuer_group(&client, &api_key, &fx_rates, &group).await {
-                    Ok(row) => (row, None),
-                    Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
-                };
+            let (row, error) = match tokio::time::timeout(
+                ISSUER_REQUEST_TIMEOUT,
+                analyze_issuer_group(&client, &api_key, &fx_rates, &group),
+            )
+            .await
+            {
+                Ok(Ok(row)) => (row, None),
+                Ok(Err(reason)) => (unavailable_issuer_row(&group, &reason), Some(reason)),
+                Err(_) => {
+                    let reason = "issuer enrichment request exceeded 5 seconds".to_string();
+                    (unavailable_issuer_row(&group, &reason), Some(reason))
+                }
+            };
             let classification = row
                 .get("data_quality_status")
                 .and_then(Value::as_str)
@@ -1281,10 +1294,10 @@ async fn enrich_pending_issuers(
             )
         }
     }))
-    .buffer_unordered(64)
+    .buffer_unordered(ENRICHMENT_CONCURRENCY)
     .collect::<Vec<_>>();
     tokio::pin!(work);
-    let deadline = tokio::time::sleep(Duration::from_secs(110));
+    let deadline = tokio::time::sleep(ENRICHMENT_DEADLINE);
     tokio::pin!(deadline);
     let mut cancellation_poll = tokio::time::interval(Duration::from_secs(1));
     loop {
@@ -1336,11 +1349,27 @@ async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpTool
                 .num_seconds()
                 .max(0)
         });
-    let eta_seconds = elapsed_seconds.and_then(|elapsed| {
+    let enrichment_elapsed_seconds = job
+        .checkpoint
+        .as_ref()
+        .and_then(|checkpoint| checkpoint.get("pass_set_persisted_at"))
+        .and_then(Value::as_str)
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+        .map(|started| {
+            (now - started.with_timezone(&chrono::Utc))
+                .num_seconds()
+                .max(0)
+        });
+    let eta_seconds = enrichment_elapsed_seconds.and_then(|stage_elapsed| {
         (job.processed > 0 && job.processed < job.total).then(|| {
-            let remaining = job.total - job.processed;
-            elapsed.saturating_mul(i64::try_from(remaining).unwrap_or(i64::MAX))
-                / i64::try_from(job.processed).unwrap_or(1)
+            let remaining = i64::try_from(job.total - job.processed).unwrap_or(i64::MAX);
+            let processed = i64::try_from(job.processed).unwrap_or(1);
+            let throughput_eta = stage_elapsed.saturating_mul(remaining) / processed;
+            let deadline_remaining = i64::try_from(ENRICHMENT_DEADLINE.as_secs())
+                .unwrap_or(i64::MAX)
+                .saturating_sub(stage_elapsed)
+                .max(0);
+            throughput_eta.min(deadline_remaining)
         })
     });
     if job.status == "queued" && job.stage != "queued" {
