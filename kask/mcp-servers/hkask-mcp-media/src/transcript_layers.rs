@@ -281,6 +281,59 @@ fn check_disjoint(ranges: &[(usize, usize)]) -> Result<(), LayerValidationError>
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CorrectionAlignmentError {
+    #[error(
+        "correction range {start_word}..={end_word} is outside the {words_count}-word transcript"
+    )]
+    InvalidRange {
+        start_word: usize,
+        end_word: usize,
+        words_count: usize,
+    },
+    #[error(
+        "correction for words {start_word}..={end_word} replaces {expected} timed words with {actual} tokens"
+    )]
+    TokenCountMismatch {
+        start_word: usize,
+        end_word: usize,
+        expected: usize,
+        actual: usize,
+    },
+}
+
+/// Project correction text onto cloned timed words without mutating the stored
+/// transcript. A replacement is timing-aligned only when each original timed
+/// word receives exactly one replacement token.
+pub fn aligned_corrected_words(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<TimedWord>, CorrectionAlignmentError> {
+    let mut projected = words.to_vec();
+    for edit in edits {
+        let Some(range) = projected.get_mut(edit.start_word..=edit.end_word) else {
+            return Err(CorrectionAlignmentError::InvalidRange {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                words_count: words.len(),
+            });
+        };
+        let replacement_tokens = edit.replacement.split_whitespace().collect::<Vec<_>>();
+        if replacement_tokens.len() != range.len() {
+            return Err(CorrectionAlignmentError::TokenCountMismatch {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                expected: range.len(),
+                actual: replacement_tokens.len(),
+            });
+        }
+        for (word, replacement) in range.iter_mut().zip(replacement_tokens) {
+            word.word = replacement.to_string();
+        }
+    }
+    Ok(projected)
+}
+
 /// The derived corrected-text view: apply a correction layer's edits to
 /// the rendered transcript text. `words` stays immutable — this is a pure
 /// projection, recomputable from the layer at any time (applying a
@@ -681,6 +734,47 @@ mod tests {
     fn corrected_view_without_edits_returns_the_rendered_text() {
         let words = timed_words(&["alpa", "beta", "gama"]);
         assert_eq!(corrected_text_view(&words, &[]), "alpa beta gama");
+    }
+
+    /// dcterms:identifier: `transcript_layers::aligned_corrected_words`
+    /// expect: Corrected working words keep the original timing of the exact word they replace.
+    /// [P1] Motivating: Transcript corrections become navigable without rewriting timing evidence.
+    #[test]
+    fn aligned_correction_projects_text_onto_immutable_word_timings() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        let edits = vec![edit(0, 0, "alpha"), edit(2, 2, "gamma")];
+
+        let projected = aligned_corrected_words(&words, &edits).expect("aligned projection");
+
+        assert_eq!(words[0].word, "alpa", "original evidence changed");
+        assert_eq!(projected[0].word, "alpha");
+        assert_eq!(projected[0].start_ms, words[0].start_ms);
+        assert_eq!(projected[0].end_ms, words[0].end_ms);
+        assert_eq!(projected[1].word, "beta");
+        assert_eq!(projected[2].word, "gamma");
+        assert_eq!(projected[2].start_ms, words[2].start_ms);
+        assert_eq!(projected[2].end_ms, words[2].end_ms);
+    }
+
+    /// dcterms:identifier: `transcript_layers::aligned_corrected_words`
+    /// expect: A correction that changes timed-word cardinality is visibly unaligned, never assigned invented timestamps.
+    /// [P1] Motivating: Search and export must not claim timing precision the correction does not possess.
+    #[test]
+    fn cardinality_changing_correction_is_explicitly_unaligned() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        let edits = vec![edit(1, 2, "Cinderella")];
+
+        let error = aligned_corrected_words(&words, &edits).expect_err("must be unaligned");
+
+        assert_eq!(
+            error,
+            CorrectionAlignmentError::TokenCountMismatch {
+                start_word: 1,
+                end_word: 2,
+                expected: 2,
+                actual: 1,
+            }
+        );
     }
 
     #[test]

@@ -196,11 +196,13 @@ publication and canonical EDL publication record these typed relationships befor
 releasing rollback ownership. `educt_get_transcript` enumerates live exports and
 renders, and `gallery_asset_detail` exposes a rendered Asset's transcript origin.
 
-Reviewed divergence: correction layers preserve original word timings and produce a
-derived corrected-text view, but locate/highlight/SRT/corpus export still read the
-original words. Reduct promotes corrected text into its working transcript and
-re-aligns it. The local correction projection must gain a timing-preserving token
-map before those consumers can switch without corrupting provenance.
+The latest correction layer now supplies the working transcript for inspection,
+locate, semantic highlighting, SRT, and corpus export. One-to-one replacement
+tokens inherit the corresponding cloned source word's timing; the stored source
+bundle never changes. Cardinality-changing corrections remain readable and
+text-exportable but carry an explicit unaligned state, and timing-dependent tools
+return `FailedPrecondition`. Reduct can re-align these edits server-side; local
+re-transcription/re-alignment remains the explicit capability gap.
 
 Official reference surface:
 <https://reduct.video/product/edit-video/> and

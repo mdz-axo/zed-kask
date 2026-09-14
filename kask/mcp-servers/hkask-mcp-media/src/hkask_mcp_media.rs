@@ -3113,7 +3113,7 @@ mod tool_behavior_tests {
         }))
     }
 
-    fn make_server_with_port(port: Arc<MockInferencePort>) -> MediaServer {
+    fn make_server_with_port(port: Arc<dyn hkask_types::ports::InferencePort>) -> MediaServer {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store =
             Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
@@ -3542,6 +3542,268 @@ mod tool_behavior_tests {
         let applied = content_of(&applied);
         assert_eq!(applied["corrected_text"], serde_json::json!("Alpha beta"));
         assert_eq!(applied["applied_layer"]["edits"].as_u64(), Some(1));
+    }
+
+    /// dcterms:identifier: `MediaServer::educt_locate`
+    /// expect: After an aligned correction, I navigate and export the corrected working transcript rather than stale source text.
+    /// [P1] Motivating: Transcript correction changes the text users work with without changing its timing evidence.
+    #[tokio::test]
+    async fn aligned_correction_drives_inspection_locate_and_srt_export() {
+        let server = make_pass_server(
+            r#"{"edits": [{"start_word": 0, "end_word": 0, "replacement": "Alpha", "reason": "capitalization"}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        server
+            .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: Some("test-stt-model".to_string()),
+                structured: None,
+            }))
+            .await
+            .expect("correction stored");
+
+        let inspected = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id: transcript_id.clone(),
+                include_layers: Some(false),
+            }))
+            .await
+            .expect("transcript inspection");
+        let inspected = content_of(&inspected);
+        assert_eq!(inspected["working_transcript"]["text"], "Alpha beta");
+        assert_eq!(inspected["working_transcript"]["alignment"], "aligned");
+        assert_eq!(inspected["transcript"]["words"][0]["word"], "alpha");
+        assert_eq!(inspected["working_transcript"]["words"][0]["word"], "Alpha");
+        assert_eq!(
+            inspected["working_transcript"]["words"][0]["start_ms"],
+            inspected["transcript"]["words"][0]["start_ms"]
+        );
+
+        let located = server
+            .educt_locate(Parameters(crate::types::EductLocateRequest {
+                transcript_id: transcript_id.clone(),
+                text: "Alpha beta".to_string(),
+            }))
+            .await
+            .expect("corrected quote locates");
+        assert_eq!(content_of(&located)["count"].as_u64(), Some(1));
+        let stale = server
+            .educt_locate(Parameters(crate::types::EductLocateRequest {
+                transcript_id: transcript_id.clone(),
+                text: "alpha beta".to_string(),
+            }))
+            .await
+            .expect("stale quote returns no-match");
+        assert_eq!(content_of(&stale)["status"], "no_match");
+
+        let exported = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id: transcript_id.clone(),
+                format: "srt".to_string(),
+            }))
+            .await
+            .expect("corrected SRT export");
+        let exported = content_of(&exported);
+        let srt = std::fs::read_to_string(exported["output"].as_str().expect("SRT path"))
+            .expect("read SRT");
+        assert!(srt.contains("Alpha beta"), "{srt}");
+        assert!(exported["correction_layer_id"].is_string());
+
+        let corpus = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "corpus_text".to_string(),
+            }))
+            .await
+            .expect("aligned corpus export");
+        let corpus = content_of(&corpus);
+        assert_eq!(
+            std::fs::read_to_string(corpus["output"].as_str().expect("corpus path"))
+                .expect("read corpus text"),
+            "Alpha beta"
+        );
+        assert_eq!(corpus["correction_alignment"], "aligned");
+        assert_eq!(corpus["word_timings"], true);
+        assert!(corpus.get("degradation").is_none());
+    }
+
+    /// dcterms:identifier: `MediaServer::educt_highlight_pass`
+    /// expect: Semantic highlighting reads the corrected working words, not stale transcription text.
+    /// [P1] Motivating: Agent-selected highlights must describe the transcript the user sees.
+    #[tokio::test]
+    async fn aligned_correction_drives_semantic_highlight_prompt() {
+        struct CapturingInference {
+            prompt: Arc<std::sync::Mutex<Option<String>>>,
+        }
+        impl hkask_types::ports::InferencePort for CapturingInference {
+            fn generate(
+                &self,
+                prompt: &str,
+                _: &hkask_types::template::LLMParameters,
+                _: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                *self.prompt.lock().expect("capture prompt") = Some(prompt.to_string());
+                Box::pin(async {
+                    Ok(hkask_types::InferenceResult {
+                        text: r#"{"highlights":[{"start_word":0,"end_word":1,"label":"corrected","note":""}]}"#.to_string(),
+                        model: "mock-model".to_string(),
+                        usage: Default::default(),
+                        finish_reason: "stop".to_string(),
+                        tool_calls: Vec::new(),
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+        }
+
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let server = make_server_with_port(Arc::new(CapturingInference {
+            prompt: captured.clone(),
+        }));
+        let transcript_id = store_two_word_transcript(&server).await;
+        let correction = crate::transcript_layers::TranscriptLayer::Correction(
+            crate::transcript_layers::CorrectionLayer {
+                provenance: crate::transcript_layers::LayerProvenance {
+                    model: "operator".to_string(),
+                    prompt_template: "manual".to_string(),
+                    created_at: "2026-09-14T00:00:00Z".to_string(),
+                },
+                edits: vec![crate::transcript_layers::CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "Alpha".to_string(),
+                    reason: "capitalization".to_string(),
+                }],
+            },
+        );
+        server
+            .educt_store_layer(Parameters(crate::types::EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(correction).expect("serialize correction"),
+                ),
+            }))
+            .await
+            .expect("store correction");
+
+        server
+            .educt_highlight_pass(Parameters(crate::types::EductHighlightPassRequest {
+                transcript_id,
+                request: "find corrected words".to_string(),
+                model: Some("test-stt-model".to_string()),
+                structured: None,
+            }))
+            .await
+            .expect("highlight corrected transcript");
+
+        let prompt = captured
+            .lock()
+            .expect("read prompt")
+            .clone()
+            .expect("prompt captured");
+        assert!(prompt.contains("0:Alpha 1:beta"), "{prompt}");
+        assert!(!prompt.contains("0:alpha 1:beta"), "{prompt}");
+    }
+
+    /// dcterms:identifier: `MediaServer::educt_locate`
+    /// expect: A correction without a safe word-to-timing map stays readable but cannot masquerade as timed navigation or captions.
+    /// [P1] Motivating: The system surfaces alignment loss instead of inventing media precision.
+    #[tokio::test]
+    async fn unaligned_correction_blocks_timed_consumers_and_exports_text_with_degradation() {
+        let server = make_pass_server(
+            r#"{"edits": [{"start_word": 0, "end_word": 1, "replacement": "AlphaBeta", "reason": "merged speech"}]}"#
+                .to_string(),
+        );
+        let transcript_id = store_two_word_transcript(&server).await;
+        server
+            .educt_correction_pass(Parameters(crate::types::EductCorrectionPassRequest {
+                transcript_id: transcript_id.clone(),
+                model: Some("test-stt-model".to_string()),
+                structured: None,
+            }))
+            .await
+            .expect("correction stored");
+
+        let applied = server
+            .educt_apply_corrections(Parameters(crate::types::EductApplyCorrectionsRequest {
+                transcript_id: transcript_id.clone(),
+                layer_id: None,
+            }))
+            .await
+            .expect("unaligned view remains readable");
+        let applied = content_of(&applied);
+        assert_eq!(applied["corrected_text"], "AlphaBeta");
+        assert_eq!(applied["alignment"], "unaligned");
+        assert!(applied["alignment_error"].as_str().is_some());
+        assert!(applied["working_words"].is_null());
+
+        let locate_error = server
+            .educt_locate(Parameters(crate::types::EductLocateRequest {
+                transcript_id: transcript_id.clone(),
+                text: "AlphaBeta".to_string(),
+            }))
+            .await
+            .expect_err("unaligned locate must fail");
+        assert_eq!(
+            locate_error.kind,
+            hkask_types::McpErrorKind::FailedPrecondition
+        );
+        assert!(locate_error.message.contains("2 timed words with 1 tokens"));
+
+        let highlight_error = server
+            .educt_highlight_pass(Parameters(crate::types::EductHighlightPassRequest {
+                transcript_id: transcript_id.clone(),
+                request: "find the merged phrase".to_string(),
+                model: Some("test-stt-model".to_string()),
+                structured: None,
+            }))
+            .await
+            .expect_err("unaligned highlight must fail before inference");
+        assert_eq!(
+            highlight_error.kind,
+            hkask_types::McpErrorKind::FailedPrecondition
+        );
+
+        let srt_error = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id: transcript_id.clone(),
+                format: "srt".to_string(),
+            }))
+            .await
+            .expect_err("unaligned SRT must fail");
+        assert_eq!(
+            srt_error.kind,
+            hkask_types::McpErrorKind::FailedPrecondition
+        );
+
+        let corpus = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "corpus_text".to_string(),
+            }))
+            .await
+            .expect("corrected text-only corpus export");
+        let corpus = content_of(&corpus);
+        assert_eq!(
+            std::fs::read_to_string(corpus["output"].as_str().expect("corpus path"))
+                .expect("read corpus text"),
+            "AlphaBeta"
+        );
+        assert_eq!(corpus["correction_alignment"], "unaligned");
+        assert_eq!(corpus["word_timings"], false);
+        assert!(corpus["degradation"].as_str().is_some());
     }
 
     #[tokio::test]

@@ -164,15 +164,14 @@ flowchart TD
 id: DIAG-RF-004
 verified_date: 2026-07-29
 verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/research_store.rs (ResearchStore), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
-status: VERIFIED (v9 — 2026-09-14: the incomplete standalone driver-forecast surface was removed after its driver engine became the single projection implementation behind the existing valuation tools. Tool surface is pinned by `tool_surface_is_exactly_42_registered_tools`. Sub-router counts: financial_data 9, analysis 5, notes 6, analytics 5, valuation 11, economic_profit 1, expectations 1, transcript 1, artifacts 3 = 42.)
+status: VERIFIED (v9 — 2026-09-14: the incomplete standalone driver-forecast surface was removed after its driver engine became the single projection implementation behind the existing valuation tools. Tool surface is pinned by `tool_surface_is_exactly_40_registered_tools`. Sub-router counts: financial_data 9, analysis 5, notes 6, analytics 3, valuation 11, economic_profit 1, expectations 1, transcript 1, artifacts 3 = 40. Portfolio analytics are exclusively owned by `hkask-mcp-portfolio`.)
 -->
 
-## Tools (42)
+## Tools (40)
 
-> Count pinned end-to-end by `tool_surface_is_exactly_42_registered_tools`
-> (`CompaniesServer::combined_router().list_all().len()`), mirroring the
-> media/scenarios/swarm pins. The tabulated groups below cover 36 tools; 7
-> tools are not yet tabulated.
+> Count pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`
+> (`CompaniesServer::combined_router().list_all().len()`). Portfolio analytics
+> and ledger operations are exclusive to the portfolio MCP server.
 
 ### Financial data (9)
 
@@ -227,12 +226,10 @@ Investor-return reference: `/home/mdz-axolotl/Clones/Library/Guidebook/MA_Guideb
 
 Primary screening reference: [FactSet Universal Screening API](https://developer.factset.com/api-catalog/universal-screening-api). Corroborating references: Bloomberg EQS and GuruFocus All-In-One Screener.
 
-### Portfolio analytics and DCF (5)
+### DCF (3)
 
 | Tool | Description |
 |------|-------------|
-| `portfolio_attribution` | Rank position contributions to portfolio movement |
-| `portfolio_characteristics` | Weighted-average portfolio valuation, profitability, leverage, growth, and composition |
 | `dcf_valuation` | Two-stage DCF (Gordon-growth terminal); returns intrinsic value and forecast ID |
 | `reverse_dcf` | Solve for the revenue growth implied by the current market price |
 | `scenario_analysis` | Four growth-by-margin scenarios; returns intrinsic-value range |
@@ -342,7 +339,7 @@ The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at
 cargo test -p hkask-mcp-companies
 ```
 
-The suite covers provider-error handling, EODHD normalization, valuation request validation, research-store owner isolation, attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, attribution weight and contribution math, the `LearningState` flaky-provider override loop, and the tool-surface pin (`tool_surface_is_exactly_42_registered_tools`) that keeps the portfolio server's ledger tools out of this server. End-to-end MCP wire-format coverage remains future work.[^bach-bolton-companies-validation]
+The suite covers provider-error handling, EODHD normalization, valuation request validation, research-store owner isolation, attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, the `LearningState` flaky-provider override loop, and the tool-surface pin (`tool_surface_is_exactly_40_registered_tools`) that keeps the portfolio server's ledger tools out of this server. End-to-end MCP wire-format coverage remains future work.[^bach-bolton-companies-validation]
 
 ## Cross-links
 

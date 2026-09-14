@@ -175,13 +175,15 @@ source transcript/layer IDs and nullable live links. Gallery Asset deletion keep
 transcripts and marks their source relationship detached instead of destroying
 editorial work.
 
-One reviewed divergence remains explicit: correction layers currently produce a
-derived corrected-text view, but `educt_locate`, semantic highlighting, SRT, and
-corpus-text export still consume the immutable original words. Reduct promotes
-corrections into its working transcript and re-aligns them to media. Closing that
-gap requires a timing-preserving corrected-token projection (and a surfaced
-unaligned state when replacement text cannot map safely); mutating the original
-word/timing evidence would violate this system's provenance model. There is no
+The latest correction layer is the working transcript used by inspection,
+`educt_locate`, semantic highlighting, SRT, and corpus-text export. A pure
+projection replaces text one-for-one over cloned `TimedWord`s, retaining every
+source timestamp. If a correction changes token cardinality, its corrected text
+remains readable and corpus-exportable, but timing-dependent navigation,
+highlighting, and SRT fail with an explicit unaligned precondition instead of
+silently using stale source text or inventing timestamps. Reduct can re-align such
+edits server-side; local re-transcription/re-alignment remains the honest capability
+gap. The immutable source bundle remains available for audit, and there is no
 hidden Reduct upload, credential, fallback, or cloud mode.
 
 ## Configuration

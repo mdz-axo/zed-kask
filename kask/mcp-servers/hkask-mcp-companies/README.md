@@ -1,17 +1,19 @@
 # hkask-mcp-companies
 
-Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and local portfolio-ledger operations.
+Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts.
 
-## Tools (42)
+## Tools (40)
 
 | Group | Tools |
 |---|---:|
-| Financial data | 8 |
+| Financial data | 9 |
 | Analysis and research | 5 |
-| Portfolio analytics and DCF | 5 |
-| Valuation and forecasting | 9 |
+| DCF | 3 |
+| Valuation and forecasting | 11 |
 | Economic-profit and expectations analysis | 2 |
-| Portfolio ledger, notes, and files | 13 |
+| Company notes and files | 6 |
+| Transcript retrieval | 1 |
+| Artifact management | 3 |
 
 ### Financial data
 
@@ -25,6 +27,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `key_metrics` | Get key financial metrics. |
 | `historical_price` | Get historical price data. |
 | `symbol_search` | Search for symbols. |
+| `resolve_symbol` | Resolve a company name or ticker to its primary exchange symbol. |
 
 ### Analysis and research
 
@@ -36,12 +39,10 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `company_screener` | One universe-screening capability. Immediate mode parses ad hoc criteria; saved-screen mode renders a registered Jinja or direct API `ScreenDefinition`, submits an asynchronous calculate job, exposes status, and pages an immutable columnar result. |
 | `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims. |
 
-### Portfolio analytics and DCF
+### DCF
 
 | Tool | Description |
 |---|---|
-| `portfolio_attribution` | Rank position contributions to portfolio movement. |
-| `portfolio_characteristics` | Calculate weighted-average portfolio valuation, profitability, leverage, growth, and composition. |
 | `dcf_valuation` | Build a two-stage DCF valuation and return an intrinsic value and forecast ID. |
 | `reverse_dcf` | Solve for the revenue growth implied by the current market price. |
 | `scenario_analysis` | Run four growth-by-margin scenarios and return the intrinsic-value range. |
@@ -52,9 +53,11 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 |---|---|
 | `comparable_analysis` | Compare peer valuation multiples with a DCF overlay. |
 | `sensitivity_analysis` | Rank DCF inputs by their effect on intrinsic value. |
+| `equity_duration` | Measure the cash-flow-weighted duration of projected equity value. |
 | `monte_carlo_dcf` | Simulate DCF assumptions and return an intrinsic-value distribution. |
 | `scenario_impact_valuation` | Compose a company's DCF from scenario event-tree impact mappings. Reverse bridge from hkask-mcp-scenarios. |
 | `calibrate_forecast` | Calibrate growth and margin estimates into scenario-weighted intrinsic value. |
+| `forecast_persist` | Persist a pre-computed forecast for later scoring. |
 | `forecast_get` | Retrieve one durable forecast and its recorded outcomes for the authenticated owner. |
 | `forecast_list` | List an authenticated owner's durable forecasts for a symbol. |
 | `forecast_record` | Record a forecast outcome, Brier scores, and optional return-gap decomposition. |
@@ -67,25 +70,18 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade. |
 | `expectations_gap` | Compare implied revenue growth and profitability with demonstrated capability using the investor's target return as the equity component of modified WACC; surface DuPont ROE and Higgins SGR separately. |
 
-### Portfolio ledger, notes, and files
+### Company notes and files
 
 | Tool | Description |
 |---|---|
-| `portfolio_list` | List portfolios. |
-| `portfolio_delete` | Delete a portfolio and all its data. |
-| `ledger_import` | Import CSV or JSON transactions into a portfolio ledger. |
-| `ledger_export` | Export a portfolio ledger as CSV or JSON. |
-| `transaction_note_append` | Append a note to an existing transaction. |
-| `portfolio_comparison` | Compare two portfolios' positions, overlap, and unique symbols. |
-| `portfolio_returns` | Calculate time-weighted and money-weighted returns for a date range. |
 | `note_add` | Add a dated note to a company or security. |
 | `note_list` | List notes for a symbol, optionally filtered by date range or tags. |
 | `note_delete` | Delete a note by ID. |
 | `file_attach` | Attach a base64-encoded file to a company or security. |
-| `file_list` | List a portfolio's attached files for a symbol. |
+| `file_list` | List attached files for a company or security. |
 | `file_delete` | Delete an attached file by ID. |
 
-See the [Companies MCP Server Reference](../../docs/reference/mcp-servers/companies.md) for the full tool catalog, behavioral boundaries, and the code-anchored tool-routing diagram (DIAG-RF-004). The [Companies User Guide](../../docs/how-to/companies-mcp.md) covers task-oriented procedures for valuation, forecasting, and portfolio operations.
+See the [Companies MCP Server Reference](../../docs/reference/mcp-servers/companies.md) for the full tool catalog, behavioral boundaries, and the code-anchored tool-routing diagram (DIAG-RF-004). The [Companies User Guide](../../docs/how-to/companies-mcp.md) covers task-oriented procedures for company valuation, forecasting, and research artifacts.
 
 ## Configuration
 
@@ -123,7 +119,7 @@ src/
 ├── research.rs         Exa, Tavily, and Brave research retrieval
 ├── screener.rs         natural-language screening prompt parser (EODHD)
 ├── fibo.rs             FIBO concept identifiers used by derived outputs
-└── portfolio.rs        SQLite-backed ledger, notes, and attachments
+└── research_store.rs   Company notes, files, forecasts, and saved-screen jobs
 ```
 
 ### Behavioral boundaries

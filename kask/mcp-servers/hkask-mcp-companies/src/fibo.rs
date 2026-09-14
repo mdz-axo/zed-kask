@@ -151,8 +151,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
 
         // Analysis-family tools — no FIBO equivalent (verified 2026-08-29);
         // their outputs are analysis reports → Dublin Core.
-        "portfolio_attribution"
-        | "dcf_valuation"
+        "dcf_valuation"
         | "reverse_dcf"
         | "ep_valuation"
         | "expectations_gap"
@@ -168,8 +167,7 @@ pub(crate) fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         | "working_capital_cycle" => Some(dc_bibo::REPORT),
 
         // Data outputs — structured data, not analysis → Dublin Core.
-        "portfolio_characteristics"
-        | "stock_screener"
+        "stock_screener"
         | "company_screener"
         | "key_metrics"
         | "income_statement"

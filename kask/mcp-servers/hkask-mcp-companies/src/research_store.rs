@@ -3,13 +3,13 @@
 //! Research notes, file attachments, and DCF forecast snapshots, keyed by
 //! stock symbol. The general-purpose transaction ledger, holdings, and
 //! returns live in the `hkask-mcp-portfolio` server; this store opens the
-//! same shared DB (`mcp/portfolio/{owner}`) for the ledger context its
-//! artifacts attach to, and owns the companies-specific tables (notes,
-//! files, forecasts) alongside the portfolio crate's schema.
+//! same owner database (`mcp/portfolio/{owner}`) only as the storage location
+//! for companies-specific notes, files, forecasts, and screen jobs. It exposes
+//! no portfolio ledger or analytics reads.
 
-use hkask_mcp_portfolio::{LedgerFilter, PortfolioStore};
+use hkask_mcp_portfolio::PortfolioStore;
 // Re-exported for the tool layer's imports.
-pub(crate) use hkask_mcp_portfolio::{PortfolioError, Transaction};
+pub(crate) use hkask_mcp_portfolio::PortfolioError;
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -260,11 +260,7 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
 /// snapshots.
 #[derive(Clone)]
 pub(crate) struct ResearchStore {
-    /// The general-purpose store (owns the SQLite DB + schema).
-    store: PortfolioStore,
-    /// Path to the same SQLite DB the store uses, for companies-specific
-    /// tables (notes, files, forecasts). Mirrored at construction so this
-    /// module can open its own connection without reaching into the store.
+    /// Path to the shared owner database for companies-specific research artifacts.
     db_path: PathBuf,
 }
 
@@ -273,9 +269,10 @@ impl ResearchStore {
     /// portfolio crate creates the DB and the general schema; this module
     /// adds the companies-specific tables (notes, files, forecasts) on top.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
-        let store = PortfolioStore::new(owner)?;
+        let portfolio_schema = PortfolioStore::new(owner)?;
+        drop(portfolio_schema);
         let db_path = resolve_db_path(&owner)?;
-        let manager = Self { store, db_path };
+        let manager = Self { db_path };
         manager.ensure_companies_schema()?;
         manager.recover_interrupted_screen_jobs()?;
         Ok(manager)
@@ -283,8 +280,9 @@ impl ResearchStore {
 
     #[cfg(test)]
     pub(crate) fn with_dir(directory: PathBuf) -> Result<Self, PortfolioError> {
+        let portfolio_schema = PortfolioStore::with_dir(directory.clone());
+        drop(portfolio_schema);
         let manager = Self {
-            store: PortfolioStore::with_dir(directory.clone()),
             db_path: directory.join("master.db"),
         };
         manager.ensure_companies_schema()?;
@@ -364,43 +362,6 @@ impl ResearchStore {
             );
         }
         Ok(())
-    }
-
-    // ── Ledger context (read-only views over the shared portfolio DB) ──
-
-    pub fn get_transactions(
-        &self,
-        name: &str,
-        symbol: Option<&str>,
-        tx_type: Option<&str>,
-        from_date: Option<&str>,
-        to_date: Option<&str>,
-    ) -> Result<Vec<Transaction>, PortfolioError> {
-        self.store.ledger(
-            name,
-            LedgerFilter {
-                symbol,
-                tx_type,
-                asset_type: None,
-                from_date,
-                to_date,
-            },
-        )
-    }
-
-    pub fn get_symbols(&self, name: &str) -> Result<Vec<String>, PortfolioError> {
-        let conn = self.open()?;
-        let mut stmt = conn
-            .prepare("SELECT DISTINCT symbol FROM transactions WHERE portfolio_name = ?1 AND symbol IS NOT NULL AND symbol != ''")
-            .map_err(|e| format!("query: {e}"))?;
-        let rows = stmt
-            .query_map(params![name], |row| row.get::<_, String>(0))
-            .map_err(|e| format!("query: {e}"))?;
-        let mut symbols = Vec::new();
-        for row in rows {
-            symbols.push(row.map_err(|e| format!("row: {e}"))?);
-        }
-        Ok(symbols)
     }
 
     // ── Companies-specific: screening jobs ─────────────────────────

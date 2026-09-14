@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (42) — portfolio ledger/CRUD/returns live in the portfolio MCP server
+//! ## Tools (40) — portfolio analytics, ledger, CRUD, and returns live in the portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -16,7 +16,7 @@
 //! - `tools/valuation.rs` — dcf_valuation, reverse_dcf, ep_valuation, comparable_analysis,
 //!   scenario_analysis, sensitivity_analysis, monte_carlo_dcf, scenario_impact_valuation,
 //!   calibrate_forecast, forecast_record, forecast_persist
-//! - `tools/analytics.rs` — portfolio_attribution, portfolio_characteristics
+//! - `tools/analytics.rs` — DCF valuation and scenario analysis
 //! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
 //! - `tools/expectations.rs` — expectations_gap
 //! - `tools/notes.rs` — note_add, note_list, note_delete,
@@ -47,7 +47,6 @@
 
 use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
 
-pub(crate) mod aggregation;
 mod analysis;
 pub(crate) mod data_quality;
 pub(crate) mod economic_profit;
@@ -500,9 +499,9 @@ mod tool_behavior_tests {
     // this pin is what makes a re-introduction (or a silent registration drop)
     // fail CI instead of shipping as an undocumented duplicate.
     #[test]
-    fn tool_surface_is_exactly_42_registered_tools() {
+    fn tool_surface_is_exactly_40_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 42, "companies registered tool surface changed; got {n}");
+        assert_eq!(n, 40, "companies registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an ontology concept for

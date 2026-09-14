@@ -6,7 +6,7 @@
 //! path and optional gallery Asset. Persistence and selection are local; pass
 //! tools use configured inference providers, never a hidden Reduct cloud path.
 
-use crate::transcript::TranscriptBundle;
+use crate::transcript::{TimedWord, TranscriptBundle};
 use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};
 use crate::transcript_pass::{self, PassError, PassMode};
 use crate::transcript_select::{
@@ -36,6 +36,7 @@ struct EdlRenderEffectiveParams<'a> {
 struct SrtExportEffectiveParams<'a> {
     transcript_id: &'a str,
     cues: usize,
+    correction_layer_id: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -50,7 +51,100 @@ struct CorpusExportEffectiveParams<'a> {
     transcript_id: &'a str,
     words: usize,
     word_timings: bool,
+    correction_layer_id: Option<&'a str>,
+    correction_alignment: WorkingTranscriptAlignment,
     composition: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkingTranscriptAlignment {
+    Original,
+    Aligned,
+    Unaligned,
+    Untimed,
+}
+
+#[derive(serde::Serialize)]
+struct WorkingTranscript {
+    text: String,
+    words: Option<Vec<TimedWord>>,
+    alignment: WorkingTranscriptAlignment,
+    correction_layer_id: Option<String>,
+    alignment_error: Option<String>,
+}
+
+impl WorkingTranscript {
+    fn require_timed_words(&self, operation: &str) -> Result<&[TimedWord], McpToolError> {
+        self.words.as_deref().ok_or_else(|| {
+            McpToolError::new(
+                hkask_types::McpErrorKind::FailedPrecondition,
+                format!(
+                    "{operation} requires a timing-aligned working transcript; correction layer {} is unaligned: {}. Re-transcribe the corrected range or use one replacement token per original timed word",
+                    self.correction_layer_id.as_deref().unwrap_or("unknown"),
+                    self.alignment_error.as_deref().unwrap_or("unknown alignment error")
+                ),
+            )
+        })
+    }
+}
+
+fn working_transcript(
+    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
+    transcript_id: &str,
+    bundle: &TranscriptBundle,
+) -> Result<WorkingTranscript, McpToolError> {
+    let layers = transcript_store::list_layers(driver, transcript_id).map_err(map_store_error)?;
+    let mut corrections = layers
+        .into_iter()
+        .filter(|record| record.layer.kind() == "correction")
+        .collect::<Vec<_>>();
+    corrections.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let Some(record) = corrections.pop() else {
+        if bundle.words.is_empty() {
+            return Ok(WorkingTranscript {
+                text: bundle.full_text.clone(),
+                words: None,
+                alignment: WorkingTranscriptAlignment::Untimed,
+                correction_layer_id: None,
+                alignment_error: Some("source transcript has no word-level timings".to_string()),
+            });
+        }
+        return Ok(WorkingTranscript {
+            text: crate::transcript_select::rendered_transcript(&bundle.words),
+            words: Some(bundle.words.clone()),
+            alignment: WorkingTranscriptAlignment::Original,
+            correction_layer_id: None,
+            alignment_error: None,
+        });
+    };
+    let TranscriptLayer::Correction(correction) = record.layer else {
+        return Err(McpToolError::internal(
+            // rr0044-ok: layer-kind-filter invariant
+            "layer kind mismatch after correction filter",
+        ));
+    };
+    let text = crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits);
+    match crate::transcript_layers::aligned_corrected_words(&bundle.words, &correction.edits) {
+        Ok(words) => Ok(WorkingTranscript {
+            text,
+            words: Some(words),
+            alignment: WorkingTranscriptAlignment::Aligned,
+            correction_layer_id: Some(record.id),
+            alignment_error: None,
+        }),
+        Err(error) => Ok(WorkingTranscript {
+            text,
+            words: None,
+            alignment: WorkingTranscriptAlignment::Unaligned,
+            correction_layer_id: Some(record.id),
+            alignment_error: Some(error.to_string()),
+        }),
+    }
 }
 
 struct EdlRenderIntermediates {
@@ -254,7 +348,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Get a stored transcript by ID: its summary, the full TranscriptBundle, and (by default) its layers."
+        description = "Get a stored transcript by ID: its summary, immutable source TranscriptBundle, timing-aware working transcript after the latest correction, durable exports/renders, and (by default) its layers."
     )]
     pub async fn educt_get_transcript(
         &self,
@@ -272,9 +366,11 @@ impl MediaServer {
                     "transcript {transcript_id} not found"
                 )));
             };
+            let working = working_transcript(driver, &transcript_id, &bundle)?;
             let mut result = serde_json::json!({
                 "summary": summary,
                 "transcript": bundle,
+                "working_transcript": working,
             });
             if include_layers.unwrap_or(true) {
                 let layers = transcript_store::list_layers(driver, &transcript_id)
@@ -568,7 +664,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Apply a stored correction layer to its transcript: returns the corrected text view — a pure projection recomputable from the layer at any time (the immutable words and timings are never modified). Defaults to the latest correction layer; pass layer_id to apply a specific one."
+        description = "Apply a stored correction layer as a derived working view without modifying source words/timings. Returns aligned working words only when replacement-token cardinality matches the timed source range; otherwise returns an explicit unaligned state. Defaults to the latest correction layer."
     )]
     pub async fn educt_apply_corrections(
         &self,
@@ -598,8 +694,12 @@ impl MediaServer {
                 .into_iter()
                 .filter(|record| record.layer.kind() == "correction")
                 .collect();
-            // Newest first (RFC 3339 timestamps sort lexicographically).
-            correction_layers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            // Newest first; the ID breaks timestamp ties deterministically.
+            correction_layers.sort_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| b.id.cmp(&a.id))
+            });
             let record = match layer_id {
                 Some(id) => correction_layers.into_iter().find(|record| record.id == id),
                 None => correction_layers.into_iter().next(),
@@ -617,8 +717,23 @@ impl MediaServer {
             };
             let corrected =
                 crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits);
+            let (alignment, working_words, alignment_error) =
+                match crate::transcript_layers::aligned_corrected_words(
+                    &bundle.words,
+                    &correction.edits,
+                ) {
+                    Ok(words) => (WorkingTranscriptAlignment::Aligned, Some(words), None),
+                    Err(error) => (
+                        WorkingTranscriptAlignment::Unaligned,
+                        None,
+                        Some(error.to_string()),
+                    ),
+                };
             Ok(serde_json::json!({
                 "corrected_text": corrected,
+                "alignment": alignment,
+                "alignment_error": alignment_error,
+                "working_words": working_words,
                 "applied_layer": {
                     "id": record.id,
                     "provenance": record.layer.provenance(),
@@ -630,7 +745,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Run the highlight pass — the semantic selection: a natural-language request (e.g. \"where he explains the Cinderella curve\") resolved to word ranges with theme labels. The output is validated (in-bounds) and stored as a HighlightLayer; overlapping selections are allowed. The response carries pass stats."
+        description = "Run semantic selection over the timing-aligned working transcript (the latest correction when present). A natural-language request resolves to validated labeled word ranges; unaligned corrections fail visibly before inference."
     )]
     pub async fn educt_highlight_pass(
         &self,
@@ -657,6 +772,11 @@ impl MediaServer {
                      first",
                 ));
             }
+            let working = working_transcript(driver, &transcript_id, &bundle)?;
+            let working_words = working.require_timed_words("educt_highlight_pass")?;
+            let mut working_bundle = bundle.clone();
+            working_bundle.words = working_words.to_vec();
+            working_bundle.full_text = working.text;
             let mode = if structured.unwrap_or(false) {
                 PassMode::Structured
             } else {
@@ -665,7 +785,7 @@ impl MediaServer {
             let layer = transcript_pass::run_highlight_pass(
                 &self.vision_port,
                 &self.template_env,
-                &bundle,
+                &working_bundle,
                 &request,
                 mode,
                 model.as_deref(),
@@ -929,7 +1049,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Publish a stored transcript as a durable document with stable export_id and provenance metadata. \"srt\": caption cues from word timings. \"highlights_csv\": stored highlights with time ranges. \"corpus_text\": rendered text for corpus ingestion. Documents stay outside the playable-media gallery."
+        description = "Publish a durable transcript document with stable export_id and provenance. SRT and mapped corpus text use the timing-aligned working transcript; unaligned corrected text remains exportable for search with an explicit no-range-mapping degradation. Documents stay outside the playable-media gallery."
     )]
     pub async fn educt_export(
         &self,
@@ -962,12 +1082,15 @@ impl MediaServer {
                              (NoWordTimings)",
                         ));
                     }
-                    let srt = crate::transcript_export::srt_from_words(&bundle.words).map_err(
+                    let working = working_transcript(driver, &transcript_id, &bundle)?;
+                    let working_words = working.require_timed_words("SRT export")?;
+                    let srt = crate::transcript_export::srt_from_words(working_words).map_err(
                         |error| McpToolError::invalid_argument(format!("SRT export: {error}")),
                     )?;
                     let effective_params = SrtExportEffectiveParams {
                         transcript_id: &transcript_id,
                         cues: srt.matches("\n\n").count(),
+                        correction_layer_id: working.correction_layer_id.as_deref(),
                     };
                     crate::transcript_export::publish_document(
                         driver,
@@ -1019,28 +1142,57 @@ impl MediaServer {
                     )
                 }
                 crate::transcript_export::TranscriptExportFormat::CorpusText => {
-                    // The rendered form (words joined by single spaces) is
-                    // what text_to_word_ranges matches — a corpus hit on
-                    // this text maps back to word ranges exactly. Without
-                    // word timings, fall back to the provider's full_text
-                    // and surface the degradation (search works; clip
-                    // mapping does not).
-                    let (text, word_timings) = if summary.has_word_timings {
-                        (
-                            crate::transcript_select::rendered_transcript(&bundle.words),
-                            true,
-                        )
-                    } else {
-                        (bundle.full_text.clone(), false)
-                    };
-                    const COMPOSITION: &str = "run corpus_convert → corpus_chunk → \
+                    const ALIGNED_COMPOSITION: &str = "run corpus_convert → corpus_chunk → \
                          corpus_embed on this file; corpus_query hits map back to word ranges via \
-                         text_to_word_ranges over the stored transcript";
+                         text_to_word_ranges over the timing-aligned working transcript";
+                    const TEXT_ONLY_COMPOSITION: &str = "run corpus_convert → corpus_chunk → \
+                         corpus_embed on this file; text remains searchable but cannot map back to \
+                         word ranges until the transcript is timing-aligned";
+                    let working = if summary.has_word_timings {
+                        Some(working_transcript(driver, &transcript_id, &bundle)?)
+                    } else {
+                        None
+                    };
+                    let (text, word_timings, correction_layer_id, correction_alignment, degradation) =
+                        match working {
+                            Some(working) if working.words.is_some() => (
+                                working.text,
+                                true,
+                                working.correction_layer_id,
+                                working.alignment,
+                                None,
+                            ),
+                            Some(working) => (
+                                working.text,
+                                false,
+                                working.correction_layer_id,
+                                working.alignment,
+                                Some(format!(
+                                    "working transcript is unaligned — {}. Corpus text was exported, but hits cannot map back to word ranges",
+                                    working.alignment_error.as_deref().unwrap_or("unknown alignment error")
+                                )),
+                            ),
+                            None => (
+                                bundle.full_text.clone(),
+                                false,
+                                None,
+                                WorkingTranscriptAlignment::Untimed,
+                                Some(
+                                    "no word-level timings — exported the provider's full_text; corpus hits cannot map back to word ranges (NoWordTimings)".to_string(),
+                                ),
+                            ),
+                        };
                     let effective_params = CorpusExportEffectiveParams {
                         transcript_id: &transcript_id,
                         words: bundle.words.len(),
                         word_timings,
-                        composition: COMPOSITION,
+                        correction_layer_id: correction_layer_id.as_deref(),
+                        correction_alignment,
+                        composition: if word_timings {
+                            ALIGNED_COMPOSITION
+                        } else {
+                            TEXT_ONLY_COMPOSITION
+                        },
                     };
                     let mut result = crate::transcript_export::publish_document(
                         driver,
@@ -1049,11 +1201,8 @@ impl MediaServer {
                         text.as_bytes(),
                         &effective_params,
                     )?;
-                    if !word_timings {
-                        result["degradation"] = serde_json::json!(
-                            "no word-level timings — exported the provider's full_text; \
-                             corpus hits cannot map back to word ranges (NoWordTimings)"
-                        );
+                    if let Some(degradation) = degradation {
+                        result["degradation"] = serde_json::json!(degradation);
                     }
                     Ok(result)
                 }
@@ -1063,7 +1212,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Locate a quoted passage in a stored transcript, deterministically: returns every word-aligned match as a word range with its time range (start_ms/end_ms). Quote the rendered form exactly (punctuation included). Ambiguity is surfaced as all candidate ranges — never a guess; a surfaced no_match means the quote does not appear word-aligned. This is the mechanical mapping step for verified citations (e.g. the listening skill's evidence quotes): a verbatim substring of the transcript resolves to a media range with no model in the loop."
+        description = "Locate a quoted passage in the timing-aligned working transcript, deterministically. Returns every word-aligned match and time range; ambiguity is surfaced, unaligned corrections fail visibly, and no model guesses timestamps."
     )]
     pub async fn educt_locate(
         &self,
@@ -1087,7 +1236,9 @@ impl MediaServer {
                      range (NoWordTimings)",
                 ));
             }
-            let ranges = text_to_word_ranges(&bundle.words, &text);
+            let working = working_transcript(driver, &transcript_id, &bundle)?;
+            let working_words = working.require_timed_words("educt_locate")?;
+            let ranges = text_to_word_ranges(working_words, &text);
             if ranges.is_empty() {
                 return Ok(serde_json::json!({
                     "status": "no_match",
@@ -1100,7 +1251,7 @@ impl MediaServer {
             let mut located = Vec::with_capacity(ranges.len());
             for range in ranges {
                 let (start_ms, end_ms) =
-                    word_range_to_time_range(&bundle.words, range).map_err(|error| {
+                    word_range_to_time_range(working_words, range).map_err(|error| {
                         McpToolError::internal(format!(
                             // rr0044-ok: documented-impossible-invariant
                             "impossible: text_to_word_ranges produced an out-of-bounds \

@@ -131,7 +131,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer. Copy each evidence quote verbatim from p0. Do not paraphrase, normalize punctuation, or reconstruct it. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
         prompt.qa_types.len(),
         instructions
     );
@@ -475,6 +475,16 @@ mod tests {
         let messages = render_prepared_messages(&prepared())?;
         assert!(messages[0].content.contains(
             "Keep each question and answer concise. Cite the shortest exact quote sufficient to support the answer."
+        ));
+        Ok(())
+    }
+
+    /// expect: Evidence is copied byte-for-byte rather than reconstructed by the model.
+    #[test]
+    fn prepared_prompt_requires_verbatim_evidence_copying() -> Result<(), McpToolError> {
+        let messages = render_prepared_messages(&prepared())?;
+        assert!(messages[0].content.contains(
+            "Copy each evidence quote verbatim from p0. Do not paraphrase, normalize punctuation, or reconstruct it."
         ));
         Ok(())
     }
