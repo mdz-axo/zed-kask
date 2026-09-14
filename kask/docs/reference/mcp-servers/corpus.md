@@ -173,8 +173,10 @@ The whole input is validated before inference/output creation.
 Required model response shape:
 
 ```json
-[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
+{"pairs":[{"level":"factual","question":"What is the delay?","answer":"72 hours","evidence":[{"passage":"p0","quote":"The delay is 72 hours."}]},{"level":"conceptual","question":"Why does it matter?","answer":"It constrains timing.","evidence":[{"passage":"p0","quote":"delay is 72 hours"}]}]}
 ```
+
+Synchronous inference requires this object through one `emit_result` function call, allowing the provider to enforce the JSON schema. Provider-batch inference returns the same object as text because the batch IPC contract has no tool channel.
 
 Pair count and ordered Bloom levels must exactly match the request. Every pair
 requires nonblank question, answer and local evidence. Each local ID must resolve

@@ -5,6 +5,7 @@ use hkask_inference::model_constants::QA_GENERATION_MODEL_ENV;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult, McpErrorKind,
+    StructuredToolCall,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::json;
@@ -64,9 +65,13 @@ impl InferencePort for RecordingPort {
         messages: &[ChatMessage],
         parameters: &LLMParameters,
         model: Option<&str>,
-        _: Option<&[ChatToolDefinition]>,
+        tools: Option<&[ChatToolDefinition]>,
     ) -> Reply<'_> {
         assert_eq!(messages.len(), 2);
+        let [tool] = tools.expect("prepared QA structured tool") else {
+            panic!("expected one prepared QA structured tool")
+        };
+        assert_eq!(tool.function.name, "emit_result");
         assert!(!parameters.thinking_allowed, "QA must disable thinking");
         assert_eq!(model, Some(MODEL));
         self.0
@@ -75,17 +80,23 @@ impl InferencePort for RecordingPort {
             .push(model.expect("explicit model").into());
         Box::pin(async {
             Ok(InferenceResult {
-                text: json!([[
-                    "factual",
-                    "What is stated?",
-                    "The source states a fact.",
-                    [["p0", "The source states a fact."]]
-                ]])
-                .to_string(),
+                text: String::new(),
                 model: MODEL.into(),
                 usage: Default::default(),
-                finish_reason: "stop".into(),
-                tool_calls: vec![],
+                finish_reason: "tool_calls".into(),
+                tool_calls: vec![StructuredToolCall {
+                    server: String::new(),
+                    tool: "emit_result".into(),
+                    args: json!({
+                        "pairs": [{
+                            "level": "factual",
+                            "question": "What is stated?",
+                            "answer": "The source states a fact.",
+                            "evidence": [{"passage": "p0", "quote": "The source states a fact."}]
+                        }]
+                    }),
+                    call_id: Some("call-1".into()),
+                }],
                 reasoning: None,
                 cost_usd: None,
             })

@@ -162,6 +162,17 @@ async fn submit(server: &CompaniesServer, req: ScreenerRequest) -> Result<Value,
         error: None,
         created_at: now.clone(),
         updated_at: now,
+        stage: "queued".to_string(),
+        processed: 0,
+        total: 0,
+        complete_count: 0,
+        partial_count: 0,
+        unavailable_count: 0,
+        model_sensitive_count: 0,
+        heartbeat_at: None,
+        cancel_requested: false,
+        checkpoint: None,
+        artifact_path: None,
     };
     server
         .research
@@ -1496,6 +1507,17 @@ mod tests {
             error: None,
             created_at: "2026-09-13T00:00:00Z".to_string(),
             updated_at: "2026-09-13T00:00:00Z".to_string(),
+            stage: "queued".to_string(),
+            processed: 0,
+            total: 0,
+            complete_count: 0,
+            partial_count: 0,
+            unavailable_count: 0,
+            model_sensitive_count: 0,
+            heartbeat_at: None,
+            cancel_requested: false,
+            checkpoint: None,
+            artifact_path: None,
         })?;
 
         persist_screen_calculation(store.clone(), "panic-job".to_string(), async {

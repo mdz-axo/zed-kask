@@ -473,12 +473,40 @@ async fn stage_job_asset(
     stage_job_asset_in_dir(result, kind, &generated_assets_dir()).await
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum LocalVideoFormat {
+    Mp4,
+    Gif,
+}
+
+impl LocalVideoFormat {
+    pub(crate) const fn extension(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Gif => "gif",
+        }
+    }
+
+    pub(crate) const fn media_type(self) -> &'static str {
+        match self {
+            Self::Mp4 => "video",
+            Self::Gif => "image",
+        }
+    }
+
+    pub(crate) const fn block_kind(self) -> &'static str {
+        self.media_type()
+    }
+}
+
 /// Move a completed local processor output under the same rollback-armed
 /// publication owner used by background generation jobs. The processor's
 /// temporary file is consumed before this returns; no temp-runner lifetime is
 /// allowed to own the user-facing output.
 pub(crate) fn stage_local_video_publication(
     source_path: &std::path::Path,
+    format: LocalVideoFormat,
 ) -> Result<StagedJobPublication, MediaError> {
     let mut source_cleanup = StagedPathCleanup::armed(source_path.to_path_buf());
     let bytes = std::fs::read(source_path).map_err(|error| {
@@ -487,12 +515,7 @@ pub(crate) fn stage_local_video_publication(
             source_path.display()
         ))
     })?;
-    let ext = source_path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .filter(|ext| !ext.is_empty())
-        .unwrap_or("mp4")
-        .to_string();
+    let ext = format.extension().to_string();
 
     let asset_dir = generated_assets_dir();
     let id = uuid::Uuid::new_v4();
@@ -510,17 +533,12 @@ pub(crate) fn stage_local_video_publication(
     })?;
     source_cleanup.disarm();
 
-    let media_type = if ext.eq_ignore_ascii_case("gif") {
-        "image"
-    } else {
-        "video"
-    };
     let asset = StagedJobAsset {
         staged_path,
         final_path,
         bytes,
         ext,
-        media_type,
+        media_type: format.media_type(),
         gallery_store: None,
         gallery_image_id: None,
         committed: false,

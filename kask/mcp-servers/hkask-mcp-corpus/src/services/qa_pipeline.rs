@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 
-use hkask_types::ChatMessage;
+use hkask_types::{ChatMessage, ChatToolDefinition, ChatToolFunction, StructuredToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -130,7 +130,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only JSON tuples: [[\"level\",\"question\",\"answer\",[[\"p0\",\"exact quote\"]]]]. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
+        "Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order.\n{}\nUse p0 as the primary passage; other local passages are context only. Every pair needs at least one exact nonempty quote. Return only this JSON object: {{\"pairs\":[{{\"level\":\"factual\",\"question\":\"...\",\"answer\":\"...\",\"evidence\":[{{\"passage\":\"p0\",\"quote\":\"exact quote\"}}]}}]}}. Local passage IDs are mandatory; never emit canonical source or chunk identities.",
         prompt.qa_types.len(),
         instructions
     );
@@ -147,19 +147,103 @@ pub(crate) fn render_prepared_messages(
 }
 
 #[derive(Deserialize)]
-struct PreparedQaPair(String, String, String, Vec<(String, String)>);
+struct PreparedQaResponse {
+    pairs: Vec<PreparedQaPair>,
+}
+
+#[derive(Deserialize)]
+struct PreparedQaPair {
+    level: String,
+    question: String,
+    answer: String,
+    evidence: Vec<PreparedQaEvidence>,
+}
+
+#[derive(Deserialize)]
+struct PreparedQaEvidence {
+    passage: String,
+    quote: String,
+}
+
+pub(crate) fn prepared_qa_tool_definition() -> ChatToolDefinition {
+    ChatToolDefinition {
+        tool_type: "function".into(),
+        function: ChatToolFunction {
+            name: "emit_result".into(),
+            description: "Emit the complete source-grounded QA result.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pairs": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "level": {"type": "string", "enum": ["factual", "conceptual", "analyze", "evaluate", "create"]},
+                                "question": {"type": "string"},
+                                "answer": {"type": "string"},
+                                "evidence": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "passage": {"type": "string"},
+                                            "quote": {"type": "string"}
+                                        },
+                                        "required": ["passage", "quote"],
+                                        "additionalProperties": false
+                                    }
+                                }
+                            },
+                            "required": ["level", "question", "answer", "evidence"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["pairs"],
+                "additionalProperties": false
+            }),
+        },
+    }
+}
+
+pub(crate) fn prepared_qa_payload_from_tool_calls(
+    tool_calls: &[StructuredToolCall],
+) -> Result<String, String> {
+    let [tool_call] = tool_calls else {
+        return Err(format!(
+            "expected exactly one emit_result tool call, received {}",
+            tool_calls.len()
+        ));
+    };
+    if tool_call.tool != "emit_result" {
+        return Err(format!(
+            "expected emit_result tool call, received '{}'",
+            tool_call.tool
+        ));
+    }
+    Ok(tool_call.args.to_string())
+}
 
 fn parse_prepared_qa_response(
     response: &str,
     prompt: &PreparedQaPrompt,
 ) -> Result<Vec<QaPair>, String> {
-    let raw: Vec<PreparedQaPair> = serde_json::from_str(response)
+    let value: serde_json::Value = serde_json::from_str(response)
         .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
-    if raw.len() != prompt.qa_types.len() {
+    if let Some(error) = value
+        .get("qa_contract_error")
+        .and_then(|error| error.as_str())
+    {
+        return Err(format!("structured QA contract failed: {error}"));
+    }
+    let raw: PreparedQaResponse = serde_json::from_value(value)
+        .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
+    if raw.pairs.len() != prompt.qa_types.len() {
         return Err(format!(
             "expected {} QA pairs, received {}",
             prompt.qa_types.len(),
-            raw.len()
+            raw.pairs.len()
         ));
     }
     let passages = prompt
@@ -167,46 +251,55 @@ fn parse_prepared_qa_response(
         .iter()
         .map(|passage| (passage.local_id.as_str(), passage))
         .collect::<HashMap<_, _>>();
-    raw.into_iter()
+    raw.pairs
+        .into_iter()
         .zip(&prompt.qa_types)
         .enumerate()
-        .map(
-            |(index, (PreparedQaPair(level, question, answer, citations), expected))| {
-                if level != expected.as_str() {
+        .map(|(index, (pair, expected))| {
+            let PreparedQaPair {
+                level,
+                question,
+                answer,
+                evidence,
+            } = pair;
+            if level != expected.as_str() {
+                return Err(format!(
+                    "pair {index} expected Bloom level '{}', received '{level}'",
+                    expected.as_str()
+                ));
+            }
+            if question.trim().is_empty() || answer.trim().is_empty() || evidence.is_empty() {
+                return Err(format!(
+                    "pair {index} needs nonblank question, answer, and evidence"
+                ));
+            }
+            let mut evidence_quotes = Vec::with_capacity(evidence.len());
+            for citation in evidence {
+                let PreparedQaEvidence {
+                    passage: local_id,
+                    quote,
+                } = citation;
+                let passage = passages
+                    .get(local_id.as_str())
+                    .ok_or_else(|| format!("pair {index} cites unknown passage '{local_id}'"))?;
+                if quote.trim().is_empty() || !passage.text.contains(&quote) {
                     return Err(format!(
-                        "pair {index} expected Bloom level '{}', received '{level}'",
-                        expected.as_str()
+                        "pair {index} quote is not an exact substring of '{local_id}'"
                     ));
                 }
-                if question.trim().is_empty() || answer.trim().is_empty() || citations.is_empty() {
-                    return Err(format!(
-                        "pair {index} needs nonblank question, answer, and evidence"
-                    ));
-                }
-                let mut evidence_quotes = Vec::with_capacity(citations.len());
-                for (local_id, quote) in citations {
-                    let passage = passages.get(local_id.as_str()).ok_or_else(|| {
-                        format!("pair {index} cites unknown passage '{local_id}'")
-                    })?;
-                    if quote.trim().is_empty() || !passage.text.contains(&quote) {
-                        return Err(format!(
-                            "pair {index} quote is not an exact substring of '{local_id}'"
-                        ));
-                    }
-                    evidence_quotes.push(hkask_types::corpus::QaEvidence {
-                        chunk_ref: passage.chunk_ref.clone(),
-                        source: passage.source.clone(),
-                        quote,
-                    });
-                }
-                Ok(QaPair {
-                    question,
-                    answer,
-                    bloom_level: level,
-                    evidence_quotes,
-                })
-            },
-        )
+                evidence_quotes.push(hkask_types::corpus::QaEvidence {
+                    chunk_ref: passage.chunk_ref.clone(),
+                    source: passage.source.clone(),
+                    quote,
+                });
+            }
+            Ok(QaPair {
+                question,
+                answer,
+                bloom_level: level,
+                evidence_quotes,
+            })
+        })
         .collect()
 }
 
@@ -564,9 +657,47 @@ mod tests {
         }
     }
 
+    /// expect: The QA provider returns one schema-bound named result instead of fragile positional text tuples.
+    /// [P9] Motivating: Every prompt receives a structurally complete terminal outcome.
+    /// pre: the prepared prompt requests one factual pair and the provider emits one `emit_result` call.
+    /// post: the payload parses and canonical evidence identity is restored only after exact quote validation.
+    #[test]
+    fn structured_tool_payload_restores_verified_evidence() {
+        let tool = prepared_qa_tool_definition();
+        assert_eq!(tool.function.name, "emit_result");
+        assert_eq!(tool.function.parameters["required"], json!(["pairs"]));
+
+        let payload = prepared_qa_payload_from_tool_calls(&[hkask_types::StructuredToolCall {
+            server: String::new(),
+            tool: "emit_result".into(),
+            args: json!({
+                "pairs": [{
+                    "level": "factual",
+                    "question": "What is grounded?",
+                    "answer": "The answer.",
+                    "evidence": [{"passage": "p0", "quote": "grounded"}]
+                }]
+            }),
+            call_id: Some("call-1".into()),
+        }])
+        .expect("one structured result");
+        let pairs = parse_prepared_qa_response(&payload, &prepared()).expect("parse payload");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].evidence_quotes[0].chunk_ref, "chunk-1");
+        assert_eq!(pairs[0].evidence_quotes[0].source, "source.txt");
+    }
+
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
         Ok(QaCompletion {
-            text: json!([["factual", "Question?", "Answer.", [["p0", "grounded"]]]]).to_string(),
+            text: json!({
+                "pairs": [{
+                    "level": "factual",
+                    "question": "Question?",
+                    "answer": "Answer.",
+                    "evidence": [{"passage": "p0", "quote": "grounded"}]
+                }]
+            })
+            .to_string(),
             tokens_used: 10,
             completion_tokens: Some(5),
             finish_reason: Some("stop".into()),
@@ -666,13 +797,14 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         for response in [
             "not JSON",
-            "[]",
-            r#"[["factual","","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question"," ",[["p0","grounded"]]]]"#,
-            r#"[["create","question","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p0","grounded"]]],["factual","extra","answer",[["p0","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p9","grounded"]]]]"#,
-            r#"[["factual","question","answer",[["p0","not in passage"]]]]"#,
+            r#"[["factual","question","answer",[["p0","grounded"]]]]"#,
+            r#"{"pairs":[]}"#,
+            r#"{"pairs":[{"level":"factual","question":"","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
+            r#"{"pairs":[{"level":"factual","question":"question","answer":" ","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
+            r#"{"pairs":[{"level":"create","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
+            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]},{"level":"factual","question":"extra","answer":"answer","evidence":[{"passage":"p0","quote":"grounded"}]}]}"#,
+            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p9","quote":"grounded"}]}]}"#,
+            r#"{"pairs":[{"level":"factual","question":"question","answer":"answer","evidence":[{"passage":"p0","quote":"not in passage"}]}]}"#,
         ] {
             let mut bytes = Vec::new();
             let mut output = QaOutput::new(&mut bytes, 1);
@@ -747,20 +879,22 @@ mod tests {
         assert!(!rendered.contains("chunk-1"));
         assert!(!rendered.contains("source.txt"));
 
-        let response = json!([
-            [
-                "factual",
-                "What is grounded?",
-                "The answer.",
-                [["p0", "answer"]]
-            ],
-            [
-                "conceptual",
-                "How is it grounded?",
-                "By evidence.",
-                [["p0", "grounded"]]
+        let response = json!({
+            "pairs": [
+                {
+                    "level": "factual",
+                    "question": "What is grounded?",
+                    "answer": "The answer.",
+                    "evidence": [{"passage": "p0", "quote": "answer"}]
+                },
+                {
+                    "level": "conceptual",
+                    "question": "How is it grounded?",
+                    "answer": "By evidence.",
+                    "evidence": [{"passage": "p0", "quote": "grounded"}]
+                }
             ]
-        ])
+        })
         .to_string();
         let pairs = parse_prepared_qa_response(&response, &prompt).expect("parse");
         assert_eq!(pairs.len(), 2);

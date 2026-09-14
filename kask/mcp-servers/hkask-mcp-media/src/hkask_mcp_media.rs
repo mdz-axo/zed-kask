@@ -1450,25 +1450,35 @@ mod tool_behavior_tests {
         Ok((store, driver))
     }
 
-    fn server_with_gallery(
+    fn server_with_gallery_state(
         store: Arc<GalleryStore>,
         gallery_id: String,
         gallery_root: &std::path::Path,
-    ) -> MediaServer {
-        MediaServer::new(
+    ) -> (MediaServer, Arc<std::sync::Mutex<Option<GalleryState>>>) {
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_root.to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_id),
+        })));
+        let server = MediaServer::new(
             hkask_types::WebID::new(),
             Arc::new(NoopInferencePort),
-            Arc::new(std::sync::Mutex::new(Some(GalleryState {
-                path: gallery_root.to_path_buf(),
-                mode: GalleryMode::ReadOnly,
-                gallery_id: Some(gallery_id),
-            }))),
+            gallery_state.clone(),
             store,
             templates::create_env().expect("media templates must compile"),
             video::ffmpeg::FfmpegRunner::detect(),
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
-        )
+        );
+        (server, gallery_state)
+    }
+
+    fn server_with_gallery(
+        store: Arc<GalleryStore>,
+        gallery_id: String,
+        gallery_root: &std::path::Path,
+    ) -> MediaServer {
+        server_with_gallery_state(store, gallery_id, gallery_root).0
     }
 
     async fn create_real_video(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -2210,6 +2220,98 @@ mod tool_behavior_tests {
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
         );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_clip`
+    /// expect: A poisoned gallery lock surfaces its infrastructure cause instead of pretending no gallery was organized.
+    /// [P1] Motivating: operators can distinguish damaged shared state from missing setup.
+    /// pre: the gallery-state mutex was poisoned before a valid local-video request.
+    /// post: the tool error names the poisoned lock and does not report GalleryNotInitialized.
+    /// [P1] Constraining: gallery admission is fallible and occurs before FFmpeg awaits.
+    #[tokio::test]
+    async fn local_video_poisoned_gallery_preserves_causal_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let (server, gallery_state) =
+            server_with_gallery_state(store, gallery.id, gallery_root.path());
+        let poison_state = gallery_state.clone();
+        let poison_result = std::thread::spawn(move || {
+            let _guard = poison_state
+                .lock()
+                .expect("gallery lock available before poison");
+            panic!("inject gallery poison");
+        })
+        .join();
+        assert!(poison_result.is_err(), "poison thread must panic");
+
+        let error = server
+            .video_clip(Parameters(VideoClipRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+            }))
+            .await
+            .expect_err("poisoned gallery admission must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("Gallery state lock error") && message.contains("poisoned"),
+            "poison cause was replaced by another error: {message}"
+        );
+        assert!(
+            !message.contains("Gallery not initialized"),
+            "poison was misclassified as missing gallery: {message}"
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_from_images`
+    /// expect: Image-sequence publication accepts only its two real final formats.
+    /// [P1] Motivating: every accepted format has one truthful output identity.
+    /// pre: indexed source images and an active gallery exist.
+    /// post: arbitrary strings and webp are typed invalid_argument errors before FFmpeg runs.
+    /// [P1] Constraining: the format contract is closed to mp4 and gif.
+    #[tokio::test]
+    async fn video_from_images_rejects_invalid_and_webp_formats()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let image = gallery_root.path().join("frame.png");
+        add_test_image(&store, &gallery.id, &image, [255, 0, 0])?;
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+
+        for format in ["avi", "webp"] {
+            let error = server
+                .video_from_images(Parameters(VideoFromImagesRequest {
+                    image_indices: vec![0],
+                    fps: Some(2),
+                    format: Some(format.to_string()),
+                }))
+                .await
+                .expect_err("unsupported format must be rejected");
+            let message = error.to_string();
+            assert!(
+                message.contains("invalid_argument") || message.contains("Invalid argument"),
+                "unsupported {format} did not surface a typed invalid_argument: {message}"
+            );
+        }
         Ok(())
     }
 

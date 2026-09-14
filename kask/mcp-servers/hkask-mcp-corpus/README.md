@@ -221,10 +221,10 @@ are withheld from rendered model messages.
 
 ### Evidence and generated records
 
-Prepared inference returns compact tuples in requested-level order:
+Prepared inference returns one named object with pairs in requested-level order. Synchronous inference requires this object through a single `emit_result` function call; provider-batch inference returns the same object as text because its IPC contract has no tool channel.
 
 ```json
-[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
+{"pairs":[{"level":"factual","question":"What is the delay?","answer":"72 hours","evidence":[{"passage":"p0","quote":"The delay is 72 hours."}]},{"level":"conceptual","question":"Why does it matter?","answer":"It constrains timing.","evidence":[{"passage":"p0","quote":"delay is 72 hours"}]}]}
 ```
 
 Every pair must match its requested Bloom level and contain nonblank question,

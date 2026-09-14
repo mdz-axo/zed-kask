@@ -15,8 +15,9 @@ use crate::batch::{
 };
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
-    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters, read_prompts,
-    render_prepared_messages,
+    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
+    prepared_qa_payload_from_tool_calls, prepared_qa_tool_definition, qa_llm_parameters,
+    read_prompts, render_prepared_messages,
 };
 use crate::tools::semantic::batch_api::generate_qa_via_batch_api;
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -157,6 +158,7 @@ impl QaBatchService {
                     // worker actually drops, not merely until its abort is requested.
                     let _lease = task_lease;
                     let parameters = qa_llm_parameters();
+                    let tools = [prepared_qa_tool_definition()];
                     let mut attempts = 0;
                     let response = retry_with_backoff(
                         MAX_RETRIES,
@@ -171,7 +173,7 @@ impl QaBatchService {
                                         &messages,
                                         &parameters,
                                         Some(&selected_model),
-                                        None,
+                                        Some(&tools),
                                     )
                                     .await;
                                 match &response {
@@ -187,13 +189,21 @@ impl QaBatchService {
                     )
                     .await;
                     match response {
-                        Ok(response) => Ok(QaCompletion {
-                            text: response.text,
-                            tokens_used: u64::from(response.usage.total_tokens),
-                            completion_tokens: Some(u64::from(response.usage.completion_tokens)),
-                            finish_reason: Some(response.finish_reason),
-                            cost_usd: response.cost_usd,
-                        }),
+                        Ok(response) => {
+                            let text = prepared_qa_payload_from_tool_calls(&response.tool_calls)
+                                .unwrap_or_else(|error| {
+                                    serde_json::json!({"qa_contract_error": error}).to_string()
+                                });
+                            Ok(QaCompletion {
+                                text,
+                                tokens_used: u64::from(response.usage.total_tokens),
+                                completion_tokens: Some(u64::from(
+                                    response.usage.completion_tokens,
+                                )),
+                                finish_reason: Some(response.finish_reason),
+                                cost_usd: response.cost_usd,
+                            })
+                        }
                         Err(error) => {
                             Err(QaCompletionError::LlmFailed(attempts, error.to_string()))
                         }
@@ -241,7 +251,9 @@ mod tests {
     use crate::services::qa_pipeline::PreparedQaPrompt;
     use hkask_types::inference_ipc::{BatchPromptEntry, BatchResultEntry};
     use hkask_types::template::LLMParameters;
-    use hkask_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
+    use hkask_types::{
+        ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, StructuredToolCall,
+    };
     use serde_json::json;
     use std::future::Future;
     use std::pin::Pin;
@@ -298,11 +310,11 @@ mod tests {
                     return Err(error());
                 }
                 Ok(InferenceResult {
-                    text: response_text("completed before cancellation"),
+                    text: String::new(),
                     model: "OpenRouter/offline-model".into(),
                     usage: Default::default(),
-                    finish_reason: "stop".into(),
-                    tool_calls: Vec::new(),
+                    finish_reason: "tool_calls".into(),
+                    tool_calls: vec![response_tool_call("completed before cancellation")],
                     reasoning: None,
                     cost_usd: None,
                 })
@@ -355,22 +367,36 @@ mod tests {
         .expect("mock operation did not reach expected state");
     }
 
-    fn response_text(question: &str) -> String {
-        json!([
-            [
-                "factual",
-                question,
-                "Grounded answer one.",
-                [["p0", "Grounded answer one."]]
-            ],
-            [
-                "conceptual",
-                "Second question?",
-                "Grounded answer two.",
-                [["p0", "Grounded answer two."]]
+    fn response_value(question: &str) -> serde_json::Value {
+        json!({
+            "pairs": [
+                {
+                    "level": "factual",
+                    "question": question,
+                    "answer": "Grounded answer one.",
+                    "evidence": [{"passage": "p0", "quote": "Grounded answer one."}]
+                },
+                {
+                    "level": "conceptual",
+                    "question": "Second question?",
+                    "answer": "Grounded answer two.",
+                    "evidence": [{"passage": "p0", "quote": "Grounded answer two."}]
+                }
             ]
-        ])
-        .to_string()
+        })
+    }
+
+    fn response_text(question: &str) -> String {
+        response_value(question).to_string()
+    }
+
+    fn response_tool_call(question: &str) -> StructuredToolCall {
+        StructuredToolCall {
+            server: String::new(),
+            tool: "emit_result".into(),
+            args: response_value(question),
+            call_id: Some("call-1".into()),
+        }
     }
 
     impl InferencePort for RecordingPort {
@@ -392,8 +418,12 @@ mod tests {
             messages: &[ChatMessage],
             _parameters: &LLMParameters,
             model: Option<&str>,
-            _tools: Option<&[ChatToolDefinition]>,
+            tools: Option<&[ChatToolDefinition]>,
         ) -> InferenceFuture<'_> {
+            let [tool] = tools.expect("structured QA tool") else {
+                panic!("expected one structured QA tool")
+            };
+            assert_eq!(tool.function.name, "emit_result");
             self.messages
                 .lock()
                 .expect("record messages")
@@ -412,19 +442,19 @@ mod tests {
                     ));
                 }
                 Ok(InferenceResult {
-                    text: if user.contains("malformed") {
-                        "not JSON".into()
-                    } else {
-                        response_text(&user)
-                    },
+                    text: String::new(),
                     model: "OpenRouter/offline-model".into(),
                     usage: hkask_types::InferenceUsage {
                         prompt_tokens: 4,
                         completion_tokens: 6,
                         total_tokens: 10,
                     },
-                    finish_reason: "stop".into(),
-                    tool_calls: Vec::new(),
+                    finish_reason: "tool_calls".into(),
+                    tool_calls: if user.contains("malformed") {
+                        Vec::new()
+                    } else {
+                        vec![response_tool_call(&user)]
+                    },
                     reasoning: None,
                     cost_usd: Some(0.01),
                 })

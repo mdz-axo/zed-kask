@@ -2,7 +2,9 @@
 use super::IngestQaRequest;
 use crate::CorpusServer;
 use hkask_types::template::LLMParameters;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
+use hkask_types::{
+    ChatToolDefinition, InferenceError, InferencePort, InferenceResult, StructuredToolCall,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
@@ -364,8 +366,12 @@ impl InferencePort for CitationGeneration {
         messages: &[hkask_types::ChatMessage],
         _: &LLMParameters,
         _: Option<&str>,
-        _: Option<&[ChatToolDefinition]>,
+        tools: Option<&[ChatToolDefinition]>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        let [tool] = tools.expect("prepared QA structured tool") else {
+            panic!("expected one prepared QA structured tool")
+        };
+        assert_eq!(tool.function.name, "emit_result");
         let rendered = messages
             .iter()
             .map(|message| message.content.as_str())
@@ -375,26 +381,38 @@ impl InferencePort for CitationGeneration {
         assert!(rendered.contains("p0"));
         assert!(!rendered.contains("corpus:brooks:0"));
         assert!(!rendered.contains("brooks.txt"));
-        let rows = json!([
-            ["factual", "How many?", "Thirty", [["p0", "Thirty"]]],
-            [
-                "conceptual",
-                "What duration is supplied?",
-                "The duration is 72 hours.",
-                [["p1", "72 hours"]]
+        let rows = json!({
+            "pairs": [
+                {
+                    "level": "factual",
+                    "question": "How many?",
+                    "answer": "Thirty",
+                    "evidence": [{"passage": "p0", "quote": "Thirty"}]
+                },
+                {
+                    "level": "conceptual",
+                    "question": "What duration is supplied?",
+                    "answer": "The duration is 72 hours.",
+                    "evidence": [{"passage": "p1", "quote": "72 hours"}]
+                }
             ]
-        ]);
+        });
         Box::pin(async move {
             Ok(InferenceResult {
-                text: rows.to_string(),
+                text: String::new(),
                 model: "OpenRouter/offline-model".into(),
                 usage: hkask_types::InferenceUsage {
                     prompt_tokens: 4,
                     completion_tokens: 6,
                     total_tokens: 10,
                 },
-                finish_reason: "stop".into(),
-                tool_calls: Vec::new(),
+                finish_reason: "tool_calls".into(),
+                tool_calls: vec![StructuredToolCall {
+                    server: String::new(),
+                    tool: "emit_result".into(),
+                    args: rows,
+                    call_id: Some("call-1".into()),
+                }],
                 reasoning: None,
                 cost_usd: None,
             })

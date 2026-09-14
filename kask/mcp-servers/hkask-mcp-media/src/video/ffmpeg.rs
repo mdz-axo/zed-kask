@@ -7,6 +7,44 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
 
+struct RollbackOwnedOutput {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl RollbackOwnedOutput {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn commit(mut self) -> PathBuf {
+        self.armed = false;
+        self.path.clone()
+    }
+}
+
+impl Drop for RollbackOwnedOutput {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                target: "hkask.mcp.media.ffmpeg",
+                path = %self.path.display(),
+                %error,
+                "Failed to remove rollback-owned FFmpeg output"
+            ),
+        }
+    }
+}
+
 /// Video metadata from `ffprobe`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct VideoProbeInfo {
@@ -82,6 +120,15 @@ impl FfmpegRunner {
 
         Self {
             available,
+            ffmpeg_path,
+            temp_dir,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_binary(ffmpeg_path: String, temp_dir: PathBuf) -> Self {
+        Self {
+            available: true,
             ffmpeg_path,
             temp_dir,
         }
@@ -220,7 +267,7 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let output = self.output_path("mp4");
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
         let duration = end_sec - start_sec;
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -235,9 +282,10 @@ impl FfmpegRunner {
             .arg("copy")
             .arg("-avoid_negative_ts")
             .arg("make_zero")
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "clip").await?;
 
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, output = %output.display(), "Video clipped");
         Ok(output)
     }
@@ -257,8 +305,7 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let output = self.output_path("gif");
-        let palette = self.output_path("png");
+        let output = RollbackOwnedOutput::new(self.output_path("gif"));
 
         // Build filter complex for palette generation + GIF conversion
         let filter = format!(
@@ -276,12 +323,10 @@ impl FfmpegRunner {
             .arg(input)
             .arg("-filter_complex")
             .arg(&filter)
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "GIF conversion").await?;
 
-        // Clean up palette temp file
-        let _ = std::fs::remove_file(&palette);
-
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration_sec, width = %width, fps = %fps, output = %output.display(), "GIF created");
         Ok(output)
     }
@@ -300,7 +345,7 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let output = self.output_path("mp4");
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
 
         // Map position to drawtext y-coordinate
         let y_pos = match position {
@@ -330,9 +375,10 @@ impl FfmpegRunner {
             .arg(&drawtext)
             .arg("-c:a")
             .arg("copy")
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "caption").await?;
 
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, text = %text, output = %output.display(), "Caption added");
         Ok(output)
     }
@@ -393,7 +439,7 @@ impl FfmpegRunner {
         &self,
         image_paths: &[PathBuf],
         fps: u32,
-        output_format: &str,
+        format: crate::assets::LocalVideoFormat,
     ) -> Result<PathBuf, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
@@ -405,21 +451,16 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let ext = match output_format {
-            "gif" => "gif",
-            "webp" => "webp",
-            _ => "mp4",
-        };
-        let output = self.output_path(ext);
+        let output = RollbackOwnedOutput::new(self.output_path(format.extension()));
 
         // Write image list to a temp file for concat demuxer
-        let list_path = self.output_path("txt");
+        let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
         let list_content: String = image_paths
             .iter()
             .map(|p| format!("file '{}'", p.display()))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&list_path, list_content)
+        std::fs::write(list_path.path(), list_content)
             .map_err(|e| crate::MediaError::Io(format!("Failed to write image list: {}", e)))?;
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -431,20 +472,18 @@ impl FfmpegRunner {
             .arg("-r")
             .arg(fps.to_string())
             .arg("-i")
-            .arg(&list_path)
+            .arg(list_path.path())
             .arg("-c:v")
-            .arg(if ext == "gif" || ext == "webp" {
-                "libwebp"
-            } else {
-                "libx264"
+            .arg(match format {
+                crate::assets::LocalVideoFormat::Mp4 => "libx264",
+                crate::assets::LocalVideoFormat::Gif => "gif",
             })
             .arg("-pix_fmt")
             .arg("yuv420p")
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "images_to_video").await?;
 
-        let _ = std::fs::remove_file(&list_path);
-
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", image_count = image_paths.len(), fps = %fps, output = %output.display(), "Video created from images");
         Ok(output)
     }
@@ -462,16 +501,16 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let output = self.output_path("mp4");
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
 
         // Write concat list
-        let list_path = self.output_path("txt");
+        let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
         let list_content: String = video_paths
             .iter()
             .map(|p| format!("file '{}'", p.replace('\'', "'\\''")))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&list_path, list_content)
+        std::fs::write(list_path.path(), list_content)
             .map_err(|e| crate::MediaError::Io(format!("Failed to write concat list: {}", e)))?;
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -481,14 +520,13 @@ impl FfmpegRunner {
             .arg("-safe")
             .arg("0")
             .arg("-i")
-            .arg(&list_path)
+            .arg(list_path.path())
             .arg("-c")
             .arg("copy")
-            .arg(&output);
+            .arg(output.path());
         Self::run_to_completion(command, "concat").await?;
 
-        let _ = std::fs::remove_file(&list_path);
-
+        let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = video_paths.len(), output = %output.display(), "Videos concatenated");
         Ok(output)
     }
