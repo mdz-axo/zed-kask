@@ -102,3 +102,14 @@ pub(crate) fn render_companies_page(
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn investor_required_return_control_has_a_save_dispatch_arm() {
+        let page = include_str!("companies.rs");
+        let dispatcher = include_str!("../kask_page.rs");
+        assert!(page.contains("\"companies\",\n        \"investor_required_return\","));
+        assert!(dispatcher.contains("(\"companies\", \"investor_required_return\") => {"));
+    }
+}

@@ -1272,6 +1272,21 @@ mod tests {
     // `mcp_env.rs`) because it pins `effective_embedding_model`, a method on
     // `KaskSettings` defined here.
     #[test]
+    fn companies_investor_required_return_is_one_setting_and_reaches_mcp_env() {
+        let mut settings = KaskSettings::default();
+        assert_eq!(settings.companies.investor_required_return, 0.15);
+        assert_eq!(
+            settings.mcp_env().get("HKASK_INVESTOR_REQUIRED_RETURN"),
+            Some(&"0.15".to_string())
+        );
+        settings.companies.investor_required_return = 0.18;
+        assert_eq!(
+            settings.mcp_env().get("HKASK_INVESTOR_REQUIRED_RETURN"),
+            Some(&"0.18".to_string())
+        );
+    }
+
+    #[test]
     fn effective_embedding_model_falls_back_to_corpus_when_models_empty() {
         let mut settings = KaskSettings::default();
         // Nothing configured → the corpus-layer code default.

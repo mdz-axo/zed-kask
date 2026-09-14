@@ -182,24 +182,6 @@ impl ProjectionAssumptions {
         Ok(assumptions)
     }
 
-    pub(crate) fn with_investor_target_return(
-        mut self,
-        target_return: f64,
-    ) -> Result<Self, ProjectionError> {
-        if !target_return.is_finite() || !(0.0..=1.0).contains(&target_return) {
-            return Err(ProjectionError::InvalidRange {
-                field: "investor_target_return",
-                minimum: 0.0,
-                maximum: 1.0,
-            });
-        }
-        self.investor_target_return = target_return;
-        self.discount_rate = self.equity_weight * target_return
-            + self.debt_weight * self.interest_rate * (1.0 - self.tax_rate);
-        self.validate()?;
-        Ok(self)
-    }
-
     pub(crate) fn from_history_with_overrides(
         hist: &HistoricalSnapshot,
         overrides: ProjectionAssumptionOverrides,
@@ -856,9 +838,8 @@ mod tests {
         assert!((assumptions.debt_weight - 0.40).abs() < 1e-12);
         assert!((assumptions.investor_target_return - 0.15).abs() < 1e-12);
         assert!((assumptions.discount_rate - 0.1156).abs() < 1e-12);
-        let higher_hurdle = assumptions
-            .with_investor_target_return(0.20)
-            .expect("valid investor hurdle");
+        let higher_hurdle =
+            ProjectionAssumptions::from_history(&history, 0.20).expect("valid investor hurdle");
         assert!((higher_hurdle.discount_rate - 0.1456).abs() < 1e-12);
     }
 

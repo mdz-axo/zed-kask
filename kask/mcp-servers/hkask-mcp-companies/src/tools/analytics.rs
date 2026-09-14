@@ -508,7 +508,6 @@ impl CompaniesServer {
                 &req.symbol,
                 &profile,
                 types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
             )
             .await
             {

@@ -221,6 +221,7 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 |-------|------|---------|-------|
 | `chronic_staleness_days` | `u32` | `0` | 0 = use hardcoded default (90); >0 = override |
 | `fermi_defaults` | `String` | `""` | JSON with `growth` + `margin` arrays; empty = hardcoded defaults |
+| `investor_required_return` | `f64` | `0.15` | Investor equity hurdle used in companies-MCP modified WACC; emitted on every managed launch |
 
 No `transactions_dir` field — the portfolio transactions dir is derived from the artifacts dir as `portfolio-mcp/transactions/` by `mcp_env()`. See the Portfolio section below.
 
@@ -551,6 +552,7 @@ not an OpenAI-compatible chat endpoint).
 
 | `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
+| `HKASK_INVESTOR_REQUIRED_RETURN` | companies | `companies.investor_required_return` |
 | `HKASK_TRANSACTIONS_DIR` | portfolio | derived from the artifacts dir as `portfolio-mcp/transactions/` |
 | `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
 | `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
