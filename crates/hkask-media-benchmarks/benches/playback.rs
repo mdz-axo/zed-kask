@@ -1,7 +1,7 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext as _, BenchAppContext, Context, Entity, IntoElement, Render, Task, Window};
+use gpui::{BenchAppContext, Context, Entity, IntoElement, Render, Task, Window};
 use hkask_media_widget::{MediaWidget, PlaybackBenchmarkSnapshot};
 use ui::prelude::*;
 
@@ -148,8 +148,6 @@ impl PlaybackFixture {
                         .map(|widget| {
                             widget.read_with(cx, |widget, _cx| widget.benchmark_snapshot())
                         })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
                         .collect::<Option<Vec<_>>>();
                     if let Some(snapshots) = snapshots
                         && snapshots.iter().all(|snapshot| {
@@ -251,3 +249,6 @@ fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot]) {
     }
     std::hint::black_box(snapshots);
 }
+
+gpui::bench_group!(benches, media_playback);
+gpui::bench_main!(benches);

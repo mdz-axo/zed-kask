@@ -36,6 +36,8 @@ struct ScreenTemplateMetadata {
 #[derive(Deserialize)]
 struct ScreenTemplateContract {
     input: BTreeMap<String, String>,
+    #[serde(default)]
+    server_input: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,11 +136,10 @@ pub(crate) async fn execute(
 }
 
 async fn submit(server: &CompaniesServer, req: ScreenerRequest) -> Result<Value, McpToolError> {
-    let definition = resolve_definition(&req)?;
     let acquisition_date = chrono::Utc::now().date_naive().to_string();
+    let definition = resolve_definition(&req, &acquisition_date)?;
     validate_definition(&definition, &acquisition_date)?;
     let verification = verify_assertions(&definition)?;
-    let universe_snapshot = acquire_universe(server, &definition).await?;
     let definition_value = serde_json::to_value(&definition)
         .map_err(|error| McpToolError::internal(format!("serialize screen definition: {error}")))?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -157,22 +158,12 @@ async fn submit(server: &CompaniesServer, req: ScreenerRequest) -> Result<Value,
         .insert_screen_job(&job)
         .map_err(crate::map_portfolio_error)?;
 
-    let client = server.client.clone();
-    let eodhd_api_key = server.eodhd_api_key.clone();
-    let store = server.research.clone();
+    let task_server = server.clone();
     let task_id = id.clone();
     #[cfg(test)]
     let test_origin = providers::TEST_HTTP_ORIGIN.try_with(Clone::clone).ok();
     drop(tokio::spawn(async move {
-        let calculation = calculate_job(
-            store,
-            client,
-            eodhd_api_key,
-            task_id,
-            definition,
-            verification,
-            universe_snapshot,
-        );
+        let calculation = calculate_job(task_server, task_id, definition, verification);
         #[cfg(test)]
         if let Some(origin) = test_origin {
             providers::TEST_HTTP_ORIGIN.scope(origin, calculation).await;
@@ -233,21 +224,23 @@ async fn acquire_universe(
 }
 
 async fn calculate_job(
-    store: ResearchStore,
-    client: reqwest::Client,
-    eodhd_api_key: String,
+    server: CompaniesServer,
     job_id: String,
     definition: ScreenDefinition,
     verification: Value,
-    universe_snapshot: Vec<Value>,
 ) {
-    let calculation = calculate(
-        &client,
-        &eodhd_api_key,
-        &definition,
-        verification,
-        universe_snapshot,
-    );
+    let store = server.research.clone();
+    let calculation = async {
+        let universe_snapshot = acquire_universe(&server, &definition).await?;
+        calculate(
+            &server.client,
+            &server.eodhd_api_key,
+            &definition,
+            verification,
+            universe_snapshot,
+        )
+        .await
+    };
     persist_screen_calculation(store, job_id, calculation).await;
 }
 
@@ -750,9 +743,14 @@ fn load_job(store: &ResearchStore, job_id: &str) -> Result<ScreenJobRecord, McpT
         .ok_or_else(|| McpToolError::invalid_argument(format!("screen job {job_id:?} not found")))
 }
 
-fn resolve_definition(req: &ScreenerRequest) -> Result<ScreenDefinition, McpToolError> {
+fn resolve_definition(
+    req: &ScreenerRequest,
+    acquisition_date: &str,
+) -> Result<ScreenDefinition, McpToolError> {
     match (&req.template, &req.screen_definition) {
-        (Some(name), None) => render_template(name, req.template_context.as_ref()),
+        (Some(name), None) => {
+            render_template(name, req.template_context.as_ref(), acquisition_date)
+        }
         (None, Some(value)) => serde_json::from_value(value.0.clone()).map_err(|error| {
             McpToolError::invalid_argument(format!("invalid screen_definition: {error}"))
         }),
@@ -808,6 +806,7 @@ fn parse_template_source<'a>(
 fn render_template(
     name: &str,
     context: Option<&ScreenTemplateContext>,
+    acquisition_date: &str,
 ) -> Result<ScreenDefinition, McpToolError> {
     let source = SCREEN_TEMPLATES
         .iter()
@@ -816,7 +815,7 @@ fn render_template(
             McpToolError::invalid_argument(format!("unknown screen template {name:?}"))
         })?;
     let (metadata, body) = parse_template_source(name, source)?;
-    let context = match context {
+    let mut context = match context {
         Some(context) => serde_json::to_value(context).map_err(|error| {
             McpToolError::internal(format!(
                 "screen template {name:?} context failed to serialize: {error}"
@@ -824,15 +823,16 @@ fn render_template(
         })?,
         None => json!({}),
     };
+    let context_object = context.as_object_mut().ok_or_else(|| {
+        McpToolError::internal(format!("screen template {name:?} context is not an object"))
+    })?;
+    context_object.insert("as_of".to_string(), json!(acquisition_date));
     let missing_context_variables: Vec<&str> = metadata
         .contract
         .input
         .keys()
-        .filter(|field| {
-            !context
-                .as_object()
-                .is_some_and(|object| object.contains_key(field.as_str()))
-        })
+        .chain(metadata.contract.server_input.keys())
+        .filter(|field| !context_object.contains_key(field.as_str()))
         .map(String::as_str)
         .collect();
     if !missing_context_variables.is_empty() {
@@ -1189,12 +1189,11 @@ mod tests {
     fn expectations_definition(as_of: &str, exchanges: Vec<String>) -> ScreenDefinition {
         let context = ScreenTemplateContext {
             exchanges: Some(exchanges),
-            as_of: Some(as_of.to_string()),
             market_cap_min: Some(5_000_000_000.0),
             market_cap_max: Some(50_000_000_000.0),
             liquidity_min_usd: Some(1_000_000.0),
         };
-        match render_template("expectations_gap", Some(&context)) {
+        match render_template("expectations_gap", Some(&context), as_of) {
             Ok(definition) => definition,
             Err(error) => panic!("expectations template must render: {error}"),
         }
@@ -1293,14 +1292,20 @@ mod tests {
                 None => panic!("template context schema has no properties: {schema}"),
             };
         let mut contract_fields = std::collections::BTreeSet::new();
+        let mut server_fields = std::collections::BTreeSet::new();
         for (name, source) in SCREEN_TEMPLATES {
             let metadata = match parse_template_source(name, source) {
                 Ok((metadata, _)) => metadata,
                 Err(error) => panic!("registered template metadata must parse: {error}"),
             };
             contract_fields.extend(metadata.contract.input.into_keys());
+            server_fields.extend(metadata.contract.server_input.into_keys());
         }
         assert_eq!(schema_fields, contract_fields);
+        assert_eq!(
+            server_fields,
+            std::collections::BTreeSet::from(["as_of".to_string()])
+        );
     }
 
     #[test]
@@ -1317,7 +1322,7 @@ mod tests {
             Ok(request) => request,
             Err(error) => panic!("template request must deserialize: {error}"),
         };
-        let error = match resolve_definition(&request) {
+        let error = match resolve_definition(&request, "2026-09-13") {
             Ok(_) => panic!("missing template context must be rejected"),
             Err(error) => error,
         };
@@ -1339,7 +1344,6 @@ mod tests {
         assert_eq!(
             details.get("missing_context_variables"),
             Some(&json!([
-                "as_of",
                 "exchanges",
                 "liquidity_min_usd",
                 "market_cap_max",
@@ -1355,7 +1359,6 @@ mod tests {
             "template":"universal_equity",
             "template_context":{
                 "exchanges":["US"],
-                "as_of":"2026-09-11",
                 "market_cap_min":5_000_000_000.0,
                 "market_cap_max":50_000_000_000.0
             },
@@ -1364,7 +1367,8 @@ mod tests {
             "criteria_overrides":{}
         }))
         .expect("template request");
-        let rendered = resolve_definition(&templated).expect("rendered definition");
+        let rendered = resolve_definition(&templated, "2026-09-13").expect("rendered definition");
+        assert_eq!(rendered.as_of, "2026-09-13");
         let rendered_value = serde_json::to_value(&rendered).expect("definition JSON");
         let direct: ScreenerRequest = serde_json::from_value(json!({
             "action":"calculate",
@@ -1374,7 +1378,7 @@ mod tests {
             "criteria_overrides":{}
         }))
         .expect("direct request");
-        let direct = resolve_definition(&direct).expect("direct definition");
+        let direct = resolve_definition(&direct, "2026-09-13").expect("direct definition");
         assert_eq!(
             serde_json::to_value(rendered).expect("rendered JSON"),
             serde_json::to_value(direct).expect("direct JSON")
