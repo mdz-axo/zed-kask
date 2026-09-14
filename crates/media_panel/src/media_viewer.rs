@@ -14,11 +14,11 @@
 //! McpRuntime dispatch) against the `media` server. Failures surface in a
 //! status line — visible, never silent.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v1::ToolCallId;
-use gpui::{Context, Entity, Render, SharedString, Window};
+use gpui::{Context, Entity, Render, SharedString, Task, Window};
 use hkask_mcp_media::types::JobRecord;
 use serde_json::Value;
 use ui::{Icon, IconName, Label, LabelSize, prelude::*};
@@ -27,6 +27,94 @@ use util::ResultExt as _;
 /// Server that hosts the media tools — the `BUILT_IN_MCP_SERVERS` id, the
 /// same id the panel's Steer conversation is scoped to.
 const MEDIA_SERVER: &str = "media";
+const GALLERY_PAGE_LIMIT: usize = 100;
+const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RequestOwner {
+    GalleryPage(usize),
+    Jobs,
+    Detail(String),
+    Edit(&'static str),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ResourceState {
+    Idle,
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+#[derive(Clone, Debug)]
+struct RequestLifecycle {
+    epoch: u64,
+    owner: Option<RequestOwner>,
+    state: ResourceState,
+}
+
+impl RequestLifecycle {
+    fn new() -> Self {
+        Self {
+            epoch: 0,
+            owner: None,
+            state: ResourceState::Idle,
+        }
+    }
+
+    /// expect: Repeated requests for the resource currently loading do not duplicate work.
+    /// [P1] Motivating: each resource has one current request owner.
+    /// pre: owner identifies the requested resource value.
+    /// post: a new epoch is returned exactly when the owner supersedes the current request.
+    fn begin(&mut self, owner: RequestOwner) -> Option<u64> {
+        if self.state == ResourceState::Loading && self.owner.as_ref() == Some(&owner) {
+            return None;
+        }
+        self.epoch = self.epoch.wrapping_add(1);
+        self.owner = Some(owner);
+        self.state = ResourceState::Loading;
+        Some(self.epoch)
+    }
+
+    fn owns(&self, epoch: u64) -> bool {
+        self.epoch == epoch && self.state == ResourceState::Loading
+    }
+
+    fn complete(&mut self, epoch: u64, result: Result<(), String>) -> bool {
+        if !self.owns(epoch) {
+            return false;
+        }
+        self.owner = None;
+        self.state = match result {
+            Ok(()) => ResourceState::Ready,
+            Err(error) => ResourceState::Failed(error),
+        };
+        true
+    }
+
+    fn invalidate(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.owner = None;
+        self.state = ResourceState::Idle;
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GalleryListing {
+    gallery_id: String,
+    total: u64,
+    offset: usize,
+    limit: usize,
+    assets: Vec<Value>,
+}
+
+#[derive(Clone, Debug)]
+struct JobListing {
+    jobs: Vec<JobRecord>,
+    total: usize,
+    limit: usize,
+    has_more: bool,
+}
 
 /// One media asset — from the gallery listing or surfaced by a tool result.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,19 +164,25 @@ pub struct MediaViewer {
     concat_queue: Vec<String>,
     /// Total asset count in the gallery (from `gallery_list_assets`).
     gallery_total: Option<u64>,
-    /// Gallery listing pagination cursor.
+    /// Gallery listing pagination cursor and server-confirmed page size.
     gallery_offset: usize,
+    gallery_limit: usize,
     /// The gallery the current listing belongs to (from `gallery_list_assets`
     /// responses). A response carrying a different id is a root change: the
     /// previous gallery's indexed rows and pending actions are invalid.
     gallery_id: Option<String>,
-    /// Monotonic listing-request counter. A response whose epoch is not the
-    /// latest was superseded by a newer request — a delayed response for a
-    /// previous gallery can never overwrite the current view.
-    gallery_epoch: u64,
+    gallery_request: RequestLifecycle,
     jobs: Vec<JobRecord>,
+    jobs_total: Option<usize>,
+    jobs_limit: usize,
+    jobs_has_more: bool,
+    jobs_request: RequestLifecycle,
+    queue_poll_task: Option<Task<()>>,
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
     detail: Option<Value>,
+    detail_request: RequestLifecycle,
+    edit_request: RequestLifecycle,
+    edit_progress: Option<String>,
     /// Two-step delete confirmation: the asset awaiting confirmation.
     confirm_delete: Option<usize>,
     /// Visible status line (errors from tool dispatch, notices).
@@ -113,10 +207,19 @@ impl MediaViewer {
             concat_queue: Vec::new(),
             gallery_total: None,
             gallery_offset: 0,
+            gallery_limit: GALLERY_PAGE_LIMIT,
             gallery_id: None,
-            gallery_epoch: 0,
+            gallery_request: RequestLifecycle::new(),
             jobs: Vec::new(),
+            jobs_total: None,
+            jobs_limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+            jobs_has_more: false,
+            jobs_request: RequestLifecycle::new(),
+            queue_poll_task: None,
             detail: None,
+            detail_request: RequestLifecycle::new(),
+            edit_request: RequestLifecycle::new(),
+            edit_progress: None,
             confirm_delete: None,
             status: None,
             processed_tool_results: HashSet::new(),
@@ -144,11 +247,23 @@ impl MediaViewer {
         }
         self.selected = selected;
         self.detail = None;
+        self.detail_request.invalidate();
+    }
+
+    fn stop_queue_polling(&mut self) {
+        self.queue_poll_task.take();
     }
 
     fn activate_tab(&mut self, tab: ViewerTab, cx: &mut Context<Self>) {
         if self.active_tab == ViewerTab::Media && tab != ViewerTab::Media {
             self.suspend_media_widget(cx);
+        }
+        if self.active_tab == ViewerTab::Queue && tab != ViewerTab::Queue {
+            self.stop_queue_polling();
+            self.jobs_request.invalidate();
+        }
+        if self.active_tab == ViewerTab::Detail && tab != ViewerTab::Detail {
+            self.detail_request.invalidate();
         }
         self.active_tab = tab;
         self.confirm_delete = None;
@@ -257,32 +372,58 @@ impl MediaViewer {
         describe: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.status = Some("Tool invoker not wired — edit actions unavailable.".into());
-            cx.notify();
+        let Some(epoch) = self.edit_request.begin(RequestOwner::Edit(tool)) else {
             return;
         };
-        self.status = Some(format!("{tool}: {describe}…"));
+        self.status = None;
+        self.edit_progress = Some(format!("{tool}: {describe}…"));
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_edit_result(
+                epoch,
+                tool,
+                Err("Tool invoker not wired — edit actions unavailable.".into()),
+                cx,
+            );
+            return;
+        };
         cx.notify();
         let task = invoker.invoke_tool(MEDIA_SERVER, tool, params);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(text) => {
-                this.update(cx, |this, cx| {
-                    this.ingest_tool_result(&Value::String(text), tool, cx);
-                    this.status = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.status = Some(format!("{tool} failed: {}", error.message()));
-                    cx.notify();
-                })
-                .log_err();
-            }
+        cx.spawn(async move |this, cx| {
+            let result = task.await.map_err(|error| error.message().to_string());
+            this.update(cx, |this, cx| {
+                this.apply_edit_result(epoch, tool, result, cx)
+            })
+            .log_err();
         })
         .detach();
+    }
+
+    /// expect: Only the latest edit request may surface an artifact or failure.
+    /// [P1] Motivating: superseded edits cannot overwrite the current operation state.
+    /// pre: epoch was returned by edit_request.begin.
+    /// post: stale outcomes are ignored; the owned outcome commits exactly once.
+    fn apply_edit_result(
+        &mut self,
+        epoch: u64,
+        tool: &'static str,
+        result: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        match result {
+            Ok(text) => {
+                self.ingest_tool_result(&Value::String(text), tool, cx);
+                self.edit_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                self.edit_request
+                    .complete(epoch, Err(format!("{tool} failed: {error}")));
+            }
+        }
+        self.edit_progress = None;
+        cx.notify();
     }
 
     /// Trim the selected asset to the widget's transport marks via
@@ -317,11 +458,44 @@ impl MediaViewer {
         );
     }
 
+    /// expect: Concat admission accepts only videos and never truncates an over-cap queue.
+    /// [P1] Motivating: rejected media work is visible before dispatch.
+    /// pre: selected may identify any viewer asset.
+    /// post: valid unique videos append up to MAX_CONCAT_ITEMS; every rejection preserves the queue.
+    fn queue_selected_for_concat(&mut self) -> Result<(), String> {
+        let asset = self
+            .selected
+            .and_then(|position| self.assets.get(position))
+            .ok_or_else(|| "Select a video before queueing it for concat.".to_string())?;
+        if asset.kind != "video" {
+            return Err("Only video assets can be queued for concat.".into());
+        }
+        if self.concat_queue.contains(&asset.src) {
+            return Ok(());
+        }
+        if self.concat_queue.len() >= hkask_types::media_limits::MAX_CONCAT_ITEMS {
+            return Err(format!(
+                "Concat queue limit is {} videos; remove one before adding another.",
+                hkask_types::media_limits::MAX_CONCAT_ITEMS
+            ));
+        }
+        self.concat_queue.push(asset.src.clone());
+        Ok(())
+    }
+
     /// Concatenate the queued assets via `video_concat`. The result surfaces
     /// as a new playable asset.
     fn dispatch_concat(&mut self, cx: &mut Context<Self>) {
         if self.concat_queue.len() < 2 {
             self.status = Some("Queue at least two clips to concatenate.".into());
+            cx.notify();
+            return;
+        }
+        if self.concat_queue.len() > hkask_types::media_limits::MAX_CONCAT_ITEMS {
+            self.status = Some(format!(
+                "Concat queue exceeds the {}-video limit.",
+                hkask_types::media_limits::MAX_CONCAT_ITEMS
+            ));
             cx.notify();
             return;
         }
@@ -363,104 +537,79 @@ impl MediaViewer {
         cx.notify();
     }
 
-    /// Load the gallery's assets (spec: the Library shows the actual
-    /// gallery, not just conversation artifacts) and merge them into the
-    /// asset list. Gallery assets carry their `gallery_index`.
+    /// Load the gallery's current page. The committed offset changes only
+    /// after a complete response parses, so a failed page request preserves
+    /// the entire last-good snapshot.
     fn load_gallery(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.status = Some("Tool invoker not wired — panel cannot query the gallery.".into());
-            cx.notify();
+        self.request_gallery_page(self.gallery_offset, cx);
+    }
+
+    fn request_gallery_page(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let Some(epoch) = self
+            .gallery_request
+            .begin(RequestOwner::GalleryPage(offset))
+        else {
             return;
         };
         self.status = None;
-        let offset = self.gallery_offset;
-        // Each request carries an epoch; a response from a superseded request
-        // (a newer listing was requested before it arrived) is dropped — a
-        // delayed response for a previous gallery must never overwrite the
-        // current view.
-        self.gallery_epoch += 1;
-        let epoch = self.gallery_epoch;
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_gallery_listing(
+                epoch,
+                Err("Tool invoker not wired — panel cannot query the gallery.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_list_assets",
-            serde_json::json!({ "offset": offset, "limit": 100 }),
+            serde_json::json!({ "offset": offset, "limit": GALLERY_PAGE_LIMIT }),
         );
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(text) => {
-                let payload = hkask_types::tool_response::parse_tool_response(&text);
-                this.update(cx, |this, cx| {
-                    this.apply_gallery_listing(epoch, payload, cx)
-                })
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => parse_gallery_listing(
+                    hkask_types::tool_response::parse_tool_response(&text),
+                    offset,
+                ),
+                Err(error) => Err(format!("gallery_list_assets failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| this.apply_gallery_listing(epoch, result, cx))
                 .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.status = Some(format!("gallery_list_assets failed: {}", error.message()));
-                    cx.notify();
-                })
-                .log_err();
-            }
         })
         .detach();
     }
 
-    /// Apply a `gallery_list_assets` response, unless a newer request has
-    /// superseded it. Responses arrive asynchronously; the epoch check is the
-    /// delayed-response boundary — without it, a slow response for gallery A
-    /// could overwrite the listing the panel holds for gallery B.
+    /// expect: Gallery rows and pagination metadata change only for the latest complete response.
+    /// [P1] Motivating: malformed or superseded pages cannot corrupt the last-good Library snapshot.
+    /// pre: epoch was returned by gallery_request.begin.
+    /// post: stale outcomes are ignored; valid owned snapshots commit atomically; owned failures preserve data.
     fn apply_gallery_listing(
         &mut self,
         epoch: u64,
-        payload: Option<Value>,
+        result: Result<GalleryListing, String>,
         cx: &mut Context<Self>,
     ) {
-        if epoch != self.gallery_epoch {
+        if !self.gallery_request.owns(epoch) {
             return;
         }
-        self.merge_gallery_listing(payload, cx);
+        match result {
+            Ok(listing) => {
+                self.commit_gallery_listing(listing, cx);
+                self.gallery_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                self.gallery_request.complete(epoch, Err(error));
+            }
+        }
+        cx.notify();
     }
 
-    /// Merge a `gallery_list_assets` payload into the asset list.
-    fn merge_gallery_listing(&mut self, payload: Option<Value>, cx: &mut Context<Self>) {
-        let Some(payload) = payload else {
-            self.status = Some("gallery_list_assets returned unparsable output.".into());
-            cx.notify();
-            return;
-        };
-        self.gallery_total = payload.get("total").and_then(|t| t.as_u64());
-        let listing_gallery = payload
-            .get("gallery_id")
-            .and_then(|g| g.as_str())
-            .map(str::to_string);
-        let Some(records) = payload.get("assets").and_then(|a| a.as_array()) else {
-            self.status = Some("gallery_list_assets returned no assets array.".into());
-            cx.notify();
-            return;
-        };
-        // The gallery-identity boundary: a listing for a different gallery
-        // invalidates the previous gallery's indexed rows (their positional
-        // indexes are meaningless against the new root) and every pending
-        // action — selection, delete confirmation, and inspector detail all
-        // pointed into the old gallery. Nothing is auto-selected after a
-        // switch: the operator picks explicitly in the new gallery.
-        let mut gallery_changed = false;
-        if self.gallery_id.is_some() && listing_gallery != self.gallery_id {
-            self.assets.retain(|asset| asset.gallery_index.is_none());
-            self.clear_media_widget(cx);
-            self.selected = None;
-            self.confirm_delete = None;
-            self.detail = None;
-            self.gallery_id = listing_gallery;
-            gallery_changed = true;
-        } else if self.gallery_id.is_none() {
-            self.gallery_id = listing_gallery;
-        }
-        // Capture what selection and the delete-confirmation point at
-        // BEFORE the merge: gallery indexes are positional, so a deletion
-        // renumbers every later asset. Re-locating by src afterwards keeps
-        // the selection on the same asset, and never lets a stale confirm
-        // index point at a different row — confirming would then delete
-        // the WRONG asset.
+    fn commit_gallery_listing(&mut self, listing: GalleryListing, cx: &mut Context<Self>) {
+        let gallery_changed = self
+            .gallery_id
+            .as_ref()
+            .is_some_and(|gallery_id| gallery_id != &listing.gallery_id);
         let selected_src = self
             .selected
             .and_then(|ix| self.assets.get(ix))
@@ -469,66 +618,165 @@ impl MediaViewer {
             .confirm_delete
             .and_then(|ix| self.assets.get(ix))
             .map(|asset| asset.src.clone());
-        let payload_offset = payload
-            .get("offset")
-            .and_then(|o| o.as_u64())
-            .map_or(self.gallery_offset, |offset| offset as usize);
+        let mut next_assets = self.assets.clone();
+        if gallery_changed {
+            next_assets.retain(|asset| asset.gallery_index.is_none());
+        }
         merge_gallery_records(
-            &mut self.assets,
-            records,
-            payload_offset,
-            self.gallery_total,
+            &mut next_assets,
+            &listing.assets,
+            listing.offset,
+            Some(listing.total),
         );
-        if let Some(src) = selected_src {
-            self.selected = self.assets.iter().position(|asset| asset.src == src);
-            if self.selected.is_none() {
-                self.clear_media_widget(cx);
-                self.detail = None; // the selected asset left the list
-            }
+
+        let next_selected = if gallery_changed {
+            None
+        } else {
+            selected_src
+                .as_ref()
+                .and_then(|src| next_assets.iter().position(|asset| &asset.src == src))
+                .or_else(|| (!next_assets.is_empty()).then_some(0))
+        };
+        let next_confirm_delete = if gallery_changed {
+            None
+        } else {
+            confirmed_src
+                .as_ref()
+                .and_then(|src| next_assets.iter().position(|asset| &asset.src == src))
+        };
+        let selected_changed = selected_src
+            != next_selected.and_then(|ix| next_assets.get(ix).map(|asset| asset.src.clone()));
+
+        self.assets = next_assets;
+        self.gallery_total = Some(listing.total);
+        self.gallery_offset = listing.offset;
+        self.gallery_limit = listing.limit;
+        self.gallery_id = Some(listing.gallery_id);
+        self.selected = next_selected;
+        self.confirm_delete = next_confirm_delete;
+        if gallery_changed || selected_changed {
+            self.clear_media_widget(cx);
+            self.detail = None;
+            self.detail_request.invalidate();
         }
-        if let Some(src) = confirmed_src {
-            self.confirm_delete = self.assets.iter().position(|asset| asset.src == src);
+    }
+
+    #[cfg(test)]
+    fn merge_gallery_listing(&mut self, payload: Option<Value>, cx: &mut Context<Self>) {
+        let requested_offset = payload
+            .as_ref()
+            .and_then(|payload| payload.get("offset"))
+            .and_then(Value::as_u64)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .unwrap_or(self.gallery_offset);
+        match parse_gallery_listing(payload, requested_offset) {
+            Ok(listing) => self.commit_gallery_listing(listing, cx),
+            Err(error) => self.gallery_request.state = ResourceState::Failed(error),
         }
-        if !gallery_changed && self.selected.is_none() && !self.assets.is_empty() {
-            self.set_selection(Some(0), cx);
+    }
+
+    fn previous_gallery_page(&mut self, cx: &mut Context<Self>) {
+        let offset = self.gallery_offset.saturating_sub(self.gallery_limit);
+        self.request_gallery_page(offset, cx);
+    }
+
+    fn next_gallery_page(&mut self, cx: &mut Context<Self>) {
+        let Some(total) = self
+            .gallery_total
+            .and_then(|total| usize::try_from(total).ok())
+        else {
+            return;
+        };
+        let offset = self.gallery_offset.saturating_add(self.gallery_limit);
+        if offset < total {
+            self.request_gallery_page(offset, cx);
         }
-        cx.notify();
     }
 
     /// Load the generation-job queue (spec: see and manage running jobs).
     fn load_jobs(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.status = Some("Tool invoker not wired — panel cannot query jobs.".into());
-            cx.notify();
+        let Some(epoch) = self.jobs_request.begin(RequestOwner::Jobs) else {
             return;
         };
         self.status = None;
-        let task =
-            invoker.invoke_tool(MEDIA_SERVER, "job_list", serde_json::json!({ "limit": 20 }));
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(text) => {
-                let jobs = hkask_mcp_media::tools::jobs::parse_job_list_response(&text);
-                this.update(cx, |this, cx| {
-                    match jobs {
-                        Ok(jobs) => {
-                            this.jobs = jobs;
-                            this.status = None;
-                        }
-                        Err(error) => this.status = Some(format!("job_list failed: {error}")),
-                    }
-                    cx.notify();
-                })
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_jobs_listing(
+                epoch,
+                Err("Tool invoker not wired — panel cannot query jobs.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let limit = hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT;
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "job_list",
+            serde_json::json!({ "limit": limit }),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => parse_job_listing(&text, limit),
+                Err(error) => Err(format!("job_list failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| this.apply_jobs_listing(epoch, result, cx))
                 .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.status = Some(format!("job_list failed: {}", error.message()));
-                    cx.notify();
-                })
-                .log_err();
-            }
         })
         .detach();
+    }
+
+    /// expect: Queue rows and failures belong only to the latest jobs request.
+    /// [P1] Motivating: slow queue callbacks cannot replace fresher queue state.
+    /// pre: epoch was returned by jobs_request.begin.
+    /// post: stale outcomes are ignored; failures preserve rows and stop polling.
+    fn apply_jobs_listing(
+        &mut self,
+        epoch: u64,
+        result: Result<JobListing, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.jobs_request.owns(epoch) {
+            return;
+        }
+        match result {
+            Ok(listing) => {
+                self.jobs = listing.jobs;
+                self.jobs_total = Some(listing.total);
+                self.jobs_limit = listing.limit;
+                self.jobs_has_more = listing.has_more;
+                self.jobs_request.complete(epoch, Ok(()));
+                if self.should_poll_jobs() {
+                    self.schedule_queue_poll(cx);
+                } else {
+                    self.stop_queue_polling();
+                }
+            }
+            Err(error) => {
+                self.jobs_request.complete(epoch, Err(error));
+                self.stop_queue_polling();
+            }
+        }
+        cx.notify();
+    }
+
+    fn should_poll_jobs(&self) -> bool {
+        self.active_tab == ViewerTab::Queue && self.jobs.iter().any(job_is_nonterminal)
+    }
+
+    fn schedule_queue_poll(&mut self, cx: &mut Context<Self>) {
+        if self.queue_poll_task.is_some() || !self.should_poll_jobs() {
+            return;
+        }
+        self.queue_poll_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(QUEUE_POLL_INTERVAL).await;
+            this.update(cx, |this, cx| {
+                this.queue_poll_task = None;
+                if this.should_poll_jobs() {
+                    this.load_jobs(cx);
+                }
+            })
+            .log_err();
+        }));
     }
 
     /// Load the inspector data for the selected asset (spec: metadata, tags,
@@ -538,11 +786,13 @@ impl MediaViewer {
     fn load_detail(&mut self, cx: &mut Context<Self>) {
         let Some(ix) = self.selected.filter(|ix| *ix < self.assets.len()) else {
             self.detail = None;
+            self.detail_request.invalidate();
             cx.notify();
             return;
         };
         let Some(asset_id) = self.assets[ix].gallery_asset_id.clone() else {
             self.detail = None;
+            self.detail_request.invalidate();
             self.status = Some(
                 "Asset is not in the gallery index yet — run gallery_refresh \
                  from the director to index it."
@@ -551,46 +801,65 @@ impl MediaViewer {
             cx.notify();
             return;
         };
-        let requested_src = self.assets[ix].src.clone();
-        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.status = Some("Tool invoker not wired — panel cannot load detail.".into());
-            cx.notify();
+        let Some(epoch) = self
+            .detail_request
+            .begin(RequestOwner::Detail(asset_id.clone()))
+        else {
             return;
         };
         self.status = None;
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_detail_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot load detail.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_asset_detail",
             serde_json::json!({ "image_id": asset_id }),
         );
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(text) => {
-                let payload = hkask_types::tool_response::parse_tool_response(&text);
-                this.update(cx, |this, cx| {
-                    // Apply only if the selection still points at the asset
-                    // the request was made for — a response landing after a
-                    // selection change or gallery switch is stale.
-                    let still_selected = this
-                        .selected
-                        .and_then(|ix| this.assets.get(ix))
-                        .is_some_and(|asset| asset.src == requested_src);
-                    if still_selected {
-                        this.detail = payload;
-                    }
-                    cx.notify();
-                })
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => hkask_types::tool_response::parse_tool_response(&text)
+                    .filter(Value::is_object)
+                    .ok_or_else(|| {
+                        "gallery_asset_detail returned malformed object data.".to_string()
+                    }),
+                Err(error) => Err(format!("gallery_asset_detail failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| this.apply_detail_result(epoch, result, cx))
                 .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.detail = None;
-                    this.status = Some(format!("gallery_asset_detail failed: {}", error.message()));
-                    cx.notify();
-                })
-                .log_err();
-            }
         })
         .detach();
+    }
+
+    /// expect: Detail preserves its last-good object unless the latest selected-asset request succeeds.
+    /// [P1] Motivating: superseded detail errors cannot blank or degrade newer detail.
+    /// pre: epoch was returned by detail_request.begin.
+    /// post: stale outcomes are ignored and owned failures retain detail.
+    fn apply_detail_result(
+        &mut self,
+        epoch: u64,
+        result: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.detail_request.owns(epoch) {
+            return;
+        }
+        match result {
+            Ok(detail) => {
+                self.detail = Some(detail);
+                self.detail_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                self.detail_request.complete(epoch, Err(error));
+            }
+        }
+        cx.notify();
     }
 
     /// Delete the gallery-index entry for an asset (two-step confirm; the
@@ -666,6 +935,40 @@ impl MediaViewer {
             }
         })
         .detach();
+    }
+
+    fn presented_status(&self) -> Option<(SharedString, ui::Color)> {
+        let resource = match self.active_tab {
+            ViewerTab::Media => resource_status(
+                "Edit",
+                &self.edit_request.state,
+                !self.assets.is_empty(),
+                self.edit_progress.as_deref(),
+            ),
+            ViewerTab::Library => resource_status(
+                "Library",
+                &self.gallery_request.state,
+                self.gallery_total.is_some(),
+                None,
+            ),
+            ViewerTab::Queue => resource_status(
+                "Queue",
+                &self.jobs_request.state,
+                self.jobs_total.is_some(),
+                None,
+            ),
+            ViewerTab::Detail => resource_status(
+                "Detail",
+                &self.detail_request.state,
+                self.detail.is_some(),
+                None,
+            ),
+        };
+        resource.or_else(|| {
+            self.status
+                .clone()
+                .map(|status| (status.into(), ui::Color::Error))
+        })
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────
@@ -865,11 +1168,9 @@ impl MediaViewer {
                 )
                 .label_size(LabelSize::XSmall)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
-                    if let Some(position) = this.selected
-                        && let Some(asset) = this.assets.get(position)
-                        && !this.concat_queue.contains(&asset.src)
-                    {
-                        this.concat_queue.push(asset.src.clone());
+                    match this.queue_selected_for_concat() {
+                        Ok(()) => this.status = None,
+                        Err(error) => this.status = Some(error),
                     }
                     cx.notify();
                 })),
@@ -920,19 +1221,41 @@ impl MediaViewer {
     }
 
     fn render_library(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        if self.assets.is_empty() {
-            return self
-                .render_empty(
-                    "Library empty",
-                    "The gallery has no indexed assets and the conversation has surfaced none. \
-                     Ask the director to run gallery_organize, or generate media.",
-                )
-                .into_any_element();
+        if self.gallery_total.is_none() {
+            match &self.gallery_request.state {
+                ResourceState::Loading => {
+                    return self
+                        .render_empty("Loading Library", "Fetching the first gallery page…")
+                        .into_any_element();
+                }
+                ResourceState::Failed(error) => {
+                    return self
+                        .render_empty("Library unavailable", error)
+                        .into_any_element();
+                }
+                ResourceState::Idle => {
+                    return self
+                        .render_empty("Library not loaded", "Open or refresh Library to load it.")
+                        .into_any_element();
+                }
+                ResourceState::Ready => {}
+            }
         }
+        let total = self.gallery_total.unwrap_or(0);
+        let total_as_usize = usize::try_from(total).unwrap_or(usize::MAX);
+        let page_end = self
+            .gallery_offset
+            .saturating_add(self.gallery_limit)
+            .min(total_as_usize);
         let rows = self
             .assets
             .iter()
             .enumerate()
+            .filter(|(_, asset)| {
+                asset
+                    .gallery_index
+                    .is_none_or(|index| (self.gallery_offset..page_end).contains(&index))
+            })
             .map(|(ix, asset)| {
                 let selected = self.selected == Some(ix);
                 let confirming = self.confirm_delete == Some(ix);
@@ -1019,23 +1342,86 @@ impl MediaViewer {
                     )
             })
             .collect::<Vec<_>>();
+        let first = if total == 0 {
+            0
+        } else {
+            self.gallery_offset.saturating_add(1)
+        };
+        let pagination = h_flex()
+            .h_8()
+            .gap_2()
+            .px_2()
+            .items_center()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                ui::Button::new("media-library-previous", "Previous")
+                    .label_size(LabelSize::XSmall)
+                    .disabled(self.gallery_offset == 0)
+                    .on_click(cx.listener(|this, _, _, cx| this.previous_gallery_page(cx))),
+            )
+            .child(
+                ui::Button::new("media-library-next", "Next")
+                    .label_size(LabelSize::XSmall)
+                    .disabled(page_end >= total_as_usize)
+                    .on_click(cx.listener(|this, _, _, cx| this.next_gallery_page(cx))),
+            )
+            .child(
+                Label::new(format!("Showing {first}–{page_end} of {total}"))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            );
+        let content = if rows.is_empty() {
+            self.render_empty(
+                "Library empty",
+                "This page has no indexed assets and the conversation has surfaced none.",
+            )
+            .into_any_element()
+        } else {
+            v_flex()
+                .id("media-viewer-library-rows")
+                .flex_1()
+                .overflow_y_scroll()
+                .gap_0p5()
+                .p_2()
+                .children(rows)
+                .into_any_element()
+        };
         v_flex()
             .id("media-viewer-library")
             .flex_1()
-            .overflow_y_scroll()
-            .gap_0p5()
-            .p_2()
-            .children(rows)
+            .min_h_0()
+            .child(pagination)
+            .child(content)
             .into_any_element()
     }
 
     fn render_queue(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        if self.jobs_total.is_none() {
+            match &self.jobs_request.state {
+                ResourceState::Loading => {
+                    return self
+                        .render_empty("Loading Queue", "Fetching generation jobs…")
+                        .into_any_element();
+                }
+                ResourceState::Failed(error) => {
+                    return self
+                        .render_empty("Queue unavailable", error)
+                        .into_any_element();
+                }
+                ResourceState::Idle => {
+                    return self
+                        .render_empty("Queue not loaded", "Open or refresh Queue to load it.")
+                        .into_any_element();
+                }
+                ResourceState::Ready => {}
+            }
+        }
         if self.jobs.is_empty() {
             return self
                 .render_empty(
-                    "No jobs",
-                    "No generation jobs have been submitted (or the queue was lost to a server \
-                     restart — persistent lineage lives in the gallery).",
+                    "Queue ready — no jobs",
+                    "No generation jobs have been submitted (or process-local history restarted).",
                 )
                 .into_any_element();
         }
@@ -1110,25 +1496,51 @@ impl MediaViewer {
                     })
             })
             .collect::<Vec<_>>();
+        let total = self.jobs_total.unwrap_or(self.jobs.len());
+        let count_label = if self.jobs_has_more {
+            format!(
+                "Showing {} of {total} jobs (more available; limit {})",
+                self.jobs.len(),
+                self.jobs_limit
+            )
+        } else {
+            format!("Showing {} of {total} jobs", self.jobs.len())
+        };
         v_flex()
             .id("media-viewer-queue")
             .flex_1()
-            .overflow_y_scroll()
-            .gap_0p5()
-            .p_2()
-            .children(rows)
+            .min_h_0()
+            .child(
+                h_flex().h_8().px_2().items_center().child(
+                    Label::new(count_label)
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
+                ),
+            )
+            .child(
+                v_flex()
+                    .id("media-viewer-queue-rows")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .gap_0p5()
+                    .p_2()
+                    .children(rows),
+            )
             .into_any_element()
     }
 
     fn render_detail(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let Some(detail) = self.detail.as_ref() else {
-            return self
-                .render_empty(
+            let (title, hint) = match &self.detail_request.state {
+                ResourceState::Loading => ("Loading Detail", "Fetching asset metadata…"),
+                ResourceState::Failed(error) => ("Detail unavailable", error.as_str()),
+                ResourceState::Ready => ("Detail ready — empty", "The asset returned no detail."),
+                ResourceState::Idle => (
                     "No detail",
-                    "Select an indexed gallery asset, then open Detail — metadata, tags, and \
-                     lineage load from gallery_asset_detail.",
-                )
-                .into_any_element();
+                    "Select an indexed gallery asset, then open Detail.",
+                ),
+            };
+            return self.render_empty(title, hint).into_any_element();
         };
         let mut sections = v_flex().gap_2().p_3();
         if let Some(image) = detail.get("image").and_then(|i| i.as_object()) {
@@ -1216,6 +1628,191 @@ impl MediaViewer {
     }
 }
 
+fn resource_status(
+    label: &str,
+    state: &ResourceState,
+    has_last_good: bool,
+    loading_detail: Option<&str>,
+) -> Option<(SharedString, ui::Color)> {
+    match state {
+        ResourceState::Loading => Some((
+            loading_detail
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if has_last_good {
+                        format!("Refreshing {label} — showing last-good data…")
+                    } else {
+                        format!("Loading {label}…")
+                    }
+                })
+                .into(),
+            ui::Color::Muted,
+        )),
+        ResourceState::Failed(error) => Some((
+            if has_last_good {
+                format!("{label} degraded — showing last-good data: {error}")
+            } else {
+                format!("{label} failed: {error}")
+            }
+            .into(),
+            ui::Color::Error,
+        )),
+        ResourceState::Idle | ResourceState::Ready => None,
+    }
+}
+
+fn parse_gallery_listing(
+    payload: Option<Value>,
+    requested_offset: usize,
+) -> Result<GalleryListing, String> {
+    let payload = payload
+        .ok_or_else(|| "gallery_list_assets returned unparsable or failed output.".to_string())?;
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "gallery_list_assets returned a non-object payload.".to_string())?;
+    let gallery_id = object
+        .get("gallery_id")
+        .and_then(Value::as_str)
+        .filter(|gallery_id| !gallery_id.is_empty())
+        .ok_or_else(|| "gallery_list_assets returned no gallery_id.".to_string())?
+        .to_string();
+    let total = object
+        .get("total")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "gallery_list_assets returned no valid total.".to_string())?;
+    let offset = object
+        .get("offset")
+        .and_then(Value::as_u64)
+        .and_then(|offset| usize::try_from(offset).ok())
+        .ok_or_else(|| "gallery_list_assets returned no valid offset.".to_string())?;
+    if offset != requested_offset {
+        return Err(format!(
+            "gallery_list_assets returned offset {offset} for requested offset {requested_offset}."
+        ));
+    }
+    let limit = object
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|limit| usize::try_from(limit).ok())
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| "gallery_list_assets returned no valid limit.".to_string())?;
+    let assets = object
+        .get("assets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gallery_list_assets returned no assets array.".to_string())?;
+    if assets.len() > limit {
+        return Err("gallery_list_assets returned more rows than its limit.".into());
+    }
+    for (position, asset) in assets.iter().enumerate() {
+        let record = asset
+            .as_object()
+            .ok_or_else(|| format!("gallery_list_assets row {position} is not an object."))?;
+        let expected_index = offset
+            .checked_add(position)
+            .ok_or_else(|| "gallery_list_assets row index overflowed.".to_string())?;
+        let index = record
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .ok_or_else(|| format!("gallery_list_assets row {position} has no valid index."))?;
+        if index != expected_index {
+            return Err(format!(
+                "gallery_list_assets row {position} has index {index}, expected {expected_index}."
+            ));
+        }
+        for field in ["id", "path", "media_type"] {
+            if record
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "gallery_list_assets row {position} has no valid {field}."
+                ));
+            }
+        }
+    }
+    Ok(GalleryListing {
+        gallery_id,
+        total,
+        offset,
+        limit,
+        assets: assets.clone(),
+    })
+}
+
+fn parse_job_listing(output: &str, requested_limit: usize) -> Result<JobListing, String> {
+    let value: Value = serde_json::from_str(output)
+        .map_err(|error| format!("job_list returned invalid JSON: {error}"))?;
+    let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+    if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
+        return Err(format!("job_list failed: {}", error.message));
+    }
+    if payload.is_array() {
+        let jobs: Vec<JobRecord> = serde_json::from_value(payload)
+            .map_err(|error| format!("job_list returned invalid legacy rows: {error}"))?;
+        return Ok(JobListing {
+            total: jobs.len(),
+            limit: requested_limit,
+            has_more: false,
+            jobs,
+        });
+    }
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "job_list returned neither an object nor a legacy array.".to_string())?;
+    let jobs_value = object
+        .get("jobs")
+        .cloned()
+        .ok_or_else(|| "job_list returned no jobs array.".to_string())?;
+    let jobs: Vec<JobRecord> = serde_json::from_value(jobs_value)
+        .map_err(|error| format!("job_list returned invalid rows: {error}"))?;
+    let total = object
+        .get("total")
+        .map(|total| {
+            total
+                .as_u64()
+                .and_then(|total| usize::try_from(total).ok())
+                .ok_or_else(|| "job_list returned an invalid total.".to_string())
+        })
+        .transpose()?
+        .unwrap_or(jobs.len());
+    let limit = object
+        .get("limit")
+        .map(|limit| {
+            limit
+                .as_u64()
+                .and_then(|limit| usize::try_from(limit).ok())
+                .filter(|limit| *limit > 0)
+                .ok_or_else(|| "job_list returned an invalid limit.".to_string())
+        })
+        .transpose()?
+        .unwrap_or(requested_limit);
+    let has_more = object
+        .get("has_more")
+        .map(|has_more| {
+            has_more
+                .as_bool()
+                .ok_or_else(|| "job_list returned an invalid has_more flag.".to_string())
+        })
+        .transpose()?
+        .unwrap_or(total > jobs.len());
+    if jobs.len() > limit || total < jobs.len() || has_more != (total > jobs.len()) {
+        return Err("job_list returned inconsistent count metadata.".into());
+    }
+    Ok(JobListing {
+        jobs,
+        total,
+        limit,
+        has_more,
+    })
+}
+
+fn job_is_nonterminal(job: &JobRecord) -> bool {
+    matches!(job.status.as_str(), "queued" | "running" | "cancelling")
+}
+
 /// Render a scalar JSON value as display text (None for objects/arrays).
 fn scalar_text(value: &Value) -> Option<String> {
     match value {
@@ -1271,11 +1868,11 @@ impl Render for MediaViewer {
                                 })),
                         ),
                     )
-                    .when_some(self.status.clone(), |el, status| {
+                    .when_some(self.presented_status(), |el, (status, color)| {
                         el.child(
                             Label::new(status)
                                 .size(LabelSize::XSmall)
-                                .color(ui::Color::Error)
+                                .color(color)
                                 .truncate(),
                         )
                     }),
@@ -1531,7 +2128,12 @@ mod tests {
         ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
             assert_eq!(server, MEDIA_SERVER);
             assert_eq!(tool, "job_list");
-            assert_eq!(args, serde_json::json!({"limit": 20}));
+            assert_eq!(
+                args,
+                serde_json::json!({
+                    "limit": hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT
+                })
+            );
             gpui::Task::ready(Ok(self.0.clone()))
         }
     }
@@ -1564,7 +2166,7 @@ mod tests {
         viewer.update(cx, |viewer, _| {
             assert_eq!(viewer.jobs.len(), 1);
             assert_eq!(viewer.jobs[0].id, "job-1");
-            assert!(viewer.status.is_none());
+            assert_eq!(viewer.jobs_request.state, ResourceState::Ready);
         });
         for response in [
             "not json",
@@ -1579,7 +2181,9 @@ mod tests {
             cx.run_until_parked();
             viewer.update(cx, |viewer, _| {
                 assert_eq!(viewer.jobs.len(), 1, "failed refresh preserves known jobs");
-                let status = viewer.status.as_deref().expect("visible failure");
+                let ResourceState::Failed(status) = &viewer.jobs_request.state else {
+                    panic!("queue failure must be visible");
+                };
                 assert!(status.contains("job_list"));
                 if response.contains("job store unavailable") {
                     assert!(status.contains("job store unavailable"));
@@ -1594,7 +2198,7 @@ mod tests {
             cx.run_until_parked();
             viewer.update(cx, |viewer, _| {
                 assert!(viewer.jobs.is_empty());
-                assert!(viewer.status.is_none());
+                assert_eq!(viewer.jobs_request.state, ResourceState::Ready);
             });
         }
     }
@@ -1686,13 +2290,29 @@ mod tests {
     }
 
     fn surfaced_asset(src: &str) -> MediaAsset {
+        surfaced_asset_of_kind(src, "image")
+    }
+
+    fn surfaced_asset_of_kind(src: &str, kind: &str) -> MediaAsset {
         MediaAsset {
-            body: format!(r#"{{"kind":"image","src":"{src}"}}"#),
+            body: serde_json::json!({"kind": kind, "src": src}).to_string(),
             src: src.into(),
-            kind: "image".into(),
+            kind: kind.into(),
             tool: "generate_image".into(),
             gallery_index: None,
             gallery_asset_id: None,
+        }
+    }
+
+    fn job(status: &str) -> JobRecord {
+        JobRecord {
+            id: format!("job-{status}"),
+            op: "generate_video".into(),
+            status: status.into(),
+            created_at: "2026-09-14T00:00:00Z".into(),
+            completed_at: None,
+            result: None,
+            error: None,
         }
     }
 
@@ -1829,15 +2449,24 @@ mod tests {
     fn delayed_listing_response_is_dropped(cx: &mut gpui::TestAppContext) {
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
-            // Two listing requests were issued (epochs 1 and 2); epoch 2 is
-            // current. The current request's response (gallery B) merges.
-            viewer.gallery_epoch = 2;
+            // Two listing requests were issued; the second owns the resource.
+            let stale_epoch = viewer
+                .gallery_request
+                .begin(RequestOwner::GalleryPage(0))
+                .expect("first request starts");
+            let current_epoch = viewer
+                .gallery_request
+                .begin(RequestOwner::GalleryPage(GALLERY_PAGE_LIMIT))
+                .expect("different page supersedes it");
             viewer.apply_gallery_listing(
-                2,
-                Some(serde_json::json!({
-                    "gallery_id": "gallery-b", "total": 1, "offset": 0, "limit": 100,
-                    "assets": [{"id": "b0", "index": 0, "path": "/b.png", "media_type": "image", "missing": false, "metadata_stale": false}]
-                })),
+                current_epoch,
+                parse_gallery_listing(
+                    Some(serde_json::json!({
+                        "gallery_id": "gallery-b", "total": 101, "offset": 100, "limit": 100,
+                        "assets": [{"id": "b100", "index": 100, "path": "/b.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                    })),
+                    GALLERY_PAGE_LIMIT,
+                ),
                 cx,
             );
             assert_eq!(viewer.assets.len(), 1);
@@ -1846,11 +2475,14 @@ mod tests {
             // The superseded request's delayed response (gallery A, epoch 1)
             // must not overwrite the view or retarget the gallery.
             viewer.apply_gallery_listing(
-                1,
-                Some(serde_json::json!({
-                    "gallery_id": "gallery-a", "total": 1, "offset": 0, "limit": 100,
-                    "assets": [{"id": "a0", "index": 0, "path": "/a.png", "media_type": "image", "missing": false, "metadata_stale": false}]
-                })),
+                stale_epoch,
+                parse_gallery_listing(
+                    Some(serde_json::json!({
+                        "gallery_id": "gallery-a", "total": 1, "offset": 0, "limit": 100,
+                        "assets": [{"id": "a0", "index": 0, "path": "/a.png", "media_type": "image", "missing": false, "metadata_stale": false}]
+                    })),
+                    0,
+                ),
                 cx,
             );
             assert_eq!(viewer.assets.len(), 1, "delayed response must be dropped");
@@ -1937,9 +2569,12 @@ mod tests {
             viewer.confirm_delete = Some(1); // the survivor, pre-shift
         });
         let payload = serde_json::json!({
+            "gallery_id": "gallery-a",
             "total": 1,
+            "offset": 0,
+            "limit": GALLERY_PAGE_LIMIT,
             "assets": [
-                {"index": 0, "path": "/gallery/survivor.png", "media_type": "image"},
+                {"id": "survivor", "index": 0, "path": "/gallery/survivor.png", "media_type": "image"},
             ]
         });
         viewer.update(cx, |viewer, cx| {
@@ -1961,6 +2596,357 @@ mod tests {
                 "the pending confirmation follows its asset to the shifted index"
             );
         });
+    }
+
+    /// dcterms:identifier: `MediaViewer::apply_gallery_listing`
+    /// expect: A malformed latest page and a stale earlier failure cannot alter a last-good Library snapshot.
+    /// [P1] Motivating: Library pagination is an atomic latest-owner transition.
+    #[gpui::test]
+    fn gallery_failure_is_atomic_and_stale_failure_is_ignored(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.assets = vec![indexed_asset("/good.png", 0)];
+            viewer.gallery_total = Some(1);
+            viewer.gallery_offset = 0;
+            viewer.gallery_limit = GALLERY_PAGE_LIMIT;
+            viewer.gallery_id = Some("gallery-good".into());
+            viewer.selected = Some(0);
+            let before = (
+                viewer.assets.clone(),
+                viewer.gallery_total,
+                viewer.gallery_offset,
+                viewer.gallery_limit,
+                viewer.gallery_id.clone(),
+                viewer.selected,
+            );
+            let malformed_epoch = viewer
+                .gallery_request
+                .begin(RequestOwner::GalleryPage(GALLERY_PAGE_LIMIT))
+                .expect("page request starts");
+            let malformed = parse_gallery_listing(
+                Some(serde_json::json!({
+                    "gallery_id": "gallery-good", "total": 2, "offset": 100, "limit": 100,
+                    "assets": [{"id": "broken", "index": 100, "media_type": "image"}]
+                })),
+                GALLERY_PAGE_LIMIT,
+            );
+            viewer.apply_gallery_listing(malformed_epoch, malformed, cx);
+            assert_eq!(
+                (
+                    viewer.assets.clone(),
+                    viewer.gallery_total,
+                    viewer.gallery_offset,
+                    viewer.gallery_limit,
+                    viewer.gallery_id.clone(),
+                    viewer.selected,
+                ),
+                before,
+                "every last-good field survives malformed refresh"
+            );
+            assert!(matches!(
+                viewer.gallery_request.state,
+                ResourceState::Failed(_)
+            ));
+
+            let stale_epoch = viewer
+                .gallery_request
+                .begin(RequestOwner::GalleryPage(0))
+                .expect("refresh starts");
+            let current_epoch = viewer
+                .gallery_request
+                .begin(RequestOwner::GalleryPage(GALLERY_PAGE_LIMIT))
+                .expect("next page supersedes refresh");
+            viewer.apply_gallery_listing(
+                current_epoch,
+                parse_gallery_listing(
+                    Some(serde_json::json!({
+                        "gallery_id": "gallery-good", "total": 101, "offset": 100, "limit": 100,
+                        "assets": [{"id": "latest", "index": 100, "path": "/latest.png", "media_type": "image"}]
+                    })),
+                    GALLERY_PAGE_LIMIT,
+                ),
+                cx,
+            );
+            viewer.apply_gallery_listing(stale_epoch, Err("stale failure".into()), cx);
+            assert_eq!(viewer.gallery_request.state, ResourceState::Ready);
+            assert!(viewer.assets.iter().any(|asset| asset.src == "/latest.png"));
+        });
+    }
+
+    /// dcterms:identifier: `RequestLifecycle::begin`
+    /// expect: Repeated clicks for the same loading resource remain single-flight.
+    /// [P1] Motivating: refresh controls cannot fan out duplicate work.
+    #[test]
+    fn repeated_loading_owner_is_single_flight() {
+        let mut request = RequestLifecycle::new();
+        assert!(request.begin(RequestOwner::Jobs).is_some());
+        assert!(request.begin(RequestOwner::Jobs).is_none());
+        assert!(
+            request
+                .begin(RequestOwner::GalleryPage(GALLERY_PAGE_LIMIT))
+                .is_some()
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::apply_jobs_listing`
+    /// expect: Queue polling exists only for an active nonterminal queue and stops on leave, terminal data, or error.
+    /// [P1] Motivating: background queue work is bounded by visible demand.
+    #[gpui::test]
+    fn queue_polling_stops_at_every_stop_condition(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.active_tab = ViewerTab::Queue;
+            let epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            viewer.apply_jobs_listing(
+                epoch,
+                Ok(JobListing {
+                    jobs: vec![job("running")],
+                    total: 1,
+                    limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                    has_more: false,
+                }),
+                cx,
+            );
+            assert!(viewer.queue_poll_task.is_some());
+            let stale_epoch = viewer.jobs_request.epoch;
+            viewer.activate_tab(ViewerTab::Media, cx);
+            assert!(
+                viewer.queue_poll_task.is_none(),
+                "leaving Queue cancels timer"
+            );
+            viewer.apply_jobs_listing(stale_epoch, Err("stale queue error".into()), cx);
+            assert_eq!(viewer.jobs.len(), 1);
+            assert_eq!(viewer.jobs_request.state, ResourceState::Idle);
+
+            viewer.active_tab = ViewerTab::Queue;
+            let terminal_epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            viewer.apply_jobs_listing(
+                terminal_epoch,
+                Ok(JobListing {
+                    jobs: vec![job("completed")],
+                    total: 1,
+                    limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                    has_more: false,
+                }),
+                cx,
+            );
+            assert!(
+                viewer.queue_poll_task.is_none(),
+                "terminal queue does not poll"
+            );
+
+            let running_epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            viewer.apply_jobs_listing(
+                running_epoch,
+                Ok(JobListing {
+                    jobs: vec![job("running")],
+                    total: 1,
+                    limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                    has_more: false,
+                }),
+                cx,
+            );
+            assert!(viewer.queue_poll_task.is_some());
+            let error_epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            viewer.apply_jobs_listing(error_epoch, Err("queue unavailable".into()), cx);
+            assert!(viewer.queue_poll_task.is_none(), "error cancels timer");
+            assert_eq!(viewer.jobs.len(), 1, "error preserves last-good jobs");
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::apply_detail_result`
+    /// expect: A newer asset detail and edit own the view even if older failures arrive later.
+    /// [P1] Motivating: overlapping inspector and edit work cannot regress visible state.
+    #[gpui::test]
+    fn overlapping_detail_and_edit_drop_stale_errors(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let old_detail = viewer
+                .detail_request
+                .begin(RequestOwner::Detail("asset-old".into()))
+                .expect("old detail starts");
+            let new_detail = viewer
+                .detail_request
+                .begin(RequestOwner::Detail("asset-new".into()))
+                .expect("new detail supersedes");
+            viewer.apply_detail_result(
+                new_detail,
+                Ok(serde_json::json!({"image": {"id": "asset-new"}})),
+                cx,
+            );
+            viewer.apply_detail_result(old_detail, Err("stale detail error".into()), cx);
+            assert_eq!(viewer.detail_request.state, ResourceState::Ready);
+            assert_eq!(viewer.detail.as_ref().and_then(|d| d.pointer("/image/id")).and_then(Value::as_str), Some("asset-new"));
+
+            let old_edit = viewer
+                .edit_request
+                .begin(RequestOwner::Edit("video_clip"))
+                .expect("old edit starts");
+            let new_edit = viewer
+                .edit_request
+                .begin(RequestOwner::Edit("video_concat"))
+                .expect("new edit supersedes");
+            let output = serde_json::json!({
+                "content": {"display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/new.mp4\"}\n```"}
+            })
+            .to_string();
+            viewer.apply_edit_result(new_edit, "video_concat", Ok(output), cx);
+            viewer.apply_edit_result(old_edit, "video_clip", Err("stale edit error".into()), cx);
+            assert_eq!(viewer.edit_request.state, ResourceState::Ready);
+            assert!(viewer.assets.iter().any(|asset| asset.src == "/new.mp4"));
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::queue_selected_for_concat`
+    /// expect: Non-video and over-cap concat additions fail visibly without changing the queue.
+    /// [P1] Motivating: concat admission never silently drops or coerces selected work.
+    #[test]
+    fn concat_queue_rejects_type_and_cap_without_truncation() {
+        let mut viewer = MediaViewer::new();
+        viewer.assets.push(surfaced_asset("/image.png"));
+        viewer.selected = Some(0);
+        let error = viewer
+            .queue_selected_for_concat()
+            .expect_err("image must be rejected");
+        assert!(error.contains("Only video"));
+        assert!(viewer.concat_queue.is_empty());
+
+        viewer
+            .assets
+            .push(surfaced_asset_of_kind("/overflow.mp4", "video"));
+        viewer.selected = Some(1);
+        viewer.concat_queue = (0..hkask_types::media_limits::MAX_CONCAT_ITEMS)
+            .map(|index| format!("/{index}.mp4"))
+            .collect();
+        let before = viewer.concat_queue.clone();
+        let error = viewer
+            .queue_selected_for_concat()
+            .expect_err("over-cap addition must be rejected");
+        assert!(error.contains(&hkask_types::media_limits::MAX_CONCAT_ITEMS.to_string()));
+        assert_eq!(viewer.concat_queue, before);
+    }
+
+    /// dcterms:identifier: `parse_job_listing`
+    /// expect: Queue count metadata is preserved while legacy and scoped empty responses stay valid.
+    /// [P7] Motivating: the panel presents truncation instead of hiding a subset.
+    #[test]
+    fn job_listing_preserves_counts_and_compatible_empty_shapes() {
+        let record = job("running");
+        let listing = parse_job_listing(
+            &serde_json::json!({
+                "content": {
+                    "jobs": [record],
+                    "total": 3,
+                    "limit": 1,
+                    "has_more": true
+                }
+            })
+            .to_string(),
+            hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+        )
+        .expect("new response parses");
+        assert_eq!(listing.jobs.len(), 1);
+        assert_eq!(listing.total, 3);
+        assert_eq!(listing.limit, 1);
+        assert!(listing.has_more);
+        for response in [r#"{"content":[]}"#, r#"{"content":{"jobs":[]}}"#] {
+            let listing =
+                parse_job_listing(response, hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT)
+                    .expect("compatible empty response parses");
+            assert!(listing.jobs.is_empty());
+            assert_eq!(listing.total, 0);
+            assert!(!listing.has_more);
+        }
+    }
+
+    struct GalleryPageInvoker {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    }
+
+    impl hkask_tool_invoker::ToolInvoker for GalleryPageInvoker {
+        fn invoke_tool(
+            &self,
+            server: &str,
+            tool: &str,
+            args: Value,
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
+            assert_eq!(server, MEDIA_SERVER);
+            assert_eq!(tool, "gallery_list_assets");
+            self.calls.lock().expect("calls lock").push(args.clone());
+            let offset = args.get("offset").and_then(Value::as_u64).expect("offset");
+            let limit = args.get("limit").and_then(Value::as_u64).expect("limit");
+            gpui::Task::ready(Ok(serde_json::json!({
+                "content": {
+                    "gallery_id": "gallery-pages",
+                    "total": 250,
+                    "offset": offset,
+                    "limit": limit,
+                    "assets": [{
+                        "id": format!("asset-{offset}"),
+                        "index": offset,
+                        "path": format!("/{offset}.mp4"),
+                        "media_type": "video"
+                    }]
+                }
+            })
+            .to_string()))
+        }
+    }
+
+    /// dcterms:identifier: `MediaViewer::next_gallery_page`
+    /// expect: Previous and next actions dispatch reachable adjacent pages and commit their offsets.
+    /// [P1] Motivating: every gallery page is reachable from Library controls.
+    #[gpui::test]
+    fn gallery_previous_and_next_reach_adjacent_pages(cx: &mut gpui::TestAppContext) {
+        struct RestoreInvoker(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
+        impl Drop for RestoreInvoker {
+            fn drop(&mut self) {
+                hkask_tool_invoker::set_tool_invoker(self.0.take());
+            }
+        }
+        let _restore = RestoreInvoker(hkask_tool_invoker::shared_tool_invoker());
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(GalleryPageInvoker {
+            calls: calls.clone(),
+        })));
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, _| {
+            viewer.gallery_total = Some(250);
+            viewer.gallery_id = Some("gallery-pages".into());
+            viewer.gallery_limit = GALLERY_PAGE_LIMIT;
+        });
+        viewer.update(cx, |viewer, cx| viewer.next_gallery_page(cx));
+        cx.run_until_parked();
+        assert_eq!(viewer.read_with(cx, |viewer, _| viewer.gallery_offset), 100);
+        viewer.update(cx, |viewer, cx| viewer.previous_gallery_page(cx));
+        cx.run_until_parked();
+        assert_eq!(viewer.read_with(cx, |viewer, _| viewer.gallery_offset), 0);
+        let calls = calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["offset"], 100);
+        assert_eq!(calls[1]["offset"], 0);
+    }
+
+    /// dcterms:identifier: `resource_status`
+    /// expect: In-progress work uses neutral presentation, never error presentation.
+    /// [P1] Motivating: users can distinguish progress from failure.
+    #[test]
+    fn loading_status_is_not_error_colored() {
+        let (_, color) = resource_status("Queue", &ResourceState::Loading, false, None)
+            .expect("loading is presented");
+        assert_eq!(color, ui::Color::Muted);
     }
 }
 

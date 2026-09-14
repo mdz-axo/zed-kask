@@ -1258,6 +1258,40 @@ mod tool_behavior_tests {
             }
         }
 
+        struct FailingMedia;
+        impl hkask_types::InferencePort for FailingMedia {
+            fn generate(
+                &self,
+                _: &str,
+                _: &hkask_types::template::LLMParameters,
+                _: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                panic!("generation test must use media_generate")
+            }
+
+            fn media_generate<'a>(
+                &'a self,
+                _: &str,
+                _: &hkask_types::MediaGenerateParams,
+            ) -> hkask_types::MediaFuture<'a> {
+                Box::pin(async {
+                    Err(hkask_types::InferenceError::Connection(
+                        "provider sentinel failure".to_string(),
+                    ))
+                })
+            }
+        }
+
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
         let _env = ArtifactsEnvGuard::set(artifacts.path());
@@ -1284,7 +1318,7 @@ mod tool_behavior_tests {
         assert!(
             partial["failures"][0]["cause"]
                 .as_str()
-                .is_some_and(|cause| cause.contains("base64"))
+                .is_some_and(|cause| cause.contains("Invalid symbol 37"))
         );
         assert_eq!(
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
@@ -1304,6 +1338,36 @@ mod tool_behavior_tests {
             1,
             "failed variants left durable files"
         );
+
+        let provider_failed_server = make_server_with_port(Arc::new(FailingMedia));
+        let provider_failed = content_of(&provider_failed_server.generate_image(request()).await?);
+        assert_eq!(provider_failed["status"], "failed");
+        assert_eq!(
+            provider_failed["failures"].as_array().map(Vec::len),
+            Some(2)
+        );
+        assert!(
+            provider_failed["failures"]
+                .as_array()
+                .is_some_and(|failures| failures.iter().all(|failure| {
+                    failure["stage"] == "provider"
+                        && failure["cause"]
+                            .as_str()
+                            .is_some_and(|cause| cause.contains("provider sentinel failure"))
+                }))
+        );
+
+        let completed_server = make_server_with_port(Arc::new(BatchMedia {
+            items: vec![
+                serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="}),
+                serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="}),
+            ],
+        }));
+        let completed = content_of(&completed_server.generate_image(request()).await?);
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["count_requested"], 2);
+        assert_eq!(completed["count_returned"], 2);
+        assert_eq!(completed["failures"], serde_json::json!([]));
         Ok(())
     }
 

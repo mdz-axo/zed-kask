@@ -156,8 +156,16 @@ impl FfmpegRunner {
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             for entry in entries.flatten() {
                 if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
-                    if modified < stale_before {
-                        let _ = std::fs::remove_dir_all(entry.path());
+                    if modified < stale_before
+                        && let Err(error) = std::fs::remove_dir_all(entry.path())
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        tracing::warn!(
+                            target: "hkask.mcp.media.ffmpeg",
+                            path = %entry.path().display(),
+                            %error,
+                            "Failed to remove stale FFmpeg temp directory"
+                        );
                     }
                 }
             }
