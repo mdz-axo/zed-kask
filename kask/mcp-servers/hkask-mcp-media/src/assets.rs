@@ -200,7 +200,7 @@ struct StagedJobAsset {
     staged_path: std::path::PathBuf,
     final_path: std::path::PathBuf,
     bytes: Vec<u8>,
-    ext: &'static str,
+    ext: String,
     media_type: &'static str,
     gallery_store: Option<Arc<GalleryStore>>,
     gallery_image_id: Option<String>,
@@ -277,7 +277,7 @@ impl StagedJobAsset {
                 &hash,
                 width,
                 height,
-                self.ext,
+                &self.ext,
                 self.bytes.len() as u64,
                 self.media_type,
             )
@@ -392,6 +392,12 @@ impl StagedJobPublication {
         Ok(serde_json::Value::Object(slim))
     }
 
+    pub(crate) fn gallery_asset_id(&self) -> Option<&str> {
+        self.assets
+            .first()
+            .and_then(|asset| asset.gallery_image_id.as_deref())
+    }
+
     pub(crate) fn commit(&mut self) {
         for asset in &mut self.assets {
             asset.committed = true;
@@ -465,6 +471,60 @@ async fn stage_job_asset(
     kind: &str,
 ) -> Result<StagedJobAsset, MediaError> {
     stage_job_asset_in_dir(result, kind, &generated_assets_dir()).await
+}
+
+/// Move a completed local processor output under the same rollback-armed
+/// publication owner used by background generation jobs. The processor's
+/// temporary file is consumed before this returns; no temp-runner lifetime is
+/// allowed to own the user-facing output.
+pub(crate) fn stage_local_video_publication(
+    source_path: &std::path::Path,
+) -> Result<StagedJobPublication, MediaError> {
+    let mut source_cleanup = StagedPathCleanup::armed(source_path.to_path_buf());
+    let bytes = std::fs::read(source_path).map_err(|error| {
+        MediaError::AssetPersistence(format!(
+            "read processor output {}: {error}",
+            source_path.display()
+        ))
+    })?;
+    let ext = source_path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or("mp4")
+        .to_string();
+
+    let asset_dir = generated_assets_dir();
+    let id = uuid::Uuid::new_v4();
+    let final_path = asset_dir.join(format!("{id}.{ext}"));
+    let staged_path = asset_dir.join(format!(".{id}.{ext}.staged"));
+    let mut staged_path_cleanup = StagedPathCleanup::armed(staged_path.clone());
+    write_staged_asset(&staged_path, &bytes).map_err(|error| {
+        MediaError::AssetPersistence(format!("stage {}: {error}", staged_path.display()))
+    })?;
+    std::fs::remove_file(source_path).map_err(|error| {
+        MediaError::AssetPersistence(format!(
+            "consume processor output {}: {error}",
+            source_path.display()
+        ))
+    })?;
+    source_cleanup.disarm();
+
+    let asset = StagedJobAsset {
+        staged_path,
+        final_path,
+        bytes,
+        ext,
+        media_type: "video",
+        gallery_store: None,
+        gallery_image_id: None,
+        committed: false,
+    };
+    staged_path_cleanup.disarm();
+    Ok(StagedJobPublication {
+        assets: vec![asset],
+        provider_metadata: serde_json::Map::new(),
+    })
 }
 
 async fn stage_job_asset_in_dir(
@@ -552,7 +612,7 @@ async fn stage_job_asset_in_dir(
         staged_path,
         final_path,
         bytes,
-        ext,
+        ext: ext.to_string(),
         media_type,
         gallery_store: None,
         gallery_image_id: None,

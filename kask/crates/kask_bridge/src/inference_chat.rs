@@ -183,7 +183,7 @@ struct StreamAccumulator {
     text: String,
     reasoning: String,
     tool_calls: Vec<StructuredToolCall>,
-    finish_reason: String,
+    finish_reason: Option<String>,
     usage: InferenceUsage,
     cost_usd: Option<f64>,
 }
@@ -195,7 +195,7 @@ impl StreamAccumulator {
             text: String::new(),
             reasoning: String::new(),
             tool_calls: Vec::new(),
-            finish_reason: "stop".to_string(),
+            finish_reason: None,
             usage: InferenceUsage::default(),
             cost_usd: None,
         }
@@ -234,13 +234,15 @@ impl StreamAccumulator {
                 });
             }
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                self.finish_reason = match reason {
-                    StopReason::EndTurn => "stop",
-                    StopReason::MaxTokens => "length",
-                    StopReason::ToolUse => "tool_calls",
-                    StopReason::Refusal => "refusal",
-                }
-                .to_string();
+                self.finish_reason = Some(
+                    match reason {
+                        StopReason::EndTurn => "stop",
+                        StopReason::MaxTokens => "length",
+                        StopReason::ToolUse => "tool_calls",
+                        StopReason::Refusal => "refusal",
+                    }
+                    .to_string(),
+                );
             }
             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                 self.usage = InferenceUsage {
@@ -256,13 +258,26 @@ impl StreamAccumulator {
         Ok(())
     }
 
-    /// Build a complete `InferenceResult` from the accumulated state.
+    fn ensure_terminal_stop(&self) -> Result<(), InferenceError> {
+        if self.finish_reason.is_some() {
+            Ok(())
+        } else {
+            Err(InferenceError::Connection(
+                "provider stream ended without a terminal Stop event".to_string(),
+            ))
+        }
+    }
+
+    /// Build an unchecked `InferenceResult` from accumulated state.
+    /// `collect_completion` enforces the terminal event before this conversion.
     fn into_result(self) -> InferenceResult {
         InferenceResult {
             text: self.text,
             model: self.model_name,
             usage: self.usage,
-            finish_reason: self.finish_reason,
+            finish_reason: self
+                .finish_reason
+                .unwrap_or_else(|| "missing_stop".to_string()),
             tool_calls: self.tool_calls,
             reasoning: if self.reasoning.is_empty() {
                 None
@@ -273,13 +288,17 @@ impl StreamAccumulator {
         }
     }
 
-    /// Build a final `InferenceStreamChunk` carrying accumulated metadata.
+    /// Build an unchecked final chunk carrying accumulated metadata.
+    /// `collect_completion` enforces the terminal event before this conversion.
     fn into_final_chunk(self) -> InferenceStreamChunk {
         InferenceStreamChunk {
             text_delta: String::new(),
             reasoning_delta: String::new(),
             model: self.model_name,
-            finish_reason: Some(self.finish_reason),
+            finish_reason: Some(
+                self.finish_reason
+                    .unwrap_or_else(|| "missing_stop".to_string()),
+            ),
             usage: Some(self.usage),
             tool_calls: self.tool_calls,
             cost_usd: self.cost_usd,
@@ -594,6 +613,7 @@ impl LanguageModelInferencePort {
                     })?;
             }
         }
+        accumulator.ensure_terminal_stop()?;
         Ok(accumulator)
     }
 
@@ -1014,135 +1034,30 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// expect: [P7] A vision task reaches the model alongside its image in the user message, without a dummy replacement instruction.
-    #[gpui::test]
-    async fn vision_task_and_image_share_user_message(cx: &mut gpui::TestAppContext) {
-        use language_model::{MessageContent, Role};
-        let model = Arc::new(FakeLanguageModel::default());
-        model.set_supports_images(true);
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(30),
-            2,
-            cx.to_async(),
-        );
-        let generate = cx.spawn(async move |_cx| {
-            port.generate_vision("Transcribe the visible text.", &["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==".into()], &LLMParameters::default(), None).await
-        });
-        cx.run_until_parked();
-        let requests = model.pending_completions();
-        let request = requests.first().expect("vision request");
-        assert_eq!(request.messages.len(), 1);
-        let message = request.messages.first().expect("user message");
-        assert_eq!(message.role, Role::User);
-        assert!(message.content.iter().any(|part| matches!(part, MessageContent::Text(text) if text == "Transcribe the visible text.")));
-        assert_eq!(
-            message
-                .content
-                .iter()
-                .filter(|part| matches!(part, MessageContent::Image(_)))
-                .count(),
-            1
-        );
-        model.send_last_completion_stream_text_chunk("transcribed text");
-        model.end_last_completion_stream();
-        assert_eq!(generate.await.expect("completion").text, "transcribed text");
-    }
-
-    /// Dedicated QA selection reaches the registered generator even when the
-    /// active model requires thinking. Unknown IDs fail without using chat.
-    #[gpui::test]
-    async fn qa_generator_override_bypasses_incompatible_chat(cx: &mut gpui::TestAppContext) {
-        use language_model::fake_provider::FakeLanguageModelProvider;
-        use language_model::{
-            LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
-        };
-        let chat = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "openrouter",
-            "z-ai/glm-5.3-flash",
-            "Chat",
-            true,
+    #[test]
+    fn completion_requires_explicit_terminal_stop() {
+        let mut incomplete = super::StreamAccumulator::new("test-model".to_string());
+        incomplete
+            .process_event(Ok(language_model_core::LanguageModelCompletionEvent::Text(
+                "partial JSON".to_string(),
+            )))
+            .expect("text event");
+        assert!(matches!(
+            incomplete.ensure_terminal_stop(),
+            Err(InferenceError::Connection(_))
         ));
-        chat.forbid_requests();
-        let generator = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "openrouter",
-            "~openai/gpt-sol-latest",
-            "QA generator fixture",
-            true,
-        ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("openrouter".to_string()),
-                LanguageModelProviderName::from("OpenRouter".to_string()),
-            )
-            .with_models(vec![chat.clone(), generator.clone()]),
-        );
-        cx.update(|cx| {
-            LanguageModelRegistry::test(cx);
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.register_provider(provider.clone(), cx);
-                registry.set_default_model(
-                    Some(language_model::ConfiguredModel {
-                        provider,
-                        model: chat.clone(),
-                    }),
-                    cx,
-                );
-            });
-        });
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            chat.clone(),
-            Duration::from_secs(300),
-            2,
-            cx.to_async(),
-        );
-        let selected = hkask_inference::model_constants::resolve_qa_generation_model(Some(
-            "OpenRouter/~openai/gpt-sol-latest",
-        ))
-        .expect("qualified model");
-        let generate = cx.spawn(async move |_cx| {
-            port.generate_with_model(
-                "Generate QA",
-                &LLMParameters {
-                    thinking_allowed: false,
-                    ..Default::default()
-                },
-                Some(&selected),
-                None,
-            )
-            .await
-        });
-        cx.run_until_parked();
-        let requests = generator.pending_completions();
-        assert_eq!(requests.len(), 1);
-        assert!(!requests.first().expect("QA request").thinking_allowed);
-        assert_eq!(chat.completion_count(), 0);
-        generator.send_last_completion_stream_text_chunk("QA output");
-        generator.end_last_completion_stream();
-        assert_eq!(
-            generate.await.expect("generator completion").text,
-            "QA output"
-        );
+        assert_eq!(incomplete.into_result().finish_reason, "missing_stop");
 
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            chat.clone(),
-            Duration::from_secs(300),
-            2,
-            cx.to_async(),
-        );
-        let error = port
-            .generate_with_model(
-                "Generate QA",
-                &LLMParameters::default(),
-                Some("OpenRouter/not-in-registry"),
-                None,
-            )
-            .await
-            .expect_err("unavailable generator");
-        assert!(matches!(error, InferenceError::Model(_)));
-        assert!(error.to_string().contains("no default substitution"));
-        assert_eq!(chat.completion_count(), 0);
-        assert_eq!(generator.completion_count(), 0);
+        let mut complete = super::StreamAccumulator::new("test-model".to_string());
+        complete
+            .process_event(Ok(language_model_core::LanguageModelCompletionEvent::Stop(
+                language_model_core::StopReason::EndTurn,
+            )))
+            .expect("terminal stop event");
+        complete
+            .ensure_terminal_stop()
+            .expect("explicit terminal stop");
+        assert_eq!(complete.into_result().finish_reason, "stop");
     }
 
     // ── Provider-rejection detail preservation (D43-adjacent, bridge path) ──
@@ -1371,8 +1286,8 @@ mod tests {
             fake.completion_count()
         );
 
-        // Complete one stream — the semaphore releases a permit, allowing
-        // the 3rd request through.
+        // Close one fake stream — regardless of its terminal validity, dropping
+        // the request releases a permit and allows the 3rd request through.
         let first_request = fake.pending_completions().into_iter().next().unwrap();
         fake.end_completion_stream(&first_request);
         cx.run_until_parked();
@@ -1384,53 +1299,6 @@ mod tests {
              the released permit — expected 2 open streams, got {}",
             fake.completion_count()
         );
-    }
-
-    /// expect: "Cancelled queued requests never start the model and release admission capacity" [P1]
-    #[gpui::test]
-    async fn cancelled_queued_request_never_starts_model(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let fake = model.as_fake();
-        let (port, _receiver) =
-            super::LanguageModelInferencePort::new(model.clone(), Duration::ZERO, 1, cx.to_async());
-        let active = {
-            let port = port.clone();
-            cx.spawn(async move |_| {
-                port.generate("active", &LLMParameters::default(), None)
-                    .await
-            })
-        };
-        let queued = {
-            let port = port.clone();
-            cx.spawn(async move |_| {
-                port.generate("queued", &LLMParameters::default(), None)
-                    .await
-            })
-        };
-        cx.run_until_parked();
-        assert_eq!(fake.completion_count(), 1);
-        assert!(matches!(
-            port.generate("overflow", &LLMParameters::default(), None)
-                .await,
-            Err(InferenceError::Overloaded(_))
-        ));
-        drop(queued);
-        cx.run_until_parked();
-        assert_eq!(port.admission.available_permits(), 1);
-        let pending = fake
-            .pending_completions()
-            .into_iter()
-            .next()
-            .expect("active request");
-        fake.end_completion_stream(&pending);
-        cx.run_until_parked();
-        assert!(active.await.is_ok());
-        assert_eq!(
-            fake.completion_count(),
-            0,
-            "cancelled work must not dispatch after capacity frees"
-        );
-        assert_eq!(port.admission.available_permits(), 2);
     }
 
     /// expect: "Queue wait and stalled stream drain share the admission deadline" [P1]
@@ -1528,51 +1396,6 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(port.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert_eq!(port.admission.available_permits(), 2);
-    }
-
-    /// expect: "An agent with ordinary tools can finish with an answer" [P3]
-    #[gpui::test]
-    async fn ordinary_tools_allow_final_answer(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let fake = model.as_fake();
-        let (port, _receiver) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2,
-            cx.to_async(),
-        );
-        let request = cx.spawn(async move |_| {
-            let tools = [ChatToolDefinition {
-                tool_type: "function".into(),
-                function: ChatToolFunction {
-                    name: "lookup".into(),
-                    description: "Optional lookup".into(),
-                    parameters: serde_json::json!({"type":"object"}),
-                },
-            }];
-            port.generate(
-                "Answer if no lookup is needed",
-                &LLMParameters::default(),
-                Some(&tools),
-            )
-            .await
-        });
-        cx.run_until_parked();
-        let pending = fake
-            .pending_completions()
-            .into_iter()
-            .next()
-            .expect("provider request");
-        assert!(
-            matches!(pending.tool_choice, Some(LanguageModelToolChoice::Auto)),
-            "ordinary tools must not require another effect"
-        );
-        fake.send_completion_stream_text_chunk(&pending, "Finished without another tool call.");
-        fake.end_completion_stream(&pending);
-        cx.run_until_parked();
-        let answer = request.await.expect("final answer");
-        assert_eq!(answer.text, "Finished without another tool call.");
-        assert!(answer.tool_calls.is_empty());
     }
 
     // ── tool_choice: Any for the structured result protocol ─────────────

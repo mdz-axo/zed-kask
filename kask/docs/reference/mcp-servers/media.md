@@ -247,7 +247,7 @@ No routing or layout change is part of this repair.
 | `image_remove_background` | 11 | Remove background from a gallery image; delegates to the configured background-removal provider. |
 | `image_apply_style` | 53 | Apply style transfer to a gallery image; delegates to fal.ai Flux dev img2img. |
 | `image_create_collage` | 116 | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. |
-| `video_clip` | 321 | Trim a video to start/end times using local ffmpeg. |
+| `video_clip` | 301 | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the gallery active when the call was admitted. |
 | `video_to_gif` | 382 | Convert a video segment to GIF using local ffmpeg. |
 | `image_to_video` | 435 | Animate a gallery image into a short video clip; delegates to fal.ai Seedance 2.0. |
 | `video_add_caption` | 507 | Add a text caption overlay to a video using local ffmpeg. |
@@ -259,6 +259,18 @@ No routing or layout change is part of this repair.
 | `video_meme` | 867 | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | 1009 | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
 | `video_fetch` | 1036 | Download a video from a URL (YouTube, Vimeo, direct file) to local storage, index it in the gallery, return a media block; requires yt-dlp for platform URLs. |
+
+`video_clip` requires an active gallery because its result contract includes a
+stable gallery identity. It captures that gallery before FFmpeg runs, promotes
+the temporary MP4 into `media-mcp/generated/`, indexes the durable path, and
+returns `gallery_asset_id` both in the result object and in the fenced media
+block. The two IDs identify the same row. It also records generation lineage
+with `op: "video_clip"` and `params` containing `source`, `start_sec`, and
+`end_sec`; `parent_image_id` remains unset because an input path alone is not a
+verified gallery identity. OMC (`omc:Sequence`) and invocation provenance stay
+in the media block. File publication, gallery insertion, and lineage recording
+are one rollback-armed operation: a failure at any step preserves the causal
+error and removes the generated file and coupled gallery row/lineage.
 
 ### Generation (`tools/generation.rs`, 7 tools)
 

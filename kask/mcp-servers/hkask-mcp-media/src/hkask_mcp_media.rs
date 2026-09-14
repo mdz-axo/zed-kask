@@ -1411,6 +1411,338 @@ mod tool_behavior_tests {
             .expect("tool result has the content envelope")
     }
 
+    struct ArtifactsEnvGuard {
+        prior: Option<String>,
+    }
+
+    impl ArtifactsEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+            unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", path) };
+            Self { prior }
+        }
+    }
+
+    impl Drop for ArtifactsEnvGuard {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+                None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+            }
+        }
+    }
+
+    fn file_backed_gallery_store(
+        db_path: &std::path::Path,
+    ) -> Result<
+        (
+            Arc<GalleryStore>,
+            Arc<hkask_storage::database::sqlite::SqliteDriver>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let db_path = db_path.to_string_lossy().into_owned();
+        let driver = Arc::new(hkask_storage::database::sqlite::SqliteDriver::new_labeled(
+            hkask_storage::database::sqlite::SqliteDriver::file_pool(&db_path)?,
+            db_path.as_str(),
+        ));
+        let store = Arc::new(GalleryStore::from_driver(driver.clone())?);
+        Ok((store, driver))
+    }
+
+    fn server_with_gallery(
+        store: Arc<GalleryStore>,
+        gallery_id: String,
+        gallery_root: &std::path::Path,
+    ) -> MediaServer {
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery_id),
+            }))),
+            store,
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+        )
+    }
+
+    async fn create_real_video(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64:d=2",
+                "-c:v",
+                "mpeg4",
+                path.to_str().ok_or("fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "real ffmpeg fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn media_hint_body(hint: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let body = hint
+            .strip_prefix("```media\n")
+            .ok_or("missing media fence")?
+            .strip_suffix("\n```")
+            .ok_or("missing closing media fence")?;
+        Ok(serde_json::from_str(body)?)
+    }
+
+    /// dcterms:identifier: `MediaServer::video_clip`
+    /// expect: My clipped video remains addressable by one stable gallery identity after restart.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: a real source video and active file-backed gallery exist.
+    /// post: the durable file, gallery row, lineage, result id, and media-block id survive reopen and agree.
+    /// [P1] Constraining: no parent identity is inferred from the source path.
+    #[tokio::test]
+    async fn video_clip_publishes_durable_asset_and_lineage_across_store_reopen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let db_path = artifacts.path().join("gallery.db");
+
+        let (output_path, asset_id, gallery_id) = {
+            let (store, _) = file_backed_gallery_store(&db_path)?;
+            let gallery = store.open(
+                gallery_root
+                    .path()
+                    .to_str()
+                    .ok_or("gallery root is not UTF-8")?,
+                GalleryMode::ReadOnly,
+            )?;
+            let gallery_id = gallery.id.clone();
+            let server = server_with_gallery(store, gallery.id, gallery_root.path());
+            let result = server
+                .video_clip(Parameters(VideoClipRequest {
+                    video_url: source.to_string_lossy().into_owned(),
+                    start_sec: 0.25,
+                    end_sec: 1.25,
+                }))
+                .await?;
+            let content = content_of(&result);
+            let output_path = std::path::PathBuf::from(
+                content["output"].as_str().ok_or("missing durable output")?,
+            );
+            let asset_id = content["gallery_asset_id"]
+                .as_str()
+                .ok_or("missing stable gallery_asset_id")?
+                .to_string();
+            let hint = media_hint_body(
+                content["display_hint"]
+                    .as_str()
+                    .ok_or("missing media display hint")?,
+            )?;
+
+            assert!(output_path.starts_with(crate::assets::generated_assets_dir()));
+            assert!(
+                output_path.is_file(),
+                "published clip must exist before restart"
+            );
+            assert_eq!(hint["src"], content["output"]);
+            assert_eq!(hint["gallery_asset_id"], asset_id);
+            assert_eq!(hint["ontology"], "omc:Sequence");
+            assert_eq!(hint["provenance"]["tool"], "video_clip");
+            assert_eq!(
+                hint["provenance"]["args"]["video_url"],
+                source.to_string_lossy().as_ref()
+            );
+            assert_eq!(hint["provenance"]["args"]["start_sec"], 0.25);
+            assert_eq!(hint["provenance"]["args"]["end_sec"], 1.25);
+            (output_path, asset_id, gallery_id)
+        };
+
+        let (reopened, _) = file_backed_gallery_store(&db_path)?;
+        let asset = reopened.get_by_id(&gallery_id, &asset_id)?;
+        assert_eq!(asset.id, asset_id);
+        assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
+        assert!(
+            output_path.is_file(),
+            "runner/server drop must not delete publication"
+        );
+        let lineage = reopened
+            .get_generation(&asset_id)?
+            .ok_or("video_clip lineage missing after store reopen")?;
+        assert_eq!(lineage.op, "video_clip");
+        assert!(
+            lineage.parent_image_id.is_none(),
+            "source path is not a parent identity"
+        );
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(params["source"], source.to_string_lossy().as_ref());
+        assert_eq!(params["start_sec"], 0.25);
+        assert_eq!(params["end_sec"], 1.25);
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_clip`
+    /// expect: A gallery-admission failure leaves none of my clipped output or database residue behind.
+    /// [P1] Motivating: failed operations do not corrupt or clutter user work.
+    /// pre: FFmpeg succeeds but the captured gallery identity is invalid.
+    /// post: the cause is surfaced and no durable file, gallery row, or lineage remains.
+    /// [P1] Constraining: rollback remains armed until gallery admission succeeds.
+    #[tokio::test]
+    async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root
+                .path()
+                .to_str()
+                .ok_or("gallery root is not UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id;
+        let server = server_with_gallery(
+            store.clone(),
+            "missing-admission-gallery".to_string(),
+            gallery_root.path(),
+        );
+
+        let error = server
+            .video_clip(Parameters(VideoClipRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+            }))
+            .await
+            .expect_err("gallery publication must fail");
+
+        assert!(
+            error.to_string().contains("missing-admission-gallery"),
+            "original gallery failure cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        let generated = crate::assets::generated_assets_dir();
+        assert_eq!(std::fs::read_dir(generated)?.count(), 0);
+        Ok(())
+    }
+
+    /// dcterms:identifier: `assets::stage_local_video_publication`
+    /// expect: A durable-file publication failure removes the temporary clip produced on my behalf.
+    /// [P1] Motivating: failed operations leave no hidden user-work residue.
+    /// pre: real FFmpeg succeeds and the generated-assets destination rejects staging.
+    /// post: the staging cause is surfaced and the FFmpeg temp output is absent.
+    /// [P1] Constraining: temporary and staged paths stay rollback-owned until publication.
+    // TEST-DEBT: tests the crate-private staging seam because the tool result cannot expose
+    // its rollback-owned FFmpeg path after the injected publication failure.
+    #[tokio::test]
+    async fn video_clip_file_publication_failure_rolls_back_real_ffmpeg_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        std::fs::write(
+            artifacts.path().join("media-mcp"),
+            b"blocks generated directory",
+        )?;
+        let source_dir = tempfile::tempdir()?;
+        let source = source_dir.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let runner = video::ffmpeg::FfmpegRunner::detect();
+        let processor_output = runner
+            .clip(source.to_str().ok_or("source path is not UTF-8")?, 0.0, 1.0)
+            .await?;
+        assert!(
+            processor_output.is_file(),
+            "real FFmpeg output must exist before staging"
+        );
+
+        let error = match crate::assets::stage_local_video_publication(&processor_output) {
+            Ok(_) => return Err("blocked generated directory unexpectedly published".into()),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("stage"),
+            "original staging failure cause was not preserved: {error}"
+        );
+        assert!(
+            !processor_output.exists(),
+            "failed publication left the FFmpeg temp output behind"
+        );
+        assert!(artifacts.path().join("media-mcp").is_file());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_clip`
+    /// expect: A lineage-write failure removes my clipped file and its gallery identity.
+    /// [P1] Motivating: provenance failure cannot leave a partially published asset.
+    /// pre: real FFmpeg, durable-file publication, and gallery insertion succeed before lineage is rejected.
+    /// post: the lineage cause is surfaced and no durable file, gallery row, or lineage remains.
+    /// [P1] Constraining: commit occurs only after lineage is durable.
+    #[tokio::test]
+    async fn video_clip_lineage_failure_rolls_back_real_ffmpeg_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
+
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root
+                .path()
+                .to_str()
+                .ok_or("gallery root is not UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        driver.execute(
+            "CREATE TRIGGER fail_video_clip_lineage BEFORE INSERT ON gallery_generation \
+             WHEN NEW.op = 'video_clip' BEGIN SELECT RAISE(ABORT, 'injected lineage failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+
+        let error = server
+            .video_clip(Parameters(VideoClipRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+            }))
+            .await
+            .expect_err("lineage publication must fail");
+
+        assert!(
+            error.to_string().contains("injected lineage failure"),
+            "original lineage failure cause was not preserved: {error}"
+        );
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        let generated = crate::assets::generated_assets_dir();
+        assert_eq!(std::fs::read_dir(generated)?.count(), 0);
+        Ok(())
+    }
+
     /// A mock inference port returning canned responses on both paths —
     /// `generate` (the text passes) and `media_generate` (the audio-chat
     /// path) — so the full pass pipelines run end-to-end without a live

@@ -292,6 +292,11 @@ impl MediaServer {
 
     // ── Video tools ──────────────────────────────────────────────────────────
 
+    /// expect: My clipped video remains available in the admitted gallery under one stable identity.
+    /// [P1] Motivating: user work survives processor and server teardown.
+    /// pre: an active gallery exists and `0 <= start_sec < end_sec`.
+    /// post: the durable output, gallery row, lineage, result id, and media-block id agree.
+    /// [P1] Constraining: any publication failure removes the output and coupled rows.
     #[tool(description = "Trim a video to specified start/end times using local ffmpeg.")]
     pub async fn video_clip(
         &self,
@@ -318,6 +323,10 @@ impl MediaServer {
                 ));
             }
 
+            let gallery = self
+                .capture_gallery()
+                .filter(|gallery| gallery.gallery_id.is_some())
+                .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))?;
             self.require_ffmpeg()?;
 
             let output = self
@@ -325,27 +334,77 @@ impl MediaServer {
                 .clip(&video_url, start_sec, end_sec)
                 .await
                 .map_err(map_media_error)?;
+            let mut publication =
+                crate::assets::stage_local_video_publication(&output).map_err(map_media_error)?;
+            let mut result = publication
+                .publish_and_slim(Some(&gallery), &self.gallery_store)
+                .map_err(map_media_error)?;
+            let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
+                let original = MediaError::AssetPersistence(
+                    "video_clip publication produced no gallery asset identity".to_string(),
+                );
+                let error = match publication.rollback() {
+                    Ok(()) => original,
+                    Err(rollback_error) => {
+                        MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
+                    }
+                };
+                return Err(map_media_error(error));
+            };
 
-            let result = serde_json::json!({
-                "status": "clipped",
+            let lineage_params = serde_json::json!({
                 "source": video_url,
                 "start_sec": start_sec,
                 "end_sec": end_sec,
-                "duration": end_sec - start_sec,
-                "output": output.display().to_string(),
             });
+            let lineage_params_json = serde_json::to_string(&lineage_params).map_err(|error| {
+                map_media_error(MediaError::AssetPersistence(format!(
+                    "serialize video_clip lineage: {error}"
+                )))
+            })?;
+            if let Err(lineage_error) = self.gallery_store.record_generation(
+                &gallery_asset_id,
+                "video_clip",
+                None,
+                None,
+                None,
+                None,
+                Some(&lineage_params_json),
+                None,
+                None,
+            ) {
+                let original = MediaError::AssetPersistence(format!(
+                    "record video_clip lineage: {lineage_error}"
+                ));
+                let error = match publication.rollback() {
+                    Ok(()) => original,
+                    Err(rollback_error) => {
+                        MediaError::AssetPersistence(format!("{original}; {rollback_error}"))
+                    }
+                };
+                return Err(map_media_error(error));
+            }
+
+            result["status"] = serde_json::json!("clipped");
+            result["source"] = serde_json::json!(video_url);
+            result["start_sec"] = serde_json::json!(start_sec);
+            result["end_sec"] = serde_json::json!(end_sec);
+            result["duration"] = serde_json::json!(end_sec - start_sec);
+            result["gallery_asset_id"] = serde_json::json!(gallery_asset_id);
             let args = serde_json::json!({
                 "video_url": video_url,
                 "start_sec": start_sec,
                 "end_sec": end_sec,
             });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
+            let result = crate::media_block::enrich_with_omc_and_provenance(
                 result,
                 "video_clip",
                 "video",
                 args,
                 None,
-            ))
+            );
+            publication.commit();
+            Ok(result)
         })
         .await
     }

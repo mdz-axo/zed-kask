@@ -41,12 +41,25 @@ pub fn media_block_with_omc(
     omc: Option<&str>,
     provenance: Option<&Provenance>,
 ) -> String {
+    media_block_with_gallery_asset_id(kind, src, omc, provenance, None)
+}
+
+fn media_block_with_gallery_asset_id(
+    kind: &str,
+    src: &str,
+    omc: Option<&str>,
+    provenance: Option<&Provenance>,
+    gallery_asset_id: Option<&str>,
+) -> String {
     let mut body = serde_json::json!({"kind": kind, "src": src});
     if let Some(omc) = omc {
         body["ontology"] = serde_json::json!(omc);
     }
     if let Some(provenance) = provenance {
         body["provenance"] = serde_json::json!(provenance);
+    }
+    if let Some(gallery_asset_id) = gallery_asset_id {
+        body["gallery_asset_id"] = serde_json::json!(gallery_asset_id);
     }
     format!("```media\n{body}\n```")
 }
@@ -109,7 +122,11 @@ pub fn enrich_with_omc_and_provenance(
     if let Some(src) = extract_src(&result, kind) {
         let omc = omc::tool_to_omc(tool);
         let provenance = Provenance::for_tool(tool, args, span_id);
-        let hint = media_block_with_omc(kind, &src, omc, Some(&provenance));
+        let gallery_asset_id = result
+            .get("gallery_asset_id")
+            .and_then(serde_json::Value::as_str);
+        let hint =
+            media_block_with_gallery_asset_id(kind, &src, omc, Some(&provenance), gallery_asset_id);
         result["display_hint"] = serde_json::Value::String(hint);
     }
     result
