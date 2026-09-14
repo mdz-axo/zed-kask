@@ -871,11 +871,12 @@ impl MediaServer {
         }): Parameters<VideoFromImagesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_from_images", async {
-            if image_indices.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "At least one image index is required.",
-                ));
-            }
+            validate_item_count(
+                "image_indices",
+                image_indices.len(),
+                1,
+                hkask_types::media_limits::MAX_IMAGE_SEQUENCE_ITEMS,
+            )?;
 
             let fps = fps.unwrap_or(24);
             if fps == 0 {
@@ -942,11 +943,12 @@ impl MediaServer {
         Parameters(VideoConcatRequest { video_urls }): Parameters<VideoConcatRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_concat", async {
-            if video_urls.len() < 2 {
-                return Err(McpToolError::invalid_argument(
-                    "At least 2 video URLs are required.",
-                ));
-            }
+            validate_item_count(
+                "video_urls",
+                video_urls.len(),
+                2,
+                hkask_types::media_limits::MAX_CONCAT_ITEMS,
+            )?;
 
             let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
@@ -1074,6 +1076,17 @@ impl MediaServer {
         }): Parameters<VideoExtractFramesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_extract_frames", async {
+            if !interval_sec.is_finite() || interval_sec <= 0.0 {
+                return Err(McpToolError::invalid_argument(
+                    "interval_sec must be finite and greater than 0",
+                ));
+            }
+            validate_item_count(
+                "max_frames",
+                max_frames as usize,
+                1,
+                hkask_types::media_limits::MAX_EXTRACTED_FRAMES as usize,
+            )?;
             let gallery = self.access_gallery().map_err(map_media_error)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;

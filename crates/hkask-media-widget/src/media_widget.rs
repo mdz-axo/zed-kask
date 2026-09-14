@@ -106,6 +106,10 @@ pub struct MediaWidget {
     // audio_load_task. Dropping the widget cancels the outstanding yt-dlp
     // resolution.
     video_load_task: Option<Task<()>>,
+    // Request identity for remote stream resolution. Suspension and replacement
+    // loads invalidate prior completions before they can open a player or start
+    // hidden polling.
+    video_load_generation: u64,
     error: Option<SharedString>,
     /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`,
     /// `fibo:Corporation`). Drives the "Explain" affordance's tool selection
@@ -216,6 +220,7 @@ impl MediaWidget {
             video_loading: false,
             audio_load_task: None,
             video_load_task: None,
+            video_load_generation: 0,
             error: None,
             ontology: None,
             provenance: BlockProvenance::default(),
@@ -282,14 +287,20 @@ impl MediaWidget {
     }
 
     pub fn load(&mut self, cx: &mut Context<Self>) {
+        self.error = None;
         match self.storage.resolve(&self.reference) {
             Ok(resolved) => self.load_resolved(resolved, cx),
-            Err(error) => {
-                log::warn!(
-                    "hkask-media-widget: media resolution failed: {error}, falling back to direct src"
-                );
-                self.load_direct(cx);
-            }
+            Err(error) => match self.reference.kind() {
+                Some(MediaKind::Image | MediaKind::Svg) => {
+                    self.error = Some(SharedString::from(error.to_string()));
+                }
+                _ => {
+                    log::warn!(
+                        "hkask-media-widget: media resolution failed: {error}, falling back to direct src"
+                    );
+                    self.load_direct(cx);
+                }
+            },
         }
         self.sync_transport_state(cx);
     }
@@ -385,6 +396,8 @@ impl MediaWidget {
     /// player opens both so streamed video is not silent. The loading state
     /// remains visible until the worker returns the poster frame or an error.
     fn load_video_stream_async(&mut self, url: &str, cx: &mut Context<Self>) {
+        self.video_load_generation = self.video_load_generation.saturating_add(1);
+        let load_generation = self.video_load_generation;
         self.video_loading = true;
         self.sync_transport_state(cx);
         let url = url.to_string();
@@ -393,8 +406,12 @@ impl MediaWidget {
                 .background_spawn(async move { crate::streaming::resolve_stream_urls(&url).await })
                 .await;
             this.update(cx, |widget, cx| {
+                if widget.suspended || widget.video_load_generation != load_generation {
+                    return;
+                }
                 match result {
                     Ok(stream_urls) => {
+                        widget.error = None;
                         if let Some(player) = &mut widget.video_player {
                             player.open_stream(&stream_urls.video, stream_urls.audio.as_deref());
                             widget.start_playback_loop(cx);
@@ -619,6 +636,9 @@ impl MediaWidget {
         if let Some(player) = &mut self.video_player {
             player.pause();
         }
+        self.video_load_generation = self.video_load_generation.saturating_add(1);
+        self.video_load_task = None;
+        self.video_loading = false;
         self.playback_task = None;
         self.playback_loop_active = false;
         self.sync_transport_state(cx);
@@ -695,7 +715,7 @@ impl MediaWidget {
                 self.playback_loop_active = false;
             }
         }
-        cx.notify();
+        self.sync_transport_state(cx);
     }
 
     /// Compose the provenance-scoped "I disagree" body. References the
@@ -1281,6 +1301,185 @@ mod tests {
 
     fn video_fixture() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-lifecycle.mp4")
+    }
+
+    struct RetryStorage {
+        attempts: std::sync::atomic::AtomicUsize,
+    }
+
+    impl MediaStorage for RetryStorage {
+        fn resolve(&self, _reference: &MediaRef) -> anyhow::Result<ResolvedMedia> {
+            if self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                anyhow::bail!("transient storage failure")
+            }
+            Ok(ResolvedMedia {
+                kind: MediaKind::Image,
+                path: None,
+                bytes: None,
+                url: Some(SharedString::from("https://example.invalid/recovered.png")),
+            })
+        }
+    }
+
+    /// expect: Pause and Stop update the visible transport state in the same event turn.
+    /// [P1] Motivating: controls never display playback state that the child player has already left.
+    /// pre: a video is loaded and playing.
+    /// post: pause publishes not-playing immediately; stop publishes not-playing at position zero immediately.
+    #[gpui::test]
+    async fn pause_and_stop_synchronize_transport_immediately(cx: &mut TestAppContext) {
+        let path = video_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+
+        let load_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.current_frame.is_none())
+            && std::time::Instant::now() < load_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        let play_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !widget.read_with(cx, |widget, _cx| {
+            widget.last_transport.is_some_and(|state| state.is_playing)
+        }) && std::time::Instant::now() < play_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.last_transport.is_some_and(|state| state.is_playing)
+        }));
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.last_transport.is_some_and(|state| !state.is_playing)
+        }));
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        let replay_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !widget.read_with(cx, |widget, _cx| {
+            widget.last_transport.is_some_and(|state| state.is_playing)
+        }) && std::time::Instant::now() < replay_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.last_transport.is_some_and(|state| state.is_playing)
+        }));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::Stop, cx)
+            })
+        });
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget
+                .last_transport
+                .is_some_and(|state| !state.is_playing && state.position == Duration::ZERO)
+        }));
+    }
+
+    /// expect: Hiding a widget cancels an in-flight remote resolution and stale completion cannot restart polling.
+    /// [P1] Motivating: hidden media remains quiescent even when an earlier request completes later.
+    /// pre: remote video resolution owns an in-flight task.
+    /// post: suspension drops the task, clears loading, and completion cannot start playback polling.
+    #[gpui::test]
+    async fn suspend_cancels_in_flight_remote_video_resolution(cx: &mut TestAppContext) {
+        let reference = MediaRef::new(
+            SharedString::from("https://example.invalid/video.mp4"),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        assert!(widget.read_with(cx, |widget, _cx| widget.video_load_task.is_some()));
+
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.suspend(cx)));
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.video_load_task.is_none()
+                && !widget.video_loading
+                && !widget.playback_loop_active
+        }));
+
+        cx.run_until_parked();
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.suspended && !widget.playback_loop_active
+        }));
+    }
+
+    /// expect: Retrying a failed media load removes the old visible failure and successful completion stays clear.
+    /// [P1] Motivating: recovered media is not obscured by stale failure state.
+    /// pre: the first storage attempt fails and the second succeeds.
+    /// post: the first cause is visible; after retry the widget error is absent.
+    #[gpui::test]
+    async fn successful_retry_clears_prior_visible_error(cx: &mut TestAppContext) {
+        let storage = Arc::new(RetryStorage {
+            attempts: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let reference = MediaRef::new(SharedString::from("retry.png"), MediaKind::Image);
+        let widget =
+            cx.update(|cx| cx.new(|cx| MediaWidget::with_storage(reference, storage.clone(), cx)));
+
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        assert_eq!(
+            widget.read_with(cx, |widget, _cx| widget
+                .error
+                .as_ref()
+                .map(ToString::to_string)),
+            Some("transient storage failure".to_string())
+        );
+
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        assert!(widget.read_with(cx, |widget, _cx| widget.error.is_none()));
+        cx.run_until_parked();
+        assert!(widget.read_with(cx, |widget, _cx| widget.error.is_none()));
+    }
+
+    /// expect: A missing image or SVG reports the original path-resolution cause in the widget.
+    /// [P1] Motivating: a broken visual asset is diagnosable where the empty widget would appear.
+    /// pre: PathMediaStorage receives a nonexistent local image or SVG path.
+    /// post: the visible widget error preserves PathMediaStorage's exact cause.
+    #[gpui::test]
+    async fn missing_image_and_svg_surface_path_storage_cause(cx: &mut TestAppContext) {
+        for (kind, path) in [
+            (MediaKind::Image, "/definitely/missing/hkask-image.png"),
+            (MediaKind::Svg, "/definitely/missing/hkask-image.svg"),
+        ] {
+            let reference = MediaRef::new(SharedString::from(path), kind);
+            let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+            cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+            assert_eq!(
+                widget.read_with(cx, |widget, _cx| widget
+                    .error
+                    .as_ref()
+                    .map(ToString::to_string)),
+                Some(format!("media file not found: {path}"))
+            );
+        }
     }
 
     /// expect: A loaded video displays a poster frame without polling until

@@ -556,11 +556,12 @@ impl MediaServer {
         Parameters(AudioConcatRequest { audio_urls }): Parameters<AudioConcatRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_concat", async {
-            if audio_urls.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "audio_urls must not be empty",
-                ));
-            }
+            validate_item_count(
+                "audio_urls",
+                audio_urls.len(),
+                1,
+                hkask_types::media_limits::MAX_CONCAT_ITEMS,
+            )?;
             let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             pause_after_audio_admission().await?;

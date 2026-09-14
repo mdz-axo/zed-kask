@@ -237,6 +237,14 @@ pub struct WorkflowRecord {
     pub created_at: String,
 }
 
+/// Bounded workflow-list row. Full graph JSON is available only through
+/// `GalleryStore::get_workflow`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSummary {
+    pub id: String,
+    pub created_at: String,
+}
+
 /// An album — a named grouping of assets within a gallery. Albums are
 /// metadata-only (assets stay in place on disk); an asset can be in
 /// multiple albums (many-to-many via `gallery_album_members`).
@@ -1253,15 +1261,34 @@ impl GalleryStore {
         })
     }
 
-    /// List all saved workflows, newest first.
+    /// List a bounded page of saved workflow summaries, newest first, without
+    /// loading graph JSON. Returns the matching total for pagination metadata.
     #[must_use = "result must be used"]
-    pub fn list_workflows(&self) -> std::result::Result<Vec<WorkflowRecord>, GalleryStoreError> {
-        Ok(query_map(
+    pub fn list_workflow_summaries(
+        &self,
+        limit: usize,
+    ) -> std::result::Result<(Vec<WorkflowSummary>, usize), GalleryStoreError> {
+        let total = query_row(
             &*self.driver,
-            "SELECT id, graph_json, created_at FROM gallery_workflow ORDER BY created_at DESC",
+            "SELECT COUNT(*) FROM gallery_workflow",
             &[],
-            Self::workflow_from_row,
-        )?)
+            |row| row.get_int(0).map(|count| count as usize),
+        )?
+        .ok_or_else(|| {
+            GalleryStoreError::Conflict("workflow count query returned no row".to_string())
+        })?;
+        let summaries = query_map(
+            &*self.driver,
+            "SELECT id, created_at FROM gallery_workflow ORDER BY created_at DESC, id DESC LIMIT ?1",
+            &[DbValue::Integer(limit as i64)],
+            |row| {
+                Ok(WorkflowSummary {
+                    id: row.get_str(0)?.to_string(),
+                    created_at: row.get_str(1)?.to_string(),
+                })
+            },
+        )?;
+        Ok((summaries, total))
     }
 
     /// Delete a workflow by id. Does not delete assets produced by the
@@ -2034,6 +2061,24 @@ mod tests {
             .unwrap();
         let retrieved = store.get_workflow(&wf.id).unwrap();
         assert_eq!(retrieved.graph_json, "{\"nodes\":[],\"parallel\":false}");
+    }
+
+    /// expect: Workflow listings return only bounded metadata while full graphs remain available
+    /// through direct load.
+    #[test]
+    fn workflow_summary_page_is_bounded_and_excludes_graphs() {
+        let store = setup();
+        let first = store.record_workflow(r#"{"nodes":["first"]}"#).unwrap();
+        let second = store.record_workflow(r#"{"nodes":["second"]}"#).unwrap();
+
+        let (summaries, total) = store.list_workflow_summaries(1).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].id == first.id || summaries[0].id == second.id);
+        assert_eq!(
+            store.get_workflow(&first.id).unwrap().graph_json,
+            r#"{"nodes":["first"]}"#
+        );
     }
 
     #[test]

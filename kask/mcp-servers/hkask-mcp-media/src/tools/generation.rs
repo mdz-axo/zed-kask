@@ -21,7 +21,13 @@ impl MediaServer {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
-            let count = num_images.unwrap_or(1).clamp(1, 10);
+            let count = num_images.unwrap_or(1);
+            validate_item_count(
+                "num_images",
+                count as usize,
+                1,
+                hkask_types::media_limits::MAX_GENERATION_VARIANTS as usize,
+            )?;
             // Admission-time gallery capture: the gallery active when the
             // operation is admitted is the gallery every variant is indexed
             // into, even if the active root switches mid-inference.

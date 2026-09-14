@@ -61,6 +61,22 @@ use std::sync::{Arc, Mutex};
 /// base64-encoded, which triples the size. A multi-GB image would exhaust the
 /// process's address space.
 const MAX_IMAGE_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Validate a bounded collection request before any allocation or external work.
+pub(crate) fn validate_item_count(
+    field: &str,
+    count: usize,
+    minimum: usize,
+    maximum: usize,
+) -> Result<(), McpToolError> {
+    if count < minimum || count > maximum {
+        return Err(McpToolError::invalid_argument(format!(
+            "{field} must contain between {minimum} and {maximum} items; received {count}"
+        )));
+    }
+    Ok(())
+}
+
 use video::FfmpegRunner;
 use video::YtDlpRunner;
 
@@ -1117,6 +1133,86 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
         )
+    }
+
+    /// dcterms:identifier: `MediaServer` bounded batch tool admissions
+    /// expect: Oversized or zero-sized media batches fail visibly before gallery, network,
+    /// inference, or FFmpeg work begins.
+    /// [P9] Motivating: one request cannot silently expand beyond the server's resource budget.
+    /// pre: each request violates its documented shared cardinality limit.
+    /// post: every tool returns `invalid_argument` without requiring an active gallery.
+    /// [P1] Constraining: the server never clamps or partially executes rejected work.
+    #[tokio::test]
+    async fn media_batch_tools_reject_invalid_cardinality_at_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = make_server();
+        let concat_over_cap =
+            vec!["local.wav".to_string(); hkask_types::media_limits::MAX_CONCAT_ITEMS + 1];
+        let video_over_cap =
+            vec!["local.mp4".to_string(); hkask_types::media_limits::MAX_CONCAT_ITEMS + 1];
+        let sequence_over_cap = vec![0; hkask_types::media_limits::MAX_IMAGE_SEQUENCE_ITEMS + 1];
+
+        let errors = [
+            server
+                .audio_concat(Parameters(AudioConcatRequest {
+                    audio_urls: concat_over_cap,
+                }))
+                .await
+                .expect_err("oversized audio concat must fail"),
+            server
+                .video_concat(Parameters(VideoConcatRequest {
+                    video_urls: video_over_cap,
+                }))
+                .await
+                .expect_err("oversized video concat must fail"),
+            server
+                .video_from_images(Parameters(VideoFromImagesRequest {
+                    image_indices: sequence_over_cap,
+                    fps: None,
+                    format: None,
+                }))
+                .await
+                .expect_err("oversized image sequence must fail"),
+            server
+                .video_extract_frames(Parameters(VideoExtractFramesRequest {
+                    video_url: "local.mp4".to_string(),
+                    interval_sec: 2.0,
+                    max_frames: 0,
+                }))
+                .await
+                .expect_err("zero extracted frames must fail"),
+            server
+                .video_extract_frames(Parameters(VideoExtractFramesRequest {
+                    video_url: "local.mp4".to_string(),
+                    interval_sec: 2.0,
+                    max_frames: hkask_types::media_limits::MAX_EXTRACTED_FRAMES + 1,
+                }))
+                .await
+                .expect_err("oversized frame extraction must fail"),
+            server
+                .generate_image(Parameters(GenerateImageRequest {
+                    prompt: "bounded variants".to_string(),
+                    image_size: None,
+                    num_images: Some(0),
+                    style: None,
+                }))
+                .await
+                .expect_err("zero variants must fail"),
+            server
+                .generate_image(Parameters(GenerateImageRequest {
+                    prompt: "bounded variants".to_string(),
+                    image_size: None,
+                    num_images: Some(hkask_types::media_limits::MAX_GENERATION_VARIANTS + 1),
+                    style: None,
+                }))
+                .await
+                .expect_err("oversized variants must fail"),
+        ];
+
+        for error in errors {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        }
+        Ok(())
     }
 
     /// expect: Reopening my gallery after restart restores its original identity. [P1]

@@ -307,8 +307,14 @@ impl MediaServer {
         Parameters(JobListRequest { status, limit }): Parameters<JobListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "job_list", async {
-            let max = limit.unwrap_or(20);
-            let mut jobs = self
+            let limit = limit.unwrap_or(hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT);
+            validate_item_count(
+                "limit",
+                limit,
+                1,
+                hkask_types::media_limits::MAX_JOB_LIST_LIMIT,
+            )?;
+            let mut matching_jobs = self
                 .job_store
                 .list()
                 .map_err(map_job_store_error)?
@@ -317,11 +323,14 @@ impl MediaServer {
                 .collect::<Vec<_>>();
 
             // Sort by created_at descending (newest first).
-            jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-            jobs.truncate(max);
+            matching_jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            let total = matching_jobs.len();
+            let jobs = matching_jobs.into_iter().take(limit).collect::<Vec<_>>();
 
             Ok(serde_json::json!({
                 "jobs": jobs,
+                "total": total,
+                "has_more": total > limit,
                 "history_scope": JOB_HISTORY_SCOPE,
                 "restart_behavior": JOB_RESTART_BEHAVIOR,
             }))
@@ -803,13 +812,17 @@ mod tests {
         );
         let response = server
             .job_list(Parameters(JobListRequest {
-                status: Some("completed".into()),
+                status: None,
                 limit: Some(1),
             }))
             .await?;
+        let value: serde_json::Value = serde_json::from_str(&response)?;
+        let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+        assert_eq!(payload["total"], 2);
+        assert_eq!(payload["has_more"], true);
         let jobs = parse_job_list_response(&response)?;
         assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].id, "older");
+        assert_eq!(jobs[0].id, "newer");
 
         let response = server
             .job_status(Parameters(JobStatusRequest {
@@ -819,6 +832,37 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&response)?;
         let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
         assert_eq!(payload["history_scope"], JOB_HISTORY_SCOPE);
+        Ok(())
+    }
+
+    /// expect: Legacy job arrays and scoped job objects remain decodable after pagination
+    /// metadata is added.
+    #[test]
+    fn job_list_decoder_preserves_legacy_and_scoped_empty_shapes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert!(parse_job_list_response(r#"{"content":[]}"#)?.is_empty());
+        assert!(
+            parse_job_list_response(r#"{"content":{"jobs":[],"total":0,"has_more":false}}"#,)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    /// expect: Invalid job page sizes are rejected rather than clamped or treated as an empty
+    /// queue.
+    #[tokio::test]
+    async fn job_list_rejects_zero_and_over_cap_limits() -> Result<(), Box<dyn std::error::Error>> {
+        let server = server_with_port(Arc::new(NoInference), crate::jobs::new_job_store())?;
+        for limit in [0, hkask_types::media_limits::MAX_JOB_LIST_LIMIT + 1] {
+            let error = server
+                .job_list(Parameters(JobListRequest {
+                    status: None,
+                    limit: Some(limit),
+                }))
+                .await
+                .expect_err("invalid job limit must fail");
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        }
         Ok(())
     }
 

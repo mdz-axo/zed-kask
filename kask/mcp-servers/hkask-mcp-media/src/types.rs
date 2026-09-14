@@ -841,6 +841,13 @@ pub struct WorkflowSaveRequest {
     pub graph_json: String,
 }
 
+/// Request to list saved workflow summaries.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowListRequest {
+    /// Maximum number of workflow summaries to return (default: 100).
+    pub limit: Option<usize>,
+}
+
 /// Request to load a saved workflow by ID.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkflowLoadRequest {
