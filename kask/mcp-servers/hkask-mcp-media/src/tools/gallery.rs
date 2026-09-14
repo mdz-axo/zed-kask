@@ -1,6 +1,119 @@
 //! Gallery tools — organize, search, find-similar, refresh, describe, analyze, faces, timeline.
 use crate::*;
 
+const ANALYSIS_PIPELINES: [&str; 5] = ["faces", "objects", "colors", "composition", "scene"];
+
+#[derive(Debug, PartialEq, Eq)]
+enum AnalysisTarget {
+    New,
+    Indices(Vec<usize>),
+}
+
+fn validate_analysis_pipelines(
+    pipelines: Option<Vec<String>>,
+) -> Result<Vec<String>, McpToolError> {
+    let pipelines = pipelines.unwrap_or_else(|| ANALYSIS_PIPELINES.map(String::from).to_vec());
+    if pipelines.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "pipelines must contain at least one pipeline",
+        ));
+    }
+    for pipeline in &pipelines {
+        if pipeline.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "pipeline names must not be empty",
+            ));
+        }
+        if !ANALYSIS_PIPELINES.contains(&pipeline.as_str()) {
+            return Err(McpToolError::invalid_argument(format!(
+                "unknown pipeline '{pipeline}': must be one of {}",
+                ANALYSIS_PIPELINES.join(", ")
+            )));
+        }
+    }
+    Ok(pipelines)
+}
+
+fn validate_analysis_target(
+    mode: &str,
+    image_indices: Option<Vec<usize>>,
+    image_count: usize,
+    max_images: usize,
+) -> Result<AnalysisTarget, McpToolError> {
+    if max_images == 0 {
+        return Err(McpToolError::invalid_argument(
+            "max_images must be greater than zero",
+        ));
+    }
+    match mode {
+        "new" => {
+            if image_indices.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "image_indices is only valid when mode is 'selection'",
+                ));
+            }
+            Ok(AnalysisTarget::New)
+        }
+        "all" => {
+            if image_indices.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "image_indices is only valid when mode is 'selection'",
+                ));
+            }
+            Ok(AnalysisTarget::Indices(
+                (0..image_count).take(max_images).collect(),
+            ))
+        }
+        "selection" => {
+            let indices = image_indices.ok_or_else(|| {
+                McpToolError::invalid_argument("image_indices is required when mode is 'selection'")
+            })?;
+            if indices.len() > max_images {
+                return Err(McpToolError::invalid_argument(format!(
+                    "selection contains {} indices but max_images is {max_images}; increase max_images or submit a smaller selection",
+                    indices.len()
+                )));
+            }
+            if let Some(index) = indices.iter().find(|index| **index >= image_count) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "image index {index} is out of range for gallery with {image_count} assets"
+                )));
+            }
+            let mut seen = std::collections::HashSet::new();
+            let deduplicated = indices
+                .into_iter()
+                .filter(|index| seen.insert(*index))
+                .collect();
+            Ok(AnalysisTarget::Indices(deduplicated))
+        }
+        other => Err(McpToolError::invalid_argument(format!(
+            "invalid mode '{other}': must be new, all, or selection"
+        ))),
+    }
+}
+
+fn analysis_status(requested: usize, analyzed: u32, errors: &[String]) -> &'static str {
+    if requested == 0 {
+        "nothing_to_analyze"
+    } else if errors.is_empty() && analyzed as usize == requested {
+        "completed"
+    } else if analyzed == 0 {
+        "failed"
+    } else {
+        "partial"
+    }
+}
+
+fn refresh_status(scan_errors: &[String], stage_errors: &[&[String]]) -> &'static str {
+    if !scan_errors.is_empty() {
+        "degraded"
+    } else if stage_errors.iter().any(|errors| !errors.is_empty()) {
+        "partial"
+    } else {
+        "completed"
+    }
+}
+
 /// Score gallery images by Levenshtein tag similarity: for each (term, tag)
 /// pair at or above `min_similarity`, accumulate max(sim × confidence) per
 /// image, then rank descending. Shared by the collage's search-terms and
@@ -432,9 +545,15 @@ impl MediaServer {
             let pipelines: Vec<String> =
                 pipeline_names.into_iter().map(|s| s.to_string()).collect();
 
-            let all_indices: Vec<usize> = (0..total as usize).take(max_images).collect();
+            let analysis_assets: Vec<_> = reconciled
+                .analysis_assets
+                .iter()
+                .take(max_images)
+                .cloned()
+                .collect();
+            let analysis_requested = analysis_assets.len();
             let (analyzed, analyze_errors) = self
-                .run_analysis_on_indices(&ga, &all_indices, &pipelines)
+                .run_analysis_on_assets(&analysis_assets, &pipelines)
                 .await;
 
             let mut faces_matched = 0u32;
@@ -476,8 +595,13 @@ impl MediaServer {
                 }
             }
 
+            let status = refresh_status(
+                &scan.errors,
+                &[&analyze_errors, &face_scan_errors, &match_errors],
+            );
+
             Ok(serde_json::json!({
-                "status": "refreshed",
+                "status": status,
                 "gallery_id": gid,
                 "scan": {
                     "images_added": added,
@@ -490,7 +614,10 @@ impl MediaServer {
                     "persisted": persisted,
                 },
                 "analysis": {
+                    "status": analysis_status(analysis_requested, analyzed, &analyze_errors),
+                    "images_requested": analysis_requested,
                     "images_analyzed": analyzed,
+                    "images_pending_after_bound": reconciled.analysis_assets.len().saturating_sub(analysis_requested),
                     "pipelines": pipelines,
                 },
                 "face_scan_folder": face_scan,
@@ -562,49 +689,50 @@ impl MediaServer {
         }): Parameters<GalleryAnalyzeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_analyze", async {
+            let pipelines = validate_analysis_pipelines(pipelines)?;
             let ga = self.access_gallery().map_err(map_media_error)?;
+            let target = validate_analysis_target(
+                &mode,
+                image_indices,
+                ga.image_count as usize,
+                max_images,
+            )?;
 
-            let indices: Vec<usize> = match mode.as_str() {
-                "selection" => image_indices.unwrap_or_default(),
-                "all" => (0..ga.image_count as usize).collect(),
-                _ => {
-                    let mut untagged = Vec::new();
-                    for i in 0..ga.image_count as usize {
-                        let image = self
-                            .gallery_store
-                            .get_image(&ga.gallery_id, Some(i), None)
-                            .map_err(map_gallery_store_error)?;
-                        {
-                            match self.gallery_store.get_tags(&image.id) {
-                                Ok(tags) if tags.is_empty() => untagged.push(i),
-                                Ok(_) => continue,
-                                // A store failure is not "untagged" — surfacing it
-                                // prevents a DB outage from silently triggering
-                                // re-analysis of the entire gallery.
-                                Err(e) => {
-                                    return Err(map_media_error(e.into()));
-                                }
+            let indices = match target {
+                AnalysisTarget::Indices(indices) => indices,
+                AnalysisTarget::New => {
+                    let assets = self
+                        .gallery_store
+                        .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+                        .map_err(map_gallery_store_error)?;
+                    let mut pending = Vec::new();
+                    for (index, image) in assets.iter().enumerate() {
+                        let needs_analysis = if image.metadata_stale {
+                            true
+                        } else {
+                            self.gallery_store
+                                .get_tags(&image.id)
+                                .map_err(map_gallery_store_error)?
+                                .is_empty()
+                        };
+                        if needs_analysis {
+                            pending.push(index);
+                            if pending.len() == max_images {
+                                break;
                             }
                         }
                     }
-                    untagged
+                    pending
                 }
             };
 
-            let indices: Vec<usize> = indices.into_iter().take(max_images).collect();
             if indices.is_empty() {
                 return Ok(serde_json::json!({
                     "status": "nothing_to_analyze",
-                    "message": "No images to analyze."
+                    "message": "No images to analyze.",
+                    "pipelines_run": pipelines,
                 }));
             }
-
-            let all_pipelines: Vec<String> =
-                vec!["faces", "objects", "colors", "composition", "scene"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect();
-            let pipelines = pipelines.unwrap_or(all_pipelines);
 
             let (analyzed, errors) = self
                 .run_analysis_on_indices(&ga, &indices, &pipelines)
@@ -616,8 +744,9 @@ impl MediaServer {
                 .map(|(_, label)| label)
                 .unwrap_or_else(|| "none".to_string());
 
+            let status = analysis_status(indices.len(), analyzed, &errors);
             Ok(serde_json::json!({
-                "status": "complete",
+                "status": status,
                 "images_analyzed": analyzed,
                 "total_images": indices.len(),
                 "pipelines_run": pipelines,
@@ -677,7 +806,8 @@ impl MediaServer {
                         "face_index": face_group,
                         "name": resolved_name,
                     });
-                    self.persist_tag(&tag.image_id, "face", &new_value.to_string(), 1.0, "user");
+                    self.persist_tag(&tag.image_id, "face", &new_value.to_string(), 1.0, "user")
+                        .map_err(map_gallery_store_error)?;
                     renamed += 1;
                 }
             }

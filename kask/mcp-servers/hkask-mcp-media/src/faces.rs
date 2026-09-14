@@ -243,14 +243,19 @@ impl MediaServer {
                                 "registry_id": reg_entry.id,
                                 "method": "vision_llm",
                             });
-                            self.persist_tag(
+                            match self.persist_tag(
                                 &tag.image_id,
                                 "face",
                                 &new_value.to_string(),
                                 result.confidence,
                                 vision_model.as_str(),
-                            );
-                            faces_matched += 1;
+                            ) {
+                                Ok(_) => faces_matched += 1,
+                                Err(error) => errors.push(format!(
+                                    "Match {} vs {} could not persist: {}",
+                                    reg_entry.id, tag.id, error
+                                )),
+                            }
                             break;
                         }
                     }

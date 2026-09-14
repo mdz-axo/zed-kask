@@ -324,7 +324,7 @@ impl GalleryStore {
                 added_at TEXT NOT NULL,
                 media_type TEXT NOT NULL DEFAULT 'image',
                 missing INTEGER NOT NULL DEFAULT 0,
-                metadata_stale INTEGER NOT NULL DEFAULT 0
+                metadata_stale INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_gallery_images_gallery
                 ON gallery_images(gallery_id);
@@ -605,8 +605,8 @@ impl GalleryStore {
             .strip_prefix(&gallery.root_path)
             .unwrap_or(&absolute);
         transaction.execute(
-            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO gallery_images (id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, metadata_stale)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)
              ON CONFLICT(gallery_id, absolute_path) DO UPDATE SET
                 relative_path = excluded.relative_path, hash = excluded.hash, width = excluded.width,
                 height = excluded.height, format = excluded.format, size_bytes = excluded.size_bytes,
@@ -740,7 +740,7 @@ impl GalleryStore {
 
     /// expect: Analysis of an old revision never tags or certifies a different revision. [P1]
     /// pre: record was captured before inference
-    /// post: tags and freshness commit together only while identity/hash still match
+    /// post: inferred tags for represented types and freshness commit together only while identity/hash still match
     pub fn persist_analysis(
         &self,
         record: &ImageRecord,
@@ -748,6 +748,34 @@ impl GalleryStore {
         model: &str,
         complete: bool,
     ) -> Result<bool, GalleryStoreError> {
+        let mut tag_types = Vec::new();
+        for (tag_type, _, _) in tags {
+            if !tag_types.contains(tag_type) {
+                tag_types.push(tag_type.clone());
+            }
+        }
+        self.persist_analysis_for_tag_types(record, tags, &tag_types, model, complete)
+    }
+
+    /// expect: Reanalysis replaces only successful model-produced metadata while preserving user annotations. [P1]
+    /// pre: record was captured before inference; replace_tag_types names successful pipeline outputs
+    /// post: prior non-user tags for those types are replaced atomically, including successful empty results
+    pub fn persist_analysis_for_tag_types(
+        &self,
+        record: &ImageRecord,
+        tags: &[(String, String, f64)],
+        replace_tag_types: &[String],
+        model: &str,
+        complete: bool,
+    ) -> Result<bool, GalleryStoreError> {
+        if let Some((tag_type, _, _)) = tags
+            .iter()
+            .find(|(tag_type, _, _)| !replace_tag_types.contains(tag_type))
+        {
+            return Err(GalleryStoreError::Conflict(format!(
+                "analysis tag type '{tag_type}' is not represented by a successful pipeline"
+            )));
+        }
         let pool = self
             .driver
             .sqlite_pool()
@@ -761,6 +789,14 @@ impl GalleryStore {
             params![record.id, record.gallery_id, record.hash], |row| row.get(0)).map_err(database_error)?;
         if !matches {
             return Ok(false);
+        }
+        for tag_type in replace_tag_types {
+            transaction
+                .execute(
+                    "DELETE FROM gallery_tags WHERE image_id = ?1 AND tag_type = ?2 AND model_used != 'user'",
+                    params![record.id, tag_type],
+                )
+                .map_err(database_error)?;
         }
         for (tag_type, value, confidence) in tags {
             transaction.execute("INSERT INTO gallery_tags (id, image_id, tag_type, value, confidence, model_used, created_at)
@@ -1680,6 +1716,89 @@ mod tests {
             .unwrap();
         assert_eq!(img.hash, "abc123");
         assert_eq!(img.width, 100);
+    }
+
+    /// expect: A newly indexed image remains pending until complete analysis certifies its revision. [P1]
+    #[test]
+    fn new_images_start_with_stale_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(
+            directory.path().to_str().ok_or("UTF-8 gallery root")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &directory.path().join("pending.png").to_string_lossy(),
+            "revision-one",
+            1,
+            1,
+            "png",
+            1,
+        )?;
+
+        assert!(image.metadata_stale);
+        Ok(())
+    }
+
+    /// expect: Reanalysis atomically replaces successful model tag types, including empty results, without deleting user tags. [P1]
+    #[test]
+    fn reanalysis_replaces_model_tags_and_preserves_user_tags()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(
+            directory.path().to_str().ok_or("UTF-8 gallery root")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &directory.path().join("analyzed.png").to_string_lossy(),
+            "revision-one",
+            1,
+            1,
+            "png",
+            1,
+        )?;
+        store.tag_image(&image.id, "object", "old-model", 0.8, "model-a")?;
+        store.tag_image(&image.id, "object", "keep-user", 1.0, "user")?;
+        store.tag_image(&image.id, "caption", "old-caption", 0.8, "model-a")?;
+        store.tag_image(&image.id, "color", "keep-unrequested", 0.8, "model-a")?;
+
+        let persisted = store.persist_analysis_for_tag_types(
+            &image,
+            &[("object".into(), "new-model".into(), 0.9)],
+            &["object".into(), "caption".into()],
+            "model-b",
+            false,
+        )?;
+        assert!(persisted);
+        let tags = store.get_tags(&image.id)?;
+        assert!(
+            tags.iter()
+                .any(|tag| tag.value == "keep-user" && tag.model_used == "user")
+        );
+        assert!(
+            tags.iter()
+                .any(|tag| tag.value == "new-model" && tag.model_used == "model-b")
+        );
+        assert!(tags.iter().any(|tag| tag.value == "keep-unrequested"));
+        assert!(
+            !tags
+                .iter()
+                .any(|tag| tag.value == "old-model" || tag.value == "old-caption")
+        );
+        assert!(store.get_by_id(&gallery.id, &image.id)?.metadata_stale);
+
+        assert!(store.persist_analysis_for_tag_types(
+            &image,
+            &[],
+            &["caption".into()],
+            "model-b",
+            true,
+        )?);
+        assert!(!store.get_by_id(&gallery.id, &image.id)?.metadata_stale);
+        Ok(())
     }
 
     #[test]

@@ -97,7 +97,7 @@ impl MediaServer {
         image_record_url(&record)
     }
 
-    /// Persist a single tag to the gallery store (best-effort, logs errors).
+    /// Persist a single tag, returning the durable record or the original storage failure.
     pub(crate) fn persist_tag(
         &self,
         image_id: &str,
@@ -105,18 +105,9 @@ impl MediaServer {
         value: &str,
         confidence: f64,
         model: &str,
-    ) {
-        match self
-            .gallery_store
+    ) -> Result<hkask_storage::gallery::TagRecord, hkask_storage::gallery::GalleryStoreError> {
+        self.gallery_store
             .tag_image(image_id, tag_type, value, confidence, model)
-        {
-            Ok(_) => {
-                tracing::debug!(target: "hkask.mcp.media.tags", image_id = %image_id, tag_type = %tag_type, value = %value, "Tag persisted")
-            }
-            Err(e) => {
-                tracing::warn!(target: "hkask.mcp.media.tags", image_id = %image_id, tag_type = %tag_type, error = %e, "Failed to persist tag")
-            }
-        }
     }
 }
 
@@ -231,6 +222,9 @@ impl MediaServer {
         records: &[hkask_storage::gallery::ImageRecord],
         pipelines: &[String],
     ) -> (u32, Vec<String>) {
+        if records.is_empty() {
+            return (0, Vec::new());
+        }
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
             None => {
@@ -261,6 +255,7 @@ impl MediaServer {
             let image_id = &record.id;
             let before_errors = errors.len();
             let mut tags: Vec<(String, String, f64)> = Vec::new();
+            let mut successful_tag_types: Vec<String> = Vec::new();
             let image_url = match image_record_url(record) {
                 Ok(url) => url,
                 Err(error) => {
@@ -279,12 +274,16 @@ impl MediaServer {
                 .await
                 {
                     Ok(faces) => {
+                        let pipeline_errors = errors.len();
                         for face in &faces {
                             match serde_json::to_string(face) {
                                 Ok(value) => tags.push(("face".into(), value, 0.85)),
                                 Err(e) => errors
                                     .push(format!("image {} face tag serialization: {}", idx, e)),
                             }
+                        }
+                        if errors.len() == pipeline_errors {
+                            successful_tag_types.push("face".into());
                         }
                     }
                     Err(e) => {
@@ -303,12 +302,16 @@ impl MediaServer {
                 .await
                 {
                     Ok(objects) => {
+                        let pipeline_errors = errors.len();
                         for obj in &objects {
                             match serde_json::to_string(obj) {
                                 Ok(value) => tags.push(("object".into(), value, 0.85)),
                                 Err(e) => errors
                                     .push(format!("image {} object tag serialization: {}", idx, e)),
                             }
+                        }
+                        if errors.len() == pipeline_errors {
+                            successful_tag_types.push("object".into());
                         }
                     }
                     Err(e) => {
@@ -343,6 +346,7 @@ impl MediaServer {
                                 tags.push(("color".into(), v.into(), 0.9));
                             }
                         }
+                        successful_tag_types.push("color".into());
                     }
                     Err(e) => {
                         errors.push(format!("image {} color analysis: {}", idx, e));
@@ -374,6 +378,7 @@ impl MediaServer {
                                 tags.push(("composition".into(), v.into(), 0.85));
                             }
                         }
+                        successful_tag_types.push("composition".into());
                     }
                     Err(e) => {
                         errors.push(format!("image {} composition analysis: {}", idx, e));
@@ -392,6 +397,7 @@ impl MediaServer {
                 {
                     Ok(caption) => {
                         tags.push(("caption".into(), caption, 0.9));
+                        successful_tag_types.push("caption".into());
                     }
                     Err(e) => {
                         errors.push(format!("image {} scene caption: {}", idx, e));
@@ -409,22 +415,38 @@ impl MediaServer {
                 }
             };
             let complete = errors.len() == before_errors
-                && run_objects
-                && run_colors
-                && run_composition
-                && run_scene
-                && (run_faces || !has_faces);
+                && successful_tag_types
+                    .iter()
+                    .any(|tag_type| tag_type == "object")
+                && successful_tag_types
+                    .iter()
+                    .any(|tag_type| tag_type == "color")
+                && successful_tag_types
+                    .iter()
+                    .any(|tag_type| tag_type == "composition")
+                && successful_tag_types
+                    .iter()
+                    .any(|tag_type| tag_type == "caption")
+                && (successful_tag_types
+                    .iter()
+                    .any(|tag_type| tag_type == "face")
+                    || !has_faces);
             // Detect source edits even when no rescan has updated the durable hash yet.
             if let Err(error) = image_record_url(record) {
                 errors.push(format!("image {idx} changed during analysis: {error}"));
                 continue;
             }
-            match self
-                .gallery_store
-                .persist_analysis(record, &tags, vision_label, complete)
-            {
-                Ok(true) if errors.len() == before_errors => analyzed += 1,
-                Ok(true) => {}
+            if successful_tag_types.is_empty() {
+                continue;
+            }
+            match self.gallery_store.persist_analysis_for_tag_types(
+                record,
+                &tags,
+                &successful_tag_types,
+                vision_label,
+                complete,
+            ) {
+                Ok(true) => analyzed += 1,
                 Ok(false) => errors.push(format!("image {idx} revision changed during analysis")),
                 Err(error) => errors.push(format!("image {idx} metadata persistence: {error}")),
             }
