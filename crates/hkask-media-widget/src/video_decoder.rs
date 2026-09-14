@@ -281,6 +281,22 @@ impl VideoPlayer {
         }
     }
 
+    /// Seek and decode the sought frame without changing whether playback is
+    /// active. Used by the worker so paused scrubbing has immediate feedback.
+    fn seek_and_decode(&mut self, position: Duration) -> anyhow::Result<Option<DecodedFrame>> {
+        self.seek(position);
+        #[cfg(feature = "video")]
+        {
+            if let Some(decoder) = &mut self.decoder {
+                return match decoder.decode_frame_at(position)? {
+                    DecodeOutcome::Frame(frame) => Ok(Some(frame)),
+                    DecodeOutcome::Pending | DecodeOutcome::EndOfStream => Ok(None),
+                };
+            }
+        }
+        Ok(None)
+    }
+
     /// Set volume (0.0 to 1.0+).
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 2.0);
@@ -412,6 +428,7 @@ pub(crate) struct WidgetVideoPoll {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VideoPlaybackEvent {
     Opened,
+    Seeked,
     Completed,
     Failed(String),
 }
@@ -429,7 +446,9 @@ impl WidgetVideoPoll {
     fn error(&self) -> Option<&str> {
         self.events.iter().find_map(|event| match event {
             VideoPlaybackEvent::Failed(error) => Some(error.as_str()),
-            VideoPlaybackEvent::Opened | VideoPlaybackEvent::Completed => None,
+            VideoPlaybackEvent::Opened
+            | VideoPlaybackEvent::Seeked
+            | VideoPlaybackEvent::Completed => None,
         })
     }
 }
@@ -459,6 +478,11 @@ enum VideoCommand {
 
 enum VideoWorkerEvent {
     Opened {
+        generation: u64,
+        sequence: u64,
+        snapshot: VideoSnapshot,
+    },
+    Seeked {
         generation: u64,
         sequence: u64,
         snapshot: VideoSnapshot,
@@ -735,6 +759,19 @@ impl WidgetVideoPlayer {
                         }
                     }
                 }
+                Ok(VideoWorkerEvent::Seeked {
+                    generation,
+                    sequence,
+                    snapshot,
+                }) => {
+                    if generation == self.generation {
+                        poll.events.push(VideoPlaybackEvent::Seeked);
+                        if sequence >= self.last_sequence {
+                            self.last_sequence = sequence;
+                            self.apply_snapshot(snapshot);
+                        }
+                    }
+                }
                 Ok(VideoWorkerEvent::Completed {
                     generation,
                     sequence,
@@ -937,7 +974,37 @@ fn run_video_worker(
                 generation: next_generation,
             }) => {
                 generation = next_generation;
-                player.seek(position);
+                match player.seek_and_decode(position) {
+                    Ok(frame) => {
+                        sequence = sequence.saturating_add(1);
+                        let snapshot = VideoSnapshot::from_player(&player);
+                        frames.publish(frame, snapshot, generation, sequence);
+                        if events
+                            .send(VideoWorkerEvent::Seeked {
+                                generation,
+                                sequence,
+                                snapshot,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        player.pause();
+                        sequence = sequence.saturating_add(1);
+                        if events
+                            .send(VideoWorkerEvent::Failed {
+                                generation,
+                                sequence,
+                                error: error.to_string(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
             }
             Some(VideoCommand::SetVolume(volume)) => player.set_volume(volume),
             Some(VideoCommand::Shutdown) => break,
@@ -1783,6 +1850,41 @@ mod tests {
 
         assert_eq!(frame.presentation_time, Duration::ZERO);
         assert!(!player.is_playing());
+    }
+
+    /// expect: Seeking a paused video immediately presents the frame at the
+    /// requested media position without requiring Play.
+    /// [P1] Motivating: scrubbing gives visible feedback while media is paused.
+    /// pre: the 600ms fixture is opened and remains paused.
+    /// post: seeking to 500ms yields the 500ms frame and playback stays paused.
+    /// [P9] Constraining: the sought frame belongs to the new seek generation.
+    #[test]
+    fn paused_seek_decodes_and_delivers_the_sought_frame() {
+        let path = playback_fixture();
+        let mut player = WidgetVideoPlayer::new().expect("worker starts");
+        player.open(&path);
+        let open_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < open_deadline {
+            if player.poll().has_opened() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        player.seek(Duration::from_millis(500));
+        let seek_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut sought_frame = None;
+        while std::time::Instant::now() < seek_deadline {
+            if let Some(frame) = player.poll().frame {
+                sought_frame = Some(frame);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let frame = sought_frame.expect("paused seek delivers a frame");
+        assert_eq!(frame.presentation_time, Duration::from_millis(500));
+        assert!(!player.is_playing(), "paused seek does not start playback");
     }
 
     /// expect: Foreground starvation cannot accumulate more than one full

@@ -10,7 +10,7 @@ use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     future::Future,
     panic::AssertUnwindSafe,
 };
@@ -109,8 +109,18 @@ struct MaterializedSecurity {
     adjusted_close: f64,
     currency_symbol: String,
     issuer_key: String,
+    lei: Option<String>,
     primary_ticker: Option<String>,
+    isin: Option<String>,
+    normalized_issuer_name: String,
     fundamentals: Value,
+}
+
+struct IssuerGroup {
+    issuer_key: String,
+    issuer_key_provenance: &'static str,
+    issuer_identity_provenance: &'static str,
+    securities: Vec<MaterializedSecurity>,
 }
 
 pub(crate) async fn execute(
@@ -413,28 +423,27 @@ async fn calculate_expectations_gap(
         }
     }
 
-    let mut groups: HashMap<String, Vec<MaterializedSecurity>> = HashMap::new();
-    for security in materialized {
-        groups
-            .entry(security.issuer_key.clone())
-            .or_default()
-            .push(security);
-    }
+    let groups = group_materialized_securities(materialized);
     let mut rows = Vec::new();
-    for (issuer_key, group) in groups {
-        match analyze_issuer_group(client, eodhd_api_key, &fx_rates, &issuer_key, &group).await {
+    for group in groups {
+        match analyze_issuer_group(client, eodhd_api_key, &fx_rates, &group).await {
             Ok(row) => {
-                for duplicate in group.iter().skip(1) {
+                let actionable_symbol = row.get("actionable_symbol").and_then(Value::as_str);
+                for duplicate in group
+                    .securities
+                    .iter()
+                    .filter(|security| Some(security.symbol.as_str()) != actionable_symbol)
+                {
                     exclusions.push(json!({
                         "symbol": duplicate.symbol,
                         "reason": "issuer_deduplicated",
-                        "issuer_key": issuer_key,
+                        "issuer_key": group.issuer_key,
                     }));
                 }
                 rows.push(row);
             }
             Err(reason) => {
-                for security in group {
+                for security in group.securities {
                     exclusions.push(json!({
                         "symbol": security.symbol,
                         "reason": "expectations_unavailable",
@@ -540,17 +549,27 @@ async fn materialize_security(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let issuer_key = general
+    let lei = general
         .get("LEI")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let isin = general
+        .get("ISIN")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let normalized_issuer_name = normalize_name(&name);
+    let issuer_key = lei
+        .as_ref()
         .map(|value| format!("lei:{value}"))
         .or_else(|| {
             primary_ticker
                 .as_ref()
                 .map(|value| format!("primary:{value}"))
         })
-        .unwrap_or_else(|| format!("name:{}", normalize_name(&name)));
+        .or_else(|| isin.as_ref().map(|value| format!("isin:{value}")))
+        .unwrap_or_else(|| format!("name:{normalized_issuer_name}"));
     Ok(MaterializedSecurity {
         symbol,
         name,
@@ -559,18 +578,142 @@ async fn materialize_security(
         adjusted_close,
         currency_symbol: currency_symbol.to_string(),
         issuer_key,
+        lei,
         primary_ticker,
+        isin,
+        normalized_issuer_name,
         fundamentals,
     })
+}
+
+/// expect: Qualifying home shares and ADRs for one issuer produce one auditable row.
+/// [P5] Motivating: issuer-level screening must not rank the same company twice.
+/// pre: securities passed the venue, type, capitalization, and liquidity gates.
+/// post: shared LEI, primary ticker, ISIN, or non-conflicting normalized name evidence forms one group.
+/// [P1] Constraining: conflicting LEIs are never merged through the name fallback.
+fn group_materialized_securities(materialized: Vec<MaterializedSecurity>) -> Vec<IssuerGroup> {
+    let mut groups: Vec<Vec<MaterializedSecurity>> = Vec::new();
+    for security in materialized {
+        let mut merged = vec![security];
+        let mut remaining = groups;
+        loop {
+            let mut next = Vec::new();
+            let mut merged_any = false;
+            for group in remaining {
+                if groups_share_identity(&merged, &group) {
+                    merged.extend(group);
+                    merged_any = true;
+                } else {
+                    next.push(group);
+                }
+            }
+            if !merged_any {
+                next.push(merged);
+                groups = next;
+                break;
+            }
+            remaining = next;
+        }
+    }
+    groups.into_iter().map(finalize_issuer_group).collect()
+}
+
+fn groups_share_identity(left: &[MaterializedSecurity], right: &[MaterializedSecurity]) -> bool {
+    let shares_strong_identity = left.iter().any(|left_security| {
+        right.iter().any(|right_security| {
+            optional_identity_matches(&left_security.lei, &right_security.lei)
+                || optional_identity_matches(
+                    &left_security.primary_ticker,
+                    &right_security.primary_ticker,
+                )
+                || optional_identity_matches(&left_security.isin, &right_security.isin)
+                || left_security.issuer_key == right_security.issuer_key
+        })
+    });
+    if shares_strong_identity {
+        return true;
+    }
+    let shares_name = left.iter().any(|left_security| {
+        right.iter().any(|right_security| {
+            left_security.normalized_issuer_name == right_security.normalized_issuer_name
+        })
+    });
+    if !shares_name {
+        return false;
+    }
+    let distinct_leis: BTreeSet<&str> = left
+        .iter()
+        .chain(right.iter())
+        .filter_map(|security| security.lei.as_deref())
+        .collect();
+    distinct_leis.len() <= 1
+}
+
+fn optional_identity_matches(left: &Option<String>, right: &Option<String>) -> bool {
+    left.as_deref()
+        .zip(right.as_deref())
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn finalize_issuer_group(securities: Vec<MaterializedSecurity>) -> IssuerGroup {
+    let leis: BTreeSet<&str> = securities
+        .iter()
+        .filter_map(|security| security.lei.as_deref())
+        .collect();
+    let primary_tickers: BTreeSet<&str> = securities
+        .iter()
+        .filter_map(|security| security.primary_ticker.as_deref())
+        .collect();
+    let isins: BTreeSet<&str> = securities
+        .iter()
+        .filter_map(|security| security.isin.as_deref())
+        .collect();
+    let normalized_names: BTreeSet<&str> = securities
+        .iter()
+        .map(|security| security.normalized_issuer_name.as_str())
+        .collect();
+    let (issuer_key, issuer_key_provenance) = if let Some(lei) = leis.iter().next() {
+        (format!("lei:{lei}"), "lei")
+    } else if primary_tickers.len() == 1 {
+        let primary = primary_tickers.iter().next().copied().unwrap_or_default();
+        (format!("primary:{primary}"), "primary_ticker")
+    } else if isins.len() == 1 {
+        let isin = isins.iter().next().copied().unwrap_or_default();
+        (format!("isin:{isin}"), "isin")
+    } else {
+        let name = normalized_names.iter().next().copied().unwrap_or_default();
+        (format!("name:{name}"), "normalized_name")
+    };
+    let issuer_identity_provenance = if securities.len() == 1 {
+        issuer_key_provenance
+    } else if leis.len() == 1 && securities.iter().all(|security| security.lei.is_some()) {
+        "lei"
+    } else if primary_tickers.len() == 1
+        && securities
+            .iter()
+            .all(|security| security.primary_ticker.is_some())
+    {
+        "primary_ticker"
+    } else if isins.len() == 1 && securities.iter().all(|security| security.isin.is_some()) {
+        "isin"
+    } else {
+        "normalized_name_fallback"
+    };
+    IssuerGroup {
+        issuer_key,
+        issuer_key_provenance,
+        issuer_identity_provenance,
+        securities,
+    }
 }
 
 async fn analyze_issuer_group(
     client: &reqwest::Client,
     eodhd_api_key: &str,
     fx_rates: &HashMap<String, f64>,
-    issuer_key: &str,
-    group: &[MaterializedSecurity],
+    issuer_group: &IssuerGroup,
 ) -> Result<Value, String> {
+    let group = &issuer_group.securities;
     let primary = group
         .iter()
         .find_map(|security| security.primary_ticker.as_deref())
@@ -619,6 +762,20 @@ async fn analyze_issuer_group(
         listing_currency_symbol,
     )
     .await?;
+    let price_currency_normalization_provenance = json!({
+        "analysis_symbol": primary,
+        "price_source": if primary_security.is_some() {
+            "EODHD screener adjusted_close"
+        } else {
+            "EODHD realtime primary-security close"
+        },
+        "raw_price": raw_price,
+        "listing_currency_symbol": listing_currency_symbol,
+        "quote_currency": fundamentals.pointer("/General/CurrencyCode"),
+        "statement_currency": fundamentals.pointer("/Financials/Income_Statement/currency_symbol"),
+        "normalized_price_in_statement_currency": current_price,
+        "method": "listing-unit normalization, then quote-currency-to-USD and USD-to-statement-currency FX conversion",
+    });
     let analysis = crate::tools::expectations::solve_expectations(
         &income,
         &balance,
@@ -684,10 +841,23 @@ async fn analyze_issuer_group(
     let score = expectation_score(&growth_gap, &profitability_gap);
     Ok(json!({
         "company": actionable.name,
-        "issuer_key": issuer_key,
+        "issuer_key": issuer_group.issuer_key,
+        "issuer_key_provenance": issuer_group.issuer_key_provenance,
+        "issuer_identity_provenance": issuer_group.issuer_identity_provenance,
         "primary_ticker": primary,
+        "analysis_symbol": primary,
+        "analysis_line_reason": "EODHD PrimaryTicker supplies the issuer fundamentals and price-implied analysis",
         "actionable_symbol": actionable.symbol,
+        "actionable_venue": symbol_venue(&actionable.symbol),
+        "actionable_line_reason": "highest normalized 200-day average daily dollar volume among eligible lines",
         "eligible_symbols": group.iter().map(|security| security.symbol.clone()).collect::<Vec<_>>(),
+        "eligible_lines": group.iter().map(|security| json!({
+            "symbol": security.symbol,
+            "venue": symbol_venue(&security.symbol),
+            "market_capitalization_usd": security.market_capitalization_usd,
+            "average_daily_dollar_volume_usd": security.average_daily_dollar_volume_usd,
+            "listing_currency_symbol": security.currency_symbol,
+        })).collect::<Vec<_>>(),
         "market_capitalization_usd": cap,
         "average_daily_dollar_volume_usd": actionable.average_daily_dollar_volume_usd,
         "demonstrated_profitability": demonstrated,
@@ -698,6 +868,7 @@ async fn analyze_issuer_group(
         "profitability_gap_pp": profitability_gap,
         "expectations_gap_score": score,
         "data_quality_status": if score.is_number() { "complete" } else { "partial" },
+        "price_currency_normalization_provenance": price_currency_normalization_provenance,
         "expectations_report": report,
     }))
 }
@@ -986,6 +1157,10 @@ fn currency_spec(symbol: &str) -> Option<(&'static str, f64)> {
         "₫" => Some(("VND", 1.0)),
         _ => None,
     }
+}
+
+fn symbol_venue(symbol: &str) -> &str {
+    symbol.rsplit_once('.').map_or("", |(_, exchange)| exchange)
 }
 
 fn normalize_name(value: &str) -> String {

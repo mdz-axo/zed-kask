@@ -2538,14 +2538,29 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
         if path.starts_with("/eodhd/screener") {
             return (200, json!({"data":[
                 {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
+                {"code":"LIQADR","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0},
                 {"code":"ILL","name":"Illiquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":8_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":1_000.0}
             ]}));
         }
         if path.starts_with("/eodhd/exchange-symbol-list/US") {
             return (200, json!([
                 {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
+                {"Code":"LIQADR","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000003"},
                 {"Code":"ILL","Name":"Illiquid Issuer","Exchange":"NASDAQ","Currency":"USD","Type":"Common Stock","Isin":"US0000000002"}
             ]));
+        }
+        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("LIQADR");
+            value["General"]["Name"] = json!("Liquid Issuer");
+            value["General"]["Type"] = json!("Common Stock");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["ISIN"] = json!("US0000000003");
+            value["General"]["PrimaryTicker"] = json!("LIQADR.US");
+            value["General"]["IsDelisted"] = json!(false);
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            return (200, value);
         }
         if path.starts_with("/eodhd/fundamentals/LIQ.US") {
             let mut value = eodhd_fixture();
@@ -2619,24 +2634,44 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                     .await
                     .expect("results"),
             );
-            assert_eq!(output["metadata"]["candidate_count"], json!(2));
+            assert_eq!(output["metadata"]["candidate_count"], json!(3));
             assert_eq!(output["metadata"]["passed_count"], json!(1));
-            assert_eq!(output["metadata"]["excluded_count"], json!(1));
+            assert_eq!(output["metadata"]["excluded_count"], json!(2));
             assert_eq!(output["metadata"]["reconciled"], json!(true));
             assert_eq!(output["table"]["row_count"], json!(1));
-            assert_eq!(output["table"]["row_ids"], json!(["LIQ.US"]));
+            assert_eq!(output["table"]["row_ids"], json!(["LIQADR.US"]));
             assert_eq!(
                 output["table"]["columns"]["actionable_symbol"]["values"],
-                json!(["LIQ.US"])
+                json!(["LIQADR.US"])
             );
-            assert_eq!(output["exclusions"][0]["symbol"], json!("ILL.US"));
+            assert_eq!(
+                output["table"]["columns"]["eligible_symbols"]["values"],
+                json!([["LIQ.US", "LIQADR.US"]])
+            );
+            assert_eq!(
+                output["table"]["columns"]["issuer_key"]["values"],
+                json!(["lei:549300LIQUIDSET01"])
+            );
+            assert_eq!(
+                output["table"]["columns"]["issuer_identity_provenance"]["values"],
+                json!(["normalized_name_fallback"])
+            );
+            assert!(output["exclusions"].as_array().is_some_and(|exclusions| {
+                exclusions.iter().any(|row| {
+                    row["symbol"] == json!("LIQ.US")
+                        && row["reason"] == json!("issuer_deduplicated")
+                }) && exclusions.iter().any(|row| {
+                    row["symbol"] == json!("ILL.US")
+                        && row["reason"] == json!("below_liquidity_minimum")
+                })
+            }));
             let fundamental_calls = fixture
                 .requests()
                 .iter()
                 .filter(|path| path.starts_with("/eodhd/fundamentals/"))
                 .count();
             assert_eq!(
-                fundamental_calls, 1,
+                fundamental_calls, 2,
                 "illiquid rows must not fetch fundamentals"
             );
             let history_calls = fixture

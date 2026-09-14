@@ -110,10 +110,10 @@ It runs the same 600ms, six-frame, 10 FPS fixture through 1, 8, and 32 visible
 or viz-cached `MediaWidget` entities. The measured 2026-09-13 Linux run used
 120 FPS, ten samples per input, 100ms warm-up, and a one-second requested
 measurement window (Criterion extended each input to ten complete iterations).
-Completion intervals were 685.57–771.63ms across visible workloads and
-704.16–734.23ms across cached workloads. Across the combined run, foreground
-work p95/p99/max was 1.769/1.878/3.580ms, draw p95/p99/max was
-1.725/1.835/3.502ms, and both reported zero 8.33ms frame-budget overruns.
+Completion intervals were 695.97–777.57ms across visible workloads and
+700.38–724.51ms across cached workloads. Across the combined run, foreground
+work p95/p99/max was 1.800/2.490/6.259ms, draw p95/p99/max was
+1.753/2.456/6.033ms, and both reported zero 8.33ms frame-budget overruns.
 The Linux headless path measures CPU scheduling/render work, not real GPU
 submission. Correctness gates require monotonic consumed PTS, final PTS 500ms,
 a retained final frame, and mailbox high-water exactly one.

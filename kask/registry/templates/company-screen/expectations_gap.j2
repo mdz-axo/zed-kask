@@ -30,8 +30,17 @@ visibility: Public
   ],
   "columns": [
     {"id":"company","label":"Company","source":"company","data_type":"string","unit":null},
+    {"id":"issuer_key","label":"Issuer Identity Key","source":"issuer_key","data_type":"string","unit":null},
+    {"id":"issuer_key_provenance","label":"Issuer Key Provenance","source":"issuer_key_provenance","data_type":"string","unit":null},
+    {"id":"issuer_identity_provenance","label":"Issuer Grouping Provenance","source":"issuer_identity_provenance","data_type":"string","unit":null},
     {"id":"primary_ticker","label":"Primary Security","source":"primary_ticker","data_type":"string","unit":null},
+    {"id":"analysis_symbol","label":"Analysis Security","source":"analysis_symbol","data_type":"string","unit":null},
+    {"id":"analysis_line_reason","label":"Analysis Line Selection","source":"analysis_line_reason","data_type":"string","unit":null},
     {"id":"actionable_symbol","label":"Eligible Traded Symbol","source":"actionable_symbol","data_type":"string","unit":null},
+    {"id":"actionable_venue","label":"Eligible Traded Venue","source":"actionable_venue","data_type":"string","unit":null},
+    {"id":"actionable_line_reason","label":"Actionable Line Selection","source":"actionable_line_reason","data_type":"string","unit":null},
+    {"id":"eligible_symbols","label":"All Eligible Traded Symbols","source":"eligible_symbols","data_type":"array","unit":null},
+    {"id":"eligible_lines","label":"Eligible Traded Line Metadata","source":"eligible_lines","data_type":"array","unit":null},
     {"id":"market_capitalization_usd","label":"Issuer Market Capitalization","source":"market_capitalization_usd","data_type":"number","unit":"USD"},
     {"id":"average_daily_dollar_volume_usd","label":"Average Daily Dollar Volume","source":"average_daily_dollar_volume_usd","data_type":"number","unit":"USD"},
     {"id":"demonstrated_profitability","label":"Demonstrated Profitability","source":"demonstrated_profitability","data_type":"number","unit":"ratio"},
@@ -41,6 +50,7 @@ visibility: Public
     {"id":"implied_profitability","label":"Implied Profitability","source":"implied_profitability","data_type":"number","unit":"ratio"},
     {"id":"profitability_gap_pp","label":"Profitability Gap","source":"profitability_gap_pp","data_type":"number","unit":"percentage_points"},
     {"id":"expectations_gap_score","label":"Expectations Gap Score","source":"expectations_gap_score","data_type":"number","unit":"score"},
+    {"id":"price_currency_normalization_provenance","label":"Price and Currency Normalization Provenance","source":"price_currency_normalization_provenance","data_type":"object","unit":null},
     {"id":"data_quality_status","label":"Data Quality","source":"data_quality_status","data_type":"string","unit":null}
   ],
   "ranking": [

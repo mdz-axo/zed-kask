@@ -561,7 +561,9 @@ impl MediaWidget {
             }
             for event in poll.events {
                 match event {
-                    VideoPlaybackEvent::Opened | VideoPlaybackEvent::Completed => {
+                    VideoPlaybackEvent::Opened
+                    | VideoPlaybackEvent::Seeked
+                    | VideoPlaybackEvent::Completed => {
                         self.video_loading = false;
                     }
                     VideoPlaybackEvent::Failed(error) => {
@@ -633,9 +635,16 @@ impl MediaWidget {
                     let duration = player.duration();
                     player.seek(Duration::from_secs_f32(duration.as_secs_f32() * fraction));
                 }
-                if let Some(player) = &mut self.video_player {
+                let video_seek = if let Some(player) = &mut self.video_player {
                     let duration = player.duration();
                     player.seek(Duration::from_secs_f32(duration.as_secs_f32() * fraction));
+                    true
+                } else {
+                    false
+                };
+                if video_seek {
+                    self.video_loading = true;
+                    self.start_playback_loop(cx);
                 }
             }
             TransportEvent::VolumeChange(volume) => {
@@ -1269,6 +1278,7 @@ mod tests {
             timer.await;
             cx.run_until_parked();
         }
+        cx.run_until_parked();
         let (has_frame, is_playing, has_task) = widget.read_with(cx, |widget, _cx| {
             (
                 widget.current_frame.is_some(),
@@ -1301,6 +1311,39 @@ mod tests {
         assert!(
             !widget.read_with(cx, |widget, _cx| widget.playback_loop_active),
             "Pause cancels polling"
+        );
+
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::Seek(5.0 / 6.0), cx)
+            })
+        });
+        let seek_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| {
+            widget
+                .video_player
+                .as_ref()
+                .and_then(|player| player.delivery_stats().last_consumed_pts_ms)
+                != Some(500)
+        }) && std::time::Instant::now() < seek_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            widget.read_with(cx, |widget, _cx| {
+                widget
+                    .video_player
+                    .as_ref()
+                    .and_then(|player| player.delivery_stats().last_consumed_pts_ms)
+            }),
+            Some(500),
+            "paused seek restarts polling until the sought frame is visible"
+        );
+        assert!(
+            !widget.read_with(cx, |widget, _cx| widget.playback_loop_active),
+            "paused seek polling stops after delivering the frame"
         );
     }
 
