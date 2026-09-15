@@ -67,6 +67,8 @@ pub struct PlaybackBenchmarkSnapshot {
     pub position: Duration,
     pub duration: Duration,
     pub has_frame: bool,
+    pub suspended: bool,
+    pub polling: bool,
     pub error: Option<String>,
     pub delivery: VideoDeliveryStats,
 }
@@ -937,6 +939,8 @@ impl MediaWidget {
             position: player.position(),
             duration: player.duration(),
             has_frame: self.current_frame.is_some(),
+            suspended: self.suspended,
+            polling: self.playback_loop_active,
             error: self.error.as_ref().map(ToString::to_string),
             delivery: player.delivery_stats(),
         })
@@ -951,6 +955,9 @@ impl Focusable for MediaWidget {
 
 impl gpui::Render for MediaWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.visibility_managed {
+            self.last_visible_at = Instant::now();
+        }
         let theme = cx.theme();
 
         // A load/decode failure must be visible — storing it in `self.error`

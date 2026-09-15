@@ -11,7 +11,10 @@ const EXPECTED_FINAL_PTS_MS: u64 = 500;
 
 #[derive(Clone, Copy, Debug)]
 enum PlaybackMode {
+    /// Visible players must reach completed playback.
     Visible,
+    /// Loaded players are removed from the render tree after playback starts;
+    /// they must reach suspended/no-polling rather than completing offscreen.
     Cached,
 }
 
@@ -76,6 +79,7 @@ fn media_playback(input: &PlaybackInput, cx: &mut BenchAppContext) {
 }
 
 struct PlaybackFixture {
+    mode: PlaybackMode,
     root: Entity<PlaybackBenchView>,
     widgets: Vec<Entity<MediaWidget>>,
 }
@@ -109,19 +113,19 @@ impl PlaybackFixture {
                 widgets.push(widget);
             }
 
-            let visible_widgets = match input.mode {
-                PlaybackMode::Visible => widgets.clone(),
-                PlaybackMode::Cached => Vec::new(),
-            };
             let root = window.replace_root(cx, |_window, _cx| PlaybackBenchView {
-                widgets: visible_widgets,
+                widgets: widgets.clone(),
                 progress_tick: 0,
             });
             (root, widgets)
         });
 
         wait_until_ready(&widgets, cx);
-        Self { root, widgets }
+        Self {
+            mode: input.mode,
+            root,
+            widgets,
+        }
     }
 
     fn run(
@@ -131,7 +135,14 @@ impl PlaybackFixture {
         for widget in &self.widgets {
             widget.update(cx, |widget, cx| widget.benchmark_start_playback(cx));
         }
+        if matches!(self.mode, PlaybackMode::Cached) {
+            self.root.update(cx, |view, cx| {
+                view.widgets.clear();
+                cx.notify();
+            });
+        }
 
+        let mode = self.mode;
         let widgets = self.widgets.clone();
         self.root.update(cx, |_, cx| {
             cx.spawn(async move |root, cx| {
@@ -149,14 +160,23 @@ impl PlaybackFixture {
                             widget.read_with(cx, |widget, _cx| widget.benchmark_snapshot())
                         })
                         .collect::<Option<Vec<_>>>();
-                    if let Some(snapshots) = snapshots
-                        && snapshots.iter().all(|snapshot| {
-                            snapshot.state
-                                == hkask_media_widget::video_decoder::PlaybackState::Finished
-                        })
-                    {
-                        validate_completion(&snapshots);
-                        return Ok(snapshots);
+                    if let Some(snapshots) = snapshots {
+                        let reached_terminal = match mode {
+                            PlaybackMode::Visible => snapshots.iter().all(|snapshot| {
+                                snapshot.state
+                                    == hkask_media_widget::video_decoder::PlaybackState::Finished
+                            }),
+                            PlaybackMode::Cached => snapshots
+                                .iter()
+                                .all(|snapshot| snapshot.suspended && !snapshot.polling),
+                        };
+                        if reached_terminal {
+                            match mode {
+                                PlaybackMode::Visible => validate_completion(&snapshots),
+                                PlaybackMode::Cached => validate_suspension(&snapshots),
+                            }
+                            return Ok(snapshots);
+                        }
                     }
                     if Instant::now() >= deadline {
                         anyhow::bail!(
@@ -246,6 +266,26 @@ fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot]) {
         assert!(snapshot.delivery.consumed_frames <= 6);
         assert!(snapshot.delivery.consumed_frames >= 2);
         assert!(snapshot.position >= snapshot.duration);
+    }
+    std::hint::black_box(snapshots);
+}
+
+fn validate_suspension(snapshots: &[PlaybackBenchmarkSnapshot]) {
+    for snapshot in snapshots {
+        assert!(
+            snapshot.error.is_none(),
+            "hidden playback failed before suspension: {:?}",
+            snapshot.error
+        );
+        assert!(snapshot.suspended, "hidden media must be suspended");
+        assert!(!snapshot.polling, "hidden media must own no polling task");
+        assert_ne!(
+            snapshot.state,
+            hkask_media_widget::video_decoder::PlaybackState::Playing,
+            "hidden media must not continue decode/audio playback"
+        );
+        assert_eq!(snapshot.delivery.max_pending_frames, 1);
+        assert!(snapshot.delivery.pending_frames <= 1);
     }
     std::hint::black_box(snapshots);
 }
