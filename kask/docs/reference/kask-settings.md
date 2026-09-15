@@ -39,7 +39,7 @@ storage-root fields:
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 
-## Inference lifetime (`KaskGeneralSettings`)
+## Inference admission and resilience (`KaskGeneralSettings`)
 
 The operator-ratified core-review D3 contract (2026-09-04) is a total
 **admission-to-completion** deadline: queue wait, model resolution, stream
@@ -50,11 +50,18 @@ clients retain their 600-second transport fallback when the timer is disabled;
 otherwise they allow the published server timeout plus 30 seconds of grace.
 
 Accepted bridge requests are bounded at twice `general.max_concurrency`;
-active calls remain bounded at that configured concurrency. Saturation returns
-`Overloaded` before provider dispatch. Expiry returns `Timeout`. Caller/channel
-closure cancels local queued or running work and releases capacity. Provider
-work or tool effects already accepted elsewhere cannot be undone by cancellation;
-unknown-effect requests are not automatically replayed.
+active calls remain bounded at that configured concurrency. Exhausting admission
+capacity returns `Overloaded` before provider dispatch; full active utilization
+alone is healthy. Expiry returns `Timeout`. Caller/channel closure cancels local
+queued or running work and releases capacity.
+
+`general.inference_circuit_failure_threshold` (default 3) consecutive transient
+failures opens the local inference circuit. While open, requests return
+`CircuitOpen` before dispatch. After `general.inference_circuit_open_secs`
+(default 30), one half-open probe is admitted; success closes and transient
+failure reopens the circuit. Permanent authorization, configuration, model, and
+provider failures do not open the transient circuit; Regulation escalates them
+with typed evidence. Unknown-effect requests are not automatically replayed.
 
 ## MCP Servers (`KaskMcpSettings`)
 

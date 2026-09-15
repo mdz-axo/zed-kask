@@ -1,7 +1,6 @@
 //! StrategyEvaluator — Multi-model regulation strategy selection (Fermi improvement-loop pattern).
 //!
-//! Where `try_substitute` walks a fixed action ladder within a single strategy,
-//! `StrategyEvaluator` selects between *different strategies* for the same metric.
+//! `StrategyEvaluator` compares evidence-bearing rollout strategies for the same metric.
 //! This is Fermi's `improvement_loop` applied to cybernetic regulation:
 //! try multiple model variants, score each by held-out effectiveness, promote the winner.
 //!

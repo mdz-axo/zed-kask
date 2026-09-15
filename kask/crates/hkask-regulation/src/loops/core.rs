@@ -152,10 +152,9 @@ pub enum ActionDecision {
 pub struct LoopMetrics {
     /// Milliseconds between sense start and act completion (loop latency).
     pub delay_ms: u64,
-    /// Ratio of actions produced to deviations detected (responsiveness).
-    /// 1.0 = every deviation produced an action (or no deviations detected —
-    /// trivially responsive). 0.0 = deviations detected but no actions produced.
-    pub gain: f64,
+    /// Fraction of deviations that produced a typed disposition, bounded to
+    /// 0.0–1.0. Both `Notify` and `Escalate` are handled responses.
+    pub response_coverage: f64,
     /// How well actions match deviations (0.0–1.0).
     /// 1.0 = every deviation had a corresponding action (or no deviations
     /// detected — trivially matched). 0.0 = deviations detected but none matched.
@@ -177,7 +176,7 @@ impl Default for LoopMetrics {
     fn default() -> Self {
         Self {
             delay_ms: 0,
-            gain: 1.0,
+            response_coverage: 1.0,
             fidelity_score: 1.0,
             observed_progress_score: 0.0,
             trigger: TriggerOrigin::Scheduled,
@@ -192,7 +191,7 @@ impl LoopMetrics {
     /// \[P9\] Homeostatic Self-Regulation — loop quality enables Regulation self-observation
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle
-    /// post: returns LoopMetrics with gain, fidelity_score, and
+    /// post: returns LoopMetrics with response_coverage, fidelity_score, and
     ///       observed_progress_score computed from cycle data
     ///
     /// - `elapsed_ms`: wall-clock time from sense start to act end
@@ -208,14 +207,14 @@ impl LoopMetrics {
         impact_reports: &[ImpactReport],
         trigger: TriggerOrigin,
     ) -> Self {
-        // Gain: responsiveness. When no deviations exist, the loop is
+        // Response coverage. When no deviations exist, the loop is
         // trivially responsive (it responded to all zero deviations) — 1.0,
         // not 0.0. Reporting 0.0 when healthy makes "broken" and "healthy"
         // indistinguishable to the operator.
-        let gain = if deviations.is_empty() {
+        let response_coverage = if deviations.is_empty() {
             1.0
         } else {
-            actions.len() as f64 / deviations.len() as f64
+            (actions.len() as f64 / deviations.len() as f64).min(1.0)
         };
 
         // Fidelity: count how many deviations had a matching action by metric_name.
@@ -247,7 +246,7 @@ impl LoopMetrics {
 
         Self {
             delay_ms: elapsed_ms,
-            gain,
+            response_coverage,
             fidelity_score,
             observed_progress_score,
             trigger,
@@ -766,13 +765,13 @@ mod tests {
     use super::*;
 
     /// Pins F1 + F2 + F3: when no deviations and no impact reports exist
-    /// (the healthy steady-state), gain=1.0 (trivially responsive),
+    /// (the healthy steady-state), response coverage=1.0,
     /// fidelity=1.0 (trivially matched), and effectiveness=0.0 (unverified —
     /// NOT 1.0, which would conflate "no data" with "all effective").
     ///
     /// Before the fix, all three reported 0.0 / 0.0 / 1.0 — the operator
-    /// could not distinguish "loop broken" (gain=0) from "system healthy"
-    /// (gain=0), nor "all actions effective" (effectiveness=1) from "no
+    /// could not distinguish an unresponsive loop from a healthy steady state,
+    /// nor "all actions effective" (effectiveness=1) from "no
     /// verification ran" (effectiveness=1).
     #[test]
     fn from_cycle_healthy_reports_trivially_correct_metrics() {
@@ -784,8 +783,8 @@ mod tests {
             TriggerOrigin::Scheduled,
         );
         assert_eq!(
-            metrics.gain, 1.0,
-            "gain=1.0 when healthy (trivially responsive)"
+            metrics.response_coverage, 1.0,
+            "response coverage is 1.0 when healthy"
         );
         assert_eq!(
             metrics.fidelity_score, 1.0,
@@ -797,10 +796,9 @@ mod tests {
         );
     }
 
-    /// Pins F1: gain = actions / deviations when deviations exist. Two
-    /// deviations, one action → gain = 0.5.
+    /// Response coverage counts handled deviations and remains bounded.
     #[test]
-    fn from_cycle_gain_is_actions_over_deviations() {
+    fn from_cycle_response_coverage_is_dispositions_over_deviations() {
         let signal_a = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
         let signal_b = Signal::new(
             LoopId::Cybernetics,
@@ -813,14 +811,17 @@ mod tests {
             Deviation::from_signal(&signal_b).unwrap(),
         ];
         let action = RegulatoryAction::with_metric(
-            LoopId::Inference,
-            ActionType::Throttle,
+            LoopId::Curation,
+            ActionType::Escalate,
             RegulatoryActionParams::reason("energy_budget_low"),
             "energy_remaining".into(),
         );
         let metrics =
             LoopMetrics::from_cycle(0, &deviations, &[action], &[], TriggerOrigin::Scheduled);
-        assert_eq!(metrics.gain, 0.5, "1 action / 2 deviations = 0.5");
+        assert_eq!(
+            metrics.response_coverage, 0.5,
+            "1 disposition / 2 deviations = 0.5"
+        );
         assert_eq!(
             metrics.fidelity_score, 0.5,
             "1 matched / 2 deviations = 0.5"
@@ -835,14 +836,14 @@ mod tests {
     #[test]
     fn from_cycle_progress_is_improved_over_verified() {
         let report_accept = ImpactReport::new(
-            ActionType::Throttle,
+            ActionType::Notify,
             SignalMetric::EnergyRemaining,
             0.1,
             0.3, // improved (delta > 0 for EnergyRemaining)
             ActionDecision::Accept,
         );
         let report_block = ImpactReport::new(
-            ActionType::CircuitBreak,
+            ActionType::Escalate,
             SignalMetric::ErrorRate,
             0.3,
             0.5, // worsened
@@ -859,8 +860,8 @@ mod tests {
             metrics.observed_progress_score, 0.5,
             "1 improved / 2 verified = 0.5"
         );
-        // gain and fidelity are 1.0 because no deviations (healthy state).
-        assert_eq!(metrics.gain, 1.0);
+        // Response coverage and fidelity are 1.0 because no deviations.
+        assert_eq!(metrics.response_coverage, 1.0);
         assert_eq!(metrics.fidelity_score, 1.0);
     }
 

@@ -1,13 +1,6 @@
-//! Loop action types — efferent actions and their type classification.
+//! Typed central regulation dispositions and evidence payloads.
 
 use super::core::LoopId;
-
-/// Budget option presented to the Curator during budget guard escalation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BudgetOption {
-    pub id: String,
-    pub label: String,
-}
 
 /// Typed regulation data — replaces the previous `serde_json::Value` pass-through.
 ///
@@ -17,33 +10,9 @@ pub struct BudgetOption {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum RegulationData {
-    /// Energy budget below set-point (Autonomous mode).
-    EnergyBudgetLow {
-        remaining_ratio: f64,
-        set_point: f64,
-    },
-    /// Budget guard escalation to Curator (CuratorMediated mode).
-    BudgetGuardEscalation {
-        remaining_ratio: f64,
-        set_point: f64,
-        projected_minutes: u64,
-        options: Vec<BudgetOption>,
-        curator_timeout_secs: u64,
-        fallback: String,
-    },
-    /// Automatic energy adjustment within set-point bounds.
-    EnergyDepletionAutoAdjust {
-        remaining_ratio: f64,
-        set_point: f64,
-    },
     /// Variety deficit exceeded threshold.
     VarietyDeficitExceeded { deficit: f64, threshold: f64 },
-    /// Error rate exceeded threshold.
-    ErrorRateExceeded { error_rate: f64, threshold: f64 },
-    /// Connector latency exceeded threshold.
-    ConnectorLatencyExceeded { latency_secs: f64, threshold: f64 },
-    /// Communication queue backpressure.
-    CommunicationBackpressure { queue_depth: f64, threshold: f64 },
+
     // Wallet and SeamCoverage data variants removed 2026-08-30 with their
     // policy rules — residuals of the deleted wallet module (219c74b180)
     // and a never-built seam watcher.
@@ -66,13 +35,6 @@ pub enum RegulationData {
     /// for the advisory. Subsequent sensing may show that the condition
     /// recovered, but recovery alone does not establish that advice worked.
     OcrSilentFailuresExceeded { count: f64, threshold: f64 },
-    /// Curator (metacognition) budget override directed at a named agent.
-    ///
-    /// Carries the LLM-produced target agent name and new budget so `act()`
-    /// can issue a `CuratorDirective::OverrideEnergyBudget` without losing the
-    /// values (previously the action carried only a reason string and the
-    /// budget/target were silently dropped).
-    CuratorBudgetOverride { agent: String, new_budget: u64 },
 
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]
@@ -93,13 +55,7 @@ impl RegulationData {
     /// `regulation_policy::extract_deficit_threshold` returns `Some`) —
     /// the rest never reach verb selection.
     pub fn below_threshold_is_bad(&self) -> bool {
-        matches!(
-            self,
-            RegulationData::ToolReliabilityDegraded { .. }
-                | RegulationData::EnergyBudgetLow { .. }
-                | RegulationData::BudgetGuardEscalation { .. }
-                | RegulationData::EnergyDepletionAutoAdjust { .. }
-        )
+        matches!(self, RegulationData::ToolReliabilityDegraded { .. })
     }
 }
 
@@ -153,7 +109,7 @@ impl std::fmt::Display for RegulatoryActionParams {
     }
 }
 
-/// Efferent action produced by a loop's compute phase.
+/// Central disposition produced by a loop's compute phase.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RegulatoryAction {
     pub target: LoopId,
@@ -182,40 +138,13 @@ impl RegulatoryAction {
     }
 }
 
-/// Types of regulatory actions a loop can produce.
+/// Truthful dispositions the central regulation loop can execute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActionType {
-    /// Reduce resource allocation to a target loop
-    Throttle,
-    /// Escalate an alert to the Curation loop
+    /// Route an evidence-bearing condition to Curation/human review.
     Escalate,
-    /// Adjust a threshold or set-point
-    Calibrate,
-    /// Open a circuit breaker on a target
-    CircuitBreak,
-    /// Adjust energy budget within set-point bounds (Cybernetics automatic regulation)
-    ///
-    /// This is a *weaker* capability than `OverrideEnergyBudget`.
-    /// Cybernetics can adjust within its set-point range.
-    /// Only Curation can override set-points themselves.
-    AdjustEnergyBudget,
-    /// Override energy budget beyond set-point bounds (Curation metacognitive override)
-    ///
-    /// This is a *stronger* capability than `AdjustEnergyBudget`.
-    /// Only Curation can issue this — it can exceed Cybernetics' set-point range.
-    OverrideEnergyBudget,
-    /// Replenish an agent's energy budget (Curation directive)
-    ///
-    /// \[NORMATIVE\] Used when an agent has exhausted its budget but should continue. (P9 — Homeostatic Self-Regulation).
-    /// This is the Curator's ability to inject energy into the system.
-    ReplenishBudget,
-    /// Informational notification — no action required, positive signal.
-    /// Used for non-urgent health improvements (e.g., seam coverage increased).
+    /// Record an informational observation without intervention.
     Notify,
-    /// Prune (delete) data to free space.
-    /// Used for autonomous disk space management — export pruning, old artifact cleanup.
-    /// Pre-authorized by user via P2 Affirmative Consent configuration.
-    Prune,
 }
 
 impl ActionType {
@@ -225,31 +154,8 @@ impl ActionType {
     /// Must stay in sync with `from_str`.
     pub fn as_str(&self) -> &'static str {
         match self {
-            ActionType::Throttle => "Throttle",
             ActionType::Escalate => "Escalate",
-            ActionType::Calibrate => "Calibrate",
-            ActionType::CircuitBreak => "CircuitBreak",
-            ActionType::AdjustEnergyBudget => "AdjustEnergyBudget",
-            ActionType::OverrideEnergyBudget => "OverrideEnergyBudget",
-            ActionType::ReplenishBudget => "ReplenishBudget",
             ActionType::Notify => "Notify",
-            ActionType::Prune => "Prune",
-        }
-    }
-
-    /// Parse from the same strings produced by `as_str`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "Throttle" => Some(ActionType::Throttle),
-            "Escalate" => Some(ActionType::Escalate),
-            "Calibrate" => Some(ActionType::Calibrate),
-            "CircuitBreak" => Some(ActionType::CircuitBreak),
-            "AdjustEnergyBudget" => Some(ActionType::AdjustEnergyBudget),
-            "OverrideEnergyBudget" => Some(ActionType::OverrideEnergyBudget),
-            "ReplenishBudget" => Some(ActionType::ReplenishBudget),
-            "Notify" => Some(ActionType::Notify),
-            "Prune" => Some(ActionType::Prune),
-            _ => None,
         }
     }
 }

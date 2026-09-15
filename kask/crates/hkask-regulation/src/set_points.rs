@@ -4,67 +4,15 @@
 //! signals are compared. When a signal deviates beyond its set-point,
 //! the loop produces an efferent action.
 
-use hkask_types::regulation::QueueDepth;
-
-/// Default minimum energy budget remaining ratio (20%).
-///
-/// When energy remaining drops below this ratio, the Cybernetics Loop produces
-/// a throttle action to reduce consumption.
-pub(crate) const DEFAULT_ENERGY_MIN_REMAINING_RATIO: f64 = 0.2;
-
 /// Default maximum variety deficit before escalation (100).
 ///
 /// When variety deficit exceeds this value, an algedonic alert is triggered.
 pub const DEFAULT_VARIETY_MAX_DEFICIT: f64 = 100.0;
 
-/// Default maximum error rate (30%).
-///
-/// When the error rate exceeds this ratio, the Cybernetics Loop produces
-/// a calibration action.
-pub(crate) const DEFAULT_ERROR_RATE_MAX: f64 = 0.3;
-
-/// Default maximum connector latency in seconds.
-///
-/// When connector latency exceeds this threshold, the Cybernetics Loop
-/// produces a throttle action.
-pub(crate) const DEFAULT_CONNECTOR_LATENCY_MAX_SECS: f64 = 30.0;
-
-/// Default communication queue depth threshold for backpressure regulation.
-///
-/// When the Communication Loop's queue depth exceeds this value,
-/// the Cybernetics Loop produces a Throttle(Communication) action.
-pub(crate) const DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD: QueueDepth =
-    QueueDepth::DEFAULT_BACKPRESSURE;
-
-/// Default minimum seam coverage ratio before alert.
-///
-/// When per-crate coverage drops below its previous snapshot value,
-/// Fires an algedonic alert. Default: 0.0 (alert on ANY regression —
-/// \[NORMATIVE\] coverage should never go down). (P9 — Homeostatic Self-Regulation).
-pub(crate) const DEFAULT_SEAM_COVERAGE_MIN: f64 = 0.0;
-
 /// Default maximum number of regulation iterations per cycle.
 ///
 /// Prevents unbounded cascading in the compute→act pipeline.
 pub(crate) const DEFAULT_MAX_ITERATIONS: u32 = 100;
-
-/// Inference throttle consent mode.
-///
-/// Controls how the Cybernetics Loop handles low energy budget:
-/// - `Off`: No throttle. Regulation logs the event; user manages budget manually.
-/// - `Autonomous`: Direct throttle to Inference loop (current behavior).
-/// - `CuratorMediated`: Escalate to Curator with budget options.
-///   If user doesn't respond within the timeout, apply gentle throttle as fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InferenceThrottleMode {
-    /// No automatic throttle. User manages budget manually.
-    Off,
-    /// Throttle directly — pre-authorized by user (P2 consent via config).
-    Autonomous,
-    /// Escalate to Curator. Fallback: gentle throttle after timeout.
-    CuratorMediated { curator_timeout_secs: u64 },
-}
 
 /// Default dampener window in seconds (60s).
 ///
@@ -112,12 +60,6 @@ pub(crate) const DEFAULT_STAGE_WORSENING_RATIO: f64 = 0.05;
 /// When an action worsens its target metric by this ratio or more,
 /// the (metric, action_type) pair is blocked until Curation intervenes.
 pub(crate) const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
-
-/// Default substitution activation threshold: try alternatives after this
-/// many consecutive ineffective cycles (default: 2 — half the stagnation
-/// default of 5). When a (metric, action_type) pair hits this count,
-/// `compute()` tries the next action in the substitution ladder.
-pub(crate) const DEFAULT_SUBSTITUTION_AFTER: u32 = 2;
 
 /// Default test coverage floor (0.70 = 70% coverage).
 ///
@@ -178,23 +120,9 @@ pub(crate) const DEFAULT_MEMORY_LIFE_MIN_DAYS: f64 = 30.0;
 /// the loop produces an efferent action.
 #[derive(Debug, Clone)]
 pub struct SetPoints {
-    /// Minimum energy budget remaining ratio (0.0-1.0). Default: 0.2 (20% remaining)
-    pub energy_min_remaining: f64,
     /// Maximum variety deficit before escalation. Default: 100
     pub variety_max_deficit: f64,
-    /// Maximum error rate (0.0-1.0). Default: 0.3 (30% errors)
-    pub error_rate_max: f64,
-    /// Maximum connector latency in seconds. Default: 30.0
-    pub connector_latency_max_secs: f64,
-    /// Communication queue depth threshold for backpressure regulation.
-    /// When the Communication Loop's queue depth exceeds this value,
-    /// CyberneticsLoop produces a Throttle(Communication) action.
-    /// Default: 100 messages
-    pub communication_backpressure_threshold: QueueDepth,
-    /// Minimum seam coverage ratio per crate before seam alert.
-    /// When per-crate coverage drops below its previous snapshot,
-    /// an algedonic alert fires. Default: 0.0 (any regression alerts).
-    pub seam_coverage_min: f64,
+
     // ── Dampener configuration (v0.30.0) ──
     /// Dampener window for routine directives (seconds). Default: 60.
     pub dampen_window_secs: u64,
@@ -221,21 +149,7 @@ pub struct SetPoints {
     /// Action decision block threshold: min relative worsening to
     /// hard-block an action (0.0–1.0). Default: 0.20.
     pub block_worsening_ratio: f64,
-    /// Action substitution ladders. Key: metric name (snake_case),
-    /// value: ordered list of action type names to try when the
-    /// primary action is ineffective (Fermi model-variant pattern).
-    /// Default: empty (no substitution; escalate on plateau).
-    pub action_substitutions: std::collections::HashMap<String, Vec<String>>,
-    /// Cycles of ineffectiveness before substitution activates.
-    /// Default: 2 (half the stagnation threshold so substitution
-    /// happens before plateau escalation).
-    pub substitution_after: u32,
-    // ── Inference throttle consent mode (v0.31.0) ──
-    /// How inference throttling decisions are made when energy budget runs low.
-    /// Default: Off (user manages budget manually).
-    /// Autonomous: pre-authorized by user (P2 consent via config).
-    /// CuratorMediated: escalate to Curator with fallback after timeout.
-    pub inference_throttle_mode: InferenceThrottleMode,
+
     // ── Trace-derived quality floors (v0.32.0) ──
     /// Minimum test coverage fraction before the Cybernetics Loop alerts.
     /// Read from the latest trace run's `metrics.json` `coverage_pct`.
@@ -287,12 +201,8 @@ pub struct SetPoints {
 /// Missing fields fall back to the `SetPoints::default()` values.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub(crate) struct SetPointsConfig {
-    pub energy_min_remaining: Option<f64>,
     pub variety_max_deficit: Option<f64>,
-    pub error_rate_max: Option<f64>,
-    pub connector_latency_max_secs: Option<f64>,
-    pub communication_backpressure_threshold: Option<QueueDepth>,
-    pub seam_coverage_min: Option<f64>,
+
     pub dampen_window_secs: Option<u64>,
     pub metacognitive_window_secs: Option<u64>,
     pub override_cooldown_secs: Option<u64>,
@@ -302,9 +212,7 @@ pub(crate) struct SetPointsConfig {
     pub stagnation_thresholds: Option<std::collections::HashMap<String, u32>>,
     pub stage_worsening_ratio: Option<f64>,
     pub block_worsening_ratio: Option<f64>,
-    pub action_substitutions: Option<std::collections::HashMap<String, Vec<String>>>,
-    pub substitution_after: Option<u32>,
-    pub inference_throttle_mode: Option<InferenceThrottleMode>,
+
     pub coverage_floor: Option<f64>,
     pub mutation_score_floor: Option<f64>,
     pub tool_reliability_threshold: Option<f64>,
@@ -337,12 +245,8 @@ impl SetPointsConfig {
 impl Default for SetPoints {
     fn default() -> Self {
         Self {
-            energy_min_remaining: DEFAULT_ENERGY_MIN_REMAINING_RATIO,
             variety_max_deficit: DEFAULT_VARIETY_MAX_DEFICIT,
-            error_rate_max: DEFAULT_ERROR_RATE_MAX,
-            connector_latency_max_secs: DEFAULT_CONNECTOR_LATENCY_MAX_SECS,
-            communication_backpressure_threshold: DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD,
-            seam_coverage_min: DEFAULT_SEAM_COVERAGE_MIN,
+
             dampen_window_secs: DEFAULT_DAMPEN_WINDOW_SECS,
             metacognitive_window_secs: DEFAULT_METACOGNITIVE_WINDOW_SECS,
             override_cooldown_secs: DEFAULT_OVERRIDE_COOLDOWN_SECS,
@@ -352,9 +256,7 @@ impl Default for SetPoints {
             stagnation_thresholds: std::collections::HashMap::new(),
             stage_worsening_ratio: DEFAULT_STAGE_WORSENING_RATIO,
             block_worsening_ratio: DEFAULT_BLOCK_WORSENING_RATIO,
-            action_substitutions: std::collections::HashMap::new(),
-            substitution_after: DEFAULT_SUBSTITUTION_AFTER,
-            inference_throttle_mode: InferenceThrottleMode::Off,
+
             coverage_floor: DEFAULT_COVERAGE_FLOOR,
             mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
@@ -376,22 +278,10 @@ impl SetPoints {
     pub(crate) fn from_config(config: &SetPointsConfig) -> Self {
         let defaults = SetPoints::default();
         Self {
-            energy_min_remaining: config
-                .energy_min_remaining
-                .unwrap_or(defaults.energy_min_remaining),
             variety_max_deficit: config
                 .variety_max_deficit
                 .unwrap_or(defaults.variety_max_deficit),
-            error_rate_max: config.error_rate_max.unwrap_or(defaults.error_rate_max),
-            connector_latency_max_secs: config
-                .connector_latency_max_secs
-                .unwrap_or(defaults.connector_latency_max_secs),
-            communication_backpressure_threshold: config
-                .communication_backpressure_threshold
-                .unwrap_or(defaults.communication_backpressure_threshold),
-            seam_coverage_min: config
-                .seam_coverage_min
-                .unwrap_or(defaults.seam_coverage_min),
+
             dampen_window_secs: config
                 .dampen_window_secs
                 .unwrap_or(defaults.dampen_window_secs),
@@ -418,16 +308,7 @@ impl SetPoints {
             block_worsening_ratio: config
                 .block_worsening_ratio
                 .unwrap_or(defaults.block_worsening_ratio),
-            action_substitutions: config
-                .action_substitutions
-                .clone()
-                .unwrap_or(defaults.action_substitutions),
-            substitution_after: config
-                .substitution_after
-                .unwrap_or(defaults.substitution_after),
-            inference_throttle_mode: config
-                .inference_throttle_mode
-                .unwrap_or(defaults.inference_throttle_mode),
+
             coverage_floor: config.coverage_floor.unwrap_or(defaults.coverage_floor),
             mutation_score_floor: config
                 .mutation_score_floor
@@ -462,9 +343,6 @@ impl SetPoints {
     /// Validate set-point invariants.
     pub fn validate(&self) -> anyhow::Result<()> {
         for (name, value) in [
-            ("energy_min_remaining", self.energy_min_remaining),
-            ("error_rate_max", self.error_rate_max),
-            ("seam_coverage_min", self.seam_coverage_min),
             ("coverage_floor", self.coverage_floor),
             ("mutation_score_floor", self.mutation_score_floor),
             ("outcome_warning_threshold", self.outcome_warning_threshold),
@@ -490,12 +368,7 @@ impl SetPoints {
                 self.variety_max_deficit
             ));
         }
-        if self.connector_latency_max_secs <= 0.0 {
-            return Err(anyhow::anyhow!(
-                "connector_latency_max_secs must be > 0, got {}",
-                self.connector_latency_max_secs
-            ));
-        }
+
         if self.max_iterations == 0 {
             return Err(anyhow::anyhow!("max_iterations must be > 0"));
         }
@@ -506,9 +379,7 @@ impl SetPoints {
                 self.block_worsening_ratio
             ));
         }
-        if self.substitution_after == 0 {
-            return Err(anyhow::anyhow!("substitution_after must be > 0"));
-        }
+
         if self.dampen_window_secs == 0 {
             return Err(anyhow::anyhow!("dampen_window_secs must be > 0"));
         }

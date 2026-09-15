@@ -20,7 +20,7 @@
 //! Without this source, the cybernetics loop reports `signal_count=0` while
 //! every MCP context server is hung on `initialize`. The loop's existing
 //! sensors read ledger/DB state, not context-server process state. This is
-//! the same trap as `InferenceHealthSource` but for the MCP stdio children.
+//! the same missing-observation trap as inference resilience, but for MCP stdio children.
 
 use std::sync::{Arc, Mutex};
 

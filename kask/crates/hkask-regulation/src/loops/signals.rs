@@ -37,9 +37,7 @@ pub enum SignalMetric {
 
     /// Circuit breaker state 0.0/1.0 (Inference Loop 1)
     CircuitBreakerState,
-    /// Inference availability 0.0/1.0 (Inference Loop 1)
-    InferenceAvailable,
-    /// Inference energy remaining fraction (Inference Loop 1)
+
     /// Model availability 0.0/1.0 (Inference Loop 1)
     InferenceModelAvailable,
     /// Context server health fraction 0.0/1.0 (Cybernetics Loop 6).
@@ -80,9 +78,8 @@ pub enum SignalMetric {
     // VarietyDeficit (same ledger `overall_deficit`, same Escalate→Curation
     // rule); wiring it would have double-escalated the same number.
     // ActionIneffective / RegulatoryPlateau / ActionDecisionBlocked removed
-    // with it — superseded by the loop's direct escalation paths
-    // (`try_substitute` at cycle.rs, plateau/blocked alerts persisted to the
-    // review queue and sensed as PendingEscalations).
+    // with it — superseded by direct plateau/blocked escalations persisted to
+    // the review queue and sensed as PendingEscalations.
     /// Tool reliability: success probability has dropped below threshold.
     /// 0.0 = 0% success rate, 1.0 = 100% success rate.
     /// Set-point: reliability_threshold (default 0.80).
@@ -124,7 +121,7 @@ impl SignalMetric {
             SignalMetric::LowConfidenceCount => "low_confidence_count",
 
             SignalMetric::CircuitBreakerState => "circuit_breaker_state",
-            SignalMetric::InferenceAvailable => "inference_available",
+
             SignalMetric::InferenceModelAvailable => "inference_model_available",
             SignalMetric::ContextServerHealth => "context_server_health",
             SignalMetric::OcrSilentFailures => "ocr_silent_failures",
@@ -156,7 +153,6 @@ impl SignalMetric {
             SignalMetric::TripleCount,
             SignalMetric::LowConfidenceCount,
             SignalMetric::CircuitBreakerState,
-            SignalMetric::InferenceAvailable,
             SignalMetric::InferenceModelAvailable,
             SignalMetric::ContextServerHealth,
             SignalMetric::OcrSilentFailures,
@@ -302,7 +298,6 @@ mod tests {
             "triple_count",
             "low_confidence_count",
             "circuit_breaker_state",
-            "inference_available",
             "inference_model_available",
             "context_server_health",
             "ocr_silent_failures",
@@ -437,7 +432,6 @@ impl Deviation {
             | SignalMetric::ToolReliability
             | SignalMetric::TestCoverage
             | SignalMetric::MutationScore
-            | SignalMetric::InferenceAvailable
             | SignalMetric::InferenceModelAvailable
             | SignalMetric::MemoryLife => diff >= 0.0,
             SignalMetric::VarietyDeficit

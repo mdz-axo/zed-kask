@@ -16,13 +16,8 @@ use crate::loops::{
 /// arm (or falls through to the generic `_` arm).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RegulationReason {
-    EnergyBudgetLow,
-    BudgetGuardEscalation,
-    EnergyDepletionAutoAdjust,
     VarietyDeficitExceeded,
-    ErrorRateExceeded,
-    ConnectorLatencyExceeded,
-    CommunicationBackpressure,
+
     ToolReliabilityDegraded,
     TripleCountObserved,
     LowConfidenceCountObserved,
@@ -38,7 +33,6 @@ pub(crate) enum RegulationReason {
     MetacognitionCriticalAlerts,
     MemoryLifeLow,
     CircuitBreakerOpen,
-    InferenceUnavailable,
     ModelUnavailable,
     ContextServerFleetDegraded,
     OcrSilentFailuresExceeded,
@@ -48,13 +42,8 @@ impl RegulationReason {
     /// The wire-format string used in `RegulatoryActionParams` and logs.
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::EnergyBudgetLow => "energy_budget_low",
-            Self::BudgetGuardEscalation => "budget_guard_escalation",
-            Self::EnergyDepletionAutoAdjust => "energy_depletion_auto_adjust",
             Self::VarietyDeficitExceeded => "variety_deficit_exceeded",
-            Self::ErrorRateExceeded => "error_rate_exceeded",
-            Self::ConnectorLatencyExceeded => "connector_latency_exceeded",
-            Self::CommunicationBackpressure => "communication_backpressure",
+
             Self::ToolReliabilityDegraded => "tool_reliability_degraded",
             Self::TripleCountObserved => "triple_count_observed",
             Self::LowConfidenceCountObserved => "low_confidence_count_observed",
@@ -67,7 +56,6 @@ impl RegulationReason {
             Self::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
             Self::MemoryLifeLow => "memory_life_low",
             Self::CircuitBreakerOpen => "circuit_breaker_open",
-            Self::InferenceUnavailable => "inference_unavailable",
             Self::ModelUnavailable => "model_unavailable",
             Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
             Self::OcrSilentFailuresExceeded => "ocr_silent_failures_exceeded",
@@ -75,12 +63,7 @@ impl RegulationReason {
     }
 }
 
-/// A proposed action before substitution and mode-specific filtering.
-///
-/// `target` and `action_type` are read by `build_regulation_action` to
-/// construct the dispatched `RegulatoryAction`. `try_substitute` may
-/// override `action_type` via the stagnation ladder, and mode-specific
-/// filtering may skip the action entirely.
+/// A typed regulation disposition selected for a deviation.
 #[derive(Debug, Clone)]
 pub(crate) struct ProposedAction {
     pub target: LoopId,
@@ -128,34 +111,6 @@ impl RegulationPolicy {
 
         Self {
             rules: vec![
-                // ── Energy (Cybernetics Loop 6) ──
-                RegulationRule {
-                    metric: EnergyRemaining,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: Throttle,
-                        reason: EnergyBudgetLow,
-                    }],
-                },
-                RegulationRule {
-                    metric: EnergyRemaining,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: BudgetGuardEscalation,
-                    }],
-                },
-                RegulationRule {
-                    metric: EnergyRemaining,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Cybernetics,
-                        action_type: AdjustEnergyBudget,
-                        reason: EnergyDepletionAutoAdjust,
-                    }],
-                },
                 // ── Variety (Cybernetics Loop 6) ──
                 RegulationRule {
                     metric: VarietyDeficit,
@@ -164,36 +119,6 @@ impl RegulationPolicy {
                         target: Curation,
                         action_type: Escalate,
                         reason: VarietyDeficitExceeded,
-                    }],
-                },
-                // ── Error Rate (Cybernetics Loop 6) ──
-                RegulationRule {
-                    metric: ErrorRate,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: CircuitBreak,
-                        reason: ErrorRateExceeded,
-                    }],
-                },
-                // ── Connector Latency (Cybernetics Loop 6) ──
-                RegulationRule {
-                    metric: ConnectorLatency,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Cybernetics,
-                        action_type: Throttle,
-                        reason: ConnectorLatencyExceeded,
-                    }],
-                },
-                // ── Communication Queue Depth (Cybernetics Loop 6) ──
-                RegulationRule {
-                    metric: CommunicationQueueDepth,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Cybernetics,
-                        action_type: Throttle,
-                        reason: CommunicationBackpressure,
                     }],
                 },
                 // ── Wallet and Seam Coverage rules removed 2026-08-30 —
@@ -298,47 +223,39 @@ impl RegulationPolicy {
                 // 2026-08-30 — superseded duplicates. MetacognitionVarietyDeficit
                 // duplicated VarietyDeficit (same ledger overall_deficit,
                 // same Escalate→Curation rule); the three action metrics were
-                // superseded by the loop's direct escalation paths
-                // (try_substitute; plateau/blocked alerts persisted to the
-                // review queue and sensed as PendingEscalations).
+                // superseded by direct plateau/blocked escalations persisted
+                // to the review queue and sensed as PendingEscalations.
                 // ── Category C: Domain-specific regulation ──
-                // MemoryLife (Memory Loop 2) → Calibrate
+                // MemoryLife (Memory Loop 2) → Escalate
                 RegulationRule {
                     metric: MemoryLife,
                     direction: BelowSetPoint,
                     proposed: &[ProposedAction {
-                        target: Memory,
-                        action_type: Calibrate,
+                        target: Curation,
+                        action_type: Escalate,
                         reason: MemoryLifeLow,
                     }],
                 },
-                // CircuitBreakerState (Inference Loop 1) → Throttle
+                // CircuitBreakerState (Inference Loop 1) → Escalate.
+                // Fast correction already occurred at the dispatch boundary;
+                // central regulation reports the persistent degraded state.
                 RegulationRule {
                     metric: CircuitBreakerState,
                     direction: AboveSetPoint,
                     proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: Throttle,
+                        target: Curation,
+                        action_type: Escalate,
                         reason: CircuitBreakerOpen,
                     }],
                 },
-                // InferenceAvailable (Inference Loop 1) → Throttle
-                RegulationRule {
-                    metric: InferenceAvailable,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: Throttle,
-                        reason: InferenceUnavailable,
-                    }],
-                },
-                // InferenceModelAvailable (Inference Loop 1) → Calibrate
+                // A missing model is not locally calibratable; it requires an
+                // operator configuration decision.
                 RegulationRule {
                     metric: InferenceModelAvailable,
                     direction: BelowSetPoint,
                     proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: Calibrate,
+                        target: Curation,
+                        action_type: Escalate,
                         reason: ModelUnavailable,
                     }],
                 },
@@ -382,9 +299,7 @@ impl RegulationPolicy {
 
     /// Find all proposed actions for a given deviation.
     ///
-    /// Returns a flat list of `ProposedAction` references matching
-    /// the deviation's `(metric, direction)`. The caller applies
-    /// `try_substitute`, mode filtering, and data population.
+    /// Returns the typed dispositions matching a deviation's metric and direction.
     pub fn decide(&self, dev: &Deviation) -> Vec<&ProposedAction> {
         self.rules
             .iter()
@@ -415,35 +330,12 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
             Some((rounded_count(*deficit), rounded_count(*threshold)))
         }
-        RegulationData::ErrorRateExceeded {
-            error_rate,
-            threshold,
-        } => Some((percent_of(*error_rate), percent_of(*threshold))),
-        RegulationData::ConnectorLatencyExceeded {
-            latency_secs,
-            threshold,
-        } => Some((millis_of(*latency_secs), millis_of(*threshold))),
-        RegulationData::CommunicationBackpressure {
-            queue_depth,
-            threshold,
-        } => Some((rounded_count(*queue_depth), rounded_count(*threshold))),
+
         RegulationData::ToolReliabilityDegraded {
             reliability,
             threshold,
         } => Some((percent_of(*reliability), percent_of(*threshold))),
-        RegulationData::EnergyBudgetLow {
-            remaining_ratio,
-            set_point,
-        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
-        RegulationData::BudgetGuardEscalation {
-            remaining_ratio,
-            set_point,
-            ..
-        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
-        RegulationData::EnergyDepletionAutoAdjust {
-            remaining_ratio,
-            set_point,
-        } => Some((percent_of(*remaining_ratio), percent_of(*set_point))),
+
         RegulationData::ContextServerFleetHealth {
             healthy_count,
             total_count,
@@ -451,7 +343,7 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::OcrSilentFailuresExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
-        RegulationData::CuratorBudgetOverride { .. } | RegulationData::NoData => None,
+        RegulationData::NoData => None,
     }
 }
 
@@ -512,12 +404,6 @@ fn percent_of(value: f64) -> u64 {
     (value * 100.0).round() as u64
 }
 
-/// Scale a duration in seconds to whole milliseconds, rounding to nearest
-/// so fractional-second set-points survive the u64 conversion.
-fn millis_of(value: f64) -> u64 {
-    (value * 1000.0).round() as u64
-}
-
 /// Round a count-valued f64 to the nearest integer.
 fn rounded_count(value: f64) -> u64 {
     value.round() as u64
@@ -546,38 +432,6 @@ mod tests {
         };
         assert_eq!(extract_deficit_threshold(&data), Some((0, 80)));
 
-        let data = RegulationData::ErrorRateExceeded {
-            error_rate: 0.45,
-            threshold: 0.30,
-        };
-        assert_eq!(extract_deficit_threshold(&data), Some((45, 30)));
-
-        let data = RegulationData::EnergyBudgetLow {
-            remaining_ratio: 0.15,
-            set_point: 0.20,
-        };
-        assert_eq!(extract_deficit_threshold(&data), Some((15, 20)));
-
-        let data = RegulationData::EnergyDepletionAutoAdjust {
-            remaining_ratio: 0.12,
-            set_point: 0.20,
-        };
-        assert_eq!(extract_deficit_threshold(&data), Some((12, 20)));
-
-        // Latency scales to milliseconds so fractional seconds survive.
-        let data = RegulationData::ConnectorLatencyExceeded {
-            latency_secs: 2.5,
-            threshold: 30.0,
-        };
-        assert_eq!(extract_deficit_threshold(&data), Some((2500, 30000)));
-
-        // Count-valued scalars round to the nearest integer.
-        let data = RegulationData::CommunicationBackpressure {
-            queue_depth: 12.7,
-            threshold: 10.0,
-        };
-        assert_eq!(extract_deficit_threshold(&data), Some((13, 10)));
-
         // Integer-valued data is unchanged by the scaling.
         let data = RegulationData::VarietyDeficitExceeded {
             deficit: 100.0,
@@ -604,13 +458,6 @@ mod tests {
     #[test]
     fn extract_returns_none_for_non_threshold_variants() {
         assert_eq!(extract_deficit_threshold(&RegulationData::NoData), None);
-        assert_eq!(
-            extract_deficit_threshold(&RegulationData::CuratorBudgetOverride {
-                agent: "curator".into(),
-                new_budget: 1000,
-            }),
-            None
-        );
     }
 
     /// Pins the direction-aware verb in `alert_message`: floor metrics
@@ -656,26 +503,7 @@ mod tests {
             "tool_reliability_degraded — value 0 fell below threshold 80"
         );
 
-        let data = RegulationData::EnergyBudgetLow {
-            remaining_ratio: 0.15,
-            set_point: 0.20,
-        };
-        assert_eq!(
-            alert_message(&data, "energy_budget_low"),
-            "energy_budget_low — value 15 fell below threshold 20"
-        );
-
-        // Ceiling metrics: above-threshold is the bad direction — the
-        // verb stays "exceeds".
-        let data = RegulationData::ErrorRateExceeded {
-            error_rate: 0.45,
-            threshold: 0.30,
-        };
-        assert_eq!(
-            alert_message(&data, "error_rate_exceeded"),
-            "error_rate_exceeded — value 45 exceeds threshold 30"
-        );
-
+        // Ceiling metrics retain the "exceeds" verb.
         let data = RegulationData::VarietyDeficitExceeded {
             deficit: 100.0,
             threshold: 19.0,
@@ -714,47 +542,5 @@ pub(crate) fn classify_decision(
         ActionDecision::Accept
     } else {
         ActionDecision::Stage
-    }
-}
-
-/// Return the default substitution ladder for a metric.
-///
-/// These are the built-in ladders used when no custom ladders are configured
-/// via `SetPoints.action_substitutions`. Each ladder is an ordered list of
-/// action types to try when the primary action is repeatedly ineffective.
-pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [ActionType] {
-    use ActionType::*;
-    match metric {
-        // ── Energy ──
-        SignalMetric::EnergyRemaining => &[Throttle, AdjustEnergyBudget, Escalate],
-        // ── Variety ──
-        SignalMetric::VarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],
-        // ── Error Rate ──
-        SignalMetric::ErrorRate => &[CircuitBreak, Calibrate, Escalate],
-        SignalMetric::CircuitBreakerState => &[CircuitBreak, Calibrate, Escalate],
-        // ── Latency / Backpressure ──
-        SignalMetric::ConnectorLatency => &[Throttle, Calibrate, Escalate],
-        SignalMetric::CommunicationQueueDepth => &[Throttle, Escalate],
-        // ── Meta-regulatory (only Curation can break the plateau) ──
-        SignalMetric::AlgedonicEvents => &[Escalate, Calibrate],
-        SignalMetric::AlgedonicLogApproachingCap => &[Escalate, Calibrate],
-        SignalMetric::GoalStaleCount => &[Escalate, Calibrate],
-        SignalMetric::GoalExpiredCount => &[Escalate, Calibrate],
-        SignalMetric::MetacognitionCriticalAlerts => &[Escalate, Calibrate, OverrideEnergyBudget],
-        // ── Domain-specific ──
-        SignalMetric::MemoryLife => &[Calibrate, Escalate],
-        SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
-        SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
-        SignalMetric::ContextServerHealth => &[Escalate, Calibrate],
-        SignalMetric::OcrSilentFailures => &[Escalate, Calibrate],
-        // ── Observational (no substitution — Notify is terminal) ──
-        SignalMetric::TripleCount
-        | SignalMetric::LowConfidenceCount
-        | SignalMetric::ConsolidationCandidates
-        | SignalMetric::PendingEscalations
-        | SignalMetric::ToolReliability
-        | SignalMetric::PassRate
-        | SignalMetric::TestCoverage
-        | SignalMetric::MutationScore => &[],
     }
 }

@@ -518,7 +518,7 @@ async fn escalation_queue_has_pending_with_output_detects_duplicates() {
     let driver = SqliteDriver::in_memory_driver();
     let queue = EscalationQueue::from_driver(driver).expect("escalation queue init");
 
-    let output = "Efferent action Throttle (target: inference) recommended but not wired";
+    let output = "inference circuit remains open after recovery probe";
 
     // Fresh queue — no pending escalations.
     assert_eq!(
@@ -584,7 +584,7 @@ async fn dismiss_by_pattern_clears_matching_escalations() {
     let database = Arc::new(CuratorDb::from_stores(stores));
     let server = CuratorServer::new(WebID::new(), database, failing_inference_port());
 
-    let flood_output = "Efferent action Throttle (target: inference) recommended but not wired";
+    let flood_output = "inference circuit remains open after recovery probe";
     let other_output = "Variety deficit in domain: reasoning";
 
     // Seed: 5 identical flood escalations + 1 unrelated escalation.

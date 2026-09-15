@@ -33,6 +33,7 @@ mod delegation_grants;
 mod identity;
 mod inference_chat;
 mod inference_edit_prediction;
+mod inference_resilience;
 pub use delegation_grants::revoke_delegation_grant;
 mod inference_embedding;
 mod inference_ipc_server;
@@ -64,6 +65,7 @@ pub use inference_providers::{
     ResolvedEmbeddingCredentials, credential_url_for_key, credential_urls_for_mcp,
     resolve_embedding_credentials,
 };
+pub use inference_resilience::InferenceResilienceConfig;
 pub use inference_socket::{
     get_inference_socket_path, get_inference_timeout_secs, set_inference_socket_path,
     set_inference_timeout_secs,

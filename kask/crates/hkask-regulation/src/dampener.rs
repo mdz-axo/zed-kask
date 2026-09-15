@@ -312,6 +312,7 @@ impl StagnationDetector {
     /// so a missing key means "never recorded," not "failed to read."
     ///
     /// expect: "The system prevents regulation loop stagnation through cooldown dampening and substitution tracking"
+    #[cfg(test)]
     pub(crate) fn ineffective_count(&self, metric_name: &str, action_type: &str) -> u32 {
         let key = (metric_name.to_string(), action_type.to_string());
         let history = self.history.lock();

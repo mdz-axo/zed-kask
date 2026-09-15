@@ -102,6 +102,24 @@ introduced. Pins: `cancelled_queued_request_never_starts_model`,
 `ipc_disconnect_drops_pending_dispatch`, and the inference client's
 `ipc_client_receives_server_timeout_before_closing`. AIMD is unchanged.
 
+**D8/D9 inference-resilience continuation — 2026-09-15:**
+`LanguageModelInferencePort` now owns a configured closed/open/half-open circuit
+beside its admission and concurrency gates. Consecutive transient failures open
+the circuit; open requests return typed `CircuitOpen`; one probe is admitted
+after `kask.general.inference_circuit_open_secs`, closing on success or reopening
+on transient failure. `InferenceResilienceSource` exports atomic snapshots plus
+cursor-addressed transition and permanent-failure receipts to
+`CyberneticsLoop`; model rewiring replaces that source and resets its cursor.
+Regulation records observed recovery without causal attribution and escalates
+open circuits or permanent failures. The settings content and bridge settings
+add `inference_circuit_failure_threshold` (default 3) and
+`inference_circuit_open_secs` (default 30). Pins:
+`transient_provider_storm_opens_live_inference_circuit`,
+`half_open_admits_one_probe_and_success_closes_circuit`,
+`permanent_provider_failure_is_observed_without_opening_circuit`,
+`circuit_close_receipt_records_observed_recovery`, and
+`open_inference_circuit_routes_native_escalation`.
+
 ## The divergence surface (D1–D56)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These

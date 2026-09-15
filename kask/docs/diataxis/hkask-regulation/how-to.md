@@ -113,18 +113,17 @@ The registry is wrapped in `Arc<SensorBus>` and stored on the loop
 `self.sensor_registry.sense_all(LoopId::Cybernetics)`
 (`cybernetics_loop/cycle.rs:264`).
 
-Also add the metric to the `SENSED` list in the blind-metric warn block
-(`cybernetics_loop.rs:281-309`): the loop warns at startup about policy
-rules whose metrics have no sensor — a variety deficit on the sensing side
-per Ashby's Law. Leaving your metric out of `SENSED` after registering it
-makes the warn lie.
+For a source that can be rewired after startup, call `SensorBus::replace`
+with the metric identity instead of `register`; this prevents stale providers
+from emitting duplicate deviations.
 
-### Step 6: Add a substitution ladder entry
+### Step 6: Choose a truthful disposition
 
-Add the metric to `default_substitution_ladder` (`regulation_policy.rs:589`).
-For regulated metrics, return an ordered `&[ActionType]` slice (e.g.,
-`&[Throttle, Calibrate, Escalate]`). For observational metrics (Notify
-only), return `&[]`.
+A central policy rule may return only `Notify` or `Escalate`, because those
+are the central loop's implemented routes. Target-specific automatic control
+belongs beside its enforcement point and returns typed observations or
+receipts to regulation. Do not add an action label without its handler in the
+same change.
 
 ### Step 7: Run clippy and tests
 
@@ -146,11 +145,11 @@ and a value that crosses the set-point.
 - [ ] `RegulationReason` variant + `as_str()` entry
 - [ ] `RegulationRule` in `RegulationPolicy::default()`
 - [ ] `SetPoints` field + `Default` + `SetPointsConfig` + `from_config` + `validate()`
-- [ ] `Sensor` impl with `sense()`, `metric()`, `loop_id()`
-- [ ] `register()` call in `CyberneticsLoop::build`
-- [ ] `SENSED` list entry in the blind-metric warn block
-- [ ] `default_substitution_ladder` entry
+- [ ] `Sensor::observe()` implementation
+- [ ] `register()` for static sources or metric-keyed `replace()` for late sources
+- [ ] `Notify` or `Escalate` route, or a target-local controller with a receipt seam
 - [ ] Unit test in `sensor_provider.rs`
+- [ ] Behavior test proving one observation and one disposition per condition
 
 ## See also
 

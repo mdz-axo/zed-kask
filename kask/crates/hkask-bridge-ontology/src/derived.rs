@@ -130,6 +130,35 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["price to book", "cost of equity"],
         authority: "operator ruling 2026-09-10; Damodaran, Applied Corporate Finance, Ch. 19",
     },
+    DerivedConcept {
+        term: "inference_resilience_boundary",
+        aliases: &["inference resilience"],
+        identity: "inference admission + deadline + provider outcome + circuit state machine + observation seam",
+        definition: "The local inference-dispatch boundary that applies bounded non-spending circuit intervention and exposes coherent snapshots and receipts to central regulation. It owns enforcement; central regulation observes and escalates rather than duplicating the actuator.",
+        constituents: &[
+            "inference",
+            "admission control",
+            "circuit breaker",
+            "observation",
+        ],
+        authority: "operator approval 2026-09-15 of the Inference Regulation Loop Completion plan; Nygard, Release It!; Beer (1972), Viable System Model",
+    },
+    DerivedConcept {
+        term: "intervention_receipt",
+        aliases: &["inference intervention receipt"],
+        identity: "monotonic intervention id + transition kind + occurrence time",
+        definition: "A durable observation that a bounded control-state transition actually occurred. A proposal or recommendation is not an intervention receipt.",
+        constituents: &["intervention", "event identifier", "time"],
+        authority: "operator approval 2026-09-15 of the Inference Regulation Loop Completion plan",
+    },
+    DerivedConcept {
+        term: "observed_recovery",
+        aliases: &["inference observed recovery"],
+        identity: "later fresh observation reports return from degraded control state to healthy control state",
+        definition: "A later fresh observation that the regulated state returned to its healthy range. It records progress while keeping causal attribution unverified unless an independent causal design exists.",
+        constituents: &["observation", "recovery", "causal attribution"],
+        authority: "operator approval 2026-09-15 of the Inference Regulation Loop Completion plan; Rother (2010), Toyota Kata",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -186,6 +215,9 @@ mod tests {
             "return on equity",
             "sustainable-growth-rate",
             "sgr",
+            "inference resilience boundary",
+            "intervention receipt",
+            "observed recovery",
         ] {
             assert!(
                 resolve_derived(term).is_some(),

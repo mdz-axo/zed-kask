@@ -3,19 +3,13 @@
 //! The Cybernetics Loop is a closed-loop controller, not a passive observer.
 //! Its functional contract:
 //!
-//! 1. **Sense** — receive `reg.*` spans from all loops (tool invocations,
-//!    prompt outcomes, agent lifecycle, connector I/O).
-//! 2. **Compare** — evaluate each signal against homeostatic set-points:
-//!    call-cap remaining, variety counter balance, error rate threshold,
-//!    connector latency envelope.
-//! 3. **Compute** — when a signal deviates beyond its set-point, produce an
-//!    efferent signal: throttle, escalate, calibrate, or circuit-break.
-//! 4. **Act** — route the computed action as an `Escalate` alert to the
-//!    Curator/human (`route_action_as_alert`). The loop is a sensor+advisor,
-//!    not an actuator: the efferent actuator is deliberately not wired — the
-//!    human decides whether to apply the recommendation (user sovereignty;
-//!    see `kask/docs/diataxis/hkask-regulation/reference.md` § "Efferent
-//!    action dispatch").
+//! 1. **Sense** — read registered sensors plus atomic inference-resilience
+//!    snapshots and receipts.
+//! 2. **Compare** — evaluate each signal against its homeostatic set-point.
+//! 3. **Compute** — select a truthful `Notify` or `Escalate` disposition.
+//! 4. **Act** — record observations or route evidence-bearing escalations.
+//!    Fast inference circuit intervention is a nested loop at the dispatch
+//!    boundary; its receipts return here for assessment and escalation.
 //!
 //! The loop is self-stabilizing: if the Cybernetics Loop itself becomes unstable
 //! (e.g., alert cascade), the Curation Loop detects it via metacognitive monitoring
@@ -109,7 +103,7 @@ pub trait RolloutEventSource: Send + Sync {
     ) -> Result<(), RolloutEventError>;
 }
 use crate::energy::{CallCapManager, CallMeterOutcome};
-use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, VarietySensor};
+use crate::sensor_provider::{SensorBus, VarietySensor};
 
 use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
@@ -130,7 +124,6 @@ use tokio::sync::{RwLock, mpsc};
 struct CalibratedThresholds {
     stagnation_thresholds: HashMap<String, u32>,
     block_worsening_ratio: f64,
-    substitution_after: u32,
 }
 
 #[derive(Clone)]
@@ -158,6 +151,10 @@ pub struct CyberneticsLoop {
     /// loading) inference is unusable — the state `NoModelInferencePort`
     /// exists for. Sensed as `SignalMetric::InferenceModelAvailable`.
     inference_health_wired: bool,
+    /// Atomic resilience observation source supplied by the inference dispatch boundary.
+    inference_resilience_source: Option<Arc<dyn crate::InferenceResilienceSource>>,
+    /// Last intervention receipt consumed from the resilience source.
+    inference_intervention_cursor: std::sync::atomic::AtomicU64,
     /// Ticks since construction. The first ticks after boot often precede
     /// the deferred task's model wiring (observed live: a boot wired the
     /// no-op port at +4s while the model resolved later); sensing
@@ -245,14 +242,10 @@ impl CyberneticsLoop {
         let calibrated_thresholds = Arc::new(RwLock::new(CalibratedThresholds {
             stagnation_thresholds: set_points.stagnation_thresholds.clone(),
             block_worsening_ratio: set_points.block_worsening_ratio,
-            substitution_after: set_points.substitution_after,
         }));
         let sensor_registry = {
             let registry = SensorBus::new();
-            registry.register(Arc::new(EnergyBudgetSensor::new(
-                Arc::clone(&call_cap_manager),
-                set_points.energy_min_remaining,
-            )));
+
             registry.register(Arc::new(VarietySensor::new(
                 Arc::clone(&ledger),
                 set_points.variety_max_deficit,
@@ -280,81 +273,14 @@ impl CyberneticsLoop {
             Arc::new(registry)
         };
 
-        // F5: Warn about metrics that have policy rules but no sensor.
-        // The policy has rules covering many SignalMetric variants, but only
-        // some have sensors registered. The remaining metrics are blind —
-        // their policy rules can never fire because no signal is ever
-        // produced for them. This is a variety deficit on the sensing side
-        // (Ashby's Law: the regulator's sensing variety must match the
-        // system's disturbance variety). Adding sensors for these metrics
-        // is a follow-up; the warn makes the gap visible at startup.
-        {
-            use crate::loops::SignalMetric;
-            const SENSED: &[SignalMetric] = &[
-                SignalMetric::EnergyRemaining,
-                SignalMetric::VarietyDeficit,
-                SignalMetric::TestCoverage,
-                SignalMetric::MutationScore,
-                SignalMetric::ToolReliability,
-                SignalMetric::AlgedonicLogApproachingCap,
-                SignalMetric::AlgedonicEvents,
-                SignalMetric::PendingEscalations,
-                SignalMetric::MetacognitionCriticalAlerts,
-                SignalMetric::InferenceAvailable,
-                SignalMetric::InferenceModelAvailable,
-                SignalMetric::ContextServerHealth,
-                SignalMetric::OcrSilentFailures,
-                SignalMetric::TripleCount,
-                SignalMetric::LowConfidenceCount,
-                SignalMetric::ConsolidationCandidates,
-                SignalMetric::MemoryLife,
-            ];
-            const ALL_METRICS: &[SignalMetric] = &[
-                SignalMetric::EnergyRemaining,
-                SignalMetric::VarietyDeficit,
-                SignalMetric::ErrorRate,
-                SignalMetric::ConnectorLatency,
-                SignalMetric::CommunicationQueueDepth,
-                SignalMetric::MemoryLife,
-                SignalMetric::TripleCount,
-                SignalMetric::LowConfidenceCount,
-                SignalMetric::CircuitBreakerState,
-                SignalMetric::InferenceAvailable,
-                SignalMetric::InferenceModelAvailable,
-                SignalMetric::ContextServerHealth,
-                SignalMetric::OcrSilentFailures,
-                SignalMetric::AlgedonicEvents,
-                SignalMetric::AlgedonicLogApproachingCap,
-                SignalMetric::PendingEscalations,
-                SignalMetric::ConsolidationCandidates,
-                SignalMetric::GoalStaleCount,
-                SignalMetric::GoalExpiredCount,
-                SignalMetric::MetacognitionCriticalAlerts,
-                SignalMetric::ToolReliability,
-                SignalMetric::TestCoverage,
-                SignalMetric::MutationScore,
-            ];
-            let unsensed: Vec<&str> = ALL_METRICS
-                .iter()
-                .filter(|m| !SENSED.contains(m))
-                .map(|m| m.as_str())
-                .collect();
-            if !unsensed.is_empty() {
-                tracing::warn!(
-                    target: "reg.cybernetics",
-                    unsensed_count = unsensed.len(),
-                    unsensed = ?unsensed,
-                    "Metrics with policy rules but no sensor — these rules can never fire in production (Ashby's Law variety deficit on the sensing side)"
-                );
-            }
-        }
-
         Self {
             ledger,
             call_cap_manager,
             set_points,
             max_iterations,
             inference_health_wired: false,
+            inference_resilience_source: None,
+            inference_intervention_cursor: std::sync::atomic::AtomicU64::new(0),
             tick_count: std::sync::atomic::AtomicUsize::new(0),
             dampener,
             event_sink: None,
@@ -468,44 +394,25 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Wire an inference health source so the cybernetics loop can sense
-    /// inference saturation and timeout storms.
-    ///
-    /// Without this, the loop reports `signal_count=0` during an inference
-    /// timeout storm because its existing sensors read ledger/DB state, not
-    /// inference dispatch state. The `InferenceHealthSensor` emits
-    /// `SignalMetric::InferenceAvailable` when the inference layer is
-    /// saturated or storming, closing the blind-feedback-loop gap.
-    ///
-    /// post: returns Self for chaining
+    /// Wire the atomic inference resilience source at construction.
     #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_inference_health_source(
-        self,
-        source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
+    pub fn with_inference_resilience_source(
+        mut self,
+        source: Arc<dyn crate::InferenceResilienceSource>,
     ) -> Self {
-        let mut this = self;
-        this.inference_health_wired = true;
-        this.sensor_registry.register(Arc::new(
-            crate::sensor_provider::InferenceHealthSensor::new(source, 3),
-        ));
-        this
+        self.set_inference_resilience_source(source);
+        self
     }
 
-    /// Wire an inference health source after construction.
-    ///
-    /// Used by the composition root to lazily wire the sensor after the
-    /// `LanguageModelInferencePort` is created (in the deferred task
-    /// task). The `with_inference_health_source` builder method can't be used
-    /// there because the loop is already wrapped in `Arc<RwLock<...>>` by the
-    /// time the port exists.
-    pub fn set_inference_health_source(
+    /// Replace the inference resilience source after model wiring or rewiring.
+    pub fn set_inference_resilience_source(
         &mut self,
-        source: Arc<dyn crate::sensor_provider::InferenceHealthSource>,
+        source: Arc<dyn crate::InferenceResilienceSource>,
     ) {
         self.inference_health_wired = true;
-        self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::InferenceHealthSensor::new(source, 3),
-        ));
+        self.inference_resilience_source = Some(source);
+        self.inference_intervention_cursor
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Wire a context-server health source so the cybernetics loop can sense
@@ -524,9 +431,12 @@ impl CyberneticsLoop {
         mut self,
         source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
     ) -> Self {
-        self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::ContextServerHealthSensor::new(Arc::clone(&source)),
-        ));
+        self.sensor_registry.replace(
+            crate::loops::SignalMetric::ContextServerHealth,
+            Arc::new(crate::sensor_provider::ContextServerHealthSensor::new(
+                Arc::clone(&source),
+            )),
+        );
         self.context_server_health_source = Some(source);
         self
     }
@@ -566,9 +476,12 @@ impl CyberneticsLoop {
         &mut self,
         source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
     ) {
-        self.sensor_registry.register(Arc::new(
-            crate::sensor_provider::ContextServerHealthSensor::new(Arc::clone(&source)),
-        ));
+        self.sensor_registry.replace(
+            crate::loops::SignalMetric::ContextServerHealth,
+            Arc::new(crate::sensor_provider::ContextServerHealthSensor::new(
+                Arc::clone(&source),
+            )),
+        );
         self.context_server_health_source = Some(source);
     }
 
@@ -587,13 +500,14 @@ impl CyberneticsLoop {
             SignalMetric::LowConfidenceCount,
             SignalMetric::ConsolidationCandidates,
         ] {
-            self.sensor_registry.register(Arc::new(
-                crate::sensor_provider::MemoryHealthSensor::new(
+            self.sensor_registry.replace(
+                metric,
+                Arc::new(crate::sensor_provider::MemoryHealthSensor::new(
                     source.clone(),
                     metric,
                     &self.set_points,
-                ),
-            ));
+                )),
+            );
         }
     }
 
@@ -768,9 +682,6 @@ impl CyberneticsLoop {
         // Fermi impact-gate: verify only evidence-bearing submitted checks.
         let impact_reports = self.verify_impact(&impact_checks).await;
 
-        // Check coherence among the advisories produced by this cycle.
-        self.check_coherence(&actions).await;
-
         // Feed per-metric outcomes into strategy evaluator.
         // Collect promoted metrics in a locked scope; emit spans outside
         // to avoid holding MutexGuard across .await (not Send).
@@ -851,7 +762,7 @@ impl CyberneticsLoop {
         tracing::debug!(
             target: "reg.cybernetics",
             delay_ms = quality.delay_ms,
-            gain = quality.gain,
+            response_coverage = quality.response_coverage,
             fidelity = quality.fidelity_score,
             effectiveness = quality.observed_progress_score,
             deviations = deviations.len(),
@@ -881,7 +792,7 @@ impl CyberneticsLoop {
         if cycle_had_signal || is_heartbeat {
             let mut observation = serde_json::json!({
                 "delay_ms": quality.delay_ms,
-                "gain": quality.gain,
+                "response_coverage": quality.response_coverage,
                 "fidelity_score": quality.fidelity_score,
                 "observed_progress_score": quality.observed_progress_score,
                 "trigger": format!("{:?}", quality.trigger),

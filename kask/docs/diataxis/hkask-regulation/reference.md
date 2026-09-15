@@ -39,7 +39,7 @@ not on any storage crate — durable sinks are injected as traits
 | `sense` / `compare` / `compute` / `act` / `verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684` |
 | `route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:510` |
 | `persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147` |
-| `try_substitute` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:31` |
+
 | `build_regulation_action` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1080` |
 | `handle_curation_directive` | `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs:14` |
 | `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:446-448` |
@@ -82,7 +82,7 @@ not on any storage crate — durable sinks are injected as traits
 | `MetricPrediction` | `kask/crates/hkask-regulation/src/system_simulator.rs:16` |
 | `SetPoints` struct | `kask/crates/hkask-regulation/src/set_points.rs:186-293` |
 | `SetPointsConfig` | `kask/crates/hkask-regulation/src/set_points.rs:298-330` |
-| `InferenceThrottleMode` enum | `kask/crates/hkask-regulation/src/set_points.rs:60-67` |
+
 | `SetPoints::validate` | `kask/crates/hkask-regulation/src/set_points.rs:482-541` |
 | `load_set_points` | `kask/crates/hkask-regulation/src/set_points.rs:585-619` |
 | `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:107` |
@@ -91,7 +91,7 @@ not on any storage crate — durable sinks are injected as traits
 | `RegulationRule` | `kask/crates/hkask-regulation/src/regulation_policy.rs:93` |
 | `RegulationPolicy::decide` | `kask/crates/hkask-regulation/src/regulation_policy.rs:379` |
 | `classify_decision` | `kask/crates/hkask-regulation/src/regulation_policy.rs:566` |
-| `default_substitution_ladder` | `kask/crates/hkask-regulation/src/regulation_policy.rs:589` |
+
 | `LoopId` enum | `kask/crates/hkask-regulation/src/loops/core.rs:24-29` |
 | `LoopMetrics` / `LoopMetrics::from_cycle` | `kask/crates/hkask-regulation/src/loops/core.rs:189,241` |
 | `ImpactReport` | `kask/crates/hkask-regulation/src/loops/core.rs:80` |
@@ -268,23 +268,18 @@ classDiagram
     }
     class ActionType {
         <<enumeration>>
-        Throttle
         Escalate
-        Calibrate
-        CircuitBreak
-        AdjustEnergyBudget
-        OverrideEnergyBudget
-        ReplenishBudget
         Notify
-        Prune
     }
     class RegulationData {
         <<enumeration>>
-        EnergyBudgetLow
-        BudgetGuardEscalation
         VarietyDeficitExceeded
         ErrorRateExceeded
-        +10 more
+        ConnectorLatencyExceeded
+        CommunicationBackpressure
+        ToolReliabilityDegraded
+        ContextServerFleetHealth
+        OcrSilentFailuresExceeded
         NoData
     }
     class ImpactReport {
@@ -324,25 +319,27 @@ verified_against: kask/crates/hkask-regulation/src/loops/core.rs:24,80,173; kask
 status: VERIFIED
 -->
 
-## Efferent action dispatch
+## Regulation dispositions and inference resilience
 
-The Cybernetics Loop is a sensor+advisor, not an actuator. Every computed
-`RegulatoryAction` is converted to an `Escalate` alert by
-`route_action_as_alert` and routed through a three-tier path. The advisory
-is not passed to `verify_impact`: routing a recommendation is not an
-intervention and cannot establish effectiveness or harm. The human (via the
-Curator) decides whether to apply it; confirmed interventions use the advice
-review lifecycle. Independently submitted rollout checks carry their own
-before/after evidence and remain eligible for immediate impact verification.
+Central regulation has two truthful dispositions: `Notify` records an
+observation and `Escalate` routes an evidence-bearing condition through the
+review queue, live Curator channel, archive, and email fallback. The removed
+`Throttle`, `CircuitBreak`, `Calibrate`, and budget action labels had no
+handlers and therefore did not represent additional regulatory variety.
 
-The `efferent_action` field in the alert's `error_context` JSON carries
-the original `ActionType` (e.g., `Throttle`, `CircuitBreak`) so the Curator
-sees what the loop would have done. Native `Escalate` actions (variety
-deficit) carry `efferent_action: None` (`cycle.rs:523-529`).
+Fast inference correction lives beside enforcement in
+`kask_bridge::LanguageModelInferencePort`. Consecutive transient failures open
+a local circuit; new work receives `InferenceError::CircuitOpen`; after the
+configured interval one half-open probe is admitted. Success closes the
+circuit and failure reopens it. `InferenceResilienceSource` supplies one
+coherent snapshot plus cursor-addressed transition and permanent-failure
+receipts to `CyberneticsLoop`.
 
-`Notify` actions are skipped (`cycle.rs:513-521`) — they are observational
-("no action required, positive signal"). Converting them to Critical
-alerts would be a variety inversion.
+Circuit transitions are recorded as `reg.inference.circuit_transition`.
+A later close is `reg.inference.observed_recovery` with
+`causal_attribution: unverified`. An open circuit or permanent auth,
+configuration, model, or provider failure is escalated once per pending
+condition. Full utilization without failures is not an outage.
 
 ## Set-points
 
@@ -359,10 +356,6 @@ threshold, stage ratio < block ratio, tool reliability floor in
 env var, parses the YAML file, validates, and falls back to defaults on any
 error with a `tracing::warn!`.
 
-`InferenceThrottleMode` (`set_points.rs:60-67`) controls how low energy
-budget is handled: `Off` (user manages; the default), `Autonomous` (direct
-throttle), or `CuratorMediated { curator_timeout_secs }` (escalate with
-fallback).
 
 ## Dampener and stagnation
 
@@ -378,19 +371,11 @@ Curation→Cybernetics→Curation cycle. Two layers:
    120s, `DEFAULT_OVERRIDE_COOLDOWN` at `dampener.rs:66`, sourced from
    `set_points.rs:83`).
 
-`StagnationDetector` (`dampener.rs:231`) tracks (metric, action) pairs.
-When the same pair shows no observed improvement for `substitution_after` cycles (default 2,
-`set_points.rs:120`), `try_substitute` (`cycle.rs:31`) walks the
-substitution ladder. When it hits the per-metric stagnation threshold
-(default 5, `DEFAULT_STAGNATION_THRESHOLD` at `set_points.rs:101`), a
-regulatory-plateau alert fires. **Plateau latch (2026-09-09):** while a
-pending escalation for the plateau condition sits in the review queue,
-re-detections suppress the entire routing (span, queue persist, live
-channel) — the same source-level dedup `route_action_as_alert` applies.
-Before the latch, a persistent plateau re-fired every cycle (the
-live-observed retry_count 37, the `plateau_detected` span flood behind
-the algedonic log-cap breach). The stagnation detector keeps counting
-while latched, so resolving the escalation re-fires the next detection.
+`StagnationDetector` tracks evidence-bearing rollout impact checks. It may
+raise a latched regulatory-plateau escalation after repeated observations
+without progress, but it no longer substitutes unsupported action labels.
+While a matching escalation remains pending, source-level dedup suppresses
+repeat queue, live-channel, and archive delivery.
 
 ## Tool-reliability sensing and diagnosis
 

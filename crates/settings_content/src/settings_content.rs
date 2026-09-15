@@ -1708,10 +1708,8 @@ pub struct KaskSettingsContent {
     pub models: Option<KaskModelsSettingsContent>,
 }
 
-/// Kask-wide general configuration: global inference concurrency + batching.
-/// The limiter is process-global (one `Arc` shared across all consumers —
-/// skill execution, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
-/// for the wiring.
+/// Kask-wide general configuration for inference admission, deadlines, and
+/// local circuit-breaker resilience.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskGeneralSettingsContent {
     /// Maximum concurrent cloud inference provider calls across the whole
@@ -1723,6 +1721,14 @@ pub struct KaskGeneralSettingsContent {
     /// Wall-clock timeout for a single inference call. 0 disables (legacy
     /// behavior). Default 300 (5 minutes).
     pub inference_timeout_secs: Option<u64>,
+
+    /// Consecutive transient failures required to open the inference circuit.
+    /// Default 3.
+    pub inference_circuit_failure_threshold: Option<u32>,
+
+    /// Seconds an open inference circuit rejects work before one half-open
+    /// recovery probe is admitted. Default 30.
+    pub inference_circuit_open_secs: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

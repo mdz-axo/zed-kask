@@ -14,8 +14,8 @@
 //! returning HTTP 200 with empty content on every Complex page). The
 //! `reg.pipeline.ocr.silent_failure` warns live in the corpus subprocess's
 //! tracing — the loop's existing sensors read ledger/DB state in the zed
-//! main process. This is the same trap as `InferenceHealthSource` /
-//! `ContextServerHealthSource`, but the events cross a process boundary,
+//! main process. This follows the inference/context observation pattern, but
+//! the events cross a process boundary,
 //! hence the file channel instead of an in-process snapshot.
 
 /// Count silent failures from this many seconds before "now". Matches the

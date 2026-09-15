@@ -26,9 +26,14 @@ use language_model::LanguageModel;
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolChoice, LanguageModelToolUseInput, MessageContent, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolUseInput, MessageContent, ProviderErrorCategory,
+    Role, StopReason,
 };
 use tokio::sync::{Semaphore, oneshot};
+
+use crate::inference_resilience::{
+    InferenceCircuitPermit, InferenceResilience, InferenceResilienceConfig,
+};
 
 /// The app-wide inference port, published by `wire_kask_inference_stack`.
 ///
@@ -79,6 +84,7 @@ pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
 struct RequestLifetime {
     _admission: tokio::sync::OwnedSemaphorePermit,
+    circuit: InferenceCircuitPermit,
     deadline: Option<RequestDeadline>,
 }
 
@@ -171,6 +177,60 @@ fn completion_error_detail(error: &LanguageModelCompletionError) -> String {
     )
 }
 
+fn inference_error_from_completion(error: LanguageModelCompletionError) -> InferenceError {
+    let detail = completion_error_detail(&error);
+    match &error {
+        LanguageModelCompletionError::ProviderRejection {
+            category: ProviderErrorCategory::Authentication | ProviderErrorCategory::Permission,
+            ..
+        } => InferenceError::Auth(detail),
+        LanguageModelCompletionError::ProviderRejection {
+            category: ProviderErrorCategory::EndpointNotFound,
+            ..
+        } => InferenceError::Model(detail),
+        LanguageModelCompletionError::ProviderRejection { .. } => {
+            InferenceError::Generation(detail)
+        }
+        _ => InferenceError::Connection(detail),
+    }
+}
+
+fn is_transient_inference_failure(error: &InferenceError) -> bool {
+    match error {
+        InferenceError::Timeout(_) | InferenceError::Connection(_) => true,
+        InferenceError::Generation(detail) => detail.contains("classification: transient"),
+        InferenceError::Overloaded(_)
+        | InferenceError::Model(_)
+        | InferenceError::Json(_)
+        | InferenceError::CircuitOpen(_)
+        | InferenceError::VisionUnsupported(_)
+        | InferenceError::NotConfigured(_)
+        | InferenceError::Auth(_) => false,
+    }
+}
+
+fn permanent_inference_failure(
+    error: &InferenceError,
+) -> Option<(hkask_regulation::InferencePermanentFailureKind, String)> {
+    use hkask_regulation::InferencePermanentFailureKind;
+    let kind = match error {
+        InferenceError::Auth(_) => InferencePermanentFailureKind::Authorization,
+        InferenceError::NotConfigured(_) => InferencePermanentFailureKind::Configuration,
+        InferenceError::Model(_) => InferencePermanentFailureKind::Model,
+        InferenceError::Generation(detail) if !detail.contains("classification: transient") => {
+            InferencePermanentFailureKind::Provider
+        }
+        InferenceError::Overloaded(_)
+        | InferenceError::Timeout(_)
+        | InferenceError::Connection(_)
+        | InferenceError::Generation(_)
+        | InferenceError::Json(_)
+        | InferenceError::CircuitOpen(_)
+        | InferenceError::VisionUnsupported(_) => return None,
+    };
+    Some((kind, error.to_string()))
+}
+
 /// Shared accumulator for `collect_completion`: non-streaming calls collect
 /// all events; streaming calls forward text/thinking deltas immediately and
 /// accumulate metadata for the final chunk.
@@ -253,7 +313,7 @@ impl StreamAccumulator {
                 self.cost_usd = token_usage.cost;
             }
             Ok(_) => {}
-            Err(e) => return Err(InferenceError::Generation(completion_error_detail(&e))),
+            Err(error) => return Err(inference_error_from_completion(error)),
         }
         Ok(())
     }
@@ -318,13 +378,9 @@ impl StreamAccumulator {
 ///
 /// Health-tracking fields (`in_flight`, `max_concurrency`, `recent_timeouts`)
 /// are shared between the adapter and the receiver task via `Arc`. The
-/// `InferenceHealthSource` impl reads these so the cybernetics loop can sense
-/// inference saturation and timeout storms — closing the blind-feedback-loop
-/// gap that caused `signal_count=0` during the 300s timeout storm.
-///
-/// `Clone` is derived so the composition root can hold one clone for the
-/// `InferencePort` trait object and another for the `InferenceHealthSource`
-/// trait object — both share the same `Arc`-backed health counters.
+/// The `InferenceResilienceSource` impl exposes these counters with circuit
+/// transitions as one coherent observation. `Clone` shares the same runtime
+/// state between request dispatch and regulation observation.
 #[derive(Clone)]
 pub struct LanguageModelInferencePort {
     admission: Arc<Semaphore>,
@@ -335,6 +391,7 @@ pub struct LanguageModelInferencePort {
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     max_concurrency: Arc<std::sync::atomic::AtomicUsize>,
     recent_timeouts: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    resilience: InferenceResilience,
 }
 
 impl LanguageModelInferencePort {
@@ -364,6 +421,7 @@ impl LanguageModelInferencePort {
         model: Arc<dyn LanguageModel>,
         inference_timeout: Duration,
         max_concurrency: usize,
+        resilience_config: InferenceResilienceConfig,
         cx: AsyncApp,
     ) -> (Self, gpui::Task<()>) {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
@@ -383,6 +441,7 @@ impl LanguageModelInferencePort {
             Arc::new(std::sync::atomic::AtomicUsize::new(max_concurrency.max(1)));
         let recent_timeouts: Arc<std::sync::Mutex<Vec<std::time::Instant>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
+        let resilience = InferenceResilience::new(resilience_config);
 
         let task = cx.spawn({
             // Clone the health counters into the receiver task scope so each
@@ -414,7 +473,7 @@ impl LanguageModelInferencePort {
                         let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
                             let InferenceRequest { request, model_override, mut reply, lifetime } = req;
-                            let RequestLifetime { _admission, deadline } = lifetime;
+                            let RequestLifetime { _admission, circuit, deadline } = lifetime;
                             let work = async {
                                 let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
                                 let _in_flight = InFlightGuard::new(in_flight);
@@ -429,6 +488,19 @@ impl LanguageModelInferencePort {
                                 },
                                 result = work => result,
                             };
+                            let transient_failure = result
+                                .as_ref()
+                                .err()
+                                .is_some_and(is_transient_inference_failure);
+                            let permanent_failure = result
+                                .as_ref()
+                                .err()
+                                .and_then(permanent_inference_failure);
+                            circuit.complete(
+                                result.is_ok(),
+                                transient_failure,
+                                permanent_failure,
+                            );
                             if reply.send(result.map(StreamAccumulator::into_result)).is_err() {
                                 tracing::trace!(target: "hkask.inference", "inference caller cancelled");
                             }
@@ -441,7 +513,7 @@ impl LanguageModelInferencePort {
                         let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
                             let StreamInferenceRequest { request, model_override, reply, lifetime } = req;
-                            let RequestLifetime { _admission, deadline } = lifetime;
+                            let RequestLifetime { _admission, circuit, deadline } = lifetime;
                             let work = async {
                                 let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
                                 let _in_flight = InFlightGuard::new(in_flight);
@@ -456,6 +528,19 @@ impl LanguageModelInferencePort {
                                 },
                                 result = work => result,
                             };
+                            let transient_failure = result
+                                .as_ref()
+                                .err()
+                                .is_some_and(is_transient_inference_failure);
+                            let permanent_failure = result
+                                .as_ref()
+                                .err()
+                                .and_then(permanent_inference_failure);
+                            circuit.complete(
+                                result.is_ok(),
+                                transient_failure,
+                                permanent_failure,
+                            );
                             if reply.send(result.map(StreamAccumulator::into_final_chunk)).is_err() {
                                 tracing::trace!(target: "hkask.inference", "streaming caller cancelled");
                             }
@@ -477,6 +562,7 @@ impl LanguageModelInferencePort {
                 in_flight,
                 max_concurrency: max_concurrency_arc,
                 recent_timeouts,
+                resilience,
             },
             task,
         )
@@ -527,6 +613,11 @@ impl LanguageModelInferencePort {
     }
 
     fn admit(&self) -> Result<RequestLifetime, InferenceError> {
+        let circuit = self.resilience.admit().map_err(|retry_after| {
+            InferenceError::CircuitOpen(format!(
+                "transient inference failure threshold reached; retry after {retry_after:?}"
+            ))
+        })?;
         let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
             InferenceError::Overloaded(
                 "inference admission capacity reached; request was not dispatched".into(),
@@ -539,8 +630,19 @@ impl LanguageModelInferencePort {
         });
         Ok(RequestLifetime {
             _admission: permit,
+            circuit,
             deadline,
         })
+    }
+
+    fn recent_timeout_count_now(&self) -> u64 {
+        let now = std::time::Instant::now();
+        let mut timeouts = self
+            .recent_timeouts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        timeouts.retain(|instant| now.duration_since(*instant) < RECENT_TIMEOUT_WINDOW);
+        timeouts.len() as u64
     }
 
     async fn wait_deadline(deadline: Option<RequestDeadline>) {
@@ -581,7 +683,7 @@ impl LanguageModelInferencePort {
         let mut stream = model
             .stream_completion(request, cx)
             .await
-            .map_err(|error| InferenceError::Connection(completion_error_detail(&error)))?;
+            .map_err(inference_error_from_completion)?;
         let model_name = model.name().0.to_string();
         let mut accumulator = StreamAccumulator::new(model_name.clone());
         while let Some(event) = stream.next().await {
@@ -947,26 +1049,60 @@ impl InferencePort for LanguageModelInferencePort {
 const RECENT_TIMEOUT_WINDOW: Duration = Duration::from_secs(300);
 
 #[async_trait::async_trait]
-impl hkask_regulation::InferenceHealthSource for LanguageModelInferencePort {
-    async fn in_flight(&self) -> usize {
-        self.in_flight.load(std::sync::atomic::Ordering::Relaxed)
-    }
+impl hkask_regulation::InferenceResilienceSource for LanguageModelInferencePort {
+    async fn observe_since(
+        &self,
+        cursor: u64,
+    ) -> Result<hkask_regulation::InferenceObservation, hkask_regulation::InferenceObservationError>
+    {
+        use crate::inference_resilience::{CircuitState, CircuitTransition};
+        use hkask_regulation::{
+            InferenceCircuitState, InferenceInterventionKind, InferenceInterventionReceipt,
+            InferenceObservation, InferenceSnapshot,
+        };
 
-    async fn max_concurrency(&self) -> usize {
-        self.max_concurrency
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
+        let circuit_state = match self.resilience.state() {
+            CircuitState::Closed => InferenceCircuitState::Closed,
+            CircuitState::Open { .. } => InferenceCircuitState::Open,
+            CircuitState::HalfOpen { .. } => InferenceCircuitState::HalfOpen,
+        };
+        let interventions: Vec<_> = self
+            .resilience
+            .receipts_after(cursor)
+            .into_iter()
+            .map(|receipt| InferenceInterventionReceipt {
+                id: receipt.id,
+                kind: match receipt.transition {
+                    CircuitTransition::Opened => InferenceInterventionKind::CircuitOpened,
+                    CircuitTransition::HalfOpened => InferenceInterventionKind::CircuitHalfOpened,
+                    CircuitTransition::Closed => InferenceInterventionKind::CircuitClosed,
+                    CircuitTransition::Reopened => InferenceInterventionKind::CircuitReopened,
+                },
+                occurred_at: receipt.occurred_at,
+            })
+            .collect();
+        let permanent_failures = self.resilience.permanent_failures_after(cursor);
+        let next_cursor = interventions
+            .iter()
+            .map(|receipt| receipt.id)
+            .chain(permanent_failures.iter().map(|receipt| receipt.id))
+            .max()
+            .unwrap_or(cursor);
 
-    async fn recent_timeout_count(&self) -> u64 {
-        let now = std::time::Instant::now();
-        let mut timeouts = self
-            .recent_timeouts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // Evict timeouts older than the window. This keeps the Vec bounded —
-        // a long-running storm produces at most (rate × window) entries.
-        timeouts.retain(|t| now.duration_since(*t) < RECENT_TIMEOUT_WINDOW);
-        timeouts.len() as u64
+        Ok(InferenceObservation {
+            snapshot: InferenceSnapshot {
+                observed_at: chrono::Utc::now(),
+                in_flight: self.in_flight.load(std::sync::atomic::Ordering::Relaxed),
+                max_concurrency: self
+                    .max_concurrency
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                recent_timeout_count: self.recent_timeout_count_now(),
+                circuit_state,
+            },
+            interventions,
+            permanent_failures,
+            next_cursor,
+        })
     }
 }
 
@@ -1033,6 +1169,13 @@ mod tests {
     use language_model_core::{LanguageModelCompletionError, LanguageModelProviderName};
     use std::sync::Arc;
     use std::time::Duration;
+
+    fn test_resilience_config() -> crate::InferenceResilienceConfig {
+        crate::InferenceResilienceConfig {
+            transient_failure_threshold: 3,
+            open_duration: Duration::from_secs(30),
+        }
+    }
 
     #[test]
     fn completion_requires_explicit_terminal_stop() {
@@ -1105,6 +1248,22 @@ mod tests {
     }
 
     #[test]
+    fn completion_auth_rejection_maps_to_typed_auth_error() {
+        let rejection = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: Some(http_client::StatusCode::UNAUTHORIZED),
+            code: Some("401".to_string()),
+            message: "invalid credential".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::Authentication,
+        };
+        assert!(matches!(
+            super::inference_error_from_completion(rejection),
+            InferenceError::Auth(_)
+        ));
+    }
+
+    #[test]
     fn completion_error_detail_passes_non_rejections_through() {
         let transport = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
         assert_eq!(
@@ -1127,6 +1286,7 @@ mod tests {
             model.clone(),
             Duration::from_secs(300),
             2, // max_concurrency
+            test_resilience_config(),
             cx.to_async(),
         );
 
@@ -1156,6 +1316,216 @@ mod tests {
         assert!(detail.contains("Provider returned error"));
     }
 
+    /// expect: "Repeated transient provider failures open the live inference circuit"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: three sequential requests receive retryable provider rejections
+    /// post: the next request fails before dispatch with `InferenceError::CircuitOpen`
+    /// [P2] Constraining: automatic control is bounded to reversible admission denial
+    #[gpui::test]
+    async fn transient_provider_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+
+        for attempt_index in 0..3 {
+            let attempt_port = port.clone();
+            let prompt = format!("test-{attempt_index}");
+            let attempt = cx.spawn(async move |_cx| {
+                attempt_port
+                    .generate(&prompt, &LLMParameters::default(), None)
+                    .await
+            });
+            cx.run_until_parked();
+            fake.send_last_completion_stream_error(
+                LanguageModelCompletionError::ProviderRejection {
+                    provider: LanguageModelProviderName::new("OpenRouter"),
+                    status: Some(http_client::StatusCode::BAD_GATEWAY),
+                    code: Some("502".to_string()),
+                    message: "Provider returned error".to_string(),
+                    retry_after: None,
+                    category: ProviderErrorCategory::InternalServer,
+                },
+            );
+            cx.run_until_parked();
+            assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
+        }
+
+        assert!(matches!(
+            port.generate("blocked", &LLMParameters::default(), None)
+                .await,
+            Err(InferenceError::CircuitOpen(_))
+        ));
+    }
+
+    /// expect: "A successful half-open inference probe restores live service"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: one transient failure opens a zero-delay test circuit
+    /// post: one probe reaches the provider, succeeds, and closes the observed circuit
+    #[gpui::test]
+    async fn successful_live_half_open_probe_closes_circuit(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            1,
+            crate::InferenceResilienceConfig {
+                transient_failure_threshold: 1,
+                open_duration: Duration::ZERO,
+            },
+            cx.to_async(),
+        );
+
+        let failed_port = port.clone();
+        let failed = cx.spawn(async move |_cx| {
+            failed_port
+                .generate("failure", &LLMParameters::default(), None)
+                .await
+        });
+        cx.run_until_parked();
+        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: Some(http_client::StatusCode::BAD_GATEWAY),
+            code: Some("502".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InternalServer,
+        });
+        cx.run_until_parked();
+        assert!(matches!(failed.await, Err(InferenceError::Generation(_))));
+
+        let probe_port = port.clone();
+        let probe = cx.spawn(async move |_cx| {
+            probe_port
+                .generate("probe", &LLMParameters::default(), None)
+                .await
+        });
+        cx.run_until_parked();
+        fake.send_last_completion_stream_event(
+            language_model_core::LanguageModelCompletionEvent::Stop(
+                language_model_core::StopReason::EndTurn,
+            ),
+        );
+        fake.end_last_completion_stream();
+        cx.run_until_parked();
+        assert!(probe.await.is_ok());
+
+        let observation = hkask_regulation::InferenceResilienceSource::observe_since(&port, 0)
+            .await
+            .expect("in-process resilience observation");
+        assert_eq!(
+            observation.snapshot.circuit_state,
+            hkask_regulation::InferenceCircuitState::Closed
+        );
+        let transitions: Vec<_> = observation
+            .interventions
+            .iter()
+            .map(|receipt| receipt.kind)
+            .collect();
+        assert_eq!(
+            transitions,
+            vec![
+                hkask_regulation::InferenceInterventionKind::CircuitOpened,
+                hkask_regulation::InferenceInterventionKind::CircuitHalfOpened,
+                hkask_regulation::InferenceInterventionKind::CircuitClosed,
+            ]
+        );
+    }
+
+    /// expect: "Repeated inference deadlines open the live circuit before more work dispatches"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: three sequential requests exceed the admission-to-completion deadline
+    /// post: the next request fails before dispatch with `InferenceError::CircuitOpen`
+    #[gpui::test]
+    async fn timeout_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model,
+            Duration::from_secs(2),
+            1,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+
+        for attempt_index in 0..3 {
+            let attempt_port = port.clone();
+            let prompt = format!("timeout-{attempt_index}");
+            let attempt = cx.spawn(async move |_cx| {
+                attempt_port
+                    .generate(&prompt, &LLMParameters::default(), None)
+                    .await
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(3));
+            cx.run_until_parked();
+            assert!(matches!(attempt.await, Err(InferenceError::Timeout(_))));
+        }
+
+        assert!(matches!(
+            port.generate("blocked", &LLMParameters::default(), None)
+                .await,
+            Err(InferenceError::CircuitOpen(_))
+        ));
+    }
+
+    /// expect: "Permanent provider failures remain visible without tripping transient resilience"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: a provider returns a non-retryable rejection
+    /// post: the circuit stays closed and a permanent-failure receipt is observable
+    #[gpui::test]
+    async fn permanent_provider_failure_is_observed_without_opening_circuit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            2,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+        let attempt_port = port.clone();
+        let attempt = cx.spawn(async move |_cx| {
+            attempt_port
+                .generate("permanent", &LLMParameters::default(), None)
+                .await
+        });
+        cx.run_until_parked();
+        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status: None,
+            code: Some("499".to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::Other,
+        });
+        cx.run_until_parked();
+        assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
+
+        let observation = hkask_regulation::InferenceResilienceSource::observe_since(&port, 0)
+            .await
+            .expect("in-process resilience observation");
+        assert_eq!(
+            observation.snapshot.circuit_state,
+            hkask_regulation::InferenceCircuitState::Closed
+        );
+        assert_eq!(observation.permanent_failures.len(), 1);
+        assert_eq!(
+            observation
+                .permanent_failures
+                .first()
+                .map(|receipt| receipt.kind),
+            Some(hkask_regulation::InferencePermanentFailureKind::Provider)
+        );
+    }
+
     #[test]
     fn establishment_errors_route_through_the_detail_helper() {
         // The establishment path (stream_completion returning Err before any
@@ -1165,10 +1535,10 @@ mod tests {
         // is assembled from pieces so this test's own source cannot satisfy
         // it.
         let source = include_str!("inference_chat.rs");
-        let needle = concat!("Connection(completion_error_detail", "(&error))");
+        let needle = concat!("map_err(inference_error_from_", "completion)");
         assert!(
             source.contains(needle),
-            "the stream-establishment map_err must enrich errors via the detail helper"
+            "the stream-establishment path must preserve typed provider classification"
         );
     }
 
@@ -1245,9 +1615,11 @@ mod tests {
             model.clone(),
             Duration::from_secs(300),
             2, // max_concurrency
+            test_resilience_config(),
             cx.to_async(),
         );
 
+        // Start 4 calls
         // Fire 5 non-streaming requests. Each returns a future that resolves
         // when the reply arrives — but the FakeLanguageModel never completes
         // streams, so these futures stay pending. The semaphore should block
@@ -1310,6 +1682,7 @@ mod tests {
             model.clone(),
             Duration::from_secs(2),
             1,
+            test_resilience_config(),
             cx.to_async(),
         );
         let first = {
@@ -1353,6 +1726,7 @@ mod tests {
                 model.clone(),
                 Duration::from_secs(2),
                 1,
+                test_resilience_config(),
                 cx.to_async(),
             );
             let mut stream = port.generate_stream("stream", &LLMParameters::default(), None);
@@ -1385,8 +1759,13 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _receiver) =
-            super::LanguageModelInferencePort::new(model, Duration::ZERO, 1, cx.to_async());
+        let (port, _receiver) = super::LanguageModelInferencePort::new(
+            model,
+            Duration::ZERO,
+            1,
+            test_resilience_config(),
+            cx.to_async(),
+        );
         let stream = port.generate_stream("stream", &LLMParameters::default(), None);
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(3600));
@@ -1414,6 +1793,7 @@ mod tests {
             model.clone(),
             Duration::from_secs(300),
             2,
+            test_resilience_config(),
             cx.to_async(),
         );
 

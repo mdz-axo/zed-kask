@@ -25,7 +25,7 @@ pub(crate) mod core;
 pub(crate) mod signals;
 
 pub(crate) use actions::{ActionType, RegulatoryAction};
-pub(crate) use actions::{BudgetOption, RegulationData, RegulatoryActionParams};
+pub(crate) use actions::{RegulationData, RegulatoryActionParams};
 pub use core::CurationInput;
 pub(crate) use core::ImpactReport;
 pub use core::TriggerOrigin;

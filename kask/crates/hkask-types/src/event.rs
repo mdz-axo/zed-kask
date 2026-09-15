@@ -475,6 +475,10 @@ pub enum SpanKind {
     /// Per-domain tool-outcome breakdown (success rates, operation counts,
     /// per-error-kind tallies): `reg.outcome.tool_domains`
     ToolOutcomeBreakdown,
+    /// Inference circuit state changed: `reg.inference.circuit_transition`.
+    InferenceCircuitTransition,
+    /// A later observation found the circuit recovered: `reg.inference.observed_recovery`.
+    InferenceObservedRecovery,
 }
 
 impl SpanKind {
@@ -490,6 +494,8 @@ impl SpanKind {
             SpanKind::RegulatoryPlateauDetected => ("reg.outcome", "plateau_detected"),
             SpanKind::LoopMetricsTelemetry => ("reg.outcome", "loop_quality"),
             SpanKind::ToolOutcomeBreakdown => ("reg.outcome", "tool_domains"),
+            SpanKind::InferenceCircuitTransition => ("reg.inference", "circuit_transition"),
+            SpanKind::InferenceObservedRecovery => ("reg.inference", "observed_recovery"),
         }
     }
 }

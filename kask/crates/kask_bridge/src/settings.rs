@@ -97,8 +97,8 @@ pub struct KaskSettings {
 
 /// Kask-wide general configuration: global inference concurrency + batching.
 /// The limiter is process-global (one `Arc` shared across all consumers —
-/// corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
-/// for the wiring and the limiter impl.
+/// corpus OCR, MCP tool calls). Inference admission and resilience are
+/// enforced by `LanguageModelInferencePort`.
 ///
 /// `Default` is the single source of truth for defaults — `From<Content>`
 /// reads from it via `unwrap_or(default.field)`. Do not add
@@ -118,6 +118,12 @@ pub struct KaskGeneralSettings {
     /// (disturbance class D2: provider timeout, no response). 0 disables the
     /// timeout (legacy behavior). Default 300 (5 minutes).
     pub inference_timeout_secs: u64,
+
+    /// Consecutive transient failures required to open the inference circuit.
+    pub inference_circuit_failure_threshold: u32,
+
+    /// Seconds before an open circuit admits one half-open recovery probe.
+    pub inference_circuit_open_secs: u64,
 }
 
 impl Default for KaskGeneralSettings {
@@ -125,6 +131,8 @@ impl Default for KaskGeneralSettings {
         Self {
             max_concurrency: 96,
             inference_timeout_secs: 300,
+            inference_circuit_failure_threshold: 3,
+            inference_circuit_open_secs: 30,
         }
     }
 }
@@ -806,6 +814,14 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
             inference_timeout_secs: c
                 .inference_timeout_secs
                 .unwrap_or(default.inference_timeout_secs),
+            inference_circuit_failure_threshold: c
+                .inference_circuit_failure_threshold
+                .filter(|&value| value > 0)
+                .unwrap_or(default.inference_circuit_failure_threshold),
+            inference_circuit_open_secs: c
+                .inference_circuit_open_secs
+                .filter(|&value| value > 0)
+                .unwrap_or(default.inference_circuit_open_secs),
         }
     }
 }

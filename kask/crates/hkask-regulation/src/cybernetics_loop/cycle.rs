@@ -4,98 +4,21 @@
 //! orchestrates these phases; each phase is `pub(super)` so the facade can
 //! call it. Action construction (`build_regulation_action`), alert routing
 //! (`route_action_as_alert`), and the cycle-internal helpers
-//! (`try_substitute`, `persist_alert_to_queue`) are private to this module.
+//! (`persist_alert_to_queue`) is private to this module.
 
 use crate::algedonic::{AlertSeverity, RuntimeAlert};
+use crate::loops::RegulationData;
 use crate::loops::{
     ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, RegulatoryAction,
     RegulatoryActionParams, Signal, SignalMetric,
 };
-use crate::loops::{BudgetOption, RegulationData};
 use crate::regulation_policy::{
-    self, RegulationPolicy, RegulationReason, classify_decision, default_substitution_ladder,
-    extract_deficit_threshold,
+    self, RegulationPolicy, RegulationReason, classify_decision, extract_deficit_threshold,
 };
-use crate::set_points::InferenceThrottleMode;
 use hkask_types::WebID;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
 
 impl super::CyberneticsLoop {
-    /// Attempt to substitute an action type when the proposed one has been
-    /// repeatedly ineffective (Fermi improvement-loop pattern).
-    ///
-    /// Checks the stagnation detector for the (metric, proposed) pair.
-    /// If it has been ineffective for ≥ `substitution_after` cycles,
-    /// walks the substitution ladder to find an untried alternative.
-    /// Returns the proposed action if no alternatives remain.
-    async fn try_substitute(&self, metric: SignalMetric, proposed: ActionType) -> ActionType {
-        let proposed_str = proposed.as_str();
-        let metric_str = metric.as_str();
-
-        // Check if the proposed action has been tried enough to warrant substitution.
-        let count = self
-            .stagnation_detector
-            .ineffective_count(metric_str, proposed_str);
-
-        if count < self.calibrated_thresholds.read().await.substitution_after {
-            return proposed; // Not enough failures yet.
-        }
-
-        // Build the substitution ladder: custom overrides > defaults.
-        let custom_ladder = self.set_points.action_substitutions.get(metric_str);
-        let ladder: Vec<ActionType> = if let Some(names) = custom_ladder {
-            names.iter().filter_map(|n| ActionType::parse(n)).collect()
-        } else {
-            default_substitution_ladder(metric).to_vec()
-        };
-
-        if ladder.is_empty() {
-            return proposed; // No alternatives defined.
-        }
-
-        // Find the first action in the ladder that hasn't been tried recently.
-        for &alt in &ladder {
-            if alt == proposed {
-                continue; // Skip the action we're already considering.
-            }
-            let alt_str = alt.as_str();
-            let alt_count = self
-                .stagnation_detector
-                .ineffective_count(metric_str, alt_str);
-            if alt_count == 0 {
-                tracing::info!(
-                    target: "reg.cybernetics.substitution",
-                    metric = metric_str,
-                    from = %proposed_str,
-                    to = %alt_str,
-                    failed_attempts = count,
-                    "Action substitution: replacing ineffective action with alternative"
-                );
-                self.emit_regulation_span(
-                    SpanKind::ActionSubstituted,
-                    serde_json::json!({
-                        "metric": metric_str,
-                        "from": proposed_str,
-                        "to": alt_str,
-                        "failed_attempts": count,
-                    }),
-                )
-                .await;
-                return alt;
-            }
-        }
-
-        // All alternatives have been tried and failed — let the plateau
-        // escalation handle it.
-        tracing::warn!(
-            target: "reg.cybernetics.substitution",
-            metric = metric_str,
-            action = %proposed_str,
-            "All substitution alternatives exhausted for metric"
-        );
-        proposed
-    }
-
     /// Emit a regulation span to the RegulationArchive for Regulation observability.
     ///
     /// This is the Conant-Ashby closure: the Regulation (observer-of-observers)
@@ -139,17 +62,7 @@ impl super::CyberneticsLoop {
     /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
     /// 0.5 for Warning.
     ///
-    /// `efferent_action` carries the original `ActionType` for actions that
-    /// were converted to Escalate alerts (non-native Escalate). `None` for
-    /// native Escalate actions. The field is included in the `error_context`
-    /// JSON so the Curator's `curator_escalations` tool sees the recommended
-    /// action as structured data, not just free-text in the message.
-    async fn persist_alert_to_queue(
-        &self,
-        alert: &RuntimeAlert,
-        efferent_action: Option<&str>,
-        recovery_signal: Option<&Signal>,
-    ) {
+    async fn persist_alert_to_queue(&self, alert: &RuntimeAlert, recovery_signal: Option<&Signal>) {
         let Some(ref sink) = self.alert_escalation_sink else {
             return;
         };
@@ -167,7 +80,6 @@ impl super::CyberneticsLoop {
             "threshold": alert.threshold,
             "severity": alert.severity,
             "escalated": alert.escalated,
-            "efferent_action": efferent_action,
             "recovery_signal": recovery_signal,
             "timestamp": alert.timestamp.to_rfc3339(),
         });
@@ -210,84 +122,96 @@ impl super::CyberneticsLoop {
         .await;
     }
 
-    /// Check regulation coherence — flag contradictory or suspicious action pairs.
-    ///
-    /// Runs after verify_impact. Scans the action set from this tick and logs
-    /// warnings for patterns that suggest inconsistent regulation (e.g.
-    /// Throttle + CircuitBreak on same loop, AdjustEnergyBudget + OverrideEnergyBudget).
-    pub(super) async fn check_coherence(&self, actions: &[RegulatoryAction]) {
-        use ActionType::*;
-        let has = |t: ActionType| actions.iter().any(|a| a.action_type == t);
-        let has_target = |t: ActionType, target: LoopId| {
-            actions
-                .iter()
-                .any(|a| a.action_type == t && a.target == target)
-        };
-
-        let mut conflicts: Vec<String> = Vec::new();
-
-        // Throttle + CircuitBreak — contradictory (slow down vs stop).
-        // When both target Inference, use the more specific message instead
-        // of the generic one to avoid double-alerting for the same conflict.
-        if has(Throttle) && has(CircuitBreak) {
-            if has_target(Throttle, LoopId::Inference)
-                && has_target(CircuitBreak, LoopId::Inference)
-            {
-                tracing::warn!(
-                    target: "reg.outcome.coherence",
-                    "Throttle + CircuitBreak both targeting Inference loop — consider consolidating"
-                );
-                conflicts.push("contradictory_actions: Throttle+CircuitBreak on Inference".into());
-            } else {
-                tracing::warn!(
-                    target: "reg.outcome.coherence",
-                    action_count = actions.len(),
-                    "Potentially contradictory Throttle + CircuitBreak in same tick"
-                );
-                conflicts.push("contradictory_actions: Throttle+CircuitBreak".into());
-            }
-        }
-
-        // AdjustEnergyBudget + OverrideEnergyBudget — contradictory (manual vs forced).
-        if has(AdjustEnergyBudget) && has(OverrideEnergyBudget) {
-            tracing::warn!(
-                target: "reg.outcome.coherence",
-                action_count = actions.len(),
-                "Potentially contradictory AdjustEnergyBudget + OverrideEnergyBudget in same tick"
-            );
-            conflicts.push("contradictory_actions: AdjustEnergyBudget+OverrideEnergyBudget".into());
-        }
-
-        // Persist coherence conflicts to the escalation queue so the Curator
-        // can see them — not just a log warning that may be missed. Before
-        // this fix, check_coherence was advisory-only: it detected conflicts
-        // but neither suppressed the conflicting actions nor alerted the
-        // Curator. The coherence check was a sensor with no actuator (B4).
-        for conflict in &conflicts {
-            let alert = RuntimeAlert {
-                domain: format!("reg.coherence:{conflict}"),
-                deficit: 1,
-                threshold: 1,
-                severity: AlertSeverity::Warning,
-                escalated: true,
-                timestamp: chrono::Utc::now(),
-                message: format!(
-                    "Regulation coherence conflict detected: {conflict} ({} actions this tick)",
-                    actions.len()
-                ),
-            };
-            self.persist_alert_to_queue(&alert, None, None).await;
-            if let Some(ref tx) = self.alerts_tx {
-                if tx.send(CurationInput::Alert(alert)).is_err() {
-                    tracing::warn!(target: "reg.alert", "Coherence alert send failed — channel closed");
-                }
-            }
-        }
-    }
-
     /// Compare: detect deviations from set-points.
     pub(super) async fn compare(&self, signals: &[Signal]) -> Vec<Deviation> {
         signals.iter().filter_map(Deviation::from_signal).collect()
+    }
+
+    async fn sense_inference_resilience(&self) -> Vec<Signal> {
+        let Some(source) = &self.inference_resilience_source else {
+            return Vec::new();
+        };
+        let cursor = self
+            .inference_intervention_cursor
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let observation = match source.observe_since(cursor).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.inference",
+                    error = %error,
+                    "inference resilience observation failed"
+                );
+                return Vec::new();
+            }
+        };
+        for receipt in &observation.interventions {
+            let kind = if receipt.kind == crate::InferenceInterventionKind::CircuitClosed {
+                SpanKind::InferenceObservedRecovery
+            } else {
+                SpanKind::InferenceCircuitTransition
+            };
+            if let Some(sink) = &self.event_sink {
+                let event = RegulationRecord::new(
+                    WebID::from_persona(b"regulation"),
+                    Span::from_kind(kind),
+                    CyclePhase::Sense,
+                    serde_json::json!({
+                        "intervention_id": receipt.id,
+                        "transition": receipt.kind,
+                        "occurred_at": receipt.occurred_at,
+                        "observed_at": observation.snapshot.observed_at,
+                        "circuit_state": observation.snapshot.circuit_state,
+                        "observed_recovery": receipt.kind
+                            == crate::InferenceInterventionKind::CircuitClosed,
+                        "causal_attribution": "unverified",
+                    }),
+                    0,
+                );
+                if let Err(error) = sink.persist(&event) {
+                    tracing::warn!(
+                        target: "reg.inference",
+                        error = %error,
+                        intervention_id = receipt.id,
+                        "inference intervention receipt persistence failed"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    target: "reg.inference",
+                    intervention_id = receipt.id,
+                    "inference intervention receipt dropped — no event sink configured"
+                );
+            }
+        }
+
+        for failure in &observation.permanent_failures {
+            let action = RegulatoryAction::with_metric(
+                LoopId::Curation,
+                ActionType::Escalate,
+                RegulatoryActionParams::reason(format!(
+                    "inference_permanent_failure:{:?} — {}",
+                    failure.kind, failure.detail
+                )),
+                "inference_permanent_failure".to_string(),
+            );
+            self.route_action_as_alert(&action).await;
+        }
+        self.inference_intervention_cursor.store(
+            observation.next_cursor,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        let circuit_open = !matches!(
+            observation.snapshot.circuit_state,
+            crate::InferenceCircuitState::Closed
+        );
+        vec![Signal::new(
+            LoopId::Inference,
+            SignalMetric::CircuitBreakerState,
+            if circuit_open { 1.0 } else { 0.0 },
+            0.0,
+        )]
     }
 
     /// Produces signals for: per-agent energy ratio, variety deficit, queue depth.
@@ -304,6 +228,7 @@ impl super::CyberneticsLoop {
         // Append signals from pluggable sensor providers.
         let registry_signals = self.sensor_registry.sense_all(LoopId::Cybernetics).await;
         signals.extend(registry_signals);
+        signals.extend(self.sense_inference_resilience().await);
 
         // Sense the in-memory algedonic log cap. When the log approaches its
         // cap, emit a signal so the operator (or the `algedonic-review` skill)
@@ -415,13 +340,8 @@ impl super::CyberneticsLoop {
                     trend = pred.trend,
                     "Predictive: metric approaching set-point"
                 );
-                // Notify actions are observational — they signal "approaching
-                // threshold" but carry no efferent action. Logging them here
-                // makes the observation visible without inflating the action
-                // count (which would make gain > 1.0, breaking the documented
-                // 0.0–1.0 contract). route_action_as_alert skips Notify
-                // actions, so adding them to `actions` would also be a silent
-                // drop (F8).
+                // Predictive threshold proximity is telemetry, not a policy
+                // disposition; record it without synthesizing a deviation.
             }
         }
 
@@ -430,22 +350,8 @@ impl super::CyberneticsLoop {
         for dev in deviations {
             for proposed in policy.decide(dev) {
                 let action = self.build_regulation_action(dev, proposed).await;
-                if let Some(a) = action {
-                    if a.action_type == ActionType::Notify {
-                        // Observational actions (Notify) are logged here, not
-                        // added to `actions`. They signal "metric observed"
-                        // but carry no efferent action — route_action_as_alert
-                        // would skip them (F8), and counting them would inflate
-                        // gain beyond 1.0 (B1). Logging preserves observability.
-                        tracing::info!(
-                            target: "reg.cybernetics",
-                            metric = a.metric_name.as_deref().unwrap_or("unknown"),
-                            reason = %a.parameters.reason,
-                            "Notify action — observational, not routed as alert"
-                        );
-                    } else {
-                        actions.push(a);
-                    }
+                if let Some(disposition) = action {
+                    actions.push(disposition);
                 }
             }
         }
@@ -511,7 +417,7 @@ impl super::CyberneticsLoop {
                 // the queue is the primary durable path for alert review, not
                 // a fallback (the RegulationArchive below is the fallback for
                 // restart durability when the live channel is down).
-                self.persist_alert_to_queue(&alert, None, None).await;
+                self.persist_alert_to_queue(&alert, None).await;
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -540,100 +446,33 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Convert a single `RegulatoryAction` into a `RuntimeAlert` and route it
-    /// through the three-tier alert path (escalation queue → live channel →
-    /// archive fallback → email fallback).
-    ///
-    /// Design decision (2026-08-06): the cybernetics loop is a sensor+advisor,
-    /// not an actuator. All computed actions are converted to Escalate alerts
-    /// routed to the Curator/human. Actions that would have been direct
-    /// efferent signals (Throttle, CircuitBreak, AdjustEnergyBudget, etc.)
-    /// carry an `efferent_action` field in the alert data so the Curator sees
-    /// what the loop would have done — but the actuator is not wired. This
-    /// preserves user sovereignty: the human decides whether to apply the
-    /// recommended action, the loop does not act autonomously.
-    ///
-    /// `Notify` actions are skipped — they are observational ("no action
-    /// required, positive signal" per `ActionType::Notify`'s doc). Converting
-    /// them to Critical alerts would be a variety inversion (positive signal
-    /// → critical alert) and would pollute the escalation queue with
-    /// non-actionable noise.
-    ///
-    /// See `kask/docs/diataxis/hkask-regulation/reference.md` §
-    /// "Efferent action dispatch" for the full rationale.
+    /// Route a real escalation disposition through the durable queue, live
+    /// Curator channel, archive, and email fallback. Informational dispositions
+    /// remain observations and are not promoted to incidents.
     async fn route_action_as_alert(&self, action: &RegulatoryAction) {
-        let target_id = action.target;
-
         if action.action_type == ActionType::Notify {
             tracing::info!(
                 target: "reg.cybernetics",
-                action_type = ?action.action_type,
+                metric = action.metric_name.as_deref().unwrap_or("unknown"),
+                "Notify disposition observed"
+            );
+            return;
+        }
+        if action.target != LoopId::Curation {
+            tracing::warn!(
+                target: "reg.cybernetics",
                 target_loop = %action.target,
-                "Notify action — observational, not routed as alert"
+                "Escalate disposition rejected because its target is not Curation"
             );
             return;
         }
 
-        let is_native_escalate =
-            action.action_type == ActionType::Escalate && target_id == LoopId::Curation;
-        let efferent_action = if is_native_escalate {
-            None
-        } else {
-            Some(action.action_type.as_str())
-        };
-
-        tracing::info!(
-            target: "reg.cybernetics",
-            action_type = ?action.action_type,
-            target_loop = %action.target,
-            efferent = ?efferent_action,
-            "Cybernetics Loop efferent signal (routed as Escalate{})",
-            if efferent_action.is_some() { " — efferent not wired" } else { "" }
-        );
-
-        // Build the alert. For native Escalate actions, extract the
-        // deficit/threshold from the typed data when available. For converted
-        // efferent actions, synthesize a deficit of 1 and threshold of 1 — the
-        // alert's purpose is advisory, not quantitative.
-        let (deficit, threshold, message) = if is_native_escalate {
-            // Message composition lives in regulation_policy::alert_message —
-            // the single source of truth for this format. verify_impact's
-            // auto-resolve reconstruction calls the same helper; a local
-            // format! here would let the two sites drift and silently break
-            // the dedup-match.
-            let message = regulation_policy::alert_message(
-                &action.parameters.data,
-                &action.parameters.reason,
-            );
-            match extract_deficit_threshold(&action.parameters.data) {
-                Some((d, t)) => (d, t, message),
-                None => {
-                    // No quantitative data (NoData or non-threshold variant) —
-                    // the (1, 1) sentinel matches the advisory pattern used by
-                    // efferent and plateau alerts: "one issue, threshold one
-                    // issue." The previous (0, 0) fallback produced misleading
-                    // error_context JSON that triage read as "no deficit, no
-                    // threshold" — indistinguishable from a broken sense input
-                    // returning zero.
-                    (1, 1, message)
-                }
-            }
-        } else {
-            let msg = format!(
-                "Efferent action {} (target: {}) recommended but not wired — reason: {}",
-                action.action_type.as_str(),
-                action.target,
-                action.parameters.reason
-            );
-            (1, 1, msg)
-        };
-        let domain = if is_native_escalate {
-            String::new()
-        } else {
-            format!("efferent:{}", action.action_type.as_str())
-        };
+        let message =
+            regulation_policy::alert_message(&action.parameters.data, &action.parameters.reason);
+        let (deficit, threshold) =
+            extract_deficit_threshold(&action.parameters.data).unwrap_or((1, 1));
         let alert = RuntimeAlert {
-            domain,
+            domain: action.parameters.reason.clone(),
             deficit,
             threshold,
             severity: AlertSeverity::Critical,
@@ -658,7 +497,7 @@ impl super::CyberneticsLoop {
                     target: "reg.cybernetics",
                     action_type = ?action.action_type,
                     target_loop = %action.target,
-                    "Suppressing duplicate efferent alert — pending escalation already in queue"
+                    "Suppressing duplicate escalation — pending condition already in queue"
                 );
                 return;
             }
@@ -683,7 +522,7 @@ impl super::CyberneticsLoop {
         {
             self.emit_tool_outcome_breakdown().await;
         }
-        self.persist_alert_to_queue(&alert, efferent_action, observation.as_ref())
+        self.persist_alert_to_queue(&alert, observation.as_ref())
             .await;
 
         // Primary path: live channel to Curator's inbox
@@ -715,7 +554,6 @@ impl super::CyberneticsLoop {
                         "severity": "Critical",
                         "escalated": true,
                         "message": alert.message,
-                        "efferent_action": efferent_action,
                         "timestamp": alert.timestamp.to_rfc3339(),
                     }),
                     0,
@@ -749,8 +587,8 @@ impl super::CyberneticsLoop {
 
     /// Verify evidence-bearing rollout impact checks (Fermi impact-gate pattern).
     ///
-    /// The typed input excludes computed advisories: routing advice is not an
-    /// intervention. Each check is answered by the rollout event source with
+    /// The typed input excludes central Notify/Escalate dispositions: neither
+    /// is a measured rollout intervention. Each check is answered by the rollout event source with
     /// comparable before/after observations, then classified using relative
     /// worsening thresholds.
     pub(super) async fn verify_impact(
@@ -894,7 +732,7 @@ impl super::CyberneticsLoop {
                     if metric == SignalMetric::ToolReliability {
                         self.emit_tool_outcome_breakdown().await;
                     }
-                    self.persist_alert_to_queue(&alert, None, None).await;
+                    self.persist_alert_to_queue(&alert, None).await;
                     if let Some(ref tx) = self.alerts_tx
                         && tx.send(CurationInput::Alert(alert)).is_err()
                     {
@@ -928,7 +766,7 @@ impl super::CyberneticsLoop {
                         block_worsening_ratio * 100.0,
                     ),
                 };
-                self.persist_alert_to_queue(&alert, None, None).await;
+                self.persist_alert_to_queue(&alert, None).await;
                 if let Some(ref tx) = self.alerts_tx
                     && tx.send(CurationInput::Alert(alert)).is_err()
                 {
@@ -980,108 +818,16 @@ impl super::CyberneticsLoop {
 
     /// Build a `RegulatoryAction` from a `ProposedAction` returned by the regulation policy.
     ///
-    /// Applies mode-specific filtering (e.g., `InferenceThrottleMode`) and
-    /// `try_substitute` for stagnation-based action ladder substitution.
-    /// Returns `None` when the rule should be skipped (e.g., throttle in Off mode).
+    /// Converts a typed policy disposition into its evidence-bearing payload.
     async fn build_regulation_action(
         &self,
         dev: &Deviation,
         proposed: &regulation_policy::ProposedAction,
     ) -> Option<RegulatoryAction> {
-        use SignalMetric::*;
-
         match proposed.reason {
-            // -- EnergyRemaining BelowSetPoint ------------------------------
-            RegulationReason::EnergyBudgetLow => {
-                if !matches!(
-                    self.set_points.inference_throttle_mode,
-                    InferenceThrottleMode::Autonomous
-                ) {
-                    return None;
-                }
-                let at = self
-                    .try_substitute(EnergyRemaining, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "energy_budget_low",
-                        RegulationData::EnergyBudgetLow {
-                            remaining_ratio: dev.signal.value,
-                            set_point: dev.signal.set_point,
-                        },
-                    ),
-                    "energy_remaining".into(),
-                ))
-            }
-            RegulationReason::BudgetGuardEscalation => {
-                let curator_timeout_secs = match self.set_points.inference_throttle_mode {
-                    InferenceThrottleMode::CuratorMediated {
-                        curator_timeout_secs,
-                    } => curator_timeout_secs,
-                    _ => return None,
-                };
-                let remaining_ratio = dev.signal.value;
-                let projected_minutes = (remaining_ratio * 60.0) as u64;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "budget_guard_escalation",
-                        RegulationData::BudgetGuardEscalation {
-                            remaining_ratio,
-                            set_point: dev.signal.set_point,
-                            projected_minutes,
-                            options: vec![
-                                BudgetOption {
-                                    id: "add_funds".into(),
-                                    label: "Add funds to continue at current rate".into(),
-                                },
-                                BudgetOption {
-                                    id: "switch_model".into(),
-                                    label: "Switch to a smaller/cheaper model".into(),
-                                },
-                                BudgetOption {
-                                    id: "continue".into(),
-                                    label: "Continue at current rate (budget will exhaust)".into(),
-                                },
-                            ],
-                            curator_timeout_secs,
-                            fallback: "gentle_throttle".into(),
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            RegulationReason::EnergyDepletionAutoAdjust => {
-                if matches!(
-                    self.set_points.inference_throttle_mode,
-                    InferenceThrottleMode::Off
-                ) {
-                    return None;
-                }
-                let at = self
-                    .try_substitute(EnergyRemaining, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "energy_depletion_auto_adjust",
-                        RegulationData::EnergyDepletionAutoAdjust {
-                            remaining_ratio: dev.signal.value,
-                            set_point: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
             // -- VarietyDeficit AboveSetPoint -------------------------------
             RegulationReason::VarietyDeficitExceeded => {
-                let at = self
-                    .try_substitute(VarietyDeficit, proposed.action_type)
-                    .await;
+                let at = proposed.action_type;
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
@@ -1095,68 +841,7 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
-            // -- ErrorRate AboveSetPoint ------------------------------------
-            RegulationReason::ErrorRateExceeded => {
-                let at = self.try_substitute(ErrorRate, proposed.action_type).await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "error_rate_exceeded",
-                        RegulationData::ErrorRateExceeded {
-                            error_rate: dev.signal.value,
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- ConnectorLatency AboveSetPoint -----------------------------
-            RegulationReason::ConnectorLatencyExceeded => {
-                let at = self
-                    .try_substitute(ConnectorLatency, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "connector_latency_exceeded",
-                        RegulationData::ConnectorLatencyExceeded {
-                            latency_secs: dev.signal.value,
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- CommunicationQueueDepth AboveSetPoint ----------------------
-            RegulationReason::CommunicationBackpressure => {
-                tracing::info!(
-                    target: "reg.cybernetics.backpressure",
-                    queue_depth = dev.signal.value,
-                    threshold = dev.signal.set_point,
-                    "Communication queue depth exceeded backpressure threshold"
-                );
-                let at = self
-                    .try_substitute(CommunicationQueueDepth, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        "communication_backpressure",
-                        RegulationData::CommunicationBackpressure {
-                            queue_depth: dev.signal.value,
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // -- Wallet and SeamCoverage handlers removed 2026-08-30 —
-            // residuals of the deleted wallet module (219c74b180) and a
-            // never-built seam watcher; no sensor ever emitted these
-            // metrics, so these arms were unreachable.
+
             // -- ToolReliability BelowSetPoint ------------------------------
             RegulationReason::ToolReliabilityDegraded => {
                 tracing::warn!(
@@ -1165,9 +850,7 @@ impl super::CyberneticsLoop {
                     set_point = dev.signal.set_point,
                     "Tool reliability degraded — success rate below threshold"
                 );
-                let at = self
-                    .try_substitute(ToolReliability, proposed.action_type)
-                    .await;
+                let at = proposed.action_type;
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
                     at,
@@ -1191,11 +874,8 @@ impl super::CyberneticsLoop {
                 RegulatoryActionParams::reason(proposed.reason.as_str()),
                 dev.signal.metric.as_str().into(),
             )),
-            // -- Meta-regulatory Escalate and domain-specific regulation.
-            //    All have substitution ladders — try_substitute walks the
-            //    ladder when the proposed action is stagnating. Actions
-            //    carry NoData (no typed RegulationData variant for these
-            //    reasons yet) and the metric name for impact verification. --
+            // -- Meta-regulatory and domain-specific Escalate dispositions.
+            //    These carry NoData when no quantitative variant exists.
             RegulationReason::AlgedonicEventsExceeded
             | RegulationReason::AlgedonicLogApproachingCap
             | RegulationReason::GoalsStale
@@ -1203,43 +883,28 @@ impl super::CyberneticsLoop {
             | RegulationReason::MetacognitionCriticalAlerts
             | RegulationReason::MemoryLifeLow
             | RegulationReason::CircuitBreakerOpen
-            | RegulationReason::InferenceUnavailable
-            | RegulationReason::ModelUnavailable => {
-                let at = self
-                    .try_substitute(dev.signal.metric, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::reason(proposed.reason.as_str()),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
-            // Carry the observed storm count into the advisory so review sees
-            // the quantitative trigger instead of an ungrounded warning.
-            RegulationReason::OcrSilentFailuresExceeded => {
-                let at = self
-                    .try_substitute(dev.signal.metric, proposed.action_type)
-                    .await;
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    at,
-                    RegulatoryActionParams::with_data(
-                        proposed.reason.as_str(),
-                        RegulationData::OcrSilentFailuresExceeded {
-                            count: dev.signal.value,
-                            threshold: dev.signal.set_point,
-                        },
-                    ),
-                    dev.signal.metric.as_str().into(),
-                ))
-            }
+            | RegulationReason::ModelUnavailable => Some(RegulatoryAction::with_metric(
+                proposed.target,
+                proposed.action_type,
+                RegulatoryActionParams::reason(proposed.reason.as_str()),
+                dev.signal.metric.as_str().into(),
+            )),
+            // Carry the observed storm count into escalation evidence.
+            RegulationReason::OcrSilentFailuresExceeded => Some(RegulatoryAction::with_metric(
+                proposed.target,
+                proposed.action_type,
+                RegulatoryActionParams::with_data(
+                    proposed.reason.as_str(),
+                    RegulationData::OcrSilentFailuresExceeded {
+                        count: dev.signal.value,
+                        threshold: dev.signal.set_point,
+                    },
+                ),
+                dev.signal.metric.as_str().into(),
+            )),
             // Carry typed fleet-health data so extract_deficit_threshold can
             // populate the advisory context with real counts instead of (0, 0).
             RegulationReason::ContextServerFleetDegraded => {
-                let at = self
-                    .try_substitute(dev.signal.metric, proposed.action_type)
-                    .await;
                 let data = if let Some(ref source) = self.context_server_health_source {
                     let healthy = source.healthy_count().await as u64;
                     let total = source.total_count().await as u64;
@@ -1254,7 +919,7 @@ impl super::CyberneticsLoop {
                 };
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
-                    at,
+                    proposed.action_type,
                     RegulatoryActionParams::with_data(proposed.reason.as_str(), data),
                     dev.signal.metric.as_str().into(),
                 ))
@@ -1617,14 +1282,8 @@ mod tests {
         let action = RegulatoryAction::with_metric(
             LoopId::Curation,
             ActionType::Escalate,
-            RegulatoryActionParams::with_data(
-                "energy_budget_low",
-                RegulationData::EnergyBudgetLow {
-                    remaining_ratio: 0.15,
-                    set_point: 0.20,
-                },
-            ),
-            "energy_remaining".to_string(),
+            RegulatoryActionParams::reason("test_escalation"),
+            "test_metric".to_string(),
         );
         regulation_loop.route_action_as_alert(&action).await;
         assert_eq!(sink.persisted.lock().expect("persisted").len(), 1);
@@ -1974,7 +1633,6 @@ mod tests {
                 // Category C: Domain-specific
                 (MemoryLife, BelowSetPoint, 0.0, 1.0),
                 (CircuitBreakerState, AboveSetPoint, 1.0, 0.0),
-                (InferenceAvailable, BelowSetPoint, 0.0, 1.0),
                 (InferenceModelAvailable, BelowSetPoint, 0.0, 1.0),
                 (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
                 (OcrSilentFailures, AboveSetPoint, 14.0, 0.0),
@@ -2007,14 +1665,9 @@ mod tests {
         });
     }
 
-    /// Pins F8 + B1: compute() must NOT include Notify actions in the
-    /// returned vector. Notify actions are observational — they signal
-    /// "metric observed" but carry no efferent action. Including them
-    /// would inflate gain beyond 1.0 (B1) and they'd be silently dropped
-    /// by route_action_as_alert (F8). The fix logs them in compute() and
-    /// excludes them from the actions vector.
+    /// Notify is a truthful handled disposition and contributes to response coverage.
     #[test]
-    fn compute_excludes_notify_actions() {
+    fn compute_includes_notify_dispositions() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         runtime.block_on(async {
             let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
@@ -2023,9 +1676,12 @@ mod tests {
             let deviation = Deviation::from_signal(&signal)
                 .expect("TripleCount 1.0 vs set_point 0.0 should deviate");
             let actions = regulation_loop.compute(&[deviation]).await;
+            assert_eq!(actions.len(), 1);
             assert!(
-                actions.iter().all(|a| a.action_type != ActionType::Notify),
-                "compute() must not return Notify actions — they are observational, not regulatory"
+                actions
+                    .first()
+                    .is_some_and(|action| action.action_type == ActionType::Notify),
+                "the observation must be represented as a handled Notify disposition"
             );
         });
     }
@@ -2243,18 +1899,26 @@ mod tests {
         });
     }
 
-    struct StubHealthSource;
+    struct HealthyResilienceSource;
 
     #[async_trait::async_trait]
-    impl crate::sensor_provider::InferenceHealthSource for StubHealthSource {
-        async fn in_flight(&self) -> usize {
-            0
-        }
-        async fn max_concurrency(&self) -> usize {
-            96
-        }
-        async fn recent_timeout_count(&self) -> u64 {
-            0
+    impl crate::InferenceResilienceSource for HealthyResilienceSource {
+        async fn observe_since(
+            &self,
+            cursor: u64,
+        ) -> Result<crate::InferenceObservation, crate::InferenceObservationError> {
+            Ok(crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: chrono::Utc::now(),
+                    in_flight: 0,
+                    max_concurrency: 96,
+                    recent_timeout_count: 0,
+                    circuit_state: crate::InferenceCircuitState::Closed,
+                },
+                interventions: Vec::new(),
+                permanent_failures: Vec::new(),
+                next_cursor: cursor,
+            })
         }
     }
 
@@ -2293,7 +1957,7 @@ mod tests {
             assert_eq!(signal.set_point, 1.0);
 
             // Once the source is wired (model resolved): no signal.
-            regulation_loop.set_inference_health_source(Arc::new(StubHealthSource));
+            regulation_loop.set_inference_resilience_source(Arc::new(HealthyResilienceSource));
             let signals = regulation_loop.sense().await;
             assert!(
                 !signals
@@ -2323,6 +1987,175 @@ mod tests {
         }
     }
 
+    struct StubResilienceSource {
+        observation: crate::InferenceObservation,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::InferenceResilienceSource for StubResilienceSource {
+        async fn observe_since(
+            &self,
+            cursor: u64,
+        ) -> Result<crate::InferenceObservation, crate::InferenceObservationError> {
+            let mut observation = self.observation.clone();
+            observation
+                .interventions
+                .retain(|receipt| receipt.id > cursor);
+            observation
+                .permanent_failures
+                .retain(|receipt| receipt.id > cursor);
+            observation.next_cursor = observation
+                .interventions
+                .iter()
+                .map(|receipt| receipt.id)
+                .chain(
+                    observation
+                        .permanent_failures
+                        .iter()
+                        .map(|receipt| receipt.id),
+                )
+                .max()
+                .unwrap_or(cursor);
+            Ok(observation)
+        }
+    }
+
+    /// expect: "A recovered inference circuit is recorded as observed recovery, not causal proof"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the resilience source reports a later circuit-closed receipt
+    /// post: regulation persists the receipt with causal attribution unverified
+    #[tokio::test]
+    async fn circuit_close_receipt_records_observed_recovery() {
+        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let now = chrono::Utc::now();
+        let source = Arc::new(StubResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 0,
+                    circuit_state: crate::InferenceCircuitState::Closed,
+                },
+                interventions: vec![crate::InferenceInterventionReceipt {
+                    id: 1,
+                    kind: crate::InferenceInterventionKind::CircuitClosed,
+                    occurred_at: now,
+                }],
+                permanent_failures: Vec::new(),
+                next_cursor: 1,
+            },
+        });
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_inference_resilience_source(source);
+
+        regulation.sense().await;
+
+        let spans = sink.0.lock().unwrap_or_else(|error| error.into_inner());
+        let recovery = spans
+            .iter()
+            .find(|(path, _)| path == "reg.inference.observed_recovery")
+            .map(|(_, observation)| observation);
+        assert_eq!(
+            recovery.and_then(|value| value["causal_attribution"].as_str()),
+            Some("unverified"),
+            "persisted spans: {spans:?}"
+        );
+    }
+
+    /// expect: "An open inference circuit escalates once with its real condition"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the local resilience boundary reports an open circuit
+    /// post: central regulation routes a native circuit-breaker escalation
+    #[tokio::test]
+    async fn open_inference_circuit_routes_native_escalation() {
+        let now = chrono::Utc::now();
+        let source = Arc::new(StubResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 3,
+                    circuit_state: crate::InferenceCircuitState::Open,
+                },
+                interventions: Vec::new(),
+                permanent_failures: Vec::new(),
+                next_cursor: 0,
+            },
+        });
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_inference_resilience_source(source);
+        regulation.set_alert_escalation_sink(Some(
+            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
+        ));
+
+        regulation.tick().await;
+
+        let persisted = escalation
+            .persisted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(
+            persisted.first().map(String::as_str),
+            Some("circuit_breaker_open — regulatory escalation")
+        );
+    }
+
+    /// expect: "Permanent inference failures escalate for operator correction without opening a transient circuit"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the resilience source reports an authorization failure while the circuit is closed
+    /// post: one native escalation carries the failure class and no unwired-action wording
+    #[tokio::test]
+    async fn permanent_inference_failure_routes_native_escalation() {
+        let now = chrono::Utc::now();
+        let source = Arc::new(StubResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 0,
+                    circuit_state: crate::InferenceCircuitState::Closed,
+                },
+                interventions: Vec::new(),
+                permanent_failures: vec![crate::InferencePermanentFailureReceipt {
+                    id: 1,
+                    kind: crate::InferencePermanentFailureKind::Authorization,
+                    detail: "provider rejected credential".to_string(),
+                    occurred_at: now,
+                }],
+                next_cursor: 1,
+            },
+        });
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_inference_resilience_source(source);
+        regulation.set_alert_escalation_sink(Some(
+            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
+        ));
+
+        regulation.sense().await;
+
+        let persisted = escalation
+            .persisted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(
+            persisted.first().map(String::as_str),
+            Some(
+                "inference_permanent_failure:Authorization — provider rejected credential — regulatory escalation"
+            )
+        );
+    }
+
     /// Idle cycles emit exactly one heartbeat span per hour (tick 1, then
     /// every 360 ticks) carrying the all-zero payload plus `heartbeat: true`,
     /// `tick_count`, and the alert log's fill state. Without it, a converged
@@ -2336,7 +2169,7 @@ mod tests {
             let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
             let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
                 .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>)
-                .with_inference_health_source(Arc::new(StubHealthSource));
+                .with_inference_resilience_source(Arc::new(HealthyResilienceSource));
 
             // 361 ticks: heartbeat at tick 1, silence through tick 359,
             // heartbeat at tick 360, tick 361 silent again.

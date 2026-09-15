@@ -3166,30 +3166,29 @@ fn wire_kask_inference_stack(
         inference_model.clone(),
         inference_timeout,
         kask_settings.general.max_concurrency as usize,
+        kask_bridge::InferenceResilienceConfig {
+            transient_failure_threshold: kask_settings.general.inference_circuit_failure_threshold,
+            open_duration: std::time::Duration::from_secs(
+                kask_settings.general.inference_circuit_open_secs,
+            ),
+        },
         async_cx,
     );
     inference_task.detach();
 
-    // Wire the inference health source into the cybernetics loop so it can
-    // sense inference saturation and timeout storms. Without this, the loop
-    // reports `signal_count=0` during a timeout storm — its existing sensors
-    // read ledger/DB state, not inference dispatch state. The
-    // `set_inference_health_source` method is used (not the `with_*` builder)
-    // because the loop is already wrapped in `Arc<RwLock<...>>` by the time
-    // the port exists.
-    //
-    // The health source is a clone of the port — the port's health counters
-    // are `Arc`-shared, so the sensor reads the same atomics the receiver
-    // task updates. This mirrors the `set_event_sink` /
-    // `set_alert_escalation_sink` pattern used elsewhere in the deferred
-    // task.
-    let inference_health_source: std::sync::Arc<dyn hkask_regulation::InferenceHealthSource> =
-        std::sync::Arc::new(inference_port.clone());
+    // Wire the atomic resilience observation source after the model-bearing
+    // inference port exists. Rewiring replaces the previous source and resets
+    // its receipt cursor, so stale model health cannot produce duplicate
+    // deviations. The bridge retains enforcement; Regulation observes circuit
+    // transitions and later recovery without depending on Zed types.
+    let inference_resilience_source: std::sync::Arc<
+        dyn hkask_regulation::InferenceResilienceSource,
+    > = std::sync::Arc::new(inference_port.clone());
     {
-        let loop_for_health = cybernetics_loop.clone();
+        let loop_for_resilience = cybernetics_loop.clone();
         gpui_tokio::Tokio::spawn(cx, async move {
-            let mut loop_guard = loop_for_health.write().await;
-            loop_guard.set_inference_health_source(inference_health_source);
+            let mut loop_guard = loop_for_resilience.write().await;
+            loop_guard.set_inference_resilience_source(inference_resilience_source);
         })
         .detach();
     }

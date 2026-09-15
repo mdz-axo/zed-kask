@@ -107,11 +107,10 @@ metric is within 3 ticks of its set-point with a reliable trend, logs a
 It then walks the `RegulationPolicy::default()` rules
 (`regulation_policy.rs:119`) via `decide()` (`regulation_policy.rs:379`),
 which returns the `&ProposedAction`s whose `metric` and `direction` match
-the deviation. Each proposal is converted to a `RegulatoryAction` by
-`build_regulation_action` (`cycle.rs:1080`), which applies mode-specific
-filtering (e.g., `InferenceThrottleMode::Autonomous` gates the
-`EnergyBudgetLow` rule) and `try_substitute` (`cycle.rs:31`) for
-stagnation-based action substitution.
+the deviation. Each proposal is converted to a typed `Notify` or `Escalate` disposition by
+`build_regulation_action`. Inference circuit intervention occurs locally in
+`kask_bridge`; central policy observes its receipts rather than inventing a
+second actuator.
 
 ## Step 4: Act — route actions as Escalate alerts
 
@@ -160,11 +159,9 @@ writes the verdict back as a `regulation_impact`-sourced event. Checks queued
 through `submit_rollout_impact_check` are drained into the next tick's
 verification pass separately from computed advisories.
 
-The `StagnationDetector` (`dampener.rs:231`) records each (metric, action)
-pair's observed progress. When the same pair does not improve for `substitution_after`
-cycles (default 2), `try_substitute` walks the substitution ladder
-(`regulation_policy.rs:589`). When it hits the per-metric stagnation
-threshold (default 5), a regulatory-plateau alert fires.
+The `StagnationDetector` records evidence-bearing rollout observations. When
+the same measured path repeatedly shows no progress, a latched
+regulatory-plateau alert fires; no unsupported action substitution occurs.
 
 ## Step 6: Record — update the regulation-health counters
 

@@ -120,11 +120,11 @@ signal against its set-point via `Deviation::from_signal`
 (`regulation_policy.rs:85`) that `build_regulation_action`
 (`cycle.rs:1080`) converts into `RegulatoryAction`s.
 
-The act phase (`cycle.rs:408`) converts all actions to `Escalate` alerts
-routed to the Curator/human — the loop is a sensor+advisor, not an actuator
-(see [Reference](./reference.md) § "Efferent action dispatch"). The verify
-phase (`cycle.rs:684`) records the impact and feeds it back to the next
-sense phase.
+The act phase executes the selected central disposition: `Notify` records
+an observation and `Escalate` uses the durable human-review path. Fast
+inference resilience is a nested local loop at the dispatch boundary; its
+transition receipts return through `InferenceResilienceSource`. The verify
+phase handles separately submitted evidence-bearing rollout checks.
 
 The separation of compare and compute is deliberate. Merging them would
 conflate detection (what changed) with response (what to do). Keeping them
@@ -142,11 +142,11 @@ channel is connected.
 ```mermaid
 sequenceDiagram
     participant CL as CyberneticsLoop
-    participant EQ as AlertEscalationSink<br/>(EscalationQueue on curator.db)
-    participant TX as alerts_tx<br/>(CurationInput channel)
-    participant AR as RegulationSink<br/>(RegulationArchive on curator.db)
+    participant EQ as AlertEscalationSink queue
+    participant TX as CurationInput channel
+    participant AR as RegulationArchive
     participant EM as AlertEmailSink
-    CL->>EQ: persist_alert_to_queue(alert, efferent_action)
+    CL->>EQ: persist_alert_to_queue(alert, recovery_signal)
     CL->>TX: send(CurationInput::Alert(alert))
     alt live channel down
         CL->>AR: persist(RegulationRecord)
@@ -171,29 +171,19 @@ trail. The `RegulationArchive` remains as a secondary fallback for restart
 durability when the live channel is down. Email fires as notification
 (archive succeeded) or last resort (archive failed).
 
-## Why the loop is a sensor+advisor, not an actuator
+## Why inference resilience is local
 
-A design decision recorded in `route_action_as_alert` (`cycle.rs:510`)
-makes the cybernetics loop an advisor, not an actuator. All computed
-actions are converted to `Escalate` alerts routed to the Curator/human.
-Actions that would have been direct efferent signals (`Throttle`,
-`CircuitBreak`, `AdjustEnergyBudget`, etc.) carry an `efferent_action`
-field in the alert data so the Curator sees what the loop would have done
-— but the actuator is not wired (`cycle.rs:531-538`) logs "efferent not
-wired").
+Inference admission, deadlines, provider outcomes, and circuit state share
+one runtime owner in `kask_bridge`. Keeping the fast circuit breaker there
+lets it reject work immediately without making the scheduled central loop
+micromanage S1 operations. The central loop receives atomic snapshots and
+cursor-addressed receipts, records later closure as observed recovery, and
+escalates open circuits or permanent failures.
 
-This preserves user sovereignty: the human decides whether to apply the
-recommended action. The loop senses, compares, computes, and recommends;
-it does not act unilaterally. The only autonomous action is
-`reset_all_caps()` (`cybernetics_loop.rs:689`) at the start of each tick's
-act phase (`cycle.rs:409`), which resets every agent's call cap to its
-ceiling — this is a bookkeeping operation, not a regulatory intervention.
-
-`Notify` actions are skipped entirely (`cycle.rs:513-521`) — they are
-observational ("no action required, positive signal"). Converting them to
-Critical alerts would be a variety inversion: a positive signal (e.g., a
-storage-usage observation) would generate a critical alert, polluting the
-escalation queue with non-actionable noise.
+Automatic behavior is limited to bounded, reversible, non-spending safety
+control. Credential repair, model selection, and spending remain operator
+policy decisions. Per-agent call caps remain their own local enforcement
+path and never globally throttle inference.
 
 ## The two-level meta-loop
 
@@ -223,14 +213,9 @@ subsequent overrides are suppressed for 120s). The single
 `parking_lot::Mutex` lock eliminates the TOCTOU race between the two
 checks (`dampener.rs:181`).
 
-`StagnationDetector` (`dampener.rs:231`) catches a different failure mode:
-the regulator converging to a wrong attractor. When the same (metric,
-action) pair shows no observed improvement for `substitution_after` cycles (default 2),
-`try_substitute` (`cycle.rs:31`) walks the substitution ladder
-(`regulation_policy.rs:589`) to find an untried alternative. When it hits
-the per-metric stagnation threshold (default 5), a regulatory-plateau
-alert fires — the regulator's model has converged to a wrong attractor,
-which is a Conant-Ashby violation.
+`StagnationDetector` applies only to evidence-bearing rollout observations.
+Repeated lack of observed progress can raise a latched plateau escalation;
+it no longer substitutes action labels that have no executable handler.
 
 ## The call cap as energy homeostasis
 

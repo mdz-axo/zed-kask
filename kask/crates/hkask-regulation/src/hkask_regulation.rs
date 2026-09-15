@@ -10,6 +10,7 @@ pub(crate) mod algedonic;
 pub(crate) mod cybernetics_loop;
 pub(crate) mod dampener;
 pub(crate) mod energy;
+mod inference_resilience;
 
 pub(crate) mod metacognition;
 pub(crate) mod regulation_policy;
@@ -26,6 +27,11 @@ pub use algedonic::{
 };
 pub use cybernetics_loop::{CyberneticsLoop, RolloutEventError, RolloutEventSource};
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
+pub use inference_resilience::{
+    InferenceCircuitState, InferenceInterventionKind, InferenceInterventionReceipt,
+    InferenceObservation, InferenceObservationError, InferencePermanentFailureKind,
+    InferencePermanentFailureReceipt, InferenceResilienceSource, InferenceSnapshot,
+};
 pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
 
 pub use loops::CurationInput;
@@ -38,7 +44,6 @@ pub use regulation_policy::alert_condition;
 pub use runtime::NoopEventSink;
 pub use runtime::{OBSERVATION_WINDOW_SECS, RegulationLedger};
 pub use sensor_provider::ContextServerHealthSource;
-pub use sensor_provider::InferenceHealthSource;
 pub use sensor_provider::MemoryHealthSource;
 pub use sensor_provider::OcrHealthError;
 pub use sensor_provider::OcrHealthSource;
