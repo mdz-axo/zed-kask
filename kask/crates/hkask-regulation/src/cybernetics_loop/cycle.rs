@@ -1185,6 +1185,46 @@ mod tests {
     /// pins the plateau latch: while the queue holds a pending escalation
     /// for the plateau condition, re-detections must suppress the span, the
     /// queue persist, and the live-channel send.
+    struct ConfirmingEscalationSink {
+        persisted: Mutex<Vec<String>>,
+    }
+
+    impl ConfirmingEscalationSink {
+        fn new() -> Self {
+            Self {
+                persisted: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl crate::AlertEscalationSink for ConfirmingEscalationSink {
+        fn try_persist_alert(
+            &self,
+            output: &str,
+            _confidence: f64,
+            _error_context: &str,
+        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+            self.persisted
+                .lock()
+                .expect("persisted lock")
+                .push(output.to_string());
+            Ok(crate::AlertQueueOutcome::Confirmed(Some(
+                "test-escalation".to_string(),
+            )))
+        }
+
+        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+            self.persisted
+                .lock()
+                .expect("persisted lock")
+                .push(output.to_string());
+        }
+
+        fn has_pending_alert(&self, _output: &str) -> bool {
+            !self.persisted.lock().expect("persisted lock").is_empty()
+        }
+    }
+
     struct LatchingEscalationSink {
         pending: Mutex<bool>,
         persisted: Mutex<Vec<String>>,
@@ -2389,9 +2429,11 @@ mod tests {
                 next_cursor: 1,
             },
         });
-        let escalation = Arc::new(RecordingEscalationSink::new());
+        let escalation = Arc::new(ConfirmingEscalationSink::new());
+        let event_sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
         let mut regulation =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(Arc::clone(&event_sink) as Arc<dyn hkask_types::RegulationSink>);
         regulation.set_inference_resilience_source(source);
         regulation.set_alert_escalation_sink(Some(
             Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
@@ -2407,6 +2449,20 @@ mod tests {
         assert_eq!(
             persisted.first().map(String::as_str),
             Some("circuit_breaker_open — regulatory escalation")
+        );
+        drop(persisted);
+        let spans = event_sink
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let loop_quality = spans
+            .iter()
+            .find(|(path, _)| path == "reg.outcome.loop_quality")
+            .map(|(_, observation)| observation);
+        assert_eq!(
+            loop_quality.and_then(|observation| observation["actions"].as_u64()),
+            Some(1),
+            "the deduplicated policy disposition must remain visible in loop-quality telemetry"
         );
     }
 
