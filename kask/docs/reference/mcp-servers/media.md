@@ -151,7 +151,9 @@ bounded terminal-record retention are disclosed.
 The media widget clears stale failures on retry, synchronizes Pause/Stop into
 the visible transport immediately, surfaces missing image/SVG filesystem causes,
 and invalidates in-flight remote resolution when suspended so hidden media
-cannot restart polling.
+cannot restart polling. A visible panel or inline lookup reactivates the shared
+Asset without autoplay and restarts an initial load interrupted by suspension,
+preventing a visible player from remaining at Loading/0:00.
 
 ## Gallery lifecycle — ratified 2026-09-06
 

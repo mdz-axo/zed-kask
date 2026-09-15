@@ -222,6 +222,14 @@ accept the page before that join. Resume requires a matching report; missing or
 mismatched evidence blocks without automatic re-OCR. Do not fabricate a report for old staged text; diagnose it and
 explicitly regenerate only when needed.
 
+For substantive image/diagram-only pages that yield no verbatim text, use a dual
+representation when the caller has approved text collapse without multimodal QA:
+exclude those pages from source-evidence QA, preserve rendered page images in a
+separate hashed archive, and store text descriptions with explicit
+`model_inference` provenance and `included_in_text_qa=false`. Record page identities
+and the text/nontext boundary in the conversion report. Never present inferred
+figure descriptions as source quotes or silently drop the archived pages.
+
 For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidence.
 Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then
 inspect the report before bulk work. Missing configuration, endpoint errors,

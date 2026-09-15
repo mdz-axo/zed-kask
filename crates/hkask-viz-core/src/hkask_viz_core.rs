@@ -278,6 +278,7 @@ pub fn shared_media_widget(
         cache.get(&key).cloned()
     });
     if let Some(existing) = existing.and_then(|entity| entity.upgrade()) {
+        existing.update(cx, |widget, cx| widget.activate(cx));
         return Some(existing);
     }
     let entity = hkask_media_widget::create_media_widget(body, window, cx)?;
@@ -405,6 +406,25 @@ mod tests {
             media_widget_key(unindexed),
             media_widget_key(different_body)
         );
+    }
+
+    /// expect: A visible surface reactivates a suspended shared Asset without creating a second player.
+    /// [P1] Motivating: Leaving one surface must not strand another visible embedding at Loading/0:00.
+    #[gpui::test]
+    fn visible_lookup_reactivates_suspended_shared_media(cx: &mut gpui::TestAppContext) {
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let body = r#"{"kind":"video","src":"/tmp/shared-visible.mp4","gallery_asset_id":"asset-visible-reactivation"}"#;
+        let first = cx.update(|window, cx| {
+            shared_media_widget(body, window, cx).expect("first surface creates media widget")
+        });
+        cx.update(|_window, cx| first.update(cx, |widget, cx| widget.suspend(cx)));
+        assert!(first.read_with(cx, |widget, _cx| widget.is_suspended()));
+
+        let second = cx.update(|window, cx| {
+            shared_media_widget(body, window, cx).expect("second surface reuses media widget")
+        });
+        assert_eq!(first.entity_id(), second.entity_id());
+        assert!(!second.read_with(cx, |widget, _cx| widget.is_suspended()));
     }
 
     struct DummyView;

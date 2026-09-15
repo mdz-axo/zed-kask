@@ -644,6 +644,37 @@ impl MediaWidget {
         self.sync_transport_state(cx);
     }
 
+    /// Reactivate a shared widget when a visible embedding requests it.
+    /// Loaded media stays paused; an interrupted initial load restarts so a
+    /// hidden panel cannot strand a visible inline player at Loading/0:00.
+    pub fn activate(&mut self, cx: &mut Context<Self>) {
+        if !self.suspended {
+            return;
+        }
+        self.suspended = false;
+        let needs_reload = match &self.reference {
+            MediaRef::Asset {
+                kind: MediaKind::Video,
+                ..
+            } => self.current_frame.is_none() && self.error.is_none(),
+            MediaRef::Asset {
+                kind: MediaKind::Audio,
+                ..
+            } => {
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(|player| player.duration().is_zero())
+                    && self.error.is_none()
+            }
+            _ => false,
+        };
+        if needs_reload {
+            self.load(cx);
+        } else {
+            self.sync_transport_state(cx);
+        }
+    }
+
     pub fn is_suspended(&self) -> bool {
         self.suspended
     }
@@ -1428,6 +1459,41 @@ mod tests {
         cx.run_until_parked();
         assert!(widget.read_with(cx, |widget, _cx| {
             widget.suspended && !widget.playback_loop_active
+        }));
+    }
+
+    /// expect: A visible embedding can restart a local video load cancelled by suspension.
+    /// [P1] Motivating: Shared panel/inline ownership must not strand controls at Loading/0:00.
+    #[gpui::test]
+    async fn activate_restarts_suspended_local_video_load(cx: &mut TestAppContext) {
+        let path = video_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.load(cx);
+                widget.suspend(cx);
+                widget.activate(cx);
+            })
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.current_frame.is_none())
+            && std::time::Instant::now() < deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        cx.run_until_parked();
+
+        let state = widget.read_with(cx, |widget, _cx| widget.last_transport);
+        assert!(widget.read_with(cx, |widget, _cx| widget.current_frame.is_some()));
+        assert!(state.is_some_and(|state| {
+            !state.is_loading && !state.is_playing && !state.duration.is_zero()
         }));
     }
 
