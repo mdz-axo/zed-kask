@@ -258,6 +258,38 @@ files/JSON; do not introduce Python tooling.
 
 ## Stage 2 — Chunk once, measure coverage and overlap
 
+### Reference-model calibration
+
+When the selected chunk policy is unvalidated for the corpus/retriever, changes a
+shared default, or the caller requests calibration, compare it before paid downstream
+expansion. Chunk size is a retrieval policy, not a universal constant. Use one
+candidate-independent gold query/evidence set derived from source pages or other
+pre-chunk source units; QA generated from any candidate chunking cannot evaluate that
+same candidate.
+
+The minimum reference suite is:
+
+1. **Passage baseline** — greedy sentence-bounded 100-word passages, no overlap,
+   merging a final passage below 50 words backward (Lewis et al., 2020; Chen et al.,
+   2024).
+2. **Current candidate** — the caller's proposed structure/sentence-aware maximum,
+   floor and overlap, recorded exactly rather than relabeled as the baseline.
+3. **Small-to-big challenger** — fine deterministic child units linked to
+   source-faithful parent passages; retrieve children and expand parents. Generated
+   propositions, summaries and contextual prefixes may be retrieval keys but never
+   source quotations.
+
+Hold corpus, query set, embedding model, retriever, top-k and retrieved-token budget
+constant. Report exact-evidence Recall@k, MRR or nDCG, duplicate retrieval rate,
+retrieved tokens, chunk/index size, grounded answer accuracy when measured, and every
+source-fidelity violation. Select on the Pareto frontier: source fidelity is a hard
+gate, then retrieval quality under the fixed token/cost budget. Do not add semantic
+breakpoint chunking, dynamic routing, contextual generation or linked tiers merely to
+complete the comparison; a missing challenger is a capability gap to implement and
+verify, not a fabricated result. The design taxonomy is segmentation × embedding
+paradigm (Zhou et al., 2026); in-document needle retrieval and in-corpus retrieval are
+separate evaluation strata.
+
 Call `corpus_chunk` with `input_dir` set to the accepted `.txt` directory,
 explicit `output`, `entity_ref_prefix`, selected `max_tokens`, `overlap_tokens`,
 `multi_tier=false`, and `index=false` when Stage 3 will persist embeddings.

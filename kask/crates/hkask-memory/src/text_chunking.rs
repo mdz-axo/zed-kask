@@ -912,9 +912,9 @@ mod tests {
 
     #[test]
     fn filter_removes_ocr_images_but_preserves_surrounding_source_text() {
-        let prose = "Substantive source prose remains available for evidence. ".repeat(30);
+        let prose = "Substantive source prose remains available for evidence\n".repeat(30);
         let input = format!(
-            r#"{prose}<table><tr><th>Ho-Lee model: \( \mu = 0.005 \)</th></tr><tr><td>![Ten paths generated from Ho-Lee model](page_349_768_482_388.png)</td></tr></table> ![Literal Markdown](source.png) {prose}{prose}"#
+            r#"{prose}<table><tr><th>Ho-Lee model: \( \mu = 0.005 \)</th></tr><tr><td>![Ten paths generated from Ho-Lee model](page_349_768_482_388.png)</td></tr></table> ![Literal Markdown](source.png) {prose}{FORM_FEED}{prose}"#
         );
 
         let filtered = filter_boilerplate_pages_with_report(&input);
@@ -924,7 +924,7 @@ mod tests {
                 .text
                 .contains("<th>Ho-Lee model: \\( \\mu = 0.005 \\)</th>")
         );
-        assert!(filtered.text.contains("Substantive source prose remains."));
+        assert!(filtered.text.contains("Substantive source prose remains"));
         assert!(filtered.text.contains("![Literal Markdown](source.png)"));
         assert!(!filtered.text.contains("Ten paths generated"));
         assert!(!filtered.text.contains("page_349_768_482_388.png"));
