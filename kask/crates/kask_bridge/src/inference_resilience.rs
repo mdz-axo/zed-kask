@@ -41,6 +41,13 @@ pub(crate) struct InferenceInterventionReceipt {
     pub occurred_at: chrono::DateTime<chrono::Utc>,
 }
 
+pub(crate) struct InferenceCircuitObservation {
+    pub state: CircuitState,
+    pub receipts: Vec<InferenceInterventionReceipt>,
+    pub permanent_failures: Vec<hkask_regulation::InferencePermanentFailureReceipt>,
+    pub next_cursor: u64,
+}
+
 pub(crate) struct InferenceCircuit {
     config: InferenceResilienceConfig,
     state: CircuitState,
@@ -61,10 +68,6 @@ impl InferenceCircuit {
             receipts: Vec::new(),
             permanent_failures: Vec::new(),
         }
-    }
-
-    pub(crate) fn state(&self) -> CircuitState {
-        self.state
     }
 
     /// expect: "A transient inference storm stops new work before it amplifies the outage"
@@ -145,18 +148,28 @@ impl InferenceCircuit {
         }
     }
 
-    pub(crate) fn receipts_after(&mut self, cursor: u64) -> Vec<InferenceInterventionReceipt> {
+    /// Return one cursor-consistent view of circuit state and all receipt kinds.
+    ///
+    /// Both histories share `next_event_id`, so reading them under different lock
+    /// acquisitions can advance past an event inserted between those reads.
+    pub(crate) fn observe_since(&mut self, cursor: u64) -> InferenceCircuitObservation {
         self.receipts.retain(|receipt| receipt.id > cursor);
-        self.receipts.clone()
-    }
-
-    pub(crate) fn permanent_failures_after(
-        &mut self,
-        cursor: u64,
-    ) -> Vec<hkask_regulation::InferencePermanentFailureReceipt> {
         self.permanent_failures
             .retain(|receipt| receipt.id > cursor);
-        self.permanent_failures.clone()
+        let receipts = self.receipts.clone();
+        let permanent_failures = self.permanent_failures.clone();
+        let next_cursor = receipts
+            .iter()
+            .map(|receipt| receipt.id)
+            .chain(permanent_failures.iter().map(|receipt| receipt.id))
+            .max()
+            .unwrap_or(cursor);
+        InferenceCircuitObservation {
+            state: self.state,
+            receipts,
+            permanent_failures,
+            next_cursor,
+        }
     }
 
     pub(crate) fn record_permanent_failure(
@@ -209,19 +222,8 @@ impl InferenceResilience {
         }
     }
 
-    pub(crate) fn state(&self) -> CircuitState {
-        self.lock().state()
-    }
-
-    pub(crate) fn receipts_after(&self, cursor: u64) -> Vec<InferenceInterventionReceipt> {
-        self.lock().receipts_after(cursor)
-    }
-
-    pub(crate) fn permanent_failures_after(
-        &self,
-        cursor: u64,
-    ) -> Vec<hkask_regulation::InferencePermanentFailureReceipt> {
-        self.lock().permanent_failures_after(cursor)
+    pub(crate) fn observe_since(&self, cursor: u64) -> InferenceCircuitObservation {
+        self.lock().observe_since(cursor)
     }
 
     fn lock(&self) -> MutexGuard<'_, InferenceCircuit> {
@@ -295,12 +297,48 @@ mod tests {
             circuit.record_transient_failure_at(start + Duration::from_secs(offset));
         }
 
-        assert!(matches!(circuit.state(), CircuitState::Open { .. }));
+        assert!(matches!(
+            circuit.observe_since(0).state,
+            CircuitState::Open { .. }
+        ));
         assert!(matches!(
             circuit.admit_at(start + Duration::from_secs(3)),
             CircuitAdmission::Rejected { .. }
         ));
-        assert_eq!(circuit.receipts_after(0).len(), 1);
+        assert_eq!(circuit.observe_since(0).receipts.len(), 1);
+    }
+
+    /// expect: "Transition and permanent-failure receipts share one lossless observation cursor"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: both receipt kinds were recorded under one monotonically increasing event sequence
+    /// post: one observation returns both kinds and advances to their maximum id without skipping either
+    #[test]
+    fn observation_reconciles_both_receipt_kinds_under_one_cursor() {
+        let start = Instant::now();
+        let mut circuit = InferenceCircuit::new(InferenceResilienceConfig {
+            transient_failure_threshold: 1,
+            open_duration: Duration::from_secs(30),
+        });
+        circuit.record_transient_failure_at(start);
+        circuit.record_permanent_failure(
+            hkask_regulation::InferencePermanentFailureKind::Authorization,
+            "missing key".to_string(),
+        );
+
+        let observation = circuit.observe_since(0);
+
+        assert_eq!(
+            observation.state,
+            CircuitState::Open {
+                until: start + Duration::from_secs(30)
+            }
+        );
+        assert_eq!(observation.receipts.len(), 1);
+        assert_eq!(observation.permanent_failures.len(), 1);
+        assert_eq!(observation.next_cursor, 2);
+        let acknowledged = circuit.observe_since(observation.next_cursor);
+        assert!(acknowledged.receipts.is_empty());
+        assert!(acknowledged.permanent_failures.is_empty());
     }
 
     /// expect: "Inference recovery is probed once and returns the circuit to normal service"
@@ -327,9 +365,10 @@ mod tests {
 
         circuit.record_success();
 
-        assert_eq!(circuit.state(), CircuitState::Closed);
+        assert_eq!(circuit.observe_since(0).state, CircuitState::Closed);
         let transitions: Vec<_> = circuit
-            .receipts_after(0)
+            .observe_since(0)
+            .receipts
             .into_iter()
             .map(|receipt| receipt.transition)
             .collect();

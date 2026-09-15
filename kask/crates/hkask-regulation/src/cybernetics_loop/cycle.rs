@@ -62,16 +62,20 @@ impl super::CyberneticsLoop {
     /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
     /// 0.5 for Warning.
     ///
-    async fn persist_alert_to_queue(&self, alert: &RuntimeAlert, recovery_signal: Option<&Signal>) {
+    async fn persist_alert_to_queue(
+        &self,
+        alert: &RuntimeAlert,
+        recovery_signal: Option<&Signal>,
+    ) -> bool {
         let Some(ref sink) = self.alert_escalation_sink else {
-            return;
+            return false;
         };
         // Skip non-escalated alerts — only escalated alerts (Critical, or
         // Warning with `escalated: true`) belong in the reviewable backlog.
         // Info alerts and non-escalated Warnings are diagnostic, not
         // actionable, and would pollute the queue.
         if !alert.escalated {
-            return;
+            return true;
         }
         let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
         let mut error_context = serde_json::json!({
@@ -100,7 +104,19 @@ impl super::CyberneticsLoop {
                 error_context["outcome_breakdown"] = serde_json::json!(breakdown);
             }
         }
-        sink.persist_alert(&alert.message, confidence, &error_context.to_string());
+        match sink.try_persist_alert(&alert.message, confidence, &error_context.to_string()) {
+            Ok(crate::AlertQueueOutcome::Confirmed(_)) => true,
+            Ok(crate::AlertQueueOutcome::Attempted) => false,
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.alert",
+                    error = %error,
+                    domain = %alert.domain,
+                    "Failed to persist alert to the reviewable escalation queue"
+                );
+                false
+            }
+        }
     }
 
     /// Emit the per-domain tool-outcome breakdown span
@@ -128,6 +144,20 @@ impl super::CyberneticsLoop {
     }
 
     async fn sense_inference_resilience(&self) -> Vec<Signal> {
+        enum ResilienceEvent {
+            Intervention(crate::InferenceInterventionReceipt),
+            PermanentFailure(crate::InferencePermanentFailureReceipt),
+        }
+
+        impl ResilienceEvent {
+            fn id(&self) -> u64 {
+                match self {
+                    Self::Intervention(receipt) => receipt.id,
+                    Self::PermanentFailure(receipt) => receipt.id,
+                }
+            }
+        }
+
         let Some(source) = &self.inference_resilience_source else {
             return Vec::new();
         };
@@ -145,67 +175,126 @@ impl super::CyberneticsLoop {
                 return Vec::new();
             }
         };
-        for receipt in &observation.interventions {
-            let kind = if receipt.kind == crate::InferenceInterventionKind::CircuitClosed {
-                SpanKind::InferenceObservedRecovery
-            } else {
-                SpanKind::InferenceCircuitTransition
-            };
-            if let Some(sink) = &self.event_sink {
-                let event = RegulationRecord::new(
-                    WebID::from_persona(b"regulation"),
-                    Span::from_kind(kind),
-                    CyclePhase::Sense,
-                    serde_json::json!({
-                        "intervention_id": receipt.id,
-                        "transition": receipt.kind,
-                        "occurred_at": receipt.occurred_at,
-                        "observed_at": observation.snapshot.observed_at,
-                        "circuit_state": observation.snapshot.circuit_state,
-                        "observed_recovery": receipt.kind
-                            == crate::InferenceInterventionKind::CircuitClosed,
-                        "causal_attribution": "unverified",
-                    }),
-                    0,
-                );
-                if let Err(error) = sink.persist(&event) {
-                    tracing::warn!(
-                        target: "reg.inference",
-                        error = %error,
-                        intervention_id = receipt.id,
-                        "inference intervention receipt persistence failed"
-                    );
-                }
-            } else {
-                tracing::warn!(
-                    target: "reg.inference",
-                    intervention_id = receipt.id,
-                    "inference intervention receipt dropped — no event sink configured"
-                );
-            }
-        }
-
-        for failure in &observation.permanent_failures {
-            let action = RegulatoryAction::with_metric(
-                LoopId::Curation,
-                ActionType::Escalate,
-                RegulatoryActionParams::reason(format!(
-                    "inference_permanent_failure:{:?} — {}",
-                    failure.kind, failure.detail
-                )),
-                "inference_permanent_failure".to_string(),
-            );
-            self.route_action_as_alert(&action).await;
-        }
-        self.inference_intervention_cursor.store(
-            observation.next_cursor,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-
-        let recovery_failed = observation
+        let mut events: Vec<_> = observation
             .interventions
             .iter()
-            .any(|receipt| receipt.kind == crate::InferenceInterventionKind::CircuitReopened);
+            .cloned()
+            .map(ResilienceEvent::Intervention)
+            .chain(
+                observation
+                    .permanent_failures
+                    .iter()
+                    .cloned()
+                    .map(ResilienceEvent::PermanentFailure),
+            )
+            .collect();
+        events.sort_unstable_by_key(ResilienceEvent::id);
+
+        let mut acknowledged_cursor = cursor;
+        let mut recovery_failed = false;
+        for event in events {
+            let event_id = event.id();
+            let reopened = matches!(
+                &event,
+                ResilienceEvent::Intervention(receipt)
+                    if receipt.kind == crate::InferenceInterventionKind::CircuitReopened
+            );
+            if event_id != acknowledged_cursor.saturating_add(1) {
+                tracing::warn!(
+                    target: "reg.inference",
+                    expected_id = acknowledged_cursor.saturating_add(1),
+                    observed_id = event_id,
+                    source_next_cursor = observation.next_cursor,
+                    "inference receipt sequence contains a gap — cursor not advanced"
+                );
+                break;
+            }
+
+            let handled = match event {
+                ResilienceEvent::Intervention(receipt) => {
+                    let escalation_handled =
+                        if receipt.kind == crate::InferenceInterventionKind::CircuitReopened {
+                            let action = RegulatoryAction::with_metric(
+                                LoopId::Curation,
+                                ActionType::Escalate,
+                                RegulatoryActionParams::reason("circuit_breaker_open"),
+                                SignalMetric::CircuitBreakerState.as_str().to_string(),
+                            );
+                            self.route_action_as_alert(&action).await
+                        } else {
+                            true
+                        };
+                    if !escalation_handled {
+                        false
+                    } else {
+                        let kind =
+                            if receipt.kind == crate::InferenceInterventionKind::CircuitClosed {
+                                SpanKind::InferenceObservedRecovery
+                            } else {
+                                SpanKind::InferenceCircuitTransition
+                            };
+                        if let Some(sink) = &self.event_sink {
+                            let regulation_event = RegulationRecord::new(
+                                WebID::from_persona(b"regulation"),
+                                Span::from_kind(kind),
+                                CyclePhase::Sense,
+                                serde_json::json!({
+                                    "intervention_id": receipt.id,
+                                    "transition": receipt.kind,
+                                    "occurred_at": receipt.occurred_at,
+                                    "observed_at": observation.snapshot.observed_at,
+                                    "circuit_state": observation.snapshot.circuit_state,
+                                    "observed_recovery": receipt.kind
+                                        == crate::InferenceInterventionKind::CircuitClosed,
+                                    "causal_attribution": "unverified",
+                                }),
+                                0,
+                            );
+                            match sink.persist(&regulation_event) {
+                                Ok(()) => true,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "reg.inference",
+                                        error = %error,
+                                        intervention_id = receipt.id,
+                                        "inference intervention receipt persistence failed"
+                                    );
+                                    false
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                target: "reg.inference",
+                                intervention_id = receipt.id,
+                                "inference intervention receipt not acknowledged — no event sink configured"
+                            );
+                            false
+                        }
+                    }
+                }
+                ResilienceEvent::PermanentFailure(failure) => {
+                    let action = RegulatoryAction::with_metric(
+                        LoopId::Curation,
+                        ActionType::Escalate,
+                        RegulatoryActionParams::reason(format!(
+                            "inference_permanent_failure:{:?} — {}",
+                            failure.kind, failure.detail
+                        )),
+                        "inference_permanent_failure".to_string(),
+                    );
+                    self.route_action_as_alert(&action).await
+                }
+            };
+
+            if !handled {
+                break;
+            }
+            recovery_failed |= reopened;
+            acknowledged_cursor = event_id;
+        }
+        self.inference_intervention_cursor
+            .store(acknowledged_cursor, std::sync::atomic::Ordering::Relaxed);
+
         vec![Signal::new(
             LoopId::Inference,
             SignalMetric::CircuitBreakerState,
@@ -448,15 +537,16 @@ impl super::CyberneticsLoop {
 
     /// Route a real escalation disposition through the durable queue, live
     /// Curator channel, archive, and email fallback. Informational dispositions
-    /// remain observations and are not promoted to incidents.
-    async fn route_action_as_alert(&self, action: &RegulatoryAction) {
+    /// remain observations and are not promoted to incidents. Returns true only
+    /// when a pending condition or durable sink confirms the evidence is retained.
+    async fn route_action_as_alert(&self, action: &RegulatoryAction) -> bool {
         if action.action_type == ActionType::Notify {
             tracing::info!(
                 target: "reg.cybernetics",
                 metric = action.metric_name.as_deref().unwrap_or("unknown"),
                 "Notify disposition observed"
             );
-            return;
+            return true;
         }
         if action.target != LoopId::Curation {
             tracing::warn!(
@@ -464,7 +554,7 @@ impl super::CyberneticsLoop {
                 target_loop = %action.target,
                 "Escalate disposition rejected because its target is not Curation"
             );
-            return;
+            return false;
         }
 
         let message =
@@ -499,7 +589,7 @@ impl super::CyberneticsLoop {
                     target_loop = %action.target,
                     "Suppressing duplicate escalation — pending condition already in queue"
                 );
-                return;
+                return true;
             }
         }
 
@@ -522,7 +612,8 @@ impl super::CyberneticsLoop {
         {
             self.emit_tool_outcome_breakdown().await;
         }
-        self.persist_alert_to_queue(&alert, observation.as_ref())
+        let queue_confirmed = self
+            .persist_alert_to_queue(&alert, observation.as_ref())
             .await;
 
         // Primary path: live channel to Curator's inbox
@@ -539,9 +630,11 @@ impl super::CyberneticsLoop {
             false
         };
 
-        // Fallback: persist full alert to RegulationArchive for Curator retrieval on next activation
+        // Fallback: persist the full alert to RegulationArchive when the live
+        // channel is unavailable. The returned status lets receipt consumers
+        // distinguish durable handling from best-effort delivery.
+        let mut archive_persisted = false;
         if !sent_live {
-            let mut persisted = false;
             if let Some(ref sink) = self.event_sink {
                 let event = RegulationRecord::new(
                     WebID::from_persona(b"regulation"),
@@ -560,7 +653,7 @@ impl super::CyberneticsLoop {
                 );
                 match sink.persist(&event) {
                     Ok(()) => {
-                        persisted = true;
+                        archive_persisted = true;
                         tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert persisted to RegulationArchive (Curator inbox unavailable)");
                     }
                     Err(e) => {
@@ -574,15 +667,16 @@ impl super::CyberneticsLoop {
             // resort (archive failed/unavailable).
             if let Some(ref email_sink) = self.alert_email_sink {
                 email_sink.send_alert_email(&alert);
-                if persisted {
+                if archive_persisted {
                     tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as notification (live channel down, archive persisted)");
                 } else {
                     tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as last resort (archive unavailable)");
                 }
-            } else if !persisted {
+            } else if !archive_persisted {
                 tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel, event_sink, or email sink");
             }
         }
+        queue_confirmed || archive_persisted
     }
 
     /// Verify evidence-bearing rollout impact checks (Fermi impact-gate pattern).
@@ -1987,6 +2081,32 @@ mod tests {
         }
     }
 
+    struct FailOnceCapturingSink {
+        fail_next: std::sync::atomic::AtomicBool,
+        persisted: Mutex<Vec<(String, serde_json::Value)>>,
+    }
+
+    impl hkask_types::RegulationSink for FailOnceCapturingSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            if self
+                .fail_next
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(hkask_types::InfrastructureError::Serialization(
+                    "sink unavailable".to_string(),
+                ));
+            }
+            self.persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((event.span.path.clone(), event.observation.clone()));
+            Ok(())
+        }
+    }
+
     struct StubResilienceSource {
         observation: crate::InferenceObservation,
     }
@@ -2018,6 +2138,141 @@ mod tests {
                 .unwrap_or(cursor);
             Ok(observation)
         }
+    }
+
+    struct CursorRecordingResilienceSource {
+        observation: crate::InferenceObservation,
+        cursors: Mutex<Vec<u64>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::InferenceResilienceSource for CursorRecordingResilienceSource {
+        async fn observe_since(
+            &self,
+            cursor: u64,
+        ) -> Result<crate::InferenceObservation, crate::InferenceObservationError> {
+            self.cursors
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(cursor);
+            let mut observation = self.observation.clone();
+            observation
+                .interventions
+                .retain(|receipt| receipt.id > cursor);
+            observation
+                .permanent_failures
+                .retain(|receipt| receipt.id > cursor);
+            observation.next_cursor = observation
+                .interventions
+                .iter()
+                .map(|receipt| receipt.id)
+                .chain(
+                    observation
+                        .permanent_failures
+                        .iter()
+                        .map(|receipt| receipt.id),
+                )
+                .max()
+                .unwrap_or(cursor);
+            Ok(observation)
+        }
+    }
+
+    /// expect: "A resilience receipt remains pending until its observation is durably recorded"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the first attempt to persist an observed recovery fails and the second succeeds
+    /// post: the second observation retries the same cursor and only the third advances past the receipt
+    #[tokio::test]
+    async fn failed_inference_receipt_persistence_does_not_advance_cursor() {
+        let now = chrono::Utc::now();
+        let source = Arc::new(CursorRecordingResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 0,
+                    circuit_state: crate::InferenceCircuitState::Closed,
+                },
+                interventions: vec![crate::InferenceInterventionReceipt {
+                    id: 1,
+                    kind: crate::InferenceInterventionKind::CircuitClosed,
+                    occurred_at: now,
+                }],
+                permanent_failures: Vec::new(),
+                next_cursor: 1,
+            },
+            cursors: Mutex::new(Vec::new()),
+        });
+        let sink = Arc::new(FailOnceCapturingSink {
+            fail_next: std::sync::atomic::AtomicBool::new(true),
+            persisted: Mutex::new(Vec::new()),
+        });
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_inference_resilience_source(Arc::clone(&source) as Arc<_>);
+
+        regulation.sense().await;
+        regulation.sense().await;
+        regulation.sense().await;
+
+        assert_eq!(
+            *source
+                .cursors
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            vec![0, 0, 1]
+        );
+        assert_eq!(
+            sink.persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .len(),
+            1
+        );
+    }
+
+    /// expect: "A failed half-open receipt stays pending until its escalation is durably handled"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: a circuit-reopened receipt is observed while no escalation or archive sink is available
+    /// post: the next observation retries from the same cursor instead of acknowledging lost evidence
+    #[tokio::test]
+    async fn failed_inference_escalation_does_not_advance_cursor() {
+        let now = chrono::Utc::now();
+        let source = Arc::new(CursorRecordingResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 1,
+                    circuit_state: crate::InferenceCircuitState::Open,
+                },
+                interventions: vec![crate::InferenceInterventionReceipt {
+                    id: 1,
+                    kind: crate::InferenceInterventionKind::CircuitReopened,
+                    occurred_at: now,
+                }],
+                permanent_failures: Vec::new(),
+                next_cursor: 1,
+            },
+            cursors: Mutex::new(Vec::new()),
+        });
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_inference_resilience_source(Arc::clone(&source) as Arc<_>);
+
+        regulation.sense().await;
+        regulation.sense().await;
+
+        assert_eq!(
+            *source
+                .cursors
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            vec![0, 0]
+        );
     }
 
     /// expect: "A recovered inference circuit is recorded as observed recovery, not causal proof"

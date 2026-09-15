@@ -180,18 +180,26 @@ fn completion_error_detail(error: &LanguageModelCompletionError) -> String {
 fn inference_error_from_completion(error: LanguageModelCompletionError) -> InferenceError {
     let detail = completion_error_detail(&error);
     match &error {
-        LanguageModelCompletionError::ProviderRejection {
+        LanguageModelCompletionError::NoApiKey { .. }
+        | LanguageModelCompletionError::ProviderRejection {
             category: ProviderErrorCategory::Authentication | ProviderErrorCategory::Permission,
             ..
         } => InferenceError::Auth(detail),
+        LanguageModelCompletionError::DataRetentionConsentRequired { .. }
+        | LanguageModelCompletionError::SerializeRequest { .. }
+        | LanguageModelCompletionError::BuildRequestBody { .. } => {
+            InferenceError::NotConfigured(detail)
+        }
         LanguageModelCompletionError::ProviderRejection {
             category: ProviderErrorCategory::EndpointNotFound,
             ..
         } => InferenceError::Model(detail),
-        LanguageModelCompletionError::ProviderRejection { .. } => {
-            InferenceError::Generation(detail)
-        }
-        _ => InferenceError::Connection(detail),
+        LanguageModelCompletionError::ApiReadResponseError { .. }
+        | LanguageModelCompletionError::HttpSend { .. } => InferenceError::Connection(detail),
+        LanguageModelCompletionError::ProviderRejection { .. }
+        | LanguageModelCompletionError::DeserializeResponse { .. }
+        | LanguageModelCompletionError::StreamEndedUnexpectedly { .. }
+        | LanguageModelCompletionError::Other(_) => InferenceError::Generation(detail),
     }
 }
 
@@ -1061,14 +1069,14 @@ impl hkask_regulation::InferenceResilienceSource for LanguageModelInferencePort 
             InferenceObservation, InferenceSnapshot,
         };
 
-        let circuit_state = match self.resilience.state() {
+        let circuit = self.resilience.observe_since(cursor);
+        let circuit_state = match circuit.state {
             CircuitState::Closed => InferenceCircuitState::Closed,
             CircuitState::Open { .. } => InferenceCircuitState::Open,
             CircuitState::HalfOpen { .. } => InferenceCircuitState::HalfOpen,
         };
-        let interventions: Vec<_> = self
-            .resilience
-            .receipts_after(cursor)
+        let interventions: Vec<_> = circuit
+            .receipts
             .into_iter()
             .map(|receipt| InferenceInterventionReceipt {
                 id: receipt.id,
@@ -1081,13 +1089,8 @@ impl hkask_regulation::InferenceResilienceSource for LanguageModelInferencePort 
                 occurred_at: receipt.occurred_at,
             })
             .collect();
-        let permanent_failures = self.resilience.permanent_failures_after(cursor);
-        let next_cursor = interventions
-            .iter()
-            .map(|receipt| receipt.id)
-            .chain(permanent_failures.iter().map(|receipt| receipt.id))
-            .max()
-            .unwrap_or(cursor);
+        let permanent_failures = circuit.permanent_failures;
+        let next_cursor = circuit.next_cursor;
 
         Ok(InferenceObservation {
             snapshot: InferenceSnapshot {
@@ -1261,6 +1264,96 @@ mod tests {
             super::inference_error_from_completion(rejection),
             InferenceError::Auth(_)
         ));
+    }
+
+    /// expect: "Permanent completion failures preserve the operator action they require"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: completion fails through configuration, model, or non-retryable provider paths
+    /// post: each path maps to its distinct permanent-failure category
+    #[test]
+    fn permanent_completion_errors_preserve_typed_categories() {
+        let configuration = super::inference_error_from_completion(
+            LanguageModelCompletionError::DataRetentionConsentRequired {
+                model_name: "retained-model".to_string(),
+            },
+        );
+        assert!(matches!(configuration, InferenceError::NotConfigured(_)));
+        assert_eq!(
+            super::permanent_inference_failure(&configuration).map(|(kind, _)| kind),
+            Some(hkask_regulation::InferencePermanentFailureKind::Configuration)
+        );
+
+        let model = super::inference_error_from_completion(
+            LanguageModelCompletionError::ProviderRejection {
+                provider: LanguageModelProviderName::new("OpenRouter"),
+                status: Some(http_client::StatusCode::NOT_FOUND),
+                code: Some("404".to_string()),
+                message: "model not found".to_string(),
+                retry_after: None,
+                category: ProviderErrorCategory::EndpointNotFound,
+            },
+        );
+        assert!(matches!(model, InferenceError::Model(_)));
+        assert_eq!(
+            super::permanent_inference_failure(&model).map(|(kind, _)| kind),
+            Some(hkask_regulation::InferencePermanentFailureKind::Model)
+        );
+
+        let provider = super::inference_error_from_completion(LanguageModelCompletionError::Other(
+            anyhow::anyhow!("permanent provider failure"),
+        ));
+        assert!(matches!(provider, InferenceError::Generation(_)));
+        assert_eq!(
+            super::permanent_inference_failure(&provider).map(|(kind, _)| kind),
+            Some(hkask_regulation::InferencePermanentFailureKind::Provider)
+        );
+    }
+
+    /// expect: "A missing provider credential remains an authorization failure and never quarantines inference"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: three sequential provider streams fail because their API key is absent
+    /// post: the circuit remains closed and all three failures are observable as authorization receipts
+    #[gpui::test]
+    async fn missing_api_key_failures_do_not_open_the_transient_circuit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = model.as_fake();
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            Duration::from_secs(300),
+            1,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+
+        for attempt_index in 0..3 {
+            let attempt_port = port.clone();
+            let prompt = format!("missing-key-{attempt_index}");
+            let attempt = cx.spawn(async move |_cx| {
+                attempt_port
+                    .generate(&prompt, &LLMParameters::default(), None)
+                    .await
+            });
+            cx.run_until_parked();
+            fake.send_last_completion_stream_error(LanguageModelCompletionError::NoApiKey {
+                provider: LanguageModelProviderName::new("OpenRouter"),
+            });
+            cx.run_until_parked();
+            assert!(matches!(attempt.await, Err(InferenceError::Auth(_))));
+        }
+
+        let observation = hkask_regulation::InferenceResilienceSource::observe_since(&port, 0)
+            .await
+            .expect("in-process resilience observation");
+        assert_eq!(
+            observation.snapshot.circuit_state,
+            hkask_regulation::InferenceCircuitState::Closed
+        );
+        assert_eq!(observation.permanent_failures.len(), 3);
+        assert!(observation.permanent_failures.iter().all(|receipt| {
+            receipt.kind == hkask_regulation::InferencePermanentFailureKind::Authorization
+        }));
     }
 
     #[test]

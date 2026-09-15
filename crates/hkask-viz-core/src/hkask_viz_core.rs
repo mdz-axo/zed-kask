@@ -498,8 +498,33 @@ mod tests {
         assert_eq!(first_id, second.entity_id());
     }
 
+    /// expect: The dedicated media registry is bounded and suspends its oldest Asset on eviction.
+    #[gpui::test]
+    fn media_registry_is_bounded_and_suspends_eviction(cx: &mut gpui::TestAppContext) {
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        clear_widget_cache();
+        let first_body =
+            r#"{"kind":"video","src":"/tmp/media-0.mp4","gallery_asset_id":"bounded-0"}"#;
+        let first = cx.update(|window, cx| {
+            shared_media_widget(first_body, window, cx).expect("first media widget")
+        });
+        for index in 1..=MAX_CACHE_SIZE {
+            let body = format!(
+                r#"{{"kind":"video","src":"/tmp/media-{index}.mp4","gallery_asset_id":"bounded-{index}"}}"#
+            );
+            cx.update(|window, cx| {
+                shared_media_widget(&body, window, cx).expect("bounded media widget")
+            });
+        }
+        assert_eq!(
+            MEDIA_WIDGETS.with(|cache| cache.borrow().widgets.len()),
+            MAX_CACHE_SIZE
+        );
+        assert!(first.read_with(cx, |widget, _cx| widget.is_suspended()));
+    }
+
     /// dcterms:identifier: `hkask_viz_core::block_renderer`
-    /// expect: Media playback lifetime belongs to visible embeddings, never the generic viz cache.
+    /// expect: Media stays outside the generic viz LRU; its dedicated bounded registry owns lifecycle.
     /// [P1] Motivating: Offscreen media must not remain alive solely because a cache owns its player.
     #[gpui::test]
     fn media_renderer_excludes_players_from_strong_viz_cache(cx: &mut gpui::TestAppContext) {
