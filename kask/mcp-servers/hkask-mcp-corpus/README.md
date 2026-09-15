@@ -121,7 +121,9 @@ caller verification.
   body heading; trailing bibliography, references and works-cited sections
   require an exact heading after two-thirds of document words; a trailing index
   additionally requires index-entry structure. Prose mentions do not trigger
-  removal (`hkask-memory/src/text_chunking.rs`).
+  removal. Well-formed Markdown image nodes are also excluded with inline byte-range
+  accounting so model-inferred alt text cannot become source-evidence QA while
+  surrounding source prose and semantic HTML remain (`hkask-memory/src/text_chunking.rs`).
 
 Directory results include `total_documents`, `total_chunks`, resolved
 `max_tokens`, `overlap_tokens`, `overlap_words`, `budget_basis`,

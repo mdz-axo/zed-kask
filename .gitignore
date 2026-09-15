@@ -63,6 +63,7 @@ crates/docs_preprocessor/actions.json
 
 .local*
 .cache
+.tmp-research
 
 # Local build error logs (stale artifacts, not source)
 build-err.txt

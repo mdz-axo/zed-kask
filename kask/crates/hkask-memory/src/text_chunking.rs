@@ -337,6 +337,64 @@ pub struct BoilerplateFilterResult {
     pub exclusions: Vec<BoilerplateExclusion>,
 }
 
+fn is_ocr_figure_destination(destination: &str) -> bool {
+    let Some(coordinates) = destination
+        .strip_prefix("page_")
+        .and_then(|value| value.strip_suffix(".png"))
+    else {
+        return false;
+    };
+    let mut parts = coordinates.split('_');
+    (0..4).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    }) && parts.next().is_none()
+}
+
+fn strip_markdown_images(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let mut output = String::with_capacity(text.len());
+    let mut exclusions = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = text[cursor..].find("![") {
+        let start = cursor + relative_start;
+        let label_start = start + 2;
+        let Some(relative_separator) = text[label_start..].find("](") else {
+            break;
+        };
+        if text[label_start..label_start + relative_separator].contains("![") {
+            output.push_str(&text[cursor..label_start]);
+            cursor = label_start;
+            continue;
+        }
+        let destination_start = label_start + relative_separator + 2;
+        let Some(relative_end) = text[destination_start..].find(')') else {
+            break;
+        };
+        let end = destination_start + relative_end + 1;
+        let destination = &text[destination_start..end - 1];
+
+        if is_ocr_figure_destination(destination) {
+            output.push_str(&text[cursor..start]);
+            output.push(' ');
+            exclusions.push(BoilerplateExclusion {
+                reason: "model_inference_image",
+                boundary_unit: "byte",
+                start,
+                end,
+                removed_words: text[start..end].split_whitespace().count(),
+            });
+        } else {
+            output.push_str(&text[cursor..end]);
+        }
+        cursor = end;
+    }
+
+    output.push_str(&text[cursor..]);
+    (output, exclusions)
+}
+
 /// expect: I can remove bounded book furniture while retaining substantive content and reviewing every exclusion.
 /// [P3] Motivating: Generative Space — downstream corpus stages receive content rather than front/back matter.
 /// [P1] Constraining: Human Agency — every removal carries a reason and source boundary.
@@ -345,7 +403,7 @@ pub struct BoilerplateFilterResult {
 /// post: returns retained text plus complete word-count and exclusion-range accounting
 pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResult {
     let input_words = text.split_whitespace().count();
-    let (filtered, exclusions) = if text.contains(FORM_FEED) {
+    let (filtered, mut exclusions) = if text.contains(FORM_FEED) {
         filter_page_delimited_boilerplate(text)
     } else if let Some(reason) = boilerplate_page_reason(text) {
         let removed_words = text.split_whitespace().count();
@@ -362,6 +420,8 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     } else {
         filter_unpaged_boilerplate(text)
     };
+    let (filtered, image_exclusions) = strip_markdown_images(&filtered);
+    exclusions.extend(image_exclusions);
     let retained_words = filtered.split_whitespace().count();
 
     BoilerplateFilterResult {
@@ -848,6 +908,34 @@ mod tests {
     fn sanitize_replaces_control_chars_with_space() {
         let input = "hello\x01world\x06test\x0eend";
         assert_eq!(sanitize_text(input), "hello world test end");
+    }
+
+    #[test]
+    fn filter_removes_ocr_images_but_preserves_surrounding_source_text() {
+        let prose = "Substantive source prose remains available for evidence. ".repeat(30);
+        let input = format!(
+            r#"{prose}<table><tr><th>Ho-Lee model: \( \mu = 0.005 \)</th></tr><tr><td>![Ten paths generated from Ho-Lee model](page_349_768_482_388.png)</td></tr></table> ![Literal Markdown](source.png) {prose}{prose}"#
+        );
+
+        let filtered = filter_boilerplate_pages_with_report(&input);
+
+        assert!(
+            filtered
+                .text
+                .contains("<th>Ho-Lee model: \\( \\mu = 0.005 \\)</th>")
+        );
+        assert!(filtered.text.contains("Substantive source prose remains."));
+        assert!(filtered.text.contains("![Literal Markdown](source.png)"));
+        assert!(!filtered.text.contains("Ten paths generated"));
+        assert!(!filtered.text.contains("page_349_768_482_388.png"));
+        let image_exclusions: Vec<_> = filtered
+            .exclusions
+            .iter()
+            .filter(|exclusion| exclusion.reason == "model_inference_image")
+            .collect();
+        assert_eq!(image_exclusions.len(), 1);
+        assert_eq!(image_exclusions[0].boundary_unit, "byte");
+        assert!(image_exclusions[0].removed_words > 0);
     }
 
     /// A whole document that MENTIONS "copyright" (an OCR'd book, a
