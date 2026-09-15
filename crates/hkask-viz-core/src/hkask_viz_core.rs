@@ -28,11 +28,12 @@
 //! playback position, graph pan/zoom/evidence) and restarts file I/O.
 //!
 //! Non-media viz widgets use a thread-local 32-entry strong LRU keyed by body
-//! hash so graph/pan state survives parent re-renders. Media is different:
-//! hidden lifetime means possible ghost audio. Media widgets therefore use a
-//! weak registry keyed by stable gallery Asset ID (exact body when unindexed).
-//! Visible embedding surfaces own the strong entity; the registry coordinates
-//! one player across surfaces without extending its lifetime offscreen.
+//! hash so graph/pan state survives parent re-renders. Media uses a separate
+//! bounded 32-entry strong registry keyed by stable gallery Asset ID (exact body
+//! when unindexed), because D18's ephemeral elements do not retain an entity
+//! across parent renders. Renderer lookups provide a visibility heartbeat;
+//! loading or playback self-suspends when that heartbeat stops, preventing
+//! offscreen audio/decode work while paused state remains bounded.
 #![warn(clippy::let_underscore_future)]
 
 use std::cell::RefCell;
@@ -244,14 +245,51 @@ thread_local! {
     /// LRU cache of widget entities, keyed by a hash of the block body.
     /// Thread-local because GPUI entities are not `Send` (single-threaded).
     static VIZ_CACHE: RefCell<VizCache> = RefCell::new(VizCache::new());
-    /// Media widgets by stable Asset id (exact body when unindexed), weak:
-    /// visible embedding surfaces hold the strong reference. This is the
-    /// single-instance guarantee — one media widget per Asset, shared
-    /// between the conversation-inline render and the viewer pane. Without
-    /// it, both surfaces construct their own player for the same video and
-    /// play TWO audio streams a few hundred ms apart.
-    static MEDIA_WIDGETS: RefCell<HashMap<String, gpui::WeakEntity<hkask_media_widget::MediaWidget>>> =
-        RefCell::new(HashMap::default());
+    /// Bounded strong media ownership bridges the stateless D18 callback's
+    /// ephemeral elements. Each lookup marks the Asset visible; the widget's
+    /// heartbeat watchdog suspends loading/playback when lookups stop.
+    static MEDIA_WIDGETS: RefCell<MediaCache> = RefCell::new(MediaCache::new());
+}
+
+struct MediaCache {
+    widgets: HashMap<String, Entity<hkask_media_widget::MediaWidget>>,
+    order: VecDeque<String>,
+}
+
+impl MediaCache {
+    fn new() -> Self {
+        Self {
+            widgets: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Entity<hkask_media_widget::MediaWidget>> {
+        let entity = self.widgets.get(key)?.clone();
+        self.order.retain(|existing| existing != key);
+        self.order.push_back(key.to_string());
+        Some(entity)
+    }
+
+    fn insert(
+        &mut self,
+        key: String,
+        entity: Entity<hkask_media_widget::MediaWidget>,
+    ) -> Option<Entity<hkask_media_widget::MediaWidget>> {
+        self.order.retain(|existing| existing != &key);
+        self.order.push_back(key.clone());
+        self.widgets.insert(key, entity);
+        if self.widgets.len() <= MAX_CACHE_SIZE {
+            return None;
+        }
+        let oldest = self.order.pop_front()?;
+        self.widgets.remove(&oldest)
+    }
+
+    fn clear(&mut self) {
+        self.widgets.clear();
+        self.order.clear();
+    }
 }
 
 fn media_widget_key(body: &str) -> String {
@@ -272,19 +310,16 @@ pub fn shared_media_widget(
     cx: &mut gpui::App,
 ) -> Option<gpui::Entity<hkask_media_widget::MediaWidget>> {
     let key = media_widget_key(body);
-    let existing = MEDIA_WIDGETS.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.retain(|_, entity| entity.upgrade().is_some());
-        cache.get(&key).cloned()
-    });
-    if let Some(existing) = existing.and_then(|entity| entity.upgrade()) {
-        existing.update(cx, |widget, cx| widget.activate(cx));
+    if let Some(existing) = MEDIA_WIDGETS.with(|cache| cache.borrow_mut().get(&key)) {
+        existing.update(cx, |widget, cx| widget.mark_visible(cx));
         return Some(existing);
     }
     let entity = hkask_media_widget::create_media_widget(body, window, cx)?;
-    MEDIA_WIDGETS.with(|cache| {
-        cache.borrow_mut().insert(key, entity.downgrade());
-    });
+    entity.update(cx, |widget, cx| widget.mark_visible(cx));
+    let evicted = MEDIA_WIDGETS.with(|cache| cache.borrow_mut().insert(key, entity.clone()));
+    if let Some(evicted) = evicted {
+        evicted.update(cx, |widget, cx| widget.suspend(cx));
+    }
     Some(entity)
 }
 
@@ -297,6 +332,7 @@ pub fn clear_widget_cache() {
     VIZ_CACHE.with(|cache| {
         cache.borrow_mut().clear();
     });
+    MEDIA_WIDGETS.with(|cache| cache.borrow_mut().clear());
 }
 
 struct VizCache {
@@ -364,10 +400,9 @@ pub fn block_renderer() -> BlockRenderer {
             return Some(element);
         }
 
-        // Cache miss — try media first through the weak shared-widget
-        // registry. Do NOT insert media into the strong generic viz LRU:
-        // the visible embedding owns its entity, so offscreen release stops
-        // playback instead of leaving a cached ghost player alive.
+        // Cache miss — try media first through its dedicated bounded registry.
+        // Media stays outside the generic viz LRU because its visibility
+        // heartbeat governs active loading/playback suspension.
         if let Some(entity) = shared_media_widget(body, window, cx) {
             return Some(CachedWidget::new(entity).render());
         }
@@ -432,6 +467,35 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
         }
+    }
+
+    /// expect: Ephemeral block elements hand the same Asset entity to the next parent render.
+    /// [P1] Motivating: A stateless markdown callback must not restart decoder open every frame.
+    #[gpui::test]
+    fn media_registry_bridges_ephemeral_block_elements(cx: &mut gpui::TestAppContext) {
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let body =
+            r#"{"kind":"video","src":"/tmp/bridge.mp4","gallery_asset_id":"asset-render-bridge"}"#;
+        let element = cx
+            .update(|window, cx| block_renderer()(body, window, cx).expect("media block renders"));
+        let key = media_widget_key(body);
+        let first_id = MEDIA_WIDGETS.with(|cache| {
+            cache
+                .borrow_mut()
+                .get(&key)
+                .expect("registry contains rendered media")
+                .entity_id()
+        });
+        drop(element);
+        cx.run_until_parked();
+        assert!(
+            MEDIA_WIDGETS.with(|cache| cache.borrow_mut().get(&key).is_some()),
+            "the bounded registry lost the entity between parent renders"
+        );
+        let second = cx.update(|window, cx| {
+            shared_media_widget(body, window, cx).expect("next render reuses media")
+        });
+        assert_eq!(first_id, second.entity_id());
     }
 
     /// dcterms:identifier: `hkask_viz_core::block_renderer`

@@ -278,7 +278,8 @@ limit on the following turn). A persist failure surfaces as a tool error
 and `media_block_with_omc` serialize JSON rather than interpolating paths.
 Every indexed Asset hint carries `gallery_asset_id`; gallery listing reconciliation
 injects that same ID into the renderer body, so panel and inline presentations use
-one stable weak-registry key.
+one stable bounded-registry key. Renderer lookups provide a visibility heartbeat;
+loading or playback suspends when the Asset stops rendering.
 `display_hint` is one fenced media block; `display_hints` is an array of them.
 Structured raw outputs use `hkask_types::tool_response::display_hints_from_output_value`;
 the live text transport uses `display_hints_from_output_text` as its adapter.

@@ -453,6 +453,13 @@ mod smoke {
                 );
                 assert!(response.get("text").is_none());
                 assert_eq!(response["output"], output);
+                assert_eq!(response["requested_path"], "source.txt");
+                let report_path = format!("{output}.report.json");
+                assert_eq!(response["report"], report_path);
+                let report: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&report_path)?)?;
+                assert_eq!(report["output"], output);
+                assert_eq!(report["text_bytes"], source.len());
                 assert_eq!(std::fs::read_to_string(output)?.trim(), source.trim());
             }
             return Ok(());

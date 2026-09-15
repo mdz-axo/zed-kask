@@ -24,6 +24,8 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::io::Write;
 
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
@@ -50,11 +52,16 @@ impl CorpusServer {
             self,
             "corpus_convert",
             async {
+                let requested_path = path.clone();
+                let requested_pages = target_pages.clone();
                 let result = ConvertService::from_corpus(self)
                     .convert(path, force_ocr, target_pages, include_structure.unwrap_or(false))
                     .await?;
-                let text = result.get("text").and_then(serde_json::Value::as_str)
+                let text = result
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
                     .filter(|text| !text.trim().is_empty())
+                    .map(str::to_owned)
                     .ok_or_else(|| McpToolError::failed_precondition(format!("Conversion produced no usable text; report: {result}")))?;
                 // Honor the `output` parameter on the file path: the
                 // extracted text lands at the caller's destination instead
@@ -74,7 +81,7 @@ impl CorpusServer {
                             )
                         })?;
                     }
-                    std::fs::write(&destination, text).map_err(|e| {
+                    std::fs::write(&destination, &text).map_err(|e| {
                         map_corpus_io_error(
                             e,
                             &format!("Failed to write '{}'", destination.display()),
@@ -97,11 +104,38 @@ impl CorpusServer {
                     }
                 }
                 if let Some(output_path) = output.as_deref() {
+                    let mut hasher = Sha256::new();
+                    hasher.update(text.as_bytes());
+                    let text_sha256 = format!("{:x}", hasher.finalize());
                     result["output"] = serde_json::json!(output_path);
+                    result["requested_path"] = serde_json::json!(requested_path);
+                    result["requested_pages"] = serde_json::json!(requested_pages);
+                    result["text_sha256"] = serde_json::json!(text_sha256);
+                    result["text_bytes"] = serde_json::json!(text.len());
                     if let Some(object) = result.as_object_mut() {
                         object.remove("text");
                         object.remove("structure");
                     }
+
+                    let report_path = format!("{output_path}.report.json");
+                    let report_destination =
+                        crate::path_safety::contain_for_write(&report_path)?;
+                    let parent = report_destination.parent().ok_or_else(|| {
+                        McpToolError::invalid_argument("Conversion report must have a parent")
+                    })?;
+                    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+                        map_corpus_io_error(e, "Failed to create conversion report temporary file")
+                    })?;
+                    serde_json::to_writer(&mut temporary, &result).map_err(|e| {
+                        McpToolError::internal(format!("Cannot serialize conversion report: {e}"))
+                    })?;
+                    temporary.flush().map_err(|e| {
+                        map_corpus_io_error(e, "Failed to flush conversion report")
+                    })?;
+                    temporary.persist(&report_destination).map_err(|e| {
+                        map_corpus_io_error(e.error, "Failed to publish conversion report")
+                    })?;
+                    result["report"] = serde_json::json!(report_path);
                 }
                 Ok(result)
             },

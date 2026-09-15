@@ -44,6 +44,9 @@ const DEFAULT_SERVER: &str = "hkask-mcp-media";
 /// Surfaced when the process-global `ToolInvoker` is not wired. Visible state,
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
 const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
+/// A playing/loading shared widget that has not been requested by a renderer
+/// within this interval is offscreen and must suspend its active work.
+const VISIBILITY_GRACE: Duration = Duration::from_millis(250);
 
 /// Convert a decoder-owned BGRA frame into GPUI's render-image container.
 /// GPUI uploads this byte buffer as BGRA; the image crate supplies storage,
@@ -82,6 +85,10 @@ pub struct MediaWidget {
     /// distinct from an operator pause: it is the lifecycle signal that no
     /// hidden audio/decode polling may continue.
     suspended: bool,
+    /// Set by the shared D18 registry. Directly-owned widgets are not governed
+    /// by the render-heartbeat watchdog.
+    visibility_managed: bool,
+    last_visible_at: Instant,
     /// Edit marks for interactive trimming: the in/out points the operator
     /// set on the transport, in playback-clock seconds. `None` until set.
     mark_in_secs: Option<f64>,
@@ -213,6 +220,8 @@ impl MediaWidget {
             playback_task: None,
             playback_loop_active: false,
             suspended: false,
+            visibility_managed: false,
+            last_visible_at: Instant::now(),
             mark_in_secs: None,
             mark_out_secs: None,
             last_transport: None,
@@ -525,6 +534,7 @@ impl MediaWidget {
         if self.playback_loop_active {
             return;
         }
+
         self.playback_loop_active = true;
         let entity = cx.entity().downgrade();
         self.playback_task = Some(cx.spawn(async move |_this, cx| {
@@ -559,6 +569,10 @@ impl MediaWidget {
     /// loop. Rendering occurs only when transport state changes or a new frame
     /// arrives.
     fn tick_playback(&mut self, _delta: Duration, cx: &mut Context<Self>) -> bool {
+        if self.visibility_managed && self.last_visible_at.elapsed() > VISIBILITY_GRACE {
+            self.suspend(cx);
+            return false;
+        }
         let mut transport_state = TransportState {
             is_playing: false,
             position: Duration::ZERO,
@@ -642,6 +656,15 @@ impl MediaWidget {
         self.playback_task = None;
         self.playback_loop_active = false;
         self.sync_transport_state(cx);
+    }
+
+    /// Mark a shared widget as requested by a visible embedding. Active work
+    /// self-suspends when this heartbeat stops; paused media retains only its
+    /// bounded UI state.
+    pub fn mark_visible(&mut self, cx: &mut Context<Self>) {
+        self.visibility_managed = true;
+        self.last_visible_at = Instant::now();
+        self.activate(cx);
     }
 
     /// Reactivate a shared widget when a visible embedding requests it.
@@ -1494,6 +1517,43 @@ mod tests {
         assert!(widget.read_with(cx, |widget, _cx| widget.current_frame.is_some()));
         assert!(state.is_some_and(|state| {
             !state.is_loading && !state.is_playing && !state.duration.is_zero()
+        }));
+    }
+
+    /// expect: A shared player suspends active work when renderer heartbeats stop.
+    /// [P1] Motivating: Bounded strong ownership must never reintroduce offscreen audio or polling.
+    #[gpui::test]
+    async fn stale_visibility_heartbeat_suspends_playback(cx: &mut TestAppContext) {
+        let path = video_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.load(cx);
+                widget.mark_visible(cx);
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.current_frame.is_none())
+            && Instant::now() < deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx);
+                widget.last_visible_at =
+                    Instant::now() - VISIBILITY_GRACE - Duration::from_millis(1);
+                assert!(!widget.tick_playback(Duration::from_millis(33), cx));
+            })
+        });
+        assert!(widget.read_with(cx, |widget, _cx| {
+            widget.is_suspended() && !widget.playback_loop_active
         }));
     }
 

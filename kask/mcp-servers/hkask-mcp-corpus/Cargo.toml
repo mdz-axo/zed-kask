@@ -41,6 +41,7 @@ rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "process"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 schemars.workspace = true
 tracing.workspace = true
 
