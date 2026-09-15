@@ -201,7 +201,9 @@ supersedes the create-only activation / insert-only rescan behavior.
   transcripts, clears only their live gallery link in the same database statement,
   and retains immutable source identity. Index-only deletion leaves path-backed
   transcripts usable; requested file deletion fails before row deletion when the
-  filesystem operation fails.
+  filesystem operation fails. Local-vs-network classification is syntactic rather
+  than existence-based, so a missing local source reaches the filesystem/FFmpeg
+  boundary and retains its original cause instead of becoming a URL syntax error.
 - Canonicalization of an absent path resolves its existing symlink ancestors
   (deepest existing prefix canonicalized, absent remainder appended lexically),
   so alias and real spellings of a missing file denote one identity. Conflicting
@@ -272,6 +274,9 @@ limit on the following turn). A persist failure surfaces as a tool error
 
 **Display-hint contract (approved wire cleanup, 2026-09-05):** `media_block`
 and `media_block_with_omc` serialize JSON rather than interpolating paths.
+Every indexed Asset hint carries `gallery_asset_id`; gallery listing reconciliation
+injects that same ID into the renderer body, so panel and inline presentations use
+one stable weak-registry key.
 `display_hint` is one fenced media block; `display_hints` is an array of them.
 Structured raw outputs use `hkask_types::tool_response::display_hints_from_output_value`;
 the live text transport uses `display_hints_from_output_text` as its adapter.

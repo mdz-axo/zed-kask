@@ -53,6 +53,8 @@ empty arrays are valid; missing fields, malformed responses, and tool errors
 surface a panel status instead of silently clearing the queue.
 
 `display_hint` / `display_hints` contain JSON-serialized fenced media blocks.
+Every hint for an indexed Asset carries its stable `gallery_asset_id`; inline
+conversation and Media-panel bodies therefore resolve one shared player key.
 The viewer consumes structured raw outputs directly through
 `hkask_types::tool_response::display_hints_from_output_value`; text transports
 use `display_hints_from_output_text`. Both viewer and widget validate bodies
@@ -139,7 +141,9 @@ preserves linked transcripts and atomically detaches their live gallery link;
 the immutable source Asset ID remains queryable. Index-only deletion leaves a
 still-present source file usable. Requested file deletion happens before the
 gallery row is removed, and a filesystem failure surfaces with its cause rather
-than warning and falsely reporting success.
+than warning and falsely reporting success. Missing local paths are classified by
+locator syntax rather than current existence, so tools preserve the downstream
+filesystem/FFmpeg cause instead of misreporting a deleted file as a malformed URL.
 
 Reconciliation and analysis writes use real SQLite transactions. New records begin
 analysis-pending. Refresh targets the exact added/changed/restored records returned

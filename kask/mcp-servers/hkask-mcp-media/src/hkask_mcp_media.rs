@@ -134,14 +134,13 @@ pub mod models {
 /// that simply is not a URL. Anything that is not an existing local file
 /// falls through to URL validation, which fails closed on malformed input.
 pub(crate) fn is_local_media_path(input: &str) -> bool {
-    if let Some(path) = input.strip_prefix("file://") {
-        return std::path::Path::new(path).exists();
+    if input.starts_with("file://") {
+        return true;
     }
-    if input.contains("://") {
-        // A network URL (http, https, or any other scheme) — not a local path.
+    if input.contains("://") || input.starts_with("data:") {
         return false;
     }
-    std::path::Path::new(input).exists()
+    true
 }
 
 /// Lock-free snapshot of gallery state — safe to hold across .await points.
@@ -5096,14 +5095,11 @@ mod tool_behavior_tests {
         );
     }
 
-    /// `is_local_media_path` gates the SSRF URL validation: local files this
-    /// server's own tools produce must reach the ffmpeg/provider layers,
-    /// while anything URL-shaped or nonexistent still fails closed through
-    /// the validator. Pins the local-analysis seam fix (2026-09-04):
-    /// `transcribe_bundle` on a `video_fetch` download previously died at
-    /// "No scheme separator '://' found".
+    /// `is_local_media_path` gates SSRF URL validation by locator syntax, not
+    /// current filesystem existence. Missing local Assets must reach the
+    /// filesystem/ffmpeg boundary so the visible error retains its real cause.
     #[test]
-    fn is_local_media_path_accepts_existing_files_only() {
+    fn is_local_media_path_preserves_missing_filesystem_causes() {
         let existing = std::env::temp_dir().join("is-local-media-path-test.txt");
         std::fs::write(&existing, b"fixture").expect("fixture write");
         let existing_str = existing.to_str().expect("utf-8 path");
@@ -5114,21 +5110,22 @@ mod tool_behavior_tests {
             "file:// URI over an existing file"
         );
         assert!(
-            !is_local_media_path("/nonexistent/path/audio.wav"),
-            "missing local path falls through to URL validation"
+            is_local_media_path("/nonexistent/path/audio.wav"),
+            "missing absolute paths remain filesystem inputs"
         );
         assert!(
-            !is_local_media_path("file:///nonexistent/path/audio.wav"),
-            "missing file:// target falls through to URL validation"
+            is_local_media_path("file:///nonexistent/path/audio.wav"),
+            "missing file:// targets remain filesystem inputs"
         );
         assert!(
             !is_local_media_path("https://example.com/audio.wav"),
             "network URLs are never local paths"
         );
         assert!(
-            !is_local_media_path("not a url at all"),
-            "free text is not a local path"
+            is_local_media_path("relative-audio.wav"),
+            "scheme-less relative paths remain filesystem inputs"
         );
+        assert!(!is_local_media_path("data:audio/wav;base64,AA=="));
     }
 }
 
@@ -5511,7 +5508,7 @@ mod gallery_lifecycle_tests {
         for (name, kind) in [("film.mp4", "video"), ("sound.wav", "audio")] {
             let path = root.join(name);
             std::fs::write(&path, b"fixture bytes")?;
-            server
+            let response = server
                 .gallery_add_media(Parameters(GalleryAddMediaRequest {
                     path: path.to_string_lossy().into_owned(),
                     media_type: kind.into(),
@@ -5519,6 +5516,21 @@ mod gallery_lifecycle_tests {
                     height: None,
                 }))
                 .await?;
+            let response: serde_json::Value = serde_json::from_str(&response)?;
+            let payload = hkask_types::tool_response::unwrap_tool_envelope(response);
+            let asset_id = payload["id"]
+                .as_str()
+                .ok_or("gallery_add_media response omitted Asset id")?;
+            let hint = payload["display_hint"]
+                .as_str()
+                .ok_or("gallery_add_media response omitted display_hint")?;
+            let body = hint
+                .trim()
+                .strip_prefix("```media")
+                .and_then(|body| body.trim().strip_suffix("```"))
+                .ok_or("gallery_add_media display_hint was not a media block")?;
+            let body: serde_json::Value = serde_json::from_str(body)?;
+            assert_eq!(body["gallery_asset_id"], asset_id);
         }
         std::fs::remove_file(root.join("nested/c.png"))?;
         organize(&server, &root, false).await?;

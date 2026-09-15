@@ -54,6 +54,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | Input | Contract |
 |---|---|
 | `corpus_source`, source selection | Caller-selected folder and agreed file scope, including whether nested files are included; freshly inventory every selected file, including unsupported formats |
+| content scope policy | Confirm whether the canonical pre-chunk boilerplate filter matches the requested corpus: page-delimited books remove bounded blank/title/copyright/contents/index pages, and unpaged books use conservative section signals. Use `target_pages` only for an explicit source subset or OCR probe, not to duplicate routine book-furniture filtering |
 | `entity_ref_prefix` | One namespace; use `style:{author}` for an author corpus, with the exact same author identifier in compose/centroid calls |
 | `db_path`, `passphrase` | One corpus DB; resolve the current `HKASK_DB_PASSPHRASE` from authorized credentials, never invent or print it |
 | `max_tokens` | Optional approximate size target; absent uses `HKASK_CHUNK_MAX_TOKENS` / shared settings (code default 256), not a model tokenizer |
@@ -96,6 +97,35 @@ capability or premise and rerun that stage. Expand only after the probe passes.
 The target is zero unresolved failures across the required source set and stages,
 not a plausible output file. Stop an approach after three no-progress attempts.
 On operator cancellation, stop and ask what was wrong; do not resubmit the call.
+
+### Observable execution contract
+
+A resumable final artifact is not a progress surface. Before any stage call spanning
+more than one natural work unit (source file, JSONL partition, prompt shard), verify
+whether the tool exposes durable status or incremental progress. If it returns only
+a final summary, partition the stage at those natural boundaries and execute bounded
+waves. Never place a large corpus behind one final-only synchronous call merely
+because the implementation can resume after cancellation.
+
+Bind an operator-visible reporting cadence before expansion. Size the next wave from
+the measured pilot duration so one wave completes within that cadence; do not encode
+a corpus-specific file count in this skill. Independent units may run concurrently
+inside a wave when they have disjoint outputs. Reconcile the whole wave before
+starting another; aggregate tools partition JSONL only at record boundaries and
+must reconcile the union of identities with the manifest.
+
+The execution ledger is the durable status API when the MCP tool has none. Before a
+wave, record `planned`, `completed`, `succeeded`, `failed`, `remaining`, the current
+unit or wave, `started_at`, and `updated_at`. After every unit or wave, atomically
+update those fields and report the same counts to the operator, including the last
+completed identity, current blocker and next checkpoint. A stage is not “running”
+when neither tool status nor a changing durable checkpoint can prove progress.
+
+Cancellation is a state transition, not permission to retry. Inspect worker
+liveness and durable outputs, stop orphaned workers when safe, classify each unit as
+completed/failed/unresolved, and resume only unresolved identities into new outputs.
+Never race a canceled writer, infer zero progress from a missing final response, or
+make the operator ask whether work is still alive.
 
 ## Stage 0 — Bind inputs and verify readiness
 
@@ -147,16 +177,40 @@ retained inputs blocks deletion.
 
 ## Stage 1 — Convert and audit extraction
 
-Use `corpus_convert(path, output)` for the source set. Directory conversion
-requires an output directory, resumes only quality-passing outputs, and places
-OCR-derived text in `{output}-ocr-staging`. File mode writes its requested output;
-that write is not a quality acceptance verdict. Staged OCR has a `.report.json`
-companion with its complete conversion result; preserve it for review. Directory
-responses expose `document_reports` and `verification_failed` separately from
+Conversion preserves the document text and page boundaries needed by the canonical
+pre-chunk boilerplate filter. Do not manually trim routine title/copyright/contents
+or terminal-index pages with `target_pages`; that would create a second content-scope
+authority and bypass the filter's exclusion report. Use `target_pages` only when the
+caller selected an explicit page subset or for a bounded OCR probe.
+
+Build a conversion queue by joining the immutable source manifest to one unique
+expected extraction path per source. Inventory existing outputs before inference:
+reuse a prior extraction only when its source hash and quality evidence match, and
+classify every other identity as pending. Record the queue counts in the execution
+ledger before the first conversion wave.
+
+When `corpus_convert` has no incremental status surface, use file mode for each
+pending source and execute bounded waves with disjoint output files. Reconcile and
+checkpoint each wave before scheduling the next. A directory call is allowed only
+when the tool exposes observable progress, or a measured pilot shows the entire
+bounded set completes within the operator's reporting cadence and the operator has
+accepted final-only reporting. Directory convenience never overrides observability.
+
+Directory conversion requires an output directory, resumes only quality-passing
+outputs, and places OCR-derived text in `{output}-ocr-staging`. File mode writes its
+requested output; that write is not a quality acceptance verdict. Staged OCR has a
+`.report.json` companion with its complete conversion result; preserve it for
+review. Whether conversion is file or directory mode, retain per-source outcomes
+and aggregate `document_reports` and `verification_failed` separately from
 conversion/I/O `failed`. Check both: a failed page verdict can coexist with a
-successfully written staged file. Resume requires a matching report; missing or
-mismatched evidence blocks without automatic re-OCR. Do not fabricate a report
-for old staged text; diagnose it and explicitly regenerate only when needed.
+successfully written staged file. Selective-OCR page arrays may be indexed within
+the OCR subset rather than by physical PDF page number; map them through the
+ordered `ocr_pages`/triage identities before making any page claim. Blank or failed
+pages that may be routine book furniture remain provisional until Stage 2 joins
+them to the canonical boilerplate exclusion report; do not block the corpus or
+accept the page before that join. Resume requires a matching report; missing or
+mismatched evidence blocks without automatic re-OCR. Do not fabricate a report for old staged text; diagnose it and
+explicitly regenerate only when needed.
 
 For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidence.
 Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then
@@ -165,17 +219,21 @@ inspect the report before bulk work. Missing configuration, endpoint errors,
 Source-confirmed blank pages can be recorded as such; never infer that every empty
 page is benign. `include_structure=true` is only needed for the block view.
 
-Audit every extraction against the original: source coverage, word counts,
-legibility, repetition, script/language consistency and deterministic OCR quality
-results. The directory resume floor is 50 words plus its quality gates; it is not
-semantic proof. Merge staged OCR into accepted extractions only after review.
+Audit every extraction for word counts, legibility, repetition, script/language
+consistency and deterministic OCR outcomes. Document-level counts are a conversion
+signal, not yet the retained-content verdict: Stage 2 owns the canonical front/index
+filter and retained-page coverage check. The directory resume floor is 50 words plus
+its quality gates; it is not semantic proof. Merge staged OCR into accepted extractions only after review.
 For deliberate replacement of a passing extraction, verify it is derived and
 reproducible from a retained original before deletion/reconversion; no backup
 corpus. Audit failures stay blocked, not promoted by a copy operation.
 
-**Gate:** every inventoried source is represented exactly once by accepted text;
-no unresolved failed extraction or duplicate/probe artifact remains. Bash and
-`jq` can measure files/JSON; do not introduce Python tooling.
+**Gate:** every inventoried source has exactly one current-run extraction outcome;
+conversion/I/O failures and unambiguously substantive-page OCR failures are zero.
+Page warnings plausibly attributable to routine book furniture may advance only as
+identified provisional items that Stage 2 must resolve before embedding or
+classification. No duplicate/probe artifact remains. Bash and `jq` can measure
+files/JSON; do not introduce Python tooling.
 
 ## Stage 2 — Chunk once, measure coverage and overlap
 
@@ -184,6 +242,13 @@ explicit `output`, `entity_ref_prefix`, selected `max_tokens`, `overlap_tokens`,
 `multi_tier=false`, and `index=false` when Stage 3 will persist embeddings.
 Directory mode enumerates immediate `.txt` children, not a recursive file tree.
 Every child is containment-checked before reading; broken/escaping symlinks fail.
+
+Before word windows, the shared chunk engine is the one content-scope authority:
+page-delimited books remove bounded blank/title/copyright/contents/index pages;
+form-feed-free books use conservative front/back section signals. Reconcile every
+`boilerplate_exclusion_report` with its source and cross-check provisional Stage-1
+page warnings: an excluded warning is resolved, while a warning on retained content
+returns that source to conversion/OCR. Never reproduce this filter in orchestration.
 
 All chunk modes use the shared structural/sentence word-window engine. Effective
 maximum and overlap are `floor(tokens / 1.33)` whitespace words. Each passage is

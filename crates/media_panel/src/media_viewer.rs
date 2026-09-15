@@ -1949,10 +1949,24 @@ fn merge_gallery_records(
             .map(str::to_string);
         if let Some(existing) = assets.iter_mut().find(|existing| existing.src == src) {
             existing.gallery_index = gallery_index;
+            if let Some(asset_id) = gallery_asset_id.as_deref()
+                && let Ok(mut body) = serde_json::from_str::<Value>(&existing.body)
+                && let Some(object) = body.as_object_mut()
+            {
+                object.insert(
+                    "gallery_asset_id".to_string(),
+                    Value::String(asset_id.to_string()),
+                );
+                existing.body = body.to_string();
+            }
             existing.gallery_asset_id = gallery_asset_id;
         } else {
+            let mut body = serde_json::json!({"kind": kind, "src": src});
+            if let Some(asset_id) = gallery_asset_id.as_deref() {
+                body["gallery_asset_id"] = Value::String(asset_id.to_string());
+            }
             assets.push(MediaAsset {
-                body: serde_json::json!({"kind": kind, "src": src}).to_string(),
+                body: body.to_string(),
                 src: src.to_string(),
                 kind,
                 tool: "gallery".into(),
@@ -2337,8 +2351,8 @@ mod tests {
         // The fresh page (offset 0): deleted.png is gone; keep-b shifted
         // from index 2 to 1.
         let records = serde_json::json!([
-            {"index": 0, "path": "/gallery/keep-a.png", "media_type": "image"},
-            {"index": 1, "path": "/gallery/keep-b.png", "media_type": "image"},
+            {"id": "asset-a", "index": 0, "path": "/gallery/keep-a.png", "media_type": "image"},
+            {"id": "asset-b", "index": 1, "path": "/gallery/keep-b.png", "media_type": "image"},
         ]);
         merge_gallery_records(&mut assets, records.as_array().unwrap(), 0, None);
 
@@ -2353,10 +2367,20 @@ mod tests {
             ],
             "the deleted in-page asset must drop; unindexed and out-of-page assets stay"
         );
+        let keep_a = assets.first().expect("keep-a survives");
         assert_eq!(
-            assets.first().expect("keep-a survives").gallery_index,
+            keep_a.gallery_index,
             Some(0),
             "a conversation-surfaced asset for an indexed file gains its index"
+        );
+        assert_eq!(keep_a.gallery_asset_id.as_deref(), Some("asset-a"));
+        assert_eq!(
+            hkask_media_widget::MediaBlockBody::parse(&keep_a.body)
+                .expect("reconciled body stays renderable")
+                .gallery_asset_id
+                .as_deref(),
+            Some("asset-a"),
+            "the renderer body must carry the same stable Asset identity as the panel row"
         );
         assert_eq!(
             assets

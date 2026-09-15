@@ -344,19 +344,24 @@ impl MediaServer {
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked.truncate(limit);
 
-        // In-root paths are relative; external imports retain absolute paths.
-        // Path::join handles both without inventing a root-relative external file.
-        let display_hints: Vec<String> = ranked
-            .iter()
-            .map(|(rel, _, _)| {
-                crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
-            })
-            .collect();
-
         let assets = self
             .gallery_store
             .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
             .map_err(map_gallery_store_error)?;
+        let display_hints: Vec<String> = ranked
+            .iter()
+            .filter_map(|(path, _, _)| {
+                let image = assets.iter().find(|image| image.relative_path == *path)?;
+                Some(crate::media_block::media_block_with_gallery_asset_id(
+                    "image",
+                    &image.absolute_path,
+                    None,
+                    None,
+                    Some(&image.id),
+                ))
+            })
+            .collect();
+
         let results: Vec<serde_json::Value> = ranked.into_iter().filter_map(|(path, score, matches)| {
             let image = assets.iter().find(|image| image.relative_path == path)?;
             Some(serde_json::json!({ "image": path, "image_id": image.id, "metadata_stale": image.metadata_stale,
@@ -496,19 +501,24 @@ impl MediaServer {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);
 
-        // One renderable ```media block per result (see gallery_search_tags
-        // for the root_path.join rationale).
-        let display_hints: Vec<String> = scored
-            .iter()
-            .map(|(rel, _)| {
-                crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
-            })
-            .collect();
-
         let assets = self
             .gallery_store
             .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
             .map_err(map_gallery_store_error)?;
+        let display_hints: Vec<String> = scored
+            .iter()
+            .filter_map(|(path, _)| {
+                let image = assets.iter().find(|image| image.relative_path == *path)?;
+                Some(crate::media_block::media_block_with_gallery_asset_id(
+                    "image",
+                    &image.absolute_path,
+                    None,
+                    None,
+                    Some(&image.id),
+                ))
+            })
+            .collect();
+
         let results: Vec<serde_json::Value> = scored.into_iter().filter_map(|(path, score)| {
             let image = assets.iter().find(|image| image.relative_path == path)?;
             Some(serde_json::json!({"image": path, "image_id": image.id, "metadata_stale": image.metadata_stale, "similarity": score}))
@@ -998,10 +1008,9 @@ impl MediaServer {
         execute_tool(self, "gallery_timeline", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
 
-            // (period_key, relative_path, absolute_path). absolute_path drives
-            // the inline-renderable display_hints; relative_path stays in the
-            // result as a human-readable image identifier.
-            let mut dated_images: Vec<(String, String, String)> = Vec::new();
+            // Asset identity travels with every timeline result so inline and
+            // panel renderers resolve the same shared media player.
+            let mut dated_images: Vec<(String, String, String, String)> = Vec::new();
             let assets = self
                 .gallery_store
                 .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
@@ -1038,32 +1047,40 @@ impl MediaServer {
                     _ => date_str.chars().take(4).collect(),
                 };
 
-                dated_images.push((period_key, img.relative_path, img.absolute_path));
+                dated_images.push((period_key, img.relative_path, img.absolute_path, img.id));
             }
 
-            let mut periods: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            let mut periods: std::collections::BTreeMap<String, Vec<(String, String, String)>> =
                 std::collections::BTreeMap::new();
-            for (key, rel, abs) in &dated_images {
-                periods
-                    .entry(key.clone())
-                    .or_default()
-                    .push((rel.clone(), abs.clone()));
+            for (key, rel, abs, asset_id) in &dated_images {
+                periods.entry(key.clone()).or_default().push((
+                    rel.clone(),
+                    abs.clone(),
+                    asset_id.clone(),
+                ));
             }
 
             let mut result_periods: Vec<serde_json::Value> = Vec::new();
             let mut display_hints: Vec<String> = Vec::new();
             for (key, images) in periods.iter().rev().take(count) {
-                let selected: Vec<&(String, String)> = images.iter().take(per_period).collect();
+                let selected: Vec<&(String, String, String)> =
+                    images.iter().take(per_period).collect();
                 result_periods.push(serde_json::json!({
                     "period": key,
                     "total_images": images.len(),
-                    "images": selected.iter().map(|(rel, _)| rel.clone()).collect::<Vec<_>>(),
+                    "images": selected.iter().map(|(rel, _, _)| rel.clone()).collect::<Vec<_>>(),
                 }));
                 // One renderable ```media block per selected image so the agent
                 // can surface them inline; the D18 MediaWidget resolves the
                 // filesystem path via PathMediaStorage.
-                for (_, abs) in &selected {
-                    display_hints.push(crate::media_block::image_block(abs));
+                for (_, absolute_path, asset_id) in &selected {
+                    display_hints.push(crate::media_block::media_block_with_gallery_asset_id(
+                        "image",
+                        absolute_path,
+                        None,
+                        None,
+                        Some(asset_id),
+                    ));
                 }
             }
 
@@ -1464,16 +1481,19 @@ impl MediaServer {
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "display_hint".into(),
-                    serde_json::Value::String(crate::media_block::media_block_with_omc(
-                        kind,
-                        &record.absolute_path,
-                        crate::omc::tool_to_omc("gallery_add_media"),
-                        Some(&crate::media_block::Provenance::for_tool(
-                            "gallery_add_media",
-                            serde_json::json!({"path": path, "media_type": kind}),
-                            None,
-                        )),
-                    )),
+                    serde_json::Value::String(
+                        crate::media_block::media_block_with_gallery_asset_id(
+                            kind,
+                            &record.absolute_path,
+                            crate::omc::tool_to_omc("gallery_add_media"),
+                            Some(&crate::media_block::Provenance::for_tool(
+                                "gallery_add_media",
+                                serde_json::json!({"path": path, "media_type": kind}),
+                                None,
+                            )),
+                            Some(&record.id),
+                        ),
+                    ),
                 );
             }
             Ok(value)

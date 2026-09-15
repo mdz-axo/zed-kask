@@ -44,7 +44,7 @@ pub fn media_block_with_omc(
     media_block_with_gallery_asset_id(kind, src, omc, provenance, None)
 }
 
-fn media_block_with_gallery_asset_id(
+pub(crate) fn media_block_with_gallery_asset_id(
     kind: &str,
     src: &str,
     omc: Option<&str>,
@@ -105,7 +105,8 @@ pub fn image_block(src: &str) -> String {
 /// This is the OMC-aware enrichment path. It:
 /// 1. Resolves the OMC concept for `tool` via `omc::tool_to_omc`.
 /// 2. Extracts the asset src from the result (via `extract_src`).
-/// 3. Formats a ```media block carrying `kind`, `src`, `omc`, `provenance`.
+/// 3. Formats a ```media block carrying `kind`, `src`, `omc`, `provenance`,
+///    and stable `gallery_asset_id` when the result identifies an indexed Asset.
 /// 4. Attaches the block to the result as `display_hint`.
 ///
 /// `tool` is the MCP tool name (drives the OMC tag). `kind` is the media
