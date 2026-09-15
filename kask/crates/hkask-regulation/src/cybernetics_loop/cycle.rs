@@ -202,14 +202,14 @@ impl super::CyberneticsLoop {
             std::sync::atomic::Ordering::Relaxed,
         );
 
-        let circuit_open = !matches!(
-            observation.snapshot.circuit_state,
-            crate::InferenceCircuitState::Closed
-        );
+        let recovery_failed = observation
+            .interventions
+            .iter()
+            .any(|receipt| receipt.kind == crate::InferenceInterventionKind::CircuitReopened);
         vec![Signal::new(
             LoopId::Inference,
             SignalMetric::CircuitBreakerState,
-            if circuit_open { 1.0 } else { 0.0 },
+            if recovery_failed { 1.0 } else { 0.0 },
             0.0,
         )]
     }
@@ -2065,12 +2065,12 @@ mod tests {
         );
     }
 
-    /// expect: "An open inference circuit escalates once with its real condition"
+    /// expect: "Initial circuit opening corrects locally without creating an operator alert"
     /// [P9] Motivating: Homeostatic Self-Regulation
-    /// pre: the local resilience boundary reports an open circuit
-    /// post: central regulation routes a native circuit-breaker escalation
+    /// pre: the resilience boundary reports its first circuit-open transition
+    /// post: regulation records the transition but does not escalate before recovery is attempted
     #[tokio::test]
-    async fn open_inference_circuit_routes_native_escalation() {
+    async fn initial_inference_circuit_open_does_not_escalate() {
         let now = chrono::Utc::now();
         let source = Arc::new(StubResilienceSource {
             observation: crate::InferenceObservation {
@@ -2081,9 +2081,57 @@ mod tests {
                     recent_timeout_count: 3,
                     circuit_state: crate::InferenceCircuitState::Open,
                 },
-                interventions: Vec::new(),
+                interventions: vec![crate::InferenceInterventionReceipt {
+                    id: 1,
+                    kind: crate::InferenceInterventionKind::CircuitOpened,
+                    occurred_at: now,
+                }],
                 permanent_failures: Vec::new(),
-                next_cursor: 0,
+                next_cursor: 1,
+            },
+        });
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_inference_resilience_source(source);
+        regulation.set_alert_escalation_sink(Some(
+            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
+        ));
+
+        regulation.tick().await;
+
+        assert!(
+            escalation
+                .persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty()
+        );
+    }
+
+    /// expect: "A failed half-open recovery probe escalates once with its real condition"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the local resilience boundary reports that the circuit reopened
+    /// post: central regulation routes a native circuit-breaker escalation
+    #[tokio::test]
+    async fn reopened_inference_circuit_routes_native_escalation() {
+        let now = chrono::Utc::now();
+        let source = Arc::new(StubResilienceSource {
+            observation: crate::InferenceObservation {
+                snapshot: crate::InferenceSnapshot {
+                    observed_at: now,
+                    in_flight: 0,
+                    max_concurrency: 2,
+                    recent_timeout_count: 3,
+                    circuit_state: crate::InferenceCircuitState::Open,
+                },
+                interventions: vec![crate::InferenceInterventionReceipt {
+                    id: 1,
+                    kind: crate::InferenceInterventionKind::CircuitReopened,
+                    occurred_at: now,
+                }],
+                permanent_failures: Vec::new(),
+                next_cursor: 1,
             },
         });
         let escalation = Arc::new(RecordingEscalationSink::new());

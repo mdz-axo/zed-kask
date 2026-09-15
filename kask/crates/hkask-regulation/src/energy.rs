@@ -2,8 +2,8 @@
 //!
 //! Model: 1 unit = 1 governed tool invocation. Each agent has a hard ceiling on
 //! calls per regulation cycle; the cap resets to the ceiling each tick. A call
-//! either fits (`remaining > 0`) or it does not, and the regulation loop's
-//! `EnergyBudgetSensor` reads the usage ratio for its throttle set-point.
+//! either fits (`remaining > 0`) or it does not. Exhaustion produces a targeted
+//! warning before reset; it never becomes a global inference throttle.
 //!
 //! Curation can override an agent's ceiling (`OverrideEnergyBudget`), clear the
 //! override (`ClearOverride`), or credit calls (`ReplenishBudget`); an override

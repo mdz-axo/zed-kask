@@ -110,15 +110,17 @@ after `kask.general.inference_circuit_open_secs`, closing on success or reopenin
 on transient failure. `InferenceResilienceSource` exports atomic snapshots plus
 cursor-addressed transition and permanent-failure receipts to
 `CyberneticsLoop`; model rewiring replaces that source and resets its cursor.
-Regulation records observed recovery without causal attribution and escalates
-open circuits or permanent failures. The settings content and bridge settings
+Regulation records observed recovery without causal attribution; the initial
+open remains local, while a failed half-open probe or permanent failure escalates.
+The settings content and bridge settings
 add `inference_circuit_failure_threshold` (default 3) and
 `inference_circuit_open_secs` (default 30). Pins:
 `transient_provider_storm_opens_live_inference_circuit`,
 `half_open_admits_one_probe_and_success_closes_circuit`,
 `permanent_provider_failure_is_observed_without_opening_circuit`,
 `circuit_close_receipt_records_observed_recovery`, and
-`open_inference_circuit_routes_native_escalation`.
+`initial_inference_circuit_open_does_not_escalate` and
+`reopened_inference_circuit_routes_native_escalation`.
 
 ## The divergence surface (D1–D56)
 

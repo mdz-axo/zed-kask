@@ -145,23 +145,18 @@ impl InferenceCircuit {
         }
     }
 
-    pub(crate) fn receipts_after(&self, cursor: u64) -> Vec<InferenceInterventionReceipt> {
-        self.receipts
-            .iter()
-            .filter(|receipt| receipt.id > cursor)
-            .cloned()
-            .collect()
+    pub(crate) fn receipts_after(&mut self, cursor: u64) -> Vec<InferenceInterventionReceipt> {
+        self.receipts.retain(|receipt| receipt.id > cursor);
+        self.receipts.clone()
     }
 
     pub(crate) fn permanent_failures_after(
-        &self,
+        &mut self,
         cursor: u64,
     ) -> Vec<hkask_regulation::InferencePermanentFailureReceipt> {
         self.permanent_failures
-            .iter()
-            .filter(|receipt| receipt.id > cursor)
-            .cloned()
-            .collect()
+            .retain(|receipt| receipt.id > cursor);
+        self.permanent_failures.clone()
     }
 
     pub(crate) fn record_permanent_failure(

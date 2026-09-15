@@ -234,9 +234,9 @@ override (`clear_override` at `energy.rs:257`), or credit calls (`credit`
 at `energy.rs:198`); an override survives per-tick resets until cleared
 (`reset_all` re-applies the override ceiling, `energy.rs:216-225`).
 
-The `EnergyBudgetSensor` (`sensor_provider.rs:79`) reads the usage ratio
-for its throttle set-point, closing the loop between the call cap and the
-regulation policy.
+Call-cap exhaustion is detected directly before the per-tick reset and emits
+a targeted warning for that agent. It is not aggregated into a global
+inference throttle signal.
 
 ## See also
 

@@ -69,19 +69,17 @@ also senses the in-memory algedonic log cap directly
 The default sensor registry, built in `CyberneticsLoop::build()`
 (`cybernetics_loop.rs:248-279`), registers five sensors:
 
-- `EnergyBudgetSensor` (`sensor_provider.rs:79`) — emits `EnergyRemaining`.
-- `VarietySensor` (`sensor_provider.rs:126`) — emits `VarietyDeficit`.
+- `VarietySensor` — emits `VarietyDeficit`.
+- `ToolReliabilitySensor` — emits `ToolReliability`.
 - `TestCoverageSensor` (`sensor_provider.rs:251`) — emits `TestCoverage`.
 - `MutationScoreSensor` (`sensor_provider.rs:382`) — emits `MutationScore`.
 - `ToolReliabilitySensor` (`sensor_provider.rs:331`) — emits
   `ToolReliability`.
 
-Additional health sensors (`InferenceHealthSensor`, `ContextServerHealthSensor`,
-`MemoryHealthSensor`) are registered when their sources are wired via the
-`with_*_health_source` builders (`cybernetics_loop.rs:479,520,558`). Each
-`Signal` carries a `source` (`LoopId::Cybernetics`), a `metric`
-(`SignalMetric`), a `value`, and the `set_point` it is being compared
-against.
+Context-server and memory-health sensors are registered when their sources are
+wired. Inference instead supplies an atomic `InferenceResilienceSource`
+observation containing circuit state and receipts. Each scalar `Signal` carries
+a source, metric, value, and set-point.
 
 At the end of the sense phase, the simulator observes each value:
 `self.simulator.observe(signal.metric, signal.value)` (`cycle.rs:342-344`).

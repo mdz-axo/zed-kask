@@ -71,10 +71,10 @@ not on any storage crate — durable sinks are injected as traits
 | `DEFAULT_TICK_INTERVAL` (30s) | `kask/crates/hkask-regulation/src/metacognition.rs:42` |
 | `Sensor` trait | `kask/crates/hkask-regulation/src/sensor_provider.rs:27` |
 | `SensorBus` | `kask/crates/hkask-regulation/src/sensor_provider.rs:39` |
-| `EnergyBudgetSensor` / `VarietySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:79,126` |
+| `VarietySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs` |
 | `TestCoverageSensor` / `MutationScoreSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:251,382` |
 | `ToolReliabilitySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:331` |
-| `InferenceHealthSource` / `InferenceHealthSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:470,494` |
+| `InferenceResilienceSource` | `kask/crates/hkask-regulation/src/inference_resilience.rs` |
 | `ContextServerHealthSource` / sensor | `kask/crates/hkask-regulation/src/sensor_provider.rs:572,593` |
 | `MemoryHealthSource` / `MemoryHealthSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:649,677` |
 | `StrategyEvaluator` | `kask/crates/hkask-regulation/src/strategy_evaluator.rs:66` |
@@ -107,7 +107,7 @@ not on any storage crate — durable sinks are injected as traits
 | `RegulatoryActionParams` | `kask/crates/hkask-regulation/src/loops/actions.rs:168` |
 | `RegulationData` enum | `kask/crates/hkask-regulation/src/loops/actions.rs:19` |
 | `ActionType` enum | `kask/crates/hkask-regulation/src/loops/actions.rs:278` |
-| `BudgetOption` | `kask/crates/hkask-regulation/src/loops/actions.rs:7` |
+
 
 ## Class diagram
 
@@ -337,9 +337,9 @@ receipts to `CyberneticsLoop`.
 
 Circuit transitions are recorded as `reg.inference.circuit_transition`.
 A later close is `reg.inference.observed_recovery` with
-`causal_attribution: unverified`. An open circuit or permanent auth,
-configuration, model, or provider failure is escalated once per pending
-condition. Full utilization without failures is not an outage.
+`causal_attribution: unverified`. The initial open remains a local correction. A failed half-open probe or a
+permanent auth, configuration, model, or provider failure is escalated once
+per pending condition. Full utilization without failures is not an outage.
 
 ## Set-points
 

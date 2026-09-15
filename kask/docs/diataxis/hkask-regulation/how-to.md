@@ -28,7 +28,7 @@ metric gets its own implementation registered with a `SensorBus`
 | `SensorBus` (per-loop registry) | `kask/crates/hkask-regulation/src/sensor_provider.rs:39` |
 | `SensorBus::register` | `kask/crates/hkask-regulation/src/sensor_provider.rs:52` |
 | `SensorBus::sense_all` | `kask/crates/hkask-regulation/src/sensor_provider.rs:57` |
-| `EnergyBudgetSensor` (reference impl) | `kask/crates/hkask-regulation/src/sensor_provider.rs:79` |
+
 | `VarietySensor` (reference impl) | `kask/crates/hkask-regulation/src/sensor_provider.rs:126` |
 | `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:231,248-279` |
 | `SignalMetric` enum | `kask/crates/hkask-regulation/src/loops/signals.rs:14` |
@@ -84,8 +84,8 @@ so the default is declared once.
 
 ### Step 4: Implement the `Sensor` trait
 
-Create the sensor in `sensor_provider.rs`, following `EnergyBudgetSensor`
-(`sensor_provider.rs:79`) or `VarietySensor` (`sensor_provider.rs:126`).
+Create the sensor in `sensor_provider.rs`, following `VarietySensor` or
+`ToolReliabilitySensor`.
 The trait requires:
 
 - `async fn observe(&self) -> Option<Signal>` — return measured healthy and

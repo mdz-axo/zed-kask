@@ -2,8 +2,8 @@
 title: "Inference Regulation Loop Completion — Refactor Architecture Plan"
 audience: [architects, developers, product]
 last_updated: 2026-09-15
-version: "0.1.0"
-status: "Proposed"
+version: "1.0.0"
+status: "Implemented"
 domain: "Regulation"
 mds_categories: [domain, lifecycle, trust]
 ---
@@ -12,7 +12,7 @@ mds_categories: [domain, lifecycle, trust]
 
 ## 1. Purpose and authority
 
-This is the reviewable output of the `refactor-architecture`, `metacognition`, and `pragmatic-cybernetics` processes. It is a **plan, not an implementation record**. Implementation requires separate operator approval.
+This document began as the reviewable output of the `refactor-architecture`, `metacognition`, and `pragmatic-cybernetics` processes. The operator approved implementation on 2026-09-15. The core implementation landed in commit `3859ebe7e1`; the final convergence correction (initial open stays local, failed recovery escalates, acknowledged receipts prune) is currently uncommitted in the working tree.
 
 ### Functional target
 
@@ -27,9 +27,18 @@ There is no backward-compatibility requirement. Misleading types, settings, test
 3. Action records distinguish proposal, execution, observation, and operator decision; none implies causal effectiveness without evidence.
 4. Related dead surface and contradictory contracts are deleted, and behavior-level tests pin the resulting loop.
 
-## 2. Recovered specification and current state
+### Implementation evidence
 
-The current design is internally contradictory:
+- `cargo test -p hkask-regulation`: 78 passed.
+- `cargo test -p kask_bridge`: 203 passed.
+- `cargo test -p hkask-bridge-ontology`: 28 unit and 4 literal-guard tests passed.
+- `cargo check -p zed`: passed.
+- `./script/clippy`: full workspace, cargo-machete, and protobuf gates passed.
+- `cargo fmt --all -- --check`: passed.
+
+## 2. Recovered specification and pre-implementation state
+
+The pre-implementation design was internally contradictory:
 
 - `kask/crates/hkask-regulation/src/set_points.rs:51-67` advertises `Off`, direct `Autonomous` throttling, and `CuratorMediated` timeout fallback.
 - `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:543-629` explicitly converts every computed non-notification action into a critical advisory because the central loop is “not an actuator.”
