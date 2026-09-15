@@ -196,6 +196,16 @@ when the tool exposes observable progress, or a measured pilot shows the entire
 bounded set completes within the operator's reporting cadence and the operator has
 accepted final-only reporting. Directory convenience never overrides observability.
 
+If a measured pilot shows that one source file alone exceeds the reporting cadence
+and `target_pages` is supported, partition that source into nonoverlapping page
+windows with disjoint fragment outputs. Record planned/completed/failed page ranges
+in the same queue. Publish the final extraction only after the ordered range union
+covers the selected physical pages exactly once, every fragment passes its checks,
+and deterministic concatenation preserves page order and explicit form-feed page
+boundaries through a temporary file plus atomic rename. If the tool output cannot be
+assembled without changing source text or losing page identity, block and surface
+the missing capability instead of hiding another long call.
+
 Directory conversion requires an output directory, resumes only quality-passing
 outputs, and places OCR-derived text in `{output}-ocr-staging`. File mode writes its
 requested output; that write is not a quality acceptance verdict. Staged OCR has a
