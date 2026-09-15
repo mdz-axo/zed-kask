@@ -1411,15 +1411,23 @@ pub(crate) fn filter_outcome_to_pages(
             verdicts,
             ..
         } => {
-            let filtered_texts: Vec<String> = page_texts
+            let selected_source_indices: Vec<usize> = page_texts
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| target.contains(&(i + 1)))
-                .map(|(_, t)| t.clone())
+                .filter(|(index, _)| target.contains(&(index + 1)))
+                .map(|(index, _)| index)
+                .collect();
+            let filtered_texts: Vec<String> = selected_source_indices
+                .iter()
+                .map(|index| page_texts[*index].clone())
                 .collect();
             let filtered_ocr: Vec<usize> = ocr_pages
                 .into_iter()
-                .filter(|i| target.contains(&(i + 1)))
+                .filter_map(|source_index| {
+                    selected_source_indices
+                        .iter()
+                        .position(|selected| *selected == source_index)
+                })
                 .collect();
             let filtered_verdicts: Vec<crate::ocr::TriageVerdict> = verdicts
                 .into_iter()
@@ -1534,6 +1542,28 @@ mod ocr_guards {
             join_page_text(["first", "second", "third"]),
             "first\u{000C}second\u{000C}third"
         );
+    }
+
+    /// expect: Selected source-page indices are remapped into the window-local text buffer.
+    #[test]
+    fn target_page_filter_remaps_ocr_indices() {
+        let outcome = ExtractOutcome::PartialOcr {
+            page_texts: vec!["p1".into(), "p2".into(), "p3".into(), "p4".into()],
+            word_count: 4,
+            ocr_pages: vec![2, 3],
+            verdicts: Vec::new(),
+        };
+        let filtered = filter_outcome_to_pages(outcome, &std::collections::HashSet::from([3, 4]));
+        let ExtractOutcome::PartialOcr {
+            page_texts,
+            ocr_pages,
+            ..
+        } = filtered
+        else {
+            panic!("expected partial OCR");
+        };
+        assert_eq!(page_texts, ["p3", "p4"]);
+        assert_eq!(ocr_pages, [0, 1]);
     }
 
     /// Mock port whose `generate_vision` returns a configurable text — the
