@@ -131,6 +131,10 @@ fn page_reports(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn join_page_text<'a>(pages: impl IntoIterator<Item = &'a str>) -> String {
+    pages.into_iter().collect::<Vec<_>>().join("\u{000C}")
+}
+
 /// Assemble pipeline results into an outcome, erroring when the assembled
 /// text is empty — zero text after a pipeline run is a failure (every page
 /// empty or errored), never a silent success.
@@ -138,12 +142,7 @@ fn assemble_pipeline_outcome(
     outcome: PipelineOutcome,
     llm_breaker_open: bool,
 ) -> Result<PipelineOcrOutcome, McpToolError> {
-    let text = outcome
-        .results
-        .iter()
-        .map(|result| result.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let text = join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
     if text.trim().is_empty() {
         return Err(McpToolError::unavailable(format!(
             "OCR produced no text: pages={}, empty_pages={:?}, errors={}",
@@ -578,12 +577,8 @@ impl<'a> ConvertService<'a> {
 
                 let page_images = vec![image];
                 let outcome = self.run_standard_pipeline(page_images, &model).await;
-                let text = outcome
-                    .results
-                    .iter()
-                    .map(|r| r.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+                let text =
+                    join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
                 let word_count = text.split_whitespace().count();
                 let result = serde_json::json!({
                     "format": format, "path": path, "method": "ocr_pipeline",
@@ -616,12 +611,9 @@ impl<'a> ConvertService<'a> {
                         };
                         let expected = page_images.len();
                         let outcome = self.run_standard_pipeline(page_images, &model).await;
-                        let text = outcome
-                            .results
-                            .iter()
-                            .map(|r| r.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
+                        let text = join_page_text(
+                            outcome.results.iter().map(|result| result.text.as_str()),
+                        );
                         let word_count = text.split_whitespace().count();
                         let structure = markdown_pages_to_structure(
                             outcome
@@ -745,7 +737,7 @@ impl<'a> ConvertService<'a> {
                                 per_page[page_idx] = result.text.clone();
                             }
                         }
-                        let text = per_page.join("\n\n");
+                        let text = join_page_text(per_page.iter().map(String::as_str));
                         let word_count = text.split_whitespace().count();
                         let structure = markdown_pages_to_structure(
                             per_page.iter().enumerate().map(|(i, t)| (i + 1, t.clone())),
@@ -808,12 +800,9 @@ impl<'a> ConvertService<'a> {
                     Ok(page_images) => {
                         let expected = page_images.len();
                         let outcome = self.run_standard_pipeline(page_images, &model).await;
-                        let text = outcome
-                            .results
-                            .iter()
-                            .map(|r| r.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
+                        let text = join_page_text(
+                            outcome.results.iter().map(|result| result.text.as_str()),
+                        );
                         let word_count = text.split_whitespace().count();
                         let structure = markdown_pages_to_structure(
                             outcome
@@ -925,7 +914,7 @@ impl<'a> ConvertService<'a> {
                 // text-native pages only, explicitly flagging that the OCR
                 // pages were skipped (no silent loss — the caller sees the
                 // gap).
-                let native_text = page_texts.join("\n\n");
+                let native_text = join_page_text(page_texts.iter().map(String::as_str));
                 Ok(serde_json::json!({
                     "format": format,
                     "path": path,
@@ -1537,6 +1526,15 @@ mod ocr_guards {
         0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
+
+    /// expect: OCR/native page assembly preserves page boundaries for boilerplate filtering.
+    #[test]
+    fn joined_page_text_uses_form_feeds() {
+        assert_eq!(
+            join_page_text(["first", "second", "third"]),
+            "first\u{000C}second\u{000C}third"
+        );
+    }
 
     /// Mock port whose `generate_vision` returns a configurable text — the
     /// fixture for the raw-bytes OCR guard.

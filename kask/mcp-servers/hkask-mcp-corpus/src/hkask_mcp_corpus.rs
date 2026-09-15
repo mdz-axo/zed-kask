@@ -448,8 +448,11 @@ mod smoke {
                     }))
                     .await
                     .expect("relative output conversion succeeds");
-                hkask_types::tool_response::parse_tool_response(&response)
-                    .expect("valid tool response");
+                let response = hkask_types::tool_response::unwrap_tool_envelope(
+                    serde_json::from_str(&response)?,
+                );
+                assert!(response.get("text").is_none());
+                assert_eq!(response["output"], output);
                 assert_eq!(std::fs::read_to_string(output)?.trim(), source.trim());
             }
             return Ok(());

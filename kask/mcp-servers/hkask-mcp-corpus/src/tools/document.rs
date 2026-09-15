@@ -28,7 +28,7 @@ use serde::Deserialize;
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
+        description = "Extract text from a document or directory. Detects format and automatically falls back to page-image OCR for scanned PDF pages. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. File conversion with an output path writes the full text there and returns summary metadata without duplicating the text in the tool response. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
     )]
     pub async fn corpus_convert(
         &self,
@@ -94,6 +94,13 @@ impl CorpusServer {
                         result["dc_type_note"] = serde_json::json!(
                             "source extension has no Dublin Core type mapping — state identity not grounded at ingest"
                         );
+                    }
+                }
+                if let Some(output_path) = output.as_deref() {
+                    result["output"] = serde_json::json!(output_path);
+                    if let Some(object) = result.as_object_mut() {
+                        object.remove("text");
+                        object.remove("structure");
                     }
                 }
                 Ok(result)

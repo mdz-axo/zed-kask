@@ -70,8 +70,7 @@ source path, exact staged text, current `ocr_protocol` and explicit verification
 mismatched report fails visibly without re-OCR or admission. Directory responses
 return `document_reports` (without text/structure) and `verification_failed`,
 separate from I/O/conversion `failed`. A staged or resumed file is not an accepted
-extraction, including when its whole-file text passes quality checks. File mode honors its `output` path, but writing
-text does not certify quality (`src/tools/document.rs:30–101`).
+extraction, including when its whole-file text passes quality checks. File mode honors its `output` path; when present, the response returns summary metadata and the output path without duplicating the full text inline. Writing text does not certify quality (`src/tools/document.rs:30–109`).
 
 PDF extraction and page rendering consume a contained file path, not an
 in-memory copy of the PDF container. A PDF larger than the 32 MiB raw-text/JSONL
