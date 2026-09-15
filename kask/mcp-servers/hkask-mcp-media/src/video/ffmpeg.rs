@@ -241,7 +241,7 @@ impl FfmpegRunner {
         // or in the same directory. Try "ffprobe" on PATH.
         let output = Command::new("ffprobe")
             .arg("-v")
-            .arg("quiet")
+            .arg("error")
             .arg("-print_format")
             .arg("json")
             .arg("-show_format")
@@ -733,6 +733,21 @@ impl FfmpegRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: A missing local source keeps ffprobe's filesystem cause. [P1]
+    #[tokio::test]
+    async fn probe_missing_source_preserves_filesystem_cause() {
+        let runner = FfmpegRunner::detect();
+        assert!(runner.available, "ffprobe behavior requires ffmpeg on PATH");
+        let missing = std::env::temp_dir().join("hkask-missing-video-probe.mp4");
+        let error = runner
+            .probe(&missing.to_string_lossy())
+            .await
+            .expect_err("missing source must fail");
+        let message = error.to_string();
+        assert!(message.contains(&missing.to_string_lossy().to_string()));
+        assert!(message.contains("No such file or directory"), "{message}");
+    }
 
     /// The render path's ffmpeg primitives must run real ffmpeg to
     /// completion. Pins the SIGPIPE regression: tokio's `status()`
