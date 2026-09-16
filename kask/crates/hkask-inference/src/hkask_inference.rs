@@ -289,10 +289,21 @@ impl hkask_types::InferencePort for LazyInferencePort {
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
+        Box::pin(async move { Ok(self.embed_with_identity(&model, &texts).await?.vectors) })
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
         Box::pin(async move {
             // Try the IPC bridge first.
             if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
-                return client.embed(&model, &texts).await;
+                return hkask_types::InferencePort::embed_with_identity(&client, &model, &texts)
+                    .await;
             }
             // Fall back to direct HTTP: construct the port FROM the per-call
             // model so the provider endpoint always matches the model
@@ -306,7 +317,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
                      model or run under the zed bridge"
                 ))
             })?;
-            port.embed(&model, &texts).await
+            port.embed_with_identity(&model, &texts).await
         })
     }
 

@@ -128,6 +128,7 @@ verify_accepted_sources
 accepted_sources_sha256=$(jq -cS '.accepted_sources' "$run_spec" | sha256sum | cut -d' ' -f1)
 run_spec_sha256=$(jq -cS . "$run_spec" | sha256sum | cut -d' ' -f1)
 evaluator_sha256=$(sha_file "$evaluator")
+requested_model=$(jq -r '.embedding_model' "$run_spec")
 
 if [[ "$resume" != true ]]; then
     max_queries=$(jq -r '.max_queries' "$run_spec")
@@ -164,7 +165,6 @@ if [[ "$resume" != true ]]; then
       .validation.child_map_parent_sources_agree
     ' "$representation_manifest" >/dev/null
 
-    requested_model=$(jq -r '.embedding_model' "$run_spec")
     batch_size=$(jq -r '.batch_size' "$run_spec")
     export HKASK_EMBEDDING_MODEL=$requested_model
     mkdir -p "$output_dir/embed"
@@ -235,6 +235,7 @@ if [[ "$resume" != true ]]; then
         --arg accepted_sources_sha256 "$accepted_sources_sha256" \
         --arg run_spec_sha256 "$run_spec_sha256" \
         --arg queries_sha256 "$(sha_file "$queries")" \
+        --arg requested_embedding_model "$requested_model" \
         --arg actual_embedding_model "$actual_model" \
         --arg policies_sha256 "$policies_sha256" \
         --arg retriever_sha256 "$retriever_sha256" \
@@ -249,7 +250,8 @@ if [[ "$resume" != true ]]; then
         --arg fine_index_sha256 "$(sha_file "$fine_db")" '
       {schema_version:1,accepted_sources_sha256:$accepted_sources_sha256,
        run_spec_sha256:$run_spec_sha256,
-       queries_sha256:$queries_sha256,actual_embedding_model:$actual_embedding_model,
+       queries_sha256:$queries_sha256,requested_embedding_model:$requested_embedding_model,
+       actual_embedding_model:$actual_embedding_model,
        policies_sha256:$policies_sha256,retriever_sha256:$retriever_sha256,
        evaluator_sha256:$evaluator_sha256,
        representations:{reference:$reference_sha256,current:$current_sha256,fine:$fine_sha256,
@@ -284,6 +286,7 @@ else
         --arg accepted_sources_sha256 "$accepted_sources_sha256" \
         --arg run_spec_sha256 "$run_spec_sha256" \
         --arg queries_sha256 "$(sha_file "$queries")" \
+        --arg requested_embedding_model "$requested_model" \
         --arg actual_embedding_model "$actual_model" \
         --arg policies_sha256 "$policies_sha256" \
         --arg retriever_sha256 "$retriever_sha256" \
@@ -298,7 +301,8 @@ else
         --arg fine_index_sha256 "$(sha_file "$fine_db")" '
       {schema_version:1,accepted_sources_sha256:$accepted_sources_sha256,
        run_spec_sha256:$run_spec_sha256,
-       queries_sha256:$queries_sha256,actual_embedding_model:$actual_embedding_model,
+       queries_sha256:$queries_sha256,requested_embedding_model:$requested_embedding_model,
+       actual_embedding_model:$actual_embedding_model,
        policies_sha256:$policies_sha256,retriever_sha256:$retriever_sha256,
        evaluator_sha256:$evaluator_sha256,
        representations:{reference:$reference_sha256,current:$current_sha256,fine:$fine_sha256,
@@ -317,7 +321,7 @@ else
 fi
 
 actual_model=$(jq -er '.actual_embedding_model' "$run_identity")
-export HKASK_EMBEDDING_MODEL=$actual_model
+export HKASK_EMBEDDING_MODEL=$requested_model
 top_k=$(jq -r '.retriever.top_k' "$run_spec")
 word_budget=$(jq -r '.retriever.word_budget' "$run_spec")
 evaluation_cost_rows=$(mktemp)
@@ -357,7 +361,7 @@ for policy in reference current fine; do
         fi
         if ! jq -e \
             --arg policy "$policy" --arg mode "$mode" \
-            --arg model "$actual_model" \
+            --arg model "$requested_model" \
             --arg query_sha256 "$(sha_file "$queries")" \
             --arg representation_sha256 "$(sha_file "$representation")" \
             --arg index_sha256 "$(sha_file "$index_db")" \
@@ -427,7 +431,9 @@ jq -s --slurpfile costs "$costs" --slurpfile identity "$run_identity" '
         .index_bytes,
         .policy
       ])) as $ranked
-      | {run_id:$identity[0].run_id,actual_embedding_model:$identity[0].actual_embedding_model,
+      | {run_id:$identity[0].run_id,
+         requested_embedding_model:$identity[0].requested_embedding_model,
+         actual_embedding_model:$identity[0].actual_embedding_model,
          eligible_policies:[$ranked[].policy],selected_policy:$ranked[0].policy,
          ranking_rule:["budgeted_exact_evidence_recall_desc","exact_evidence_mrr_desc",
            "duplicate_overlap_rate_asc","retrieved_words_mean_asc","index_bytes_asc","policy_asc"],

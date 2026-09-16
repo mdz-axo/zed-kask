@@ -21,7 +21,7 @@ cat > "$tmp/run-spec.json" <<JSON
     "canonical_sha256": "$digest"
   }],
   "entity_ref_prefix": "calibration:e2e",
-  "embedding_model": "actual-test-embedding-model",
+  "embedding_model": "requested-test-embedding-model",
   "batch_size": 4,
   "max_queries": 1,
   "retriever": {"name":"corpus_query_cosine","top_k":5,"word_budget":200,"min_score":0},
@@ -152,7 +152,7 @@ chmod +x "$tmp/fake-corpus"
 export HKASK_CORPUS_BINARY="$tmp/fake-corpus"
 export HKASK_INFERENCE_SOCKET="test-socket"
 export HKASK_INFERENCE_TIMEOUT_SECS=5
-export HKASK_EMBEDDING_MODEL="actual-test-embedding-model"
+export HKASK_EMBEDDING_MODEL="requested-test-embedding-model"
 export HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS=10
 
 if "$host_call" corpus_tag_chunks "$tmp/run-spec.json" "$tmp/unsupported-response.json" "$tmp/unsupported.log" >/dev/null 2>&1; then
@@ -162,6 +162,8 @@ fi
 
 "$runner" "$tmp/run-spec.json" "$tmp/run"
 jq -e '
+  (.requested_embedding_model == "requested-test-embedding-model") and
+  (.actual_embedding_model == "actual-test-embedding-model") and
   (.eligible_policies | sort) == ["current","fine","reference"] and
   (.policies | length) == 3 and
   all(.policies[]; .source_fidelity_gate == "pass") and
@@ -172,6 +174,7 @@ jq -e '
 ' "$tmp/run/comparison.json" >/dev/null
 jq -e '
   (.run_id | test("^[0-9a-f]{64}$")) and
+  (.requested_embedding_model == "requested-test-embedding-model") and
   (.actual_embedding_model == "actual-test-embedding-model") and
   all([.representations.reference,.representations.current,.representations.fine,
        .representations.child_parent_map,.representations.parent,
