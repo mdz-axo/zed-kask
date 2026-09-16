@@ -2,7 +2,7 @@
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
 last_updated: 2026-09-16
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -10,9 +10,9 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-16 the corpus contains **99 active alignment records representing 99 unique IDs**: 32 records in the five consolidated diagram files and 67 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-16 the corpus contains **101 active alignment records representing 101 unique IDs**: 32 records in the five consolidated diagram files and 69 inline records.
 
-The corpus contains 100 Mermaid blocks: 99 current-state blocks, each with one immediately adjacent alignment record, and one explicitly conceptual block in the operator-retained Proposed LogiSheets plan. The Proposed block is exempt until implementation under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2.
+The corpus contains 102 Mermaid blocks: 101 current-state blocks, each with one immediately adjacent alignment record, and one explicitly conceptual block in the operator-retained Proposed LogiSheets plan. The Proposed block is exempt until implementation under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2.
 
 ## Consolidated files
 
@@ -92,6 +92,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-REG-005` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-REG-006` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-REG-007` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-16 | VERIFIED |
+| `DIAG-RES-CHUNK-001` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
+| `DIAG-RES-CHUNK-002` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-003` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-004` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-004A` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
@@ -131,7 +133,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 
-Metadata-date distribution: 10 records at 2026-08-28, four at 2026-09-04, two at 2026-09-09, and 83 at 2026-09-16. All 99 active records are `VERIFIED`.
+Metadata-date distribution: 10 records at 2026-08-28, four at 2026-09-04, two at 2026-09-09, and 85 at 2026-09-16. All 101 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

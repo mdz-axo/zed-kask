@@ -243,7 +243,7 @@ This ensures:
 
 ### 6.2 What belongs where
 
-For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the condensed tree. `explanation/`, `status/`, `qa/`, and `research/` are not standalone top-level classes; operator-retained Proposed plans are the narrow exception and live under `kask/docs/plans/`. Every deletion remains recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger:
+For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the condensed tree. `explanation/`, `status/`, and `qa/` are not standalone top-level classes; operator-retained Proposed plans are the narrow exception and live under `kask/docs/plans/`. Every deletion remains recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger:
 
 | Content | Location |
 |---------|----------|
@@ -251,6 +251,7 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 | Foundational charters and taxonomy | `kask/docs/architecture/core/` |
 | Reference documentation (MCP servers, skills, settings) | `kask/docs/reference/` |
 | Per-crate Diataxis docs | `kask/docs/diataxis/` |
+| Prior-art research findings (operator-authorized class, introduced 2026-09-16) | `kask/docs/research/` |
 | Operator-retained, not-yet-authorized plans (`status: "Proposed"`) | `kask/docs/plans/` |
 | Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
 | Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
@@ -375,8 +376,9 @@ Documents spanning multiple categories list all applicable categories in the met
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-08-01
-version: "0.39.0"
+audience: [developers, architects, agents, operators]
+last_updated: 2026-09-16
+version: "2.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]

@@ -25,6 +25,7 @@ cat > "$tmp/run-spec.json" <<JSON
   "batch_size": 4,
   "max_queries": 1,
   "retriever": {"name":"corpus_query_cosine","top_k":5,"word_budget":200,"min_score":0},
+  "selection": {"max_budgeted_exact_evidence_loss_count":1},
   "policies": {
     "current": {"min_words":10,"max_words":80,"overlap_words":0,"sentence_boundary":".!?"},
     "fine": {"min_words":5,"max_words":20,"overlap_words":0,"sentence_boundary":".!?"},
@@ -161,6 +162,7 @@ export HKASK_INFERENCE_SOCKET="test-socket"
 export HKASK_INFERENCE_TIMEOUT_SECS=5
 export HKASK_EMBEDDING_MODEL="requested-test-embedding-model"
 export HKASK_CLASSIFIER_MODEL="requested-test-classifier-model"
+export HKASK_TEMPLATE_ROOT="$tmp"
 export HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS=10
 
 printf '%s\n' '{"entity_ref":"test:tag:0","source":"source-a.txt","text":"alpha beta","word_count":2}' > "$tmp/tag-input.jsonl"
@@ -175,6 +177,9 @@ jq -e '
   (.requested_embedding_model == "requested-test-embedding-model") and
   (.actual_embedding_model == "actual-test-embedding-model") and
   (.eligible_policies | sort) == ["current","fine","reference"] and
+  .max_budgeted_exact_evidence_loss_count == 1 and
+  (.best_budgeted_exact_evidence_hit_count | type) == "number" and
+  (.material_contenders | length) > 0 and
   (.policies | length) == 3 and
   all(.policies[]; .source_fidelity_gate == "pass") and
   all(.policies[]; .ndcg.status == "unavailable") and

@@ -45,6 +45,7 @@ jq -e '
   (.retriever.top_k | type == "number" and . > 0 and . <= 50 and floor == .) and
   (.retriever.word_budget | type == "number" and . > 0 and floor == .) and
   (.retriever.min_score == 0) and
+  (.selection.max_budgeted_exact_evidence_loss_count | type == "number" and . >= 0 and floor == .) and
   all([.policies.current,.policies.fine,.policies.parent][];
     (.min_words | type == "number" and . > 0 and floor == .) and
     (.max_words | type == "number" and . > 0 and floor == .) and
@@ -324,6 +325,7 @@ actual_model=$(jq -er '.actual_embedding_model' "$run_identity")
 export HKASK_EMBEDDING_MODEL=$requested_model
 top_k=$(jq -r '.retriever.top_k' "$run_spec")
 word_budget=$(jq -r '.retriever.word_budget' "$run_spec")
+max_budgeted_loss_count=$(jq -r '.selection.max_budgeted_exact_evidence_loss_count' "$run_spec")
 evaluation_cost_rows=$(mktemp)
 trap 'rm -f "$evaluation_cost_rows"' EXIT
 fidelity_failure=false
@@ -420,24 +422,32 @@ costs_tmp=$(mktemp "$output_dir/.measured-costs.tmp.XXXXXX")
 jq --slurpfile evaluation "$evaluation_cost_rows" '.evaluation = $evaluation' "$costs" > "$costs_tmp"
 mv "$costs_tmp" "$costs"
 
-jq -s --slurpfile costs "$costs" --slurpfile identity "$run_identity" '
+jq -s --slurpfile costs "$costs" --slurpfile identity "$run_identity" \
+  --argjson max_budgeted_loss_count "$max_budgeted_loss_count" '
   map(select(.source_fidelity_gate == "pass")) as $eligible
   | if ($eligible | length) == 0 then error("no source-fidelity-passing policies") else
-      ($eligible | sort_by([
-        -(.budgeted_exact_evidence_recall),
-        -(.exact_evidence_mrr),
-        .duplicate_overlap.rate,
-        .retrieved_words.mean,
-        .index_bytes,
-        .policy
-      ])) as $ranked
+      ([$eligible[] | (.budgeted_exact_evidence_recall * .query_count | round)] | max) as $best_hit_count
+      | [$eligible[] | select(($best_hit_count - (.budgeted_exact_evidence_recall * .query_count | round)) <= $max_budgeted_loss_count)] as $material_contenders
+      | ($material_contenders | sort_by([
+          -(.budgeted_correct_source_recall),
+          .duplicate_overlap.rate,
+          -(.exact_evidence_mrr),
+          .retrieved_words.mean,
+          .index_bytes,
+          .policy
+        ])) as $ranked
       | {run_id:$identity[0].run_id,
          requested_embedding_model:$identity[0].requested_embedding_model,
          actual_embedding_model:$identity[0].actual_embedding_model,
-         eligible_policies:[$ranked[].policy],selected_policy:$ranked[0].policy,
-         ranking_rule:["budgeted_exact_evidence_recall_desc","exact_evidence_mrr_desc",
-           "duplicate_overlap_rate_asc","retrieved_words_mean_asc","index_bytes_asc","policy_asc"],
-         policies:$ranked,measured_costs:$costs[0]}
+         eligible_policies:[$eligible[].policy],
+         material_contenders:[$ranked[].policy],
+         max_budgeted_exact_evidence_loss_count:$max_budgeted_loss_count,
+         best_budgeted_exact_evidence_hit_count:$best_hit_count,
+         selected_policy:$ranked[0].policy,
+         ranking_rule:["source_fidelity_pass","within_caller_approved_exact_evidence_loss_count",
+           "budgeted_correct_source_recall_desc","duplicate_overlap_rate_asc","exact_evidence_mrr_desc",
+           "retrieved_words_mean_asc","index_bytes_asc","policy_asc"],
+         policies:$eligible,measured_costs:$costs[0]}
     end
 ' "$output_dir/evaluation-reference/summary.json" \
   "$output_dir/evaluation-current/summary.json" \

@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-16
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -57,7 +57,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 98 current `DIAGRAM_ALIGNMENT` records representing 97 unique IDs; 31 records are in the five consolidated files and 67 are inline. `DIAG-CAP-002` intentionally occurs at two current locations. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 101 current `DIAGRAM_ALIGNMENT` records representing 101 unique IDs; 32 records are in the five consolidated files and 69 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines. |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
@@ -65,6 +65,12 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
 
 The operator-retained Proposed LogiSheets plan contains one explicitly conceptual future-state Mermaid block. Under [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3 and §4.2, it is not an implementation registry entry until implementation begins.
+
+## Research
+
+| Document | Description |
+| --- | --- |
+| [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 
 ## Document lifecycle ledger
 

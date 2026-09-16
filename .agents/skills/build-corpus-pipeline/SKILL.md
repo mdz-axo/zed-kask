@@ -285,8 +285,11 @@ budget constant. Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-
 name every accepted source with raw/canonical paths and SHA-256 values, one entity-ref
 namespace, the exact embedding model, embedding batch size, query limit, fixed
 `corpus_query_cosine` controls, and complete current/fine/parent shared-contract
-parameters (`min_words`, `max_words`, `overlap_words`, `sentence_boundary`). Never put
-a DB passphrase in this record.
+parameters (`min_words`, `max_words`, `overlap_words`, `sentence_boundary`) and a
+caller-approved `selection.max_budgeted_exact_evidence_loss_count`. That count states
+how many held-out exact-evidence hits the caller will trade for better source recall,
+lower duplication or lower index/context cost; never invent a universal materiality
+threshold. Never put a DB passphrase in this record.
 
 The runner derives candidate-independent queries from accepted canonical sources,
 calls `corpus_build_chunk_representations`, embeds reference/current/fine retrieval
@@ -355,6 +358,17 @@ concurrency, tag_batch_size, dry_run=false)`. Start the probe with
 identity correlation passes. Split JSONL below the tool's byte cap at record
 boundaries, into disjoint files; never split records. When partitioning,
 keep original identities and verify the merged identity set equals the input.
+For a manifest-backed queue, run
+`kask/scripts/audit/run-corpus-classification-queue.sh` with a positive bounded
+`max-units` wave and report its durable queue checkpoint before the next wave;
+do not hide the remaining corpus behind one final-only invocation. If a terminal
+unit contains both classified and failed rows, call
+`kask/scripts/audit/reconcile-corpus-classification-unit.sh` once: it preserves the
+original output, marks the unit `reconciled_partial`, conservatively reserves its
+unknown cost, and appends a new immutable pending unit containing only failed
+source identities. Never relabel the original unit pending or replay its successful
+rows. The committed host runner `call-corpus-tool-via-host.sh` is the queue's
+credential-safe synchronous transport.
 
 Each output `TaggedChunk` requires `classification`:
 

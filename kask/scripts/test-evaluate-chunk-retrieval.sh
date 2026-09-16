@@ -91,7 +91,9 @@ jq -e '
     .source_fidelity_violations == 0 and
     .exact_evidence_recall_at_5 == 1 and
     .correct_source_recall_at_20 == 1 and
-    .budget_exceeded_queries == 0 and
+    .budget_limited_queries == 2 and
+    .skipped_contexts == 2 and
+    .oversized_context_queries == 2 and
     .ndcg.status == "unavailable" and
     .answer_grounding.status == "unavailable"
 ' "$tmp/direct-output/summary.json" >/dev/null
@@ -128,7 +130,9 @@ jq -e '
     .source_fidelity_violations == 0 and
     .exact_evidence_recall_at_5 == 1 and
     .budgeted_exact_evidence_recall == 0.5 and
-    .budget_exceeded_queries == 0 and
+    .budget_limited_queries == 2 and
+    .skipped_contexts == 2 and
+    .oversized_context_queries == 1 and
     .small_to_big.parent_expansion_count == 3 and
     .small_to_big.boundary_crossing_children == 1 and
     .small_to_big.retrieved_children == 2 and

@@ -71,22 +71,28 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $requ
     host_inference_timeout=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
     host_embedding_model=$(read_host_env HKASK_EMBEDDING_MODEL)
     host_classifier_model=$(read_host_env HKASK_CLASSIFIER_MODEL)
+    host_template_root=$(read_host_env HKASK_TEMPLATE_ROOT)
     host_deepinfra_token=$(read_host_env DEEPINFRA_TOKEN)
     host_openrouter_token=$(read_host_env OPENROUTER_API_KEY)
     HKASK_INFERENCE_SOCKET=${HKASK_INFERENCE_SOCKET:-$host_inference_socket}
     HKASK_INFERENCE_TIMEOUT_SECS=${HKASK_INFERENCE_TIMEOUT_SECS:-$host_inference_timeout}
     HKASK_EMBEDDING_MODEL=${HKASK_EMBEDDING_MODEL:-$host_embedding_model}
     HKASK_CLASSIFIER_MODEL=${HKASK_CLASSIFIER_MODEL:-$host_classifier_model}
+    HKASK_TEMPLATE_ROOT=${HKASK_TEMPLATE_ROOT:-$host_template_root}
     DEEPINFRA_TOKEN=${DEEPINFRA_TOKEN:-$host_deepinfra_token}
     OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-$host_openrouter_token}
     export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL
-    export HKASK_CLASSIFIER_MODEL DEEPINFRA_TOKEN OPENROUTER_API_KEY
+    export HKASK_CLASSIFIER_MODEL HKASK_TEMPLATE_ROOT DEEPINFRA_TOKEN OPENROUTER_API_KEY
 fi
 if [[ -n "$required_model_var" ]]; then
     required_model=${!required_model_var:-}
 fi
 if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
     echo "$tool_name requires HKASK_INFERENCE_SOCKET and $required_model_var" >&2
+    exit 69
+fi
+if [[ "$tool_name" == corpus_tag_chunks && -z ${HKASK_TEMPLATE_ROOT:-} ]]; then
+    echo "$tool_name requires HKASK_TEMPLATE_ROOT" >&2
     exit 69
 fi
 

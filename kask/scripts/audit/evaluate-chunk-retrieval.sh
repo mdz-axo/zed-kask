@@ -411,13 +411,15 @@ def duplicate_stats($contexts):
      rate:(if $total == 0 then 0 else (($total - $unique) / $total) end)};
 def admit($contexts; $budget):
   reduce $contexts[] as $context
-    ({contexts:[],retrieved_words:0};
+    ({contexts:[],retrieved_words:0,skipped_contexts:0,oversized_contexts:0};
      ($context.word_count // word_count($context.text)) as $words
      | if (.retrieved_words + $words) <= $budget
        then .contexts += [$context + {context_rank:((.contexts | length) + 1),word_count:$words}]
             | .retrieved_words += $words
-       else . end)
-  | .budget_exceeded = (.retrieved_words > $budget);
+       else .skipped_contexts += 1
+            | if $words > $budget then .oversized_contexts += 1 else . end
+       end)
+  | .budget_limited = (.skipped_contexts > 0);
 
 def direct_result($raw; $rows; $budget):
   [$raw.retrieval.results | to_entries[]
@@ -438,10 +440,11 @@ def direct_result($raw; $rows; $budget):
        first_exact_rank:(([$hits[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
        first_correct_source_rank:(([$hits[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
      budget_metrics:{
-       exact_evidence_found:(if $admitted.budget_exceeded then false else any($contexts[]; .text | contains($raw.query_spec.evidence_quote)) end),
-       correct_source_found:(if $admitted.budget_exceeded then false else any($contexts[]; .source == $raw.query_spec.source) end),
-       strict_budget_satisfied:($admitted.budget_exceeded | not)},
-     retrieved_words:$admitted.retrieved_words,budget_exceeded:$admitted.budget_exceeded,
+       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
+       correct_source_found:any($contexts[]; .source == $raw.query_spec.source),
+       all_candidates_admitted:($admitted.budget_limited | not)},
+     retrieved_words:$admitted.retrieved_words,budget_limited:$admitted.budget_limited,
+     skipped_contexts:$admitted.skipped_contexts,oversized_contexts:$admitted.oversized_contexts,
      duplicate_overlap:duplicate_stats($contexts),
      source_fidelity_violations:[$hits[].violations[]?],
      total_indexed:$raw.retrieval.total_indexed};
@@ -484,10 +487,11 @@ def small_result($raw; $children_by_ref; $maps_by_child; $parents_by_ref; $budge
        first_exact_rank:(([$expanded[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
        first_correct_source_rank:(([$expanded[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
      budget_metrics:{
-       exact_evidence_found:(if $admitted.budget_exceeded then false else any($contexts[]; .text | contains($raw.query_spec.evidence_quote)) end),
-       correct_source_found:(if $admitted.budget_exceeded then false else any($contexts[]; .source == $raw.query_spec.source) end),
-       strict_budget_satisfied:($admitted.budget_exceeded | not)},
-     retrieved_words:$admitted.retrieved_words,budget_exceeded:$admitted.budget_exceeded,
+       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
+       correct_source_found:any($contexts[]; .source == $raw.query_spec.source),
+       all_candidates_admitted:($admitted.budget_limited | not)},
+     retrieved_words:$admitted.retrieved_words,budget_limited:$admitted.budget_limited,
+     skipped_contexts:$admitted.skipped_contexts,oversized_contexts:$admitted.oversized_contexts,
      duplicate_overlap:duplicate_stats($contexts),
      source_fidelity_violations:([$children[].violations[]?] + [$expanded[].violations[]?]),
      small_to_big:{retrieved_children:($children | length),
@@ -560,7 +564,10 @@ jq -s \
       budgeted_correct_source_recall:ratio(([.[] | select(.budget_metrics.correct_source_found)] | length); $count),
       retrieved_words:{total:([.[].retrieved_words] | add // 0),
         mean:ratio(([.[].retrieved_words] | add // 0); $count),max:([.[].retrieved_words] | max // 0)},
-      budget_exceeded_queries:([.[] | select(.budget_exceeded)] | length),
+      budget_limited_queries:([.[] | select(.budget_limited)] | length),
+      skipped_contexts:([.[].skipped_contexts] | add // 0),
+      oversized_context_queries:([.[] | select(.oversized_contexts > 0)] | length),
+      oversized_contexts:([.[].oversized_contexts] | add // 0),
       duplicate_overlap:{total_sixgrams:$sixgrams,duplicate_sixgrams:$duplicate_sixgrams,
         rate:ratio($duplicate_sixgrams; $sixgrams)},
       ndcg:{status:"unavailable",reason:"No exhaustive or graded relevance judgments exist for the candidate corpus; observed exact/source hits cannot define an unbiased ideal DCG."},

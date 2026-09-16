@@ -141,25 +141,25 @@ ordinal=$(jq -s '[.[].ordinal] | max + 1' "$queue")
 reconciled_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 output_sha256=$(sha256sum "$output" | cut -d' ' -f1)
 
-jq -c --arg unit "$unit" --arg recovery_unit "$recovery_unit" \
-    --arg reconciled_at "$reconciled_at" --arg output_sha256 "$output_sha256" \
-    --argjson classified "$classified" --argjson failed "$failed" \
-    --argjson reserved_cost "$reserved_cost" '
-    if .unit == $unit then
-      . + {status:"reconciled_partial",reconciled_at:$reconciled_at,
-           tagged:$classified,failed:$failed,recovery_unit:$recovery_unit,
-           reported_cost_usd:null,cost_reporting_complete:false,
-           reserved_cost_usd:$reserved_cost,output_sha256:$output_sha256}
-    else . end
-' "$queue" > "$queue_tmp"
-
-jq -cn --arg unit "$recovery_unit" --arg parent_unit "$unit" \
+recovery_row=$(jq -cn --arg unit "$recovery_unit" --arg parent_unit "$unit" \
     --arg input "$recovery_input" --arg output "$recovery_output" \
     --arg args "$recovery_args" --arg response "$recovery_response" --arg log "$recovery_log" \
     --argjson ordinal "$ordinal" --argjson rows "$failed" \
     '{unit:$unit,ordinal:$ordinal,parent_unit:$parent_unit,rows:$rows,
-      input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}' \
-    >> "$queue_tmp"
+      input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}')
+
+jq -c --arg unit "$unit" --arg recovery_unit "$recovery_unit" \
+    --arg reconciled_at "$reconciled_at" --arg output_sha256 "$output_sha256" \
+    --argjson classified "$classified" --argjson failed "$failed" \
+    --argjson reserved_cost "$reserved_cost" --argjson recovery_row "$recovery_row" '
+    if .unit == $unit then
+      (. + {status:"reconciled_partial",reconciled_at:$reconciled_at,
+            tagged:$classified,failed:$failed,recovery_unit:$recovery_unit,
+            reported_cost_usd:null,cost_reporting_complete:false,
+            reserved_cost_usd:$reserved_cost,output_sha256:$output_sha256}),
+      $recovery_row
+    else . end
+' "$queue" > "$queue_tmp"
 chmod --reference="$queue" "$queue_tmp"
 mv -f "$queue_tmp" "$queue"
 queue_tmp=
