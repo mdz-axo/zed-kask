@@ -65,11 +65,12 @@ update_unit() {
     mv -f "$tmp" "$queue"
 }
 
-spent=$(jq -s '[.[] | if .status == "completed" then .reported_cost_usd elif .status == "reconciled_partial" and .cost_reporting_complete == true then .reported_cost_usd elif .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
+spent=$(jq -s '[.[] | if (.status == "completed" or (.status | startswith("failed")) or .status == "reconciled_partial") and .cost_reporting_complete == true then .reported_cost_usd elif (.status | startswith("failed")) or .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
 mapfile -t units < "$queue"
 planned=${#units[@]}
 completed=$(jq -s '[.[] | select(.status == "completed")] | length' "$queue")
 processed_this_run=0
+unresolved_failed=0
 
 for row in "${units[@]}"; do
     unit=$(jq -r '.unit' <<<"$row")
@@ -81,15 +82,18 @@ for row in "${units[@]}"; do
     response=$(jq -r '.response' <<<"$row")
     log=$(jq -r '.log' <<<"$row")
 
-    if [[ "$status" == completed || "$status" == reconciled_partial ]]; then
+    if [[ "$status" == completed || "$status" == reconciled_partial || "$status" == failed* ]]; then
         if [[ ! -f "$output" || ! -f "$response" || ! -f "$log" ]]; then
             echo "terminal unit is missing durable artifacts: $unit" >&2
             exit 65
         fi
+        if [[ "$status" == failed* ]]; then
+            unresolved_failed=$((unresolved_failed + 1))
+        fi
         continue
     fi
     if [[ "$status" != pending ]]; then
-        echo "queue contains unresolved failed unit $unit with status $status; reconcile it before resume" >&2
+        echo "queue contains unsupported unit state $unit status=$status" >&2
         exit 65
     fi
     if (( max_units > 0 && processed_this_run >= max_units )); then
@@ -159,11 +163,14 @@ for row in "${units[@]}"; do
         echo "classification count reconciliation failed for $unit" >&2
         exit 65
     fi
-    if [[ "$cost_complete" != true ]] || ! jq -en --arg value "$cost" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
-        failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" '{status:"failed_cost_reporting",failed_at:$failed_at,error:"provider cost reporting incomplete"}')"
-        echo "classification cost reporting incomplete for $unit" >&2
-        exit 65
+    accounted_cost=$estimated_unit_cost
+    reserved_cost=$estimated_unit_cost
+    if [[ "$cost_complete" == true ]] && jq -en --arg value "$cost" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
+        accounted_cost=$cost
+        reserved_cost=null
+    else
+        cost=null
+        cost_complete=false
     fi
 
     input_refs=$(mktemp)
@@ -175,11 +182,14 @@ for row in "${units[@]}"; do
         length == $rows and
         ([.[].entity_ref] | length == (unique | length)) and
         all(.[];
-          .classification.status == "classified" and
-          .classification.ontology_protocol == "published-term-resolution-v1" and
-          (.candidate_terms | type == "array" and length >= 3 and length <= 5) and
-          (.ontology_tags | type == "object") and
-          (.concepts | type == "array"))
+          if .classification.status == "classified" then
+            .classification.ontology_protocol == "published-term-resolution-v1" and
+            (.candidate_terms | type == "array" and length >= 3 and length <= 5) and
+            (.ontology_tags | type == "object") and
+            (.concepts | type == "array")
+          elif .classification.status == "failed" then
+            (.classification.reason | type == "string" and length > 0)
+          else false end)
     ' "$output" >/dev/null; then
         rm -f "$input_refs" "$output_refs"
         trap - EXIT
@@ -190,18 +200,48 @@ for row in "${units[@]}"; do
     fi
     rm -f "$input_refs" "$output_refs"
     trap - EXIT
+
+    spent=$(jq -n --argjson spent "$spent" --argjson cost "$accounted_cost" '$spent + $cost')
+    processed_this_run=$((processed_this_run + 1))
+    output_sha256=$(sha256sum "$output" | cut -d' ' -f1)
     if (( failed != 0 )); then
         failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" --argjson failed "$failed" '{status:"failed_classification",failed_at:$failed_at,failed:$failed}')"
-        echo "classification produced failed rows for $unit" >&2
-        exit 1
+        patch=$(jq -cn --arg failed_at "$failed_at" --arg output_sha256 "$output_sha256" \
+            --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" \
+            --argjson cost_complete "$cost_complete" --argjson reserved_cost "$reserved_cost" \
+            --argjson cumulative_cost "$spent" \
+            '{status:"failed_classification",failed_at:$failed_at,tagged:$tagged,failed:$failed,
+              reported_cost_usd:$cost,cost_reporting_complete:$cost_complete,
+              reserved_cost_usd:$reserved_cost,cumulative_accounted_cost_usd:$cumulative_cost,
+              output_sha256:$output_sha256}')
+        update_unit "$unit" "$patch"
+        unresolved_failed=$((unresolved_failed + 1))
+        printf 'unit=%s terminal_partial tagged=%d failed=%d cumulative_accounted_cost_usd=%s\n' \
+            "$unit" "$tagged" "$failed" "$spent" >&2
+        continue
+    fi
+    if [[ "$cost_complete" != true ]]; then
+        failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        patch=$(jq -cn --arg failed_at "$failed_at" --arg output_sha256 "$output_sha256" \
+            --argjson tagged "$tagged" --argjson reserved_cost "$reserved_cost" \
+            --argjson cumulative_cost "$spent" \
+            '{status:"failed_cost_reporting",failed_at:$failed_at,tagged:$tagged,failed:0,
+              reported_cost_usd:null,cost_reporting_complete:false,reserved_cost_usd:$reserved_cost,
+              cumulative_accounted_cost_usd:$cumulative_cost,output_sha256:$output_sha256,
+              error:"provider cost reporting incomplete"}')
+        update_unit "$unit" "$patch"
+        unresolved_failed=$((unresolved_failed + 1))
+        printf 'unit=%s terminal_cost_unknown rows=%d reserved_cost_usd=%s\n' "$unit" "$rows" "$reserved_cost" >&2
+        continue
     fi
 
-    spent=$(jq -n --argjson spent "$spent" --argjson cost "$cost" '$spent + $cost')
     completed=$((completed + 1))
-    processed_this_run=$((processed_this_run + 1))
     completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    patch=$(jq -cn --arg completed_at "$completed_at" --arg output_sha256 "$(sha256sum "$output" | cut -d' ' -f1)" --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" --argjson cost_complete "$cost_complete" --argjson cumulative_cost "$spent" '{status:"completed",completed_at:$completed_at,tagged:$tagged,failed:$failed,reported_cost_usd:$cost,cost_reporting_complete:$cost_complete,cumulative_reported_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
+    patch=$(jq -cn --arg completed_at "$completed_at" --arg output_sha256 "$output_sha256" \
+        --argjson tagged "$tagged" --argjson cost "$cost" --argjson cumulative_cost "$spent" \
+        '{status:"completed",completed_at:$completed_at,tagged:$tagged,failed:0,
+          reported_cost_usd:$cost,cost_reporting_complete:true,
+          cumulative_reported_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
     update_unit "$unit" "$patch"
     printf 'unit=%s completed=%d/%d rows=%d cumulative_cost_usd=%s\n' "$unit" "$completed" "$planned" "$rows" "$spent" >&2
 
@@ -217,4 +257,9 @@ if (( pending == 0 )); then
 else
     printf 'classification_queue_checkpoint processed_this_run=%d completed_units=%d pending_units=%d cumulative_accounted_cost_usd=%s\n' \
         "$processed_this_run" "$completed" "$pending" "$spent" >&2
+fi
+failed_terminal=$(jq -s '[.[] | select(.status | startswith("failed"))] | length' "$queue")
+if (( failed_terminal > 0 || unresolved_failed > 0 )); then
+    echo "classification queue has $failed_terminal terminal failed units requiring reconciliation" >&2
+    exit 65
 fi
