@@ -116,6 +116,7 @@ jq -e '
     .query_count == 2 and
     .source_fidelity_violations == 0 and
     .exact_evidence_recall_at_5 == 1 and
+    .budgeted_exact_evidence_recall == 0.5 and
     .budget_exceeded_queries == 1 and
     .small_to_big.parent_expansion_count == 3 and
     .small_to_big.boundary_crossing_children == 1 and
@@ -124,6 +125,12 @@ jq -e '
 ' "$tmp/small-output/summary.json" >/dev/null
 jq -e 'select(.query_id == "q1") | .retrieval_results[0].entity_ref == "child:a" and .contexts[0].entity_ref == "parent:a" and .contexts[0].retrieved_by_child_ref == "child:a"' \
     "$tmp/small-output/per-query-results.jsonl" >/dev/null
+
+HKASK_CORPUS_BINARY="$tmp/does-not-exist" "$evaluator" --reuse-raw "$tmp/small-output/raw-results.jsonl" \
+    small-reaggregated small-to-big "$tmp/queries.jsonl" "$tmp/children.jsonl" "$tmp/children.db" \
+    "$tmp/reaggregated-output" 20 5 "$tmp/map.jsonl" "$tmp/parents.jsonl"
+jq -e '.query_count == 2 and .budgeted_exact_evidence_recall == 0.5 and .source_fidelity_gate == "pass"' \
+    "$tmp/reaggregated-output/summary.json" >/dev/null
 
 "$evaluator" corrupt-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tmp/corrupt.db" "$tmp/corrupt-output" 20 5
 jq -e '.source_fidelity_gate == "fail" and .source_fidelity_violations == 2' \

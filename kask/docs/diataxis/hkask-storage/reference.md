@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — Reference"
 audience: [developers, architects]
-last_updated: 2026-08-28
-version: "2.1.0"
+last_updated: 2026-09-15
+version: "2.2.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [domain, trust]
@@ -10,208 +10,169 @@ mds_categories: [domain, trust]
 
 # hkask-storage — Reference
 
-`hkask-storage` is the consolidated persistence layer for hKask: SQLCipher
-(SQLite encryption using SQLCipher's native passphrase KDF — PBKDF2 inside
-`PRAGMA key`, salt stored in the DB file header) plus the sqlite-vec vector
-extension. The crate has a `core/` foundation (the `Database` connection
-manager, path sanitization, the `define_driver_store!` macro), a
-`database/` driver layer (the `DatabaseDriver` port, the `SqliteDriver`
-implementation, value encryption), and per-domain store modules (`hmem.rs`,
-`embeddings.rs`, `gallery.rs`, `regulation_store.rs`, `escalation.rs`,
-`rotation.rs`). SQLite is the only backend.
+`hkask-storage` is the SQLite persistence crate. File-backed `Database` pools use
+SQLCipher page encryption and sqlite-vec; in-memory and `SqliteDriver::file_pool`
+paths are unencrypted SQLite
+(`kask/crates/hkask-storage/src/core/connection.rs:337-466`;
+`kask/crates/hkask-storage/src/database/sqlite.rs:86-117`). `DbValue` supplies SQL
+binding types; SQLCipher-backed connections supply encryption.[^sqlcipher]
+SQLite vector search is supplied by sqlite-vec.[^sqlite-vec]
 
-The core schema is `src/core/sql/schema.sql`, loaded by
-`Database::initialize_schema` on every pool creation
-(`core/connection.rs:192-204`). Store-specific tables are defined inline in
-their store modules' `init_schema` methods.
+## Module inventory and exports
 
-## Source citations
+The crate root declares and exports the current modules at
+`kask/crates/hkask-storage/src/hkask_storage.rs:9-43`.
 
-| Symbol | Location |
-|--------|----------|
-| Crate root (re-exports) | `kask/crates/hkask-storage/src/hkask_storage.rs:9-35` |
-| `Database` struct | `kask/crates/hkask-storage/src/core/connection.rs:108-114` |
-| `Database::open` | `kask/crates/hkask-storage/src/core/connection.rs:163-165` |
-| `Database::open_with_extensions` | `kask/crates/hkask-storage/src/core/connection.rs:167-173` |
-| `Database::in_memory` | `kask/crates/hkask-storage/src/core/connection.rs:184-186` |
-| `Database::sqlite_pool` (cached r2d2 pool) | `kask/crates/hkask-storage/src/core/connection.rs:230-252` |
-| `Database::checkpoint` (WAL + vacuum + optimize) | `kask/crates/hkask-storage/src/core/connection.rs:263-278` |
-| `initialize_schema` + `passage_text` migration | `kask/crates/hkask-storage/src/core/connection.rs:192-219` |
-| `DatabaseError` enum | `kask/crates/hkask-storage/src/core/connection.rs:86-97` |
-| `open_or_repair` (non-destructive open) | `kask/crates/hkask-storage/src/core/connection.rs:429-434` |
-| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:435-446` |
-| `embedding_dim` / `DEFAULT_EMBEDDING_DIM` | `kask/crates/hkask-storage/src/core/connection.rs:24-37` |
-| `init_sqlite_vec_on` (per-connection vec0) | `kask/crates/hkask-storage/src/core/connection.rs:60-76` |
-| `SQLCIPHER_SALT_SIZE` (legacy-scheme marker) | `kask/crates/hkask-storage/src/core/connection.rs:82` |
-| `sanitize_path` (traversal guard) | `kask/crates/hkask-storage/src/core/security.rs:17-54` |
-| `define_driver_store!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
-| `impl_from_db_error!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:79-86` |
-| `DatabaseDriver` trait | `kask/crates/hkask-storage/src/database/driver.rs:16-58` |
-| `query_map` / `query_row` helpers | `kask/crates/hkask-storage/src/database/driver.rs:78-109` |
-| `SqliteDriver` struct | `kask/crates/hkask-storage/src/database/sqlite.rs:42-50` |
-| `SqliteDriver::new` / `new_labeled` / `with_durability` | `kask/crates/hkask-storage/src/database/sqlite.rs:67-102` |
-| `SqliteDriver::in_memory_pool` / `in_memory_driver` | `kask/crates/hkask-storage/src/database/sqlite.rs:86-106` |
-| `SqliteDriver::file_pool` (unencrypted WAL pool) | `kask/crates/hkask-storage/src/database/sqlite.rs:111-117` |
-| `WAL_PRAGMA_BATCH` / `init_wal_pragmas` | `kask/crates/hkask-storage/src/database/sqlite.rs:24-35` |
-| Storage spans (`reg.storage` tracing) | `kask/crates/hkask-storage/src/database/sqlite.rs:210-232` |
-| `TransactionHandle` (RAII tx) | `kask/crates/hkask-storage/src/database/transaction.rs` |
-| `DbValue` / `DbRow` | `kask/crates/hkask-storage/src/database/value.rs` |
-| `rotate_passphrase` (atomic re-encryption) | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
-| `RotationError` enum | `kask/crates/hkask-storage/src/rotation.rs:66-90` |
-| `HMem` struct | `kask/crates/hkask-storage/src/hmem.rs:41-59` |
-| `HMemStore` | `kask/crates/hkask-storage/src/hmem.rs:135-138` |
-| `HMemStore::from_driver` (no schema re-create) | `kask/crates/hkask-storage/src/hmem.rs:150-157` |
-| `HMemStore::update` (single-connection tx) | `kask/crates/hkask-storage/src/hmem.rs:404-476` |
-| `HMemStore::touch_recall` (decay clock) | `kask/crates/hkask-storage/src/hmem.rs:501-507` |
-| Ontology queries (`json_extract` paths) | `kask/crates/hkask-storage/src/hmem.rs:586-700` |
-| `HMemStore::delete_by_id` | `kask/crates/hkask-storage/src/hmem.rs:709-729` |
-| `StoredEmbedding` / `SimilarityResult` | `kask/crates/hkask-storage/src/embeddings.rs:27-39` |
-| `EmbeddingStore` | `kask/crates/hkask-storage/src/embeddings.rs:64-68` |
-| `EmbeddingStore::from_driver` (dim==0 clamp) | `kask/crates/hkask-storage/src/embeddings.rs:83-110` |
-| `EmbeddingStore::store` (two-table tx) | `kask/crates/hkask-storage/src/embeddings.rs:170-224` |
-| `EmbeddingStore::search` (vec0 KNN) | `kask/crates/hkask-storage/src/embeddings.rs:281-329` |
-| `EmbeddingStore::all_with_text` | `kask/crates/hkask-storage/src/embeddings.rs:468-488` |
-| `EmbeddingError` enum | `kask/crates/hkask-storage/src/embeddings.rs:41-52` |
-| `GalleryStore` / `GalleryMode` | `kask/crates/hkask-storage/src/gallery.rs:36,185` |
-| `GalleryRecord` / `ImageRecord` / `TagRecord` | `kask/crates/hkask-storage/src/gallery.rs:71-104` |
-| `FaceRegistryRecord` / `WorkflowRecord` / `GenerationRecord` | `kask/crates/hkask-storage/src/gallery.rs:111-178` |
-| `GalleryStore::init_schema` (multi-table + forward gallery schema update) | `kask/crates/hkask-storage/src/gallery.rs`, `init_schema` |
-| `GalleryStore::{open,reconcile,persist_analysis}` | `kask/crates/hkask-storage/src/gallery.rs` — canonical identity and single-connection transactions |
-| `RegulationArchive` | `kask/crates/hkask-storage/src/regulation_store.rs:70-104` |
-| `DecayConfig` / `WeightedEvent` | `kask/crates/hkask-storage/src/regulation_store.rs:16-46` |
-| `ALGEDONIC_SPAN_CATEGORIES` | `kask/crates/hkask-storage/src/regulation_store.rs:57-66` |
-| `RegulationArchive::replay_weighted` | `kask/crates/hkask-storage/src/regulation_store.rs:125-148` |
-| `RegulationArchive::lambda_for` | `kask/crates/hkask-storage/src/regulation_store.rs:160-170` |
-| `RegulationArchive::delete_older_than` / `checkpoint` | `kask/crates/hkask-storage/src/regulation_store.rs:242-292` |
-| `RegulationArchive::query_algedonic` | `kask/crates/hkask-storage/src/regulation_store.rs:318-351` |
-| `impl RegulationSink for RegulationArchive` | `kask/crates/hkask-storage/src/regulation_store.rs:474-486` |
-| `EscalationEntry` / `EscalationStatus` | `kask/crates/hkask-storage/src/escalation.rs:15-57` |
-| `EscalationQueue` | `kask/crates/hkask-storage/src/escalation.rs:58-60` |
-| `EscalationQueue::from_driver` / `init` | `kask/crates/hkask-storage/src/escalation.rs:76-103` |
-| `EscalationQueue` resolve/dismiss by output | `kask/crates/hkask-storage/src/escalation.rs:331-416` |
-| `EscalationError` enum | `kask/crates/hkask-storage/src/escalation.rs:62-67` |
-| Core schema (`schema.sql`) | `kask/crates/hkask-storage/src/core/sql/schema.sql:1-27` |
+| Module | Public surface | Evidence |
+|---|---|---|
+| `core` | `Database`, `DatabaseError`, `LeasedSqliteConnection`, `SqliteConnectionManager`, `embedding_dim`, `open_database`, `open_or_repair`, `sanitize_path` | `kask/crates/hkask-storage/src/hkask_storage.rs:20-24` |
+| `database` | `DatabaseDriver`, `SqliteDriver`, `WAL_PRAGMA_BATCH`, `init_wal_pragmas`; transaction and typed SQL values under the module | `kask/crates/hkask-storage/src/hkask_storage.rs:10,25`; `kask/crates/hkask-storage/src/database.rs:6-13` |
+| `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:12-18` |
+| `rotation` | `rotate_passphrase`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
+| `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
+| `escalation` | `EscalationEntry`, `EscalationQueue`, `EscalationStatus`, `EscalationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:30,35` |
+| `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:31,36-37` |
+| `regulation_store` | `RegulationArchive`, `DecayConfig` | `kask/crates/hkask-storage/src/hkask_storage.rs:32,38` |
+| `gallery` | gallery index, scan/reconciliation, tags, faces, workflows, generations, OMC graphs, and albums | `kask/crates/hkask-storage/src/hkask_storage.rs:11,40-43`; `kask/crates/hkask-storage/src/gallery.rs:73-135,203-293` |
 
-## Gallery persistence contract — operator decision 2026-09-06
+## Connection and driver surfaces
 
-`GalleryStore::open` validates a canonical directory and reuses its durable ID and
-stored mode. `GalleryScan` carries physical `AssetObservation`s plus depth,
-extensions and errors; `reconcile` holds one SQLite IMMEDIATE transaction for all
-upserts and safe absence transitions. Path identity is unique per gallery. Hash
-changes preserve metadata and mark `metadata_stale`; equal-content copies at
-distinct paths are not merged. Reappearance restores a retained missing ID.
-
-The approved missing policy retains all rows and relations. Active counts,
-`list_assets`, `get_image`, gallery tags and album positions exclude `missing`.
-`get_by_id` includes missing records for inspection. Listing and positional lookup
-both order by `(added_at, id)`. Counts and total size are aggregates, not cached
-columns. `persist_analysis` atomically checks gallery/ID/hash before committing
-tags and complete-analysis freshness.
-
-`init_schema` performs a forward-only metadata-preserving update: canonical paths,
-status columns and the unique identity index. Duplicate canonical roots/assets
-fail explicitly rather than deleting or silently merging annotations. Old cached
-count columns are dropped; there is no legacy read path or replacement database.
-Tests: `path_upsert_retains_annotations_and_deterministic_positions`,
-`forward_schema_preserves_data_and_refuses_duplicate_identity`, and the media
-server's real-file `gallery_lifecycle_tests` (including rollback and async binding).
-See [media lifecycle](../../reference/mcp-servers/media.md#gallery-lifecycle--ratified-2026-09-06).
-
-## Class diagram — the driver port and its stores
+| Item | Contract | Evidence |
+|---|---|---|
+| `Database::open` | validates path/passphrase and returns a handle without opening SQLite | `kask/crates/hkask-storage/src/core/connection.rs:194-252` |
+| `Database::sqlite_pool` | lazily creates and caches the SQLCipher/in-memory pool | `kask/crates/hkask-storage/src/core/connection.rs:337-366` |
+| Core schema | loaded from `core/sql/schema.sql`, then explicit column migrations run | `kask/crates/hkask-storage/src/core/connection.rs:272-335` |
+| Managed inventory registration | file-backed managed opens record the canonical path before pool creation | `kask/crates/hkask-storage/src/core/connection.rs:417-425` |
+| `DatabaseDriver` | provider-neutral execute/query/transaction boundary | `kask/crates/hkask-storage/src/database/driver.rs:16-109` |
+| `SqliteDriver` | current driver implementation | `kask/crates/hkask-storage/src/database/sqlite.rs:42-117` |
+| `DbValue` / `DbRow` | typed SQL parameter and row values; not encryption | `kask/crates/hkask-storage/src/database/value.rs:8-70` |
 
 ```mermaid
 classDiagram
     class Database {
-        -path: String
-        -passphrase: String
-        -extensions: Option~String~
-        -pool_cache: Mutex~Option~Pool~~
         +open(path, passphrase) Database
-        +in_memory() Database
         +sqlite_pool() Pool
-        +checkpoint() void
+        +checkpoint()
     }
     class DatabaseDriver {
         <<trait>>
-        +execute(sql, params) usize
-        +execute_batch(sql) void
-        +query(sql, params) Vec~DbRow~
-        +query_optional(sql, params) Option~DbRow~
-        +commit_tx() void
-        +rollback_tx() void
-        +as_any() Any
-        +sqlite_pool() Option~Pool~
+        +execute()
+        +execute_batch()
+        +query()
+        +query_optional()
+        +sqlite_pool()
     }
-    class SqliteDriver {
-        -pool: Pool
-        -label: Option~Arc~str~~
-        +new(pool) SqliteDriver
-        +new_labeled(pool, label) SqliteDriver
-        +in_memory_pool() Pool
-        +file_pool(path) Pool
+    class SqliteDriver
+    class DatabaseInventory {
+        +preview() DatabaseInventory
+        +confirm() ConfirmedInventory
     }
-    class HMemStore {
-        -driver: Arc~dyn DatabaseDriver~
-        +from_driver(driver) HMemStore
-        +insert(h_mem) void
-        +update(id, value, confidence) void
+    class ConfirmedInventory {
+        +rotate_paths()
+        +exclusions()
+        +validate_current()
     }
-    class EmbeddingStore {
-        -pool: Pool
-        -dim: usize
-        -driver: Arc~dyn DatabaseDriver~
-        +from_driver(driver, dim) EmbeddingStore
-        +store(entity_ref, vector, model) String
-        +search(query_vector, limit) Vec~SimilarityResult~
-    }
-    class GalleryStore {
-        +from_driver(driver) GalleryStore
-    }
-    class RegulationArchive {
-        +from_driver(driver) RegulationArchive
-        +replay_weighted(since, limit, config) Vec~WeightedEvent~
-    }
-    class EscalationQueue {
-        +from_driver(driver) EscalationQueue
-        +add(entry) void
-        +list_pending() Vec~EscalationEntry~
-    }
-
-    Database ..> SqliteDriver : creates pool for
-    SqliteDriver ..|> DatabaseDriver : implements
-    HMemStore --> DatabaseDriver : holds Arc
-    EmbeddingStore --> DatabaseDriver : holds Arc
-    GalleryStore --> DatabaseDriver : holds Arc
-    RegulationArchive --> DatabaseDriver : holds Arc
-    EscalationQueue --> DatabaseDriver : holds Arc
+    class HMemStore
+    class EmbeddingStore
+    class GalleryStore
+    class RegulationArchive
+    class EscalationQueue
+    SqliteDriver ..|> DatabaseDriver
+    Database --> SqliteDriver : supplies pool
+    Database --> DatabaseInventory : records managed path
+    DatabaseInventory --> ConfirmedInventory
+    HMemStore --> DatabaseDriver
+    EmbeddingStore --> DatabaseDriver
+    GalleryStore --> DatabaseDriver
+    RegulationArchive --> DatabaseDriver
+    EscalationQueue --> DatabaseDriver
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:108-114,163-186,230-278; kask/crates/hkask-storage/src/database/driver.rs:16-58; kask/crates/hkask-storage/src/database/sqlite.rs:42-73; kask/crates/hkask-storage/src/hmem.rs:135-157; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:185; kask/crates/hkask-storage/src/regulation_store.rs:70; kask/crates/hkask-storage/src/escalation.rs:58-82
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:294-306; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
 status: VERIFIED
 -->
 
-## Entity relationship diagram — core schema
+## Maintenance inventory
 
-The core schema clusters around memory/embeddings and regulation/system.
-Store-specific tables (`reg_records`, `reg_cursors`, `escalations`, the
-gallery tables) are created inline by their stores and are not in
-`schema.sql`.
+| Item | Fields or behavior | Evidence |
+|---|---|---|
+| `DATABASE_CATALOG_ENV` | `HKASK_DB_INVENTORY_PATH` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:12-14` |
+| `DATABASE_CATALOG_RELATIVE_PATH` | `maintenance/database-inventory.jsonl` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:13-15` |
+| `InventoryEntry` | path, configured, exists, recovery artifact, private file identity | `kask/crates/hkask-storage/src/maintenance_inventory.rs:168-175` |
+| `DatabaseInventory` | entries and search roots | `kask/crates/hkask-storage/src/maintenance_inventory.rs:177-181` |
+| `ConfirmedInventory` | confirmed preview, selected rotation paths, reasoned exclusions | `kask/crates/hkask-storage/src/maintenance_inventory.rs:183-205` |
+| `preview` | bounded read-only discovery; no DB opens or file creation | `kask/crates/hkask-storage/src/maintenance_inventory.rs:207-295` |
+| `confirm` | freshness, scope attestation, exclusions, recovery, hard-link, and non-empty checks | `kask/crates/hkask-storage/src/maintenance_inventory.rs:297-375` |
+
+A confirmation is an inventory receipt only. Quiescence and key publication are
+separate responsibilities.
+
+## Gallery and request-lifecycle entities
+
+All entities below are public through the public `gallery` module. The crate root
+also directly re-exports `GalleryMode`, `GalleryRecord`, `ImageRecord`,
+`TagRecord`, `FaceRegistryRecord`, `GalleryStore`, and `GalleryStoreError`
+(`kask/crates/hkask-storage/src/hkask_storage.rs:40-43`).
+
+| Entity | Role | Evidence |
+|---|---|---|
+| `GalleryMode` | read-only, copy-on-write, or destructive policy | `kask/crates/hkask-storage/src/gallery.rs:37-71` |
+| `GalleryRecord` | durable canonical root and aggregate view | `kask/crates/hkask-storage/src/gallery.rs:73-83` |
+| `ImageRecord` | stable path identity, content revision, presence, metadata freshness | `kask/crates/hkask-storage/src/gallery.rs:84-101` |
+| `AssetObservation` | one physical observation supplied by a scan request | `kask/crates/hkask-storage/src/gallery.rs:103-113` |
+| `GalleryScan` | request coverage, observations, and errors | `kask/crates/hkask-storage/src/gallery.rs:115-123` |
+| `ReconcileResult` | lifecycle counts plus exact assets requiring analysis | `kask/crates/hkask-storage/src/gallery.rs:125-135` |
+| `TagRecord` | persisted annotation | `kask/crates/hkask-storage/src/gallery.rs:203-213` |
+| `FaceRegistryRecord` | named face reference and status | `kask/crates/hkask-storage/src/gallery.rs:214-227` |
+| `WorkflowRecord` / `WorkflowSummary` | full persisted workflow and bounded list row | `kask/crates/hkask-storage/src/gallery.rs:229-246` |
+| `AlbumRecord` | nested metadata-only grouping | `kask/crates/hkask-storage/src/gallery.rs:248-259` |
+| `GenerationRecord` | provider-independent generation lineage | `kask/crates/hkask-storage/src/gallery.rs:261-285` |
+| `OmcCreationGraphRecord` | canonical MovieLabs OMC graph for one asset | `kask/crates/hkask-storage/src/gallery.rs:287-293` |
+
+```mermaid
+stateDiagram-v2
+    [*] --> Added
+    Added --> Current: analysis matches ID and hash
+    Added --> Changed: same path gets new hash
+    Current --> Changed: same path gets new hash
+    Changed --> Current: matching reanalysis commits
+    Added --> Missing: complete scan no longer sees path
+    Current --> Missing: complete scan no longer sees path
+    Changed --> Missing: complete scan no longer sees path
+    Missing --> Restored: same path reappears
+    Restored --> Current: matching reanalysis commits
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-STOR-004
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-storage/src/gallery.rs:84-135,598-725,741-815,836-930
+status: VERIFIED
+-->
+
+`GalleryStore::reconcile` commits observations and safe absence transitions in one
+transaction (`kask/crates/hkask-storage/src/gallery.rs:626-725`). Errors in scan
+coverage suppress absence inference. `persist_analysis_for_tag_types` applies a
+response only while image ID, gallery ID, hash, and non-missing state still match
+(`kask/crates/hkask-storage/src/gallery.rs:760-815`). Active list/count/index
+surfaces exclude missing records, while stable-ID inspection can include them
+(`kask/crates/hkask-storage/src/gallery.rs:728-739,836-930`).
+
+## Core schema
 
 ```mermaid
 erDiagram
-    hmems ||--o{ embeddings : "entity_ref (logical)"
-    hmems ||--o{ memory_links : "entity_a / entity_b"
-
+    hmems ||--o{ embeddings : entity_ref
+    hmems ||--o{ memory_links : entity_pair
     hmems {
         TEXT id PK
         TEXT entity
         TEXT attribute
         TEXT value
         TEXT valid_from
-
         TEXT recalled_at
         REAL confidence
         TEXT perspective
@@ -238,17 +199,6 @@ erDiagram
         INTEGER co_count
         TEXT last_linked
     }
-    audit_log {
-        TEXT id PK
-        TEXT timestamp
-        TEXT actor_webid
-        TEXT action
-        TEXT resource
-        TEXT outcome
-        TEXT details
-        TEXT ip_address
-        TEXT created_at
-    }
     reg_variety_checkpoint {
         TEXT domain PK
         INTEGER variety_count
@@ -257,157 +207,51 @@ erDiagram
     }
     reg_alerts {
         TEXT id PK
-        TEXT timestamp
-        TEXT alert_type
         TEXT severity
         TEXT domain
-        TEXT message
         INTEGER resolved
-        TEXT resolved_at
     }
     agent_registry {
         TEXT name PK
-        TEXT agent_kind
         TEXT definition_json
         TEXT token_hash
-        TEXT registered_at
-        TEXT source_yaml
     }
     loop_cursors {
         TEXT key PK
         INTEGER value
-        TEXT updated_at
     }
 ```
 
 <!-- DIAGRAM_ALIGNMENT
-id: DIAG-STOR-004
-verified_date: 2026-09-10
+id: DIAG-STOR-008
+verified_date: 2026-09-15
 verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-29
 status: VERIFIED
 -->
 
-## Schema clusters
-
-### Memory and embeddings
-
-The `hmems` table (`schema.sql:1`) is the entity-attribute-value store for
-hKask memory. Each retained row has `valid_from` (creation time) and
-`recalled_at` (recall-time decay
-clock, reset by `HMemStore::touch_recall` at `hmem.rs:501-507`),
-`owner_webid` and `visibility` (sovereignty), `perspective`
-(multi-perspective modeling), and `ontology` (a JSON blob carrying the
-dual-axis anchoring — DC+BIBO state axis + PKO process axis + 5W1H +
-open-world domain tags; `hmem.rs:53-58`). Ontology queries reach into the
-blob with SQLite `json_extract`, guarded by `json_valid(ontology)`
-(`hmem.rs`, ontology query methods). Each memory is a uni-temporal triple
-with `valid_from`; forgotten rows are deleted from the database (operator
-ruling 2026-09-04). On open, `core/connection.rs::migrate_hmems_forgetting_spec`
-purges rows marked for removal by the former lifecycle and drops its marker
-column in one transaction. A failed migration rolls back both changes.
-
-The `embeddings` table (`schema.sql:5`) stores vector embeddings keyed by
-`entity_ref`, with a `vector` BLOB (little-endian f32), `dimensions`,
-`model`, and `passage_text` (chunk text stored alongside the vector; the
-column is added to pre-existing DBs by an `ALTER TABLE` migration at
-`core/connection.rs:205-219`). The `vec_embeddings` virtual table
-(`schema.sql:7`) uses the `vec0` extension for cosine-similarity KNN
-search; its `$DIM` placeholder is replaced with `embedding_dim()` at load
-time (`core/connection.rs:193-195`).
-
-The `memory_links` table (`schema.sql:18-27`) tracks co-occurrence: how
-often two entities are recalled together. The link count is the
-`connectedness` signal for recall ranking.
-
-The `audit_log` table (`schema.sql:9`) records
-actor-action-resource-outcome tuples for compliance forensics.
-
-### Regulation and system
-
-The `reg_records` and `reg_cursors` tables are created inline in
-`RegulationArchive::init_schema` (`regulation_store.rs:76-104`, not in
-`schema.sql`). `reg_records` stores Regulation observable spans with
-`span_category`, `span_path`, `phase`, `observer_webid`, `observation`,
-`regulation`, `outcome`, `recursion_depth`, `parent_event`, and
-`visibility`. `reg_cursors` stores key-value loop state.
-
-The `escalations` table is created inline in `EscalationQueue::init`
-(`escalation.rs:83-103`) for the algedonic alert review path.
-
-The `reg_variety_checkpoint` table (`schema.sql:11`) tracks per-domain
-variety counts for Ashby's Law monitoring. The `reg_alerts` table
-(`schema.sql:12`) stores algedonic alerts with `severity` and `resolved`
-flag. The `agent_registry` table (`schema.sql:13`) registers agent
-definitions with `token_hash` for integrity verification. The `loop_cursors`
-table (`schema.sql:15`) stores key-value loop state for the Regulation
-cycle.
-
-## Port trait implementors
-
-One port trait from `hkask-types` is implemented in this crate:
-
-- `RegulationSink` by `RegulationArchive` at
-  `regulation_store.rs:474-486` (`persist` and `persist_if_absent`).
-
-The other stores (`EmbeddingStore`, `EscalationQueue`, `HMemStore`,
-`GalleryStore`) expose their methods as inherent impls rather than behind
-port traits.
-
-## D28 — Standardized Artifact Storage
-
-Under D28, storage artifacts live under a single rooted data tree
-(`{kask_data_dir}/`) with four class subdirs: `agents/`, `mcp/`, `skills/`,
-`threads/`. An artifact lives under the class subdir of the entity that owns
-it — agent-owned under `agents/{name}/`, server-owned under
-`mcp/{server_id}/`. The curator DB is `agents/curator/curator.db` (the "pod"
-concept was deprecated). MCP server DBs follow
-`mcp/{server_id}/{purpose}.db` (e.g. `mcp/kata-kanban/kanban.db`,
-`mcp/swarm/ledger.db`). See
-[`kask/docs/architecture/standardized-artifact-storage.md`](../../architecture/standardized-artifact-storage.md)
-for the full layout spec.
+Store-owned schemas add `reg_records`, `reg_cursors`, `escalations`, and gallery
+lifecycle tables outside the core schema
+(`kask/crates/hkask-storage/src/regulation_store.rs:76-104`;
+`kask/crates/hkask-storage/src/escalation.rs:83-103`;
+`kask/crates/hkask-storage/src/gallery.rs:295-384`).
 
 ## Passphrase rotation
 
-`rotation.rs::rotate_passphrase` re-encrypts a quiesced database using
-SQLCipher's schema export, rebuilding KNN and checking foreign keys/integrity
-before replacement. Individual renames are atomic; the full file sequence and
-multiple databases/keychain are **not** crash-atomic.
-
-| Enforcement | Location / behavior |
-|---|---|
-| Participating consumer quiescence | `core/connection.rs::database_lease` / `QuiescedDatabase`; exclusive lease is required through replacement. `LeasedSqliteConnection` drops the SQLite handle before its shared lease, including idle connections whose pool manager has already dropped. |
-| Recovery files | `rotation.rs::ensure_no_recovery_artifacts`; existing `.new`/`.old` and sidecars yield `RecoveryRequired` without cleanup. Normal pool opens also refuse unresolved artifacts. |
-| Path identity | Source is canonicalized for lease and replacement; symlinks remain aliases of the canonical target. Hard-link aliases are refused. |
-| Missing source | Refused before SQLCipher opens; startup cannot create an empty replacement while a backup awaits recovery. |
-| Single-file export failure | Original remains under its old key; only artifacts created by this attempt are cleaned up. |
-| Replacement failure | Backup restoration is attempted; failure names the retained recovery path. |
-
-Leases use an empty `<canonical-db>.maintenance-lock` file, never unlinked during
-normal operation. The lease protocol does not cover older binaries or direct
-SQLite callers. `SqliteConnectionManager` is exported by `hkask-storage`; its
-pooled connection dereferences to `rusqlite::Connection` while retaining ownership.
-
-`kask_bridge::rotate_all_kask_db_passphrases` still enumerates only five fixed
-paths and uses best-effort rollback. The approved T11 maintenance restart,
-external/caller-path inventory, all-DB journal, key-authority recovery, and visible
-reopen/resume are not yet implemented. Single-file tests are not certification
-of live settings rotation.
+`rotate_passphrase` re-encrypts one quiesced database through SQLCipher export,
+validates the exported database, and replaces the source while retaining recovery
+artifacts on failures that require operator action
+(`kask/crates/hkask-storage/src/rotation.rs:122-297`). The maintenance inventory
+identifies and confirms scope; it does not itself quiesce databases or make a
+multi-database/keychain operation crash-atomic.
 
 ## See also
 
-- [hkask-storage How-to](./how-to.md): procedural flowchart for adding a new
-  store or rotating a passphrase.
-- [hkask-storage Tutorial](./tutorial.md): the store lifecycle from
-  `Database` to CRUD.
-- [hkask-storage Explanation](./explanation.md): why the crate splits
-  `Database` from `SqliteDriver` and uses per-store `init_schema`.
-- [`kask/docs/architecture/standardized-artifact-storage.md`](../../architecture/standardized-artifact-storage.md):
-  the D28 layout spec.
+- [Why storage separates connection, inventory, and gallery identity](./explanation.md)
+- [How to add a store and review maintenance inventory](./how-to.md)
+- [Standardized artifact storage](../../architecture/standardized-artifact-storage.md)
 
 ---
 
-[^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. <https://martinfowler.com/books/eaa.html>. The Repository pattern that the store modules implement behind a provider-agnostic port.
-
-[^sqlcipher]: Zetetic LLC. (2024). *SQLCipher — Transparent SQLite Encryption.* <https://www.zetetic.net/sqlcipher/>. The encrypted SQLite extension that provides the database backend.
-
-[^sqlite-vec]: Aslett, A. (2024). *sqlite-vec: A vector search extension for SQLite.* <https://github.com/asg0171/sqlite-vec>. The `vec0` virtual table extension used by `EmbeddingStore::search`.
+[^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. <https://martinfowler.com/books/eaa.html>.
+[^sqlcipher]: Zetetic LLC. (2024). *SQLCipher — Transparent SQLite Encryption.* <https://www.zetetic.net/sqlcipher/>.
+[^sqlite-vec]: Aslett, A. (2024). *sqlite-vec: A vector search extension for SQLite.* <https://github.com/asg0171/sqlite-vec>.

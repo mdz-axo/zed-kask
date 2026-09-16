@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — How-to: Add a Regulation Sensor"
 audience: [developers]
-last_updated: 2026-08-31
-version: "2.0.0"
+last_updated: 2026-09-15
+version: "2.1.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [composition]
@@ -10,155 +10,126 @@ mds_categories: [composition]
 
 # hkask-regulation — How-to: Add a Regulation Sensor
 
-This guide shows how to add a new metric sensor to the Cybernetics Loop.
-Sensors are the afferent side of the homeostatic loop: each `Sensor`
-implementation produces one `SignalMetric` per tick, which `compute()`
-matches against `RegulationPolicy` rules to produce `RegulatoryAction`s.
+Use this guide to add one observable metric to the Cybernetics Loop. A sensor
+produces a current `Signal`; policy compares that signal with a set-point and
+chooses one truthful central disposition: `Notify` or `Escalate`. The sensor
+interface separates domain observation from the fitting loop, following the
+extractor separation associated here with Fermi's measurement practice.[^fermi]
 
-The `Sensor` trait (`sensor_provider.rs:27`) follows the Fermi Extractor
-pattern — domain extraction is separated from the fitting loop, so each
-metric gets its own implementation registered with a `SensorBus`
-(`sensor_provider.rs:39`).
+## Current extension points
 
-## Source citations
-
-| Symbol | Location |
-|--------|----------|
-| `Sensor` trait | `kask/crates/hkask-regulation/src/sensor_provider.rs:27-30` |
-| `SensorBus` (per-loop registry) | `kask/crates/hkask-regulation/src/sensor_provider.rs:39` |
-| `SensorBus::register` | `kask/crates/hkask-regulation/src/sensor_provider.rs:52` |
-| `SensorBus::sense_all` | `kask/crates/hkask-regulation/src/sensor_provider.rs:57` |
-
-| `VarietySensor` (reference impl) | `kask/crates/hkask-regulation/src/sensor_provider.rs:126` |
-| `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:231,248-279` |
-| `SignalMetric` enum | `kask/crates/hkask-regulation/src/loops/signals.rs:14` |
-| `Signal` struct | `kask/crates/hkask-regulation/src/loops/signals.rs:227` |
-| `RegulationPolicy::default` (rules) | `kask/crates/hkask-regulation/src/regulation_policy.rs:119` |
-| `SetPoints` (set-point values) | `kask/crates/hkask-regulation/src/set_points.rs:186` |
+| Extension point | Current location |
+|---|---|
+| `Sensor` trait | `kask/crates/hkask-regulation/src/sensor_provider.rs:27-35` |
+| `SensorBus` registry | `kask/crates/hkask-regulation/src/sensor_provider.rs:39-71` |
+| `SignalMetric` | `kask/crates/hkask-regulation/src/loops/signals.rs:14-99` |
+| `Signal` and `Deviation` | `kask/crates/hkask-regulation/src/loops/signals.rs:227-293` |
+| `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:66-102` |
+| `SetPoints` | `kask/crates/hkask-regulation/src/set_points.rs:186-330` |
+| Sensor wiring | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:231-279` |
+| Central dispositions | `kask/crates/hkask-regulation/src/loops/actions.rs:141-160` |
 
 ## Procedure
 
 ```mermaid
 flowchart TD
-    A[Step 1: Add SignalMetric variant] --> B[Step 2: Add RegulationReason + rule]
-    B --> C[Step 3: Add set-point field]
-    C --> D[Step 4: Implement Sensor trait]
-    D --> E[Step 5: Register in CyberneticsLoop::build]
-    E --> F[Step 6: Add substitution ladder entry]
-    F --> G[Step 7: Run clippy + tests]
+    A[Add SignalMetric variant and string mapping] --> B[Add RegulationReason and policy rule]
+    B --> C[Add set-point configuration and validation]
+    C --> D[Implement Sensor observe]
+    D --> E[Register or replace the sensor]
+    E --> F[Choose Notify or Escalate]
+    F --> G[Add behavior tests]
+    G --> H[Run crate tests and project clippy]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-002
-verified_date: 2026-08-31
-verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27,39,52,57,79,126; kask/crates/hkask-regulation/src/cybernetics_loop.rs:231,248-279; kask/crates/hkask-regulation/src/loops/signals.rs:14,227; kask/crates/hkask-regulation/src/regulation_policy.rs:119; kask/crates/hkask-regulation/src/set_points.rs:186
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-71; kask/crates/hkask-regulation/src/cybernetics_loop.rs:231-279; kask/crates/hkask-regulation/src/loops/signals.rs:14-99,227-293; kask/crates/hkask-regulation/src/regulation_policy.rs:66-102; kask/crates/hkask-regulation/src/loops/actions.rs:141-160; kask/crates/hkask-regulation/src/set_points.rs:186-330
 status: VERIFIED
 -->
 
-### Step 1: Add a `SignalMetric` variant
+### 1. Add the metric identity
 
-Add the new metric to `SignalMetric` (`loops/signals.rs:14`) and its
-snake_case string to `as_str()` (`loops/signals.rs:100`). The string is used
-as the stagnation-detector key and in `LoopMetrics::from_cycle` fidelity
-matching (`loops/core.rs:241`).
+Add a variant to `SignalMetric` and its stable snake-case mapping in `as_str()`
+(`kask/crates/hkask-regulation/src/loops/signals.rs:14-112`). If the metric can
+arrive by name, update `from_str_name()` in the same file. The stable identity is
+used by observations, policy matching, and impact checks.
 
-### Step 2: Add a `RegulationReason` and rule
+### 2. Add the reason and policy rule
 
-Add a variant to `RegulationReason` (`regulation_policy.rs:18`) and its
-`as_str()` mapping (`regulation_policy.rs:49`). Then add a `RegulationRule`
-to `RegulationPolicy::default()` (`regulation_policy.rs:119`) that matches
-the new metric and direction, with a `ProposedAction`
-(`regulation_policy.rs:85`) naming the `ActionType` to propose. The
-compiler verifies that every policy-table entry has a corresponding dispatch
-arm — see the test `build_regulation_action_produces_action_for_all_new_reasons`
-(`cybernetics_loop/cycle.rs:1553`).
+Add a `RegulationReason` variant and its wire string
+(`kask/crates/hkask-regulation/src/regulation_policy.rs:12-63`). Add one
+`RegulationRule` to `RegulationPolicy::default()` with the metric, deviation
+direction, target, reason, and an `ActionType`
+(`kask/crates/hkask-regulation/src/regulation_policy.rs:66-102,112-349`).
 
-### Step 3: Add a set-point field
+Choose only:
 
-Add the set-point to `SetPoints` (`set_points.rs:186`), its `Default`
-(`set_points.rs:349`), the `SetPointsConfig` mirror (`set_points.rs:298`),
-the `from_config` mapping (`set_points.rs:389`), and a `validate()` check
-(`set_points.rs:482`) if the value has range constraints. Add a
-`DEFAULT_*` constant near the top of the file (`set_points.rs:13` onward)
-so the default is declared once.
+- `Notify` for an informational observation that requires no intervention.
+- `Escalate` for an evidence-bearing condition requiring Curation or human review.
 
-### Step 4: Implement the `Sensor` trait
+Do not add an action label without an implemented handler. Automatic control
+belongs in a target-local controller with a typed observation or receipt seam back
+to Regulation. The implemented central action enum is exactly
+`Escalate | Notify` (`kask/crates/hkask-regulation/src/loops/actions.rs:141-148`).
 
-Create the sensor in `sensor_provider.rs`, following `VarietySensor` or
-`ToolReliabilitySensor`.
-The trait requires:
+### 3. Add the set-point
 
-- `async fn observe(&self) -> Option<Signal>` — return measured healthy and
-  degraded readings; return `None` only when no current observation is available.
-- Register metrics independently when a source exposes several readings.
-- Encode floor/ceiling health in `Deviation::from_signal`; do not suppress
-  healthy readings at the sensor or durable alerts cannot recover.
-- A test-only `sense()` helper filters observations to deviations. Production
-  `SensorBus` uses `observe()`, not this helper.
+Add the field to `SetPoints` and `SetPointsConfig`, declare its default once as a
+`DEFAULT_*` constant, map it in `from_config`, and add range or ordering checks in
+`validate()` when applicable
+(`kask/crates/hkask-regulation/src/set_points.rs:10-114,122-227,245-459`).
 
-The `Signal::new` constructor (`loops/signals.rs:236`) stamps the signal
-with `chrono::Utc::now()`.
+### 4. Implement `Sensor::observe`
 
-### Step 5: Register in `CyberneticsLoop::build`
+Implement `Sensor` in `kask/crates/hkask-regulation/src/sensor_provider.rs`.
+Return healthy and degraded current observations; return `None` only when no
+current observation is available. Healthy readings are required so durable
+conditions can later be reconciled as recovered. `Signal::new` stamps the
+observation time (`kask/crates/hkask-regulation/src/loops/signals.rs:227-247`).
 
-In `CyberneticsLoop::build()` (`cybernetics_loop.rs:231`), inside the
-`sensor_registry` block (`cybernetics_loop.rs:248-279`), add:
+For a source exposing several independent conditions, use one sensor identity per
+metric so one deficit cannot hide another metric's recovery.
 
-```rust
-registry.register(Arc::new(YourSensor::new(/* set_point */)));
-```
+### 5. Wire the sensor
 
-The registry is wrapped in `Arc<SensorBus>` and stored on the loop
-(`cybernetics_loop.rs:193`). `sense()` calls
-`self.sensor_registry.sense_all(LoopId::Cybernetics)`
-(`cybernetics_loop/cycle.rs:264`).
+For a startup-stable source, register the sensor in `CyberneticsLoop::build`
+(`kask/crates/hkask-regulation/src/cybernetics_loop.rs:231-279`). For a source
+that can be rewired after startup, replace the provider by metric identity through
+`SensorBus::replace` rather than registering a duplicate
+(`kask/crates/hkask-regulation/src/sensor_provider.rs:52-71`).
 
-For a source that can be rewired after startup, call `SensorBus::replace`
-with the metric identity instead of `register`; this prevents stale providers
-from emitting duplicate deviations.
+### 6. Pin the behavior
 
-### Step 6: Choose a truthful disposition
+Add tests that prove:
 
-A central policy rule may return only `Notify` or `Escalate`, because those
-are the central loop's implemented routes. Target-specific automatic control
-belongs beside its enforcement point and returns typed observations or
-receipts to regulation. Do not add an action label without its handler in the
-same change.
+1. healthy and deviating values produce the expected signal/deviation behavior;
+2. the policy emits exactly one intended `Notify` or `Escalate` disposition; and
+3. the disposition reaches its implemented observation or review path.
 
-### Step 7: Run clippy and tests
-
-From the `kask/` directory:
+Run from the repository root:
 
 ```sh
-./script/clippy
 cargo test -p hkask-regulation
+./script/clippy
 ```
-
-Per the project `.rules`, use `./script/clippy` instead of `cargo clippy`.
-Add a unit test in `sensor_provider.rs` that constructs the sensor, calls
-`sense()`, and asserts the returned `Signal` carries the expected metric
-and a value that crosses the set-point.
 
 ## Wiring checklist
 
-- [ ] `SignalMetric` variant + `as_str()` entry
-- [ ] `RegulationReason` variant + `as_str()` entry
-- [ ] `RegulationRule` in `RegulationPolicy::default()`
-- [ ] `SetPoints` field + `Default` + `SetPointsConfig` + `from_config` + `validate()`
-- [ ] `Sensor::observe()` implementation
-- [ ] `register()` for static sources or metric-keyed `replace()` for late sources
-- [ ] `Notify` or `Escalate` route, or a target-local controller with a receipt seam
-- [ ] Unit test in `sensor_provider.rs`
-- [ ] Behavior test proving one observation and one disposition per condition
+- [ ] Metric variant and stable string mappings
+- [ ] Reason variant and policy rule
+- [ ] Set-point default, config mapping, and validation
+- [ ] Healthy and degraded `observe()` results
+- [ ] Static registration or metric-keyed replacement
+- [ ] `Notify` or Curation-targeted `Escalate`
+- [ ] Behavior tests and validation commands
 
 ## See also
 
-- [hkask-regulation Reference](./reference.md): class diagram of the
-  sensor bus and loop.
-- [hkask-regulation Tutorial](./tutorial.md): reading a regulation cycle.
-- [hkask-regulation Explanation](./explanation.md): why sensors are
-  pluggable.
+- [Why Regulation separates observation, advice, and local control](./explanation.md)
+- [hkask-regulation reference](./reference.md)
 
 ---
 
-[^fermi]: Fermi, E. (1946). *Lectures on neutrons.* In J. Orear, A. H. Rosenfeld, & R. A. Schluter (Eds.), *Nuclear Physics* (1950 ed.). University of Chicago Press. The "Fermi Extractor" pattern is named after Fermi's separation of data extraction from the fitting loop in his neutron-diffusion work.
+[^fermi]: Fermi, E. (1946). *Lectures on neutrons.* In J. Orear, A. H. Rosenfeld, & R. A. Schluter (Eds.), *Nuclear Physics* (1950 ed.). University of Chicago Press.

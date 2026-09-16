@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: evaluate-chunk-retrieval.sh [--resume] <policy-label> <direct|small-to-big> \
+usage: evaluate-chunk-retrieval.sh [--resume | --reuse-raw <raw-results-jsonl>] \
+  <policy-label> <direct|small-to-big> \
   <queries-jsonl> <retrieval-representation-jsonl> <index-db> <output-dir> \
   <top-k> <word-budget> [<child-parent-map-jsonl> <parent-representation-jsonl>]
 EOF
@@ -11,9 +12,14 @@ EOF
 }
 
 resume=false
+reuse_raw=
 if [[ ${1:-} == --resume ]]; then
     resume=true
     shift
+elif [[ ${1:-} == --reuse-raw ]]; then
+    [[ $# -ge 3 ]] || usage
+    reuse_raw=$2
+    shift 2
 fi
 if [[ $# -ne 8 && $# -ne 10 ]]; then
     usage
@@ -54,6 +60,10 @@ if [[ -e "$output_dir" && "$resume" != true ]]; then
 fi
 if [[ "$resume" == true && ! -d "$output_dir" ]]; then
     echo "resume output directory does not exist: $output_dir" >&2
+    exit 66
+fi
+if [[ -n "$reuse_raw" && ! -f "$reuse_raw" ]]; then
+    echo "reused raw-results JSONL does not exist: $reuse_raw" >&2
     exit 66
 fi
 for command in jq sha256sum sync; do
@@ -131,7 +141,11 @@ if [[ "$resume" == true ]]; then
         fi
     done
 else
-    : > "$raw_results"
+    if [[ -n "$reuse_raw" ]]; then
+        cp "$reuse_raw" "$raw_results"
+    else
+        : > "$raw_results"
+    fi
     : > "$server_log"
 fi
 
@@ -140,6 +154,7 @@ chunk_count=$(wc -l < "$retrieval_representation" | tr -d ' ')
 index_bytes=$(stat -c %s "$index_db")
 query_sha256=$(sha256sum "$queries" | cut -d' ' -f1)
 representation_sha256=$(sha256sum "$retrieval_representation" | cut -d' ' -f1)
+parameter_embedding_model=${HKASK_EMBEDDING_MODEL:-host-resolved}
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "$resume" == true ]]; then
     jq -e \
@@ -168,7 +183,7 @@ else
         --arg representation_sha256 "$representation_sha256" \
         --arg index_db "$index_db" \
         --arg started_at "$started_at" \
-        --arg embedding_model "${HKASK_EMBEDDING_MODEL:-host-resolved}" \
+        --arg embedding_model "$parameter_embedding_model" \
         --argjson query_count "$query_count" \
         --argjson chunk_count "$chunk_count" \
         --argjson index_bytes "$index_bytes" \
@@ -191,11 +206,12 @@ if [[ -s "$raw_results" ]]; then
 fi
 completed=$(wc -l < "$completed_ids" | tr -d ' ')
 
-binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
-if [[ ! -f "$binary" ]]; then
-    echo "corpus MCP binary does not exist: $binary" >&2
-    exit 66
-fi
+if [[ -z "$reuse_raw" ]]; then
+    binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
+    if [[ ! -f "$binary" ]]; then
+        echo "corpus MCP binary does not exist: $binary" >&2
+        exit 66
+    fi
 
 if [[ -z ${HKASK_CORPUS_BINARY:-} || -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
     host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
@@ -217,6 +233,10 @@ if [[ -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
     echo "corpus inference configuration is incomplete" >&2
     exit 69
 fi
+parameter_embedding_model=$HKASK_EMBEDDING_MODEL
+parameter_tmp=$(mktemp "$output_dir/.parameters.json.tmp.XXXXXX")
+jq --arg model "$parameter_embedding_model" '.embedding_model = $model' "$parameters" > "$parameter_tmp"
+mv -f "$parameter_tmp" "$parameters"
 unset HKASK_DB_PASSPHRASE
 response_timeout=${HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS:-$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))}
 if [[ ! "$response_timeout" =~ ^[1-9][0-9]*$ ]]; then
@@ -302,6 +322,14 @@ done < "$queries"
 
 cleanup
 trap - EXIT
+else
+    if [[ "$parameter_embedding_model" == host-resolved ]]; then
+        echo "offline raw reuse requires HKASK_EMBEDDING_MODEL for provenance" >&2
+        exit 69
+    fi
+    printf 'reused_raw_results=%s queries=%d\n' "$reuse_raw" "$completed" >&2
+fi
+rm -f "$completed_ids"
 
 if (( completed != query_count )); then
     echo "query reconciliation failed: completed=$completed planned=$query_count" >&2
@@ -357,8 +385,9 @@ def direct_result($raw; $rows; $budget):
        first_exact_rank:(([$hits[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
        first_correct_source_rank:(([$hits[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
      budget_metrics:{
-       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
-       correct_source_found:any($contexts[]; .source == $raw.query_spec.source)},
+       exact_evidence_found:(if $admitted.budget_exceeded then false else any($contexts[]; .text | contains($raw.query_spec.evidence_quote)) end),
+       correct_source_found:(if $admitted.budget_exceeded then false else any($contexts[]; .source == $raw.query_spec.source) end),
+       strict_budget_satisfied:($admitted.budget_exceeded | not)},
      retrieved_words:$admitted.retrieved_words,budget_exceeded:$admitted.budget_exceeded,
      duplicate_overlap:duplicate_stats($contexts),
      source_fidelity_violations:[$hits[].violations[]?],
@@ -402,8 +431,9 @@ def small_result($raw; $children_by_ref; $maps_by_child; $parents_by_ref; $budge
        first_exact_rank:(([$expanded[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
        first_correct_source_rank:(([$expanded[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
      budget_metrics:{
-       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
-       correct_source_found:any($contexts[]; .source == $raw.query_spec.source)},
+       exact_evidence_found:(if $admitted.budget_exceeded then false else any($contexts[]; .text | contains($raw.query_spec.evidence_quote)) end),
+       correct_source_found:(if $admitted.budget_exceeded then false else any($contexts[]; .source == $raw.query_spec.source) end),
+       strict_budget_satisfied:($admitted.budget_exceeded | not)},
      retrieved_words:$admitted.retrieved_words,budget_exceeded:$admitted.budget_exceeded,
      duplicate_overlap:duplicate_stats($contexts),
      source_fidelity_violations:([$children[].violations[]?] + [$expanded[].violations[]?]),
@@ -441,7 +471,7 @@ sync -d "$per_query_results"
 jq -s \
     --arg policy "$policy" \
     --arg mode "$mode" \
-    --arg model "$HKASK_EMBEDDING_MODEL" \
+    --arg model "$parameter_embedding_model" \
     --arg query_sha256 "$query_sha256" \
     --arg representation_sha256 "$representation_sha256" \
     --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

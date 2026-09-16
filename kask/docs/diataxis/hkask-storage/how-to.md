@@ -1,199 +1,174 @@
 ---
-title: "hkask-storage — How-to: Add a New Store or Rotate a Passphrase"
+title: "hkask-storage — How-to: Add a Store and Review Maintenance Inventory"
 audience: [developers]
-last_updated: 2026-08-31
-version: "2.1.0"
+last_updated: 2026-09-15
+version: "2.2.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [composition]
 ---
 
-# hkask-storage — How-to: Add a New Store or Rotate a Passphrase
+# hkask-storage — How-to: Add a Store and Review Maintenance Inventory
 
-This guide shows how to add a new table or store in `hkask-storage`. The
-crate uses a per-store `init_schema` pattern rather than a centralized
-migration runner: each store module owns its schema and runs
-`CREATE TABLE IF NOT EXISTS` statements during `from_driver` construction.
-SQLite is the only backend.
+Use Procedure A to add a table-backed store. Use Procedure B to preview and
+confirm the database path set before an already-designed maintenance operation.
+The store pattern follows Fowler's Repository separation: callers use domain
+methods while the store uses the database port.[^fowler-poeaa]
 
-## Source citations
-
-| Symbol | Location |
-|--------|----------|
-| Core schema loader (`initialize_schema`) | `kask/crates/hkask-storage/src/core/connection.rs:192-204` |
-| `Database::open` (file infrastructure) | `kask/crates/hkask-storage/src/core/connection.rs:163-165` |
-| `Database::in_memory` (test pool) | `kask/crates/hkask-storage/src/core/connection.rs:184-186` |
-| `Database::sqlite_pool` (r2d2 pool + schema) | `kask/crates/hkask-storage/src/core/connection.rs:230-252` |
-| `open_database` dispatcher | `kask/crates/hkask-storage/src/core/connection.rs:435-446` |
-| `open_or_repair` (non-destructive open) | `kask/crates/hkask-storage/src/core/connection.rs:429-434` |
-| `define_driver_store!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:44-71` |
-| `impl_from_db_error!` macro | `kask/crates/hkask-storage/src/core/store_macros.rs:79-86` |
-| `DatabaseDriver` trait | `kask/crates/hkask-storage/src/database/driver.rs:16-58` |
-| `query_map` / `query_row` helpers | `kask/crates/hkask-storage/src/database/driver.rs:78-109` |
-| `TransactionHandle` (RAII tx) | `kask/crates/hkask-storage/src/database/transaction.rs` |
-| `DbValue` / `DbRow` typed values | `kask/crates/hkask-storage/src/database/value.rs` |
-| `SqliteDriver::new` / `new_labeled` / `with_durability` | `kask/crates/hkask-storage/src/database/sqlite.rs:67-102` |
-| `SqliteDriver::in_memory_pool` | `kask/crates/hkask-storage/src/database/sqlite.rs:86-101` |
-| `WAL_PRAGMA_BATCH` (PRAGMA ordering) | `kask/crates/hkask-storage/src/database/sqlite.rs:24-25` |
-| `sanitize_path` (traversal guard) | `kask/crates/hkask-storage/src/core/security.rs:17-54` |
-| Core schema (`schema.sql`) | `kask/crates/hkask-storage/src/core/sql/schema.sql:1-27` |
-| `regulation_store.rs` `init_schema` (store-specific pattern) | `kask/crates/hkask-storage/src/regulation_store.rs:76-104` |
-| `gallery.rs` `init_schema` (multi-table pattern) | `kask/crates/hkask-storage/src/gallery.rs:193-270` |
-| `rotate_passphrase` | `kask/crates/hkask-storage/src/rotation.rs:122-297` |
-| Rotation tests | `kask/crates/hkask-storage/src/rotation.rs` |
-
-## Procedure
+## Procedure A: Add a store
 
 ```mermaid
 flowchart TD
-    A["Identify owning store module"] --> B{"Core or store-specific?"}
-    B -- "core (shared)" --> C["Add CREATE TABLE to schema.sql"]
-    B -- "store-specific" --> D["Add CREATE TABLE to store init_schema"]
-    C --> E["Store init_schema becomes a no-op"]
-    D --> F["Add store struct + impl_from_db_error!"]
-    E --> G["Add CRUD methods on the driver"]
-    F --> G
-    G --> H["Add tests using in_memory_pool"]
-    H --> I["Run cargo test -p hkask-storage"]
-    I --> J["Run ./script/clippy"]
+    A[Choose core or store-owned schema] --> B[Add idempotent schema]
+    B --> C[Define store with driver-store macro]
+    C --> D[Add typed CRUD methods]
+    D --> E[Use one connection for transactions]
+    E --> F[Add in-memory behavior tests]
+    F --> G[Run crate tests and project clippy]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:192-204,435-446; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/regulation_store.rs:76-104; kask/crates/hkask-storage/src/gallery.rs:193-270
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:272-335,394-415; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/hmem.rs:404-476
 status: VERIFIED
 -->
 
-### Step 1: Identify the owning store module
+### 1. Choose schema ownership
 
-Determine which store module owns the new table. If the table is used by
-multiple stores or is foundational (like `hmems`, `embeddings`,
-`agent_registry`, `memory_links`), it belongs in
-`src/core/sql/schema.sql` (loaded by `initialize_schema` in
-`core/connection.rs:192-204`). If the table is specific to one store (like
-`reg_records` for regulation or `escalations` for the escalation queue), it
-belongs in that store's `init_schema` method.
+Put foundational tables used across stores in
+`kask/crates/hkask-storage/src/core/sql/schema.sql:1-29`. Put a domain-specific
+table in that store's `init_schema`, following Regulation, escalation, or gallery
+(`kask/crates/hkask-storage/src/regulation_store.rs:76-104`;
+`kask/crates/hkask-storage/src/escalation.rs:83-103`;
+`kask/crates/hkask-storage/src/gallery.rs:295-384`).
 
-### Step 2: Add the `CREATE TABLE` statement
+`CREATE TABLE IF NOT EXISTS` does not add columns to an existing table. For a
+column addition, inspect `PRAGMA table_info` and run an explicit migration, as the
+embedding and forgetting-spec migrations do
+(`kask/crates/hkask-storage/src/core/connection.rs:281-335`).
 
-For **core tables**, add the statement to `src/core/sql/schema.sql`. The
-file uses `CREATE TABLE IF NOT EXISTS` statements; the `IF NOT EXISTS`
-clause makes initialization idempotent. The `$DIM` placeholder in
-`vec_embeddings` is replaced with `embedding_dim()` at load time
-(`core/connection.rs:193-195`). Note that `IF NOT EXISTS` cannot add columns
-to an existing table — column additions to core tables need a
-`PRAGMA table_info` check + `ALTER TABLE` migration, as
-`migrate_embeddings_passage_text` does (`core/connection.rs:205-219`).
+### 2. Define the store
 
-For **store-specific tables**, add the statement inside the store's
-`init_schema` method. The method receives a `&Arc<dyn DatabaseDriver>` and
-calls `driver.execute_batch(sql)`. See `regulation_store.rs:76-104` for the
-single-table pattern and `gallery.rs:193-270` for the multi-table pattern
-(galleries, images, tags, face_registry, workflow, generation, albums,
-album members, with indexes and foreign keys).
+Use `define_driver_store!(MyStore)` to generate the driver-backed struct,
+`from_driver`, and `driver()` accessor. Use the two-argument form for a domain
+error and `impl_from_db_error!` for error conversion
+(`kask/crates/hkask-storage/src/core/store_macros.rs:44-86`). Construction runs
+`init_schema` and propagates failure.
 
-### Step 3: Wire the store struct
+### 3. Add operations through `DatabaseDriver`
 
-If you are adding a new store, invoke `define_driver_store!(MyStore)` to
-generate the struct, `from_driver` constructor, and `driver()` accessor
-(`core/store_macros.rs:44-71`). If your store's domain error is distinct
-from `InfrastructureError`, pass it as the second macro argument:
-`define_driver_store!(MyStore, MyError)`. Then implement `init_schema` in
-a separate `impl` block — for core-owned tables, return `Ok(())`.
+Use `execute`, `execute_batch`, `query`, and `query_optional` from
+`DatabaseDriver`, plus `query_map` and `query_row` for typed mapping
+(`kask/crates/hkask-storage/src/database/driver.rs:16-109`). Do not present
+`DbValue` as encrypted data; it is the typed SQL parameter/result representation
+(`kask/crates/hkask-storage/src/database/value.rs:8-46`). File encryption is
+provided at the SQLCipher connection layer.
 
-Add `impl_from_db_error!(MyError, Infra)` to derive `From<DbError>` mapping
-to `MyError::Infra(InfrastructureError::from(e))`
-(`core/store_macros.rs:79-86`).
+For an atomic multi-statement operation, hold one pooled connection and one RAII
+transaction. `HMemStore::update` is the reference shape
+(`kask/crates/hkask-storage/src/hmem.rs:404-476`). Separate driver calls may use
+separate pooled connections and therefore do not form one transaction.
 
-### Step 4: Add CRUD methods
+### 4. Test the behavior
 
-Add methods to the store struct for inserting, querying, updating, and
-deleting rows. The store holds an `Arc<dyn DatabaseDriver>` (generated by
-the macro) and calls `driver.execute` or `driver.query`. For typed row
-mapping, use the free functions `query_map` and `query_row`
-(`database/driver.rs:78-109`). For multi-statement atomicity, hold a single
-pooled connection and use its RAII transaction — see `HMemStore::update`
-(`hmem.rs:404-476`), which documents why per-call `BEGIN`/`COMMIT` on
-separate pool connections is not a transaction at all.
+Use `SqliteDriver::in_memory_pool()` for store tests
+(`kask/crates/hkask-storage/src/database/sqlite.rs:86-106`). Verify CRUD behavior,
+constraint failures, transaction rollback, and corrupted-row error propagation.
+The in-memory pool has one connection so tests preserve read-your-writes semantics
+(`kask/crates/hkask-storage/src/core/connection.rs:394-415`).
 
-### Step 5: Add tests
+Run from the repository root:
 
-Add tests in the store module. The tests should build a driver via
-`SqliteDriver::in_memory_pool()` (which loads the core schema,
-`database/sqlite.rs:86-101`), construct the store with `from_driver`, and
-verify the CRUD methods.
+```sh
+cargo test -p hkask-storage
+./script/clippy
+```
 
-Run the tests with `cargo test -p hkask-storage`, then run `./script/clippy`
-(repo rule: use `./script/clippy` instead of `cargo clippy`).
+## Procedure B: Preview and confirm maintenance inventory
 
-## Common pitfalls
+Inventory confirmation records scope; it does not quiesce consumers, rotate files,
+or publish a key.
 
-- **PRAGMA ordering**: `busy_timeout` MUST be set before
-  `journal_mode = WAL` because the WAL mode change acquires a brief
-  exclusive lock. With `busy_timeout = 0` (SQLite default), any lock
-  contention fails immediately with `SQLITE_BUSY`. Use `WAL_PRAGMA_BATCH`
-  (`database/sqlite.rs:24-25`) rather than inlining PRAGMA strings.
-- **In-memory pool size**: `SqliteConnectionManager::memory()` creates a
-  separate in-memory database per connection. A pool size > 1 scatters
-  writes across independent databases, breaking read-your-writes. Use
-  `max_size(1)` for in-memory pools (`core/connection.rs:280-303`).
-- **Path traversal**: any user-supplied path passed to a store MUST go
-  through `sanitize_path(base, input)` (`core/security.rs:17-54`), which
-  rejects `..` components and verifies the joined path stays within
-  `base`.
-- **Per-connection sqlite-vec loading**: `init_sqlite_vec_on` must run
-  BEFORE schema init (which creates `vec0` virtual tables) and is scoped
-  per connection to avoid the deprecated `sqlite3_auto_extension`
-  teardown segfault (`core/connection.rs:43-76`).
-- **Corrupted rows must propagate**: `HMemStore::query_rows` logs and
-  propagates row-decode errors rather than skipping them
-  (`hmem.rs:180-189`) — a silently skipped row reads as "no deviation"
-  to the regulation loop. Follow the same discipline in new stores.
+```mermaid
+flowchart TD
+    A[Read managed catalog] --> B[Preview configured, discovered, and explicit paths]
+    B --> C{Inventory complete and current?}
+    C -->|no| D[Stop and repair scope or catalog]
+    C -->|yes| E[Record reasoned exclusions]
+    E --> F[Preview again]
+    F --> G{Preview unchanged?}
+    G -->|no| B
+    G -->|yes| H[Confirm inventory receipt]
+    H --> I[Validate receipt immediately before maintenance]
+```
 
-## Rotate a DB passphrase
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-STOR-007
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-storage/src/maintenance_inventory.rs:57-101,168-218,220-295,297-375
+status: VERIFIED
+-->
 
-**Do not use the current settings path to rotate valuable live databases.**
-Core-review T11's maintenance-restart workflow is approved (2026-09-06), but its
-inventory, operation drain, offline journal, key publication, and reopen/resume
-orchestration are not yet implemented. The current bridge enumerates five fixed
-DB paths; it does not discover all caller-supplied corpus paths or provide
-multi-database/keychain crash atomicity.
+### 1. Read the managed catalog
 
-For an already-quiesced, isolated database, `rotation.rs::rotate_passphrase`:
+The canonical catalog location is configured through
+`DATABASE_CATALOG_ENV` and `DATABASE_CATALOG_RELATIVE_PATH`; both constants and
+the configuration/read functions are public
+(`kask/crates/hkask-storage/src/maintenance_inventory.rs:12-20,37-48,94-101`).
+Treat a missing or malformed catalog as an error, not as an empty known set.
 
-1. Validates the passphrase and refuses existing `.old`/`.new` recovery artifacts
-   or sidecars. It never creates a missing source as an empty database.
-2. Canonicalizes the source (hard-link aliases are refused) and acquires an
-   exclusive lease. Participating pool owners must have closed their connections;
-   `core/connection.rs::LeasedSqliteConnection` retains shared leases until close.
-3. Uses SQLCipher `sqlcipher_export`, preserves schema/FTS/rowids, rebuilds KNN
-   from canonical embedding rows, and validates foreign keys and integrity before
-   replacement. Export failure preserves the old source.
-4. Closes rotation connections and replaces files while retaining the exclusive
-   lease. Failed replacement attempts backup restoration. A failed restoration
-   requires explicit recovery; the next open/retry preserves the remaining files.
+### 2. Build a bounded preview
 
-The empty `<canonical-db>.maintenance-lock` file has a stable inode and must not
-be deleted to bypass a lock. Older binaries/direct SQLite opens do not participate;
-the caller must still establish quiescence for those consumers. Closing only the
-`Database` facade is insufficient while any pool/connection clone survives.
+Call `DatabaseInventory::preview(configured, roots, additional)`. It combines
+configured paths, explicit historical/external paths, and database paths inferred
+from maintenance markers below bounded search roots. It does not traverse directory
+symlinks and fails rather than returning a partial inventory when the scan cap is
+reached (`kask/crates/hkask-storage/src/maintenance_inventory.rs:207-295`).
 
-Run `cargo test --offline --locked -p hkask-storage --lib -- --test-threads=1`
-with temporary data/artifact roots. Tests cover RSS FTS and KNN recall after
-reopen, pool/connection lifetime and process leases, preserved recovery artifacts,
-wrong-key rejection, and failed preservation. They do not certify the unfinished
-T11 maintenance workflow.
+### 3. Confirm against a fresh preview
+
+Call `preview` again and pass both snapshots to `DatabaseInventory::confirm` with:
+
+- explicit confirmation that historical/external inventory is complete;
+- a non-empty reason for each excluded independent database; and
+- no exclusion for a configured shared-key database.
+
+Confirmation rejects changed snapshots, unresolved recovery artifacts, ambiguous
+hard links, and an empty rotation set
+(`kask/crates/hkask-storage/src/maintenance_inventory.rs:297-375`).
+
+### 4. Validate before maintenance
+
+Call `ConfirmedInventory::validate_current` against the newest preview immediately
+before using `rotate_paths()`
+(`kask/crates/hkask-storage/src/maintenance_inventory.rs:183-205`). Establish
+quiescence separately; the inventory receipt is not a maintenance lease.
+Single-database rotation itself is implemented by `rotate_passphrase`
+(`kask/crates/hkask-storage/src/rotation.rs:122-297`).
+
+## Gallery scan and analysis requests
+
+When adding gallery-facing work, carry exact lifecycle entities rather than
+positional guesses:
+
+- `AssetObservation` describes one physical asset.
+- `GalleryScan` carries observations plus coverage and errors.
+- `ReconcileResult` reports added, changed, restored, missing, and unchanged counts
+  and returns exact `analysis_assets`.
+
+These types are defined at `kask/crates/hkask-storage/src/gallery.rs:103-135` and
+consumed atomically by `GalleryStore::reconcile` at
+`kask/crates/hkask-storage/src/gallery.rs:626-725`. Persist an analysis response
+through `persist_analysis` or `persist_analysis_for_tag_types`; both refuse to
+apply an old request when image identity, hash, or presence no longer matches
+(`kask/crates/hkask-storage/src/gallery.rs:741-815`).
 
 ## See also
 
-- [hkask-storage Reference](./reference.md): ERD of the full schema and the
-  `DatabaseDriver` class diagram.
-- [hkask-storage Tutorial](./tutorial.md): the store lifecycle from
-  `Database` to CRUD.
-- [hkask-storage Explanation](./explanation.md): why the crate splits
-  `Database` from `SqliteDriver`.
+- [Why storage separates connection, inventory, and gallery identity](./explanation.md)
+- [hkask-storage reference](./reference.md)
 
 ---
 
-[^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. <https://martinfowler.com/books/eaa.html>. The Active Record pattern that the store modules implement, where each store owns its schema and CRUD methods.
+[^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. <https://martinfowler.com/books/eaa.html>.
