@@ -104,13 +104,6 @@ impl Task {
             deterministic_verdict: None,
         }
     }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  target is a valid transition from self.status
-    /// post: returns true iff self.status.can_transition_to(target)
-    pub fn can_move_to(&self, target: TaskStatus) -> bool {
-        self.status.can_transition_to(target)
-    }
 }
 
 // ── Comment ────────────────────────────────────────────────────────────────

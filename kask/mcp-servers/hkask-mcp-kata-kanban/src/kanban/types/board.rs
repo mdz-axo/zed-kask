@@ -45,4 +45,18 @@ impl Board {
     pub fn column_for_status(&self, status: TaskStatus) -> Option<&ColumnDef> {
         self.columns.iter().find(|c| c.status == status)
     }
+
+    /// Returns whether two statuses are adjacent in this board's configured
+    /// column order. Custom boards may omit standard lifecycle columns.
+    pub fn can_transition(&self, from: TaskStatus, target: TaskStatus) -> bool {
+        let mut columns = self.columns.iter().collect::<Vec<_>>();
+        columns.sort_by_key(|column| column.position);
+        columns.windows(2).any(|pair| {
+            let [left, right] = pair else {
+                return false;
+            };
+            (left.status == from && right.status == target)
+                || (left.status == target && right.status == from)
+        })
+    }
 }

@@ -275,6 +275,29 @@ fn task_move_rejects_skip() {
 }
 
 #[test]
+fn task_move_uses_custom_board_column_order() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let columns = vec![
+        ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0),
+        ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 1),
+        ColumnDef::new("Done".into(), TaskStatus::Done, 2),
+    ];
+    let board = svc.board_create(owner, "Three columns", &columns).unwrap();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Test".into()), owner)
+        .unwrap();
+
+    let task = svc
+        .task_move(task.id, TaskStatus::InProgress, owner)
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::InProgress);
+
+    let task = svc.task_move(task.id, TaskStatus::Done, owner).unwrap();
+    assert_eq!(task.status, TaskStatus::Done);
+}
+
+#[test]
 fn task_claim_records_authenticated_actor() {
     let (svc, board, owner) = make_service_with_board();
     let task = svc
@@ -478,6 +501,7 @@ fn task_record_delegation_writes_structured_fields() {
         grounding: None,
         completeness: None,
         reliance: None,
+        memory: None,
     };
     let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
         pass: true,
@@ -544,6 +568,7 @@ fn task_record_delegation_rejects_non_owner() {
         grounding: None,
         completeness: None,
         reliance: None,
+        memory: None,
     };
     let result = svc.task_record_delegation(task.id, None, delegate_result, None, other);
     assert!(
@@ -638,27 +663,21 @@ fn make_board_with_tasks_for_round_trip() -> (KanbanService, Board, WebID) {
     svc.task_create(board.id, TaskSpec::new("Backlog B".into()), owner)
         .expect("task Backlog B");
 
-    // In Progress task — move through the transition chain.
+    // In Progress task — move to the next configured column.
     let in_prog = svc
         .task_create(board.id, TaskSpec::new("In Progress Task".into()), owner)
         .expect("task In Progress");
-    svc.task_move(in_prog.id, TaskStatus::Ready, owner)
-        .expect("move to Ready");
     svc.task_move(in_prog.id, TaskStatus::InProgress, owner)
         .expect("move to InProgress");
 
-    // Done task — move all the way through and verify.
+    // Done task — walk through the board's configured columns.
     let done = svc
         .task_create(board.id, TaskSpec::new("Done Task".into()), owner)
         .expect("task Done");
-    svc.task_move(done.id, TaskStatus::Ready, owner)
-        .expect("move to Ready");
     svc.task_move(done.id, TaskStatus::InProgress, owner)
         .expect("move to InProgress");
-    svc.task_move(done.id, TaskStatus::Review, owner)
-        .expect("move to Review");
-    svc.task_verify(done.id, "work complete", owner)
-        .expect("verify to Done");
+    svc.task_move(done.id, TaskStatus::Done, owner)
+        .expect("move to Done");
 
     (svc, board, owner)
 }
@@ -698,14 +717,21 @@ fn export_import_round_trip_preserves_board_structure() {
             let task = svc
                 .task_create(new_board.id, TaskSpec::new(title.clone()), owner)
                 .expect("task create on new board");
-            // Walk the task forward to the target status. Tasks start in
-            // Backlog; advance through the transition chain.
-            let mut current = TaskStatus::Backlog;
-            while current != target_status {
-                let next = current.next().expect("status advances toward target");
-                svc.task_move(task.id, next, owner)
-                    .expect("task move toward target status");
-                current = next;
+            // Walk the task through this board's configured columns until it
+            // reaches the parsed target status.
+            if target_status != TaskStatus::Backlog {
+                let mut ordered_columns = new_board.columns.iter().collect::<Vec<_>>();
+                ordered_columns.sort_by_key(|configured| configured.position);
+                for configured in ordered_columns {
+                    if configured.status == TaskStatus::Backlog {
+                        continue;
+                    }
+                    svc.task_move(task.id, configured.status, owner)
+                        .expect("task move toward target status");
+                    if configured.status == target_status {
+                        break;
+                    }
+                }
             }
         }
     }

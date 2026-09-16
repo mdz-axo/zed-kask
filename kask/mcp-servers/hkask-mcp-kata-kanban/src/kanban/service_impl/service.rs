@@ -467,7 +467,13 @@ impl KanbanService {
 
         Self::require_task_actor(&task, actor)?;
 
-        if !task.can_move_to(target) {
+        let board = self.board_get(task.board_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: task.board_id.to_string(),
+            })
+        })?;
+        if !board.can_transition(task.status, target) {
             return Err(KanbanError::InvalidTransition {
                 task: task_id,
                 from: task.status,
@@ -478,8 +484,7 @@ impl KanbanService {
         let from_status = task.status;
 
         // WIP limit enforcement (Anderson §4: "limit WIP to expose problems")
-        if let Some(board) = self.board_get(task.board_id)?
-            && let Some(col) = board.column_for_status(target)
+        if let Some(col) = board.column_for_status(target)
             && let Some(wip_limit) = col.wip_limit
         {
             let current_count = self.count_tasks_in_status(task.board_id, target)?;

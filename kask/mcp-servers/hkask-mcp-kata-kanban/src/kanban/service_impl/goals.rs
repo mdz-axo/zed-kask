@@ -624,7 +624,7 @@ mod goal_tests {
         assert!(scored.resolution.is_some());
         assert!(svc.goal_get(goal.id).unwrap().is_some());
 
-        let restarted = KanbanService::new(svc.store.clone());
+        let restarted = KanbanService::new(svc.store);
         let retained = restarted
             .goal_get(goal.id)
             .unwrap()
