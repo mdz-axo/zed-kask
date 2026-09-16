@@ -94,8 +94,48 @@ mod tests {
             },
         ];
 
-        assert_eq!(acceptance_rate(&spans), Some(0.5));
-        assert_eq!(acceptance_rate(&spans[2..]), None);
+        let observations = operator_acceptance_observations(&spans);
+        assert_eq!(observations, vec![true, false]);
+        assert_eq!(acceptance_rate(&observations), 0.5);
+        assert!(operator_acceptance_observations(&spans[2..]).is_empty());
+    }
+
+    /// expect: "Malformed feedback cannot satisfy the drift loop's minimum-sample gate."
+    #[tokio::test]
+    async fn malformed_feedback_does_not_create_a_false_drift_window() {
+        let ledger = Arc::new(TokioRwLock::new(RegulationLedger::default()));
+        {
+            let ledger = ledger.read().await;
+            for index in 0..10 {
+                let payload = match index {
+                    0 => OperatorFeedbackObservation::new(true, None).into_payload(),
+                    5 => OperatorFeedbackObservation::new(false, None).into_payload(),
+                    _ => serde_json::json!({"note": "missing accepted field"}),
+                };
+                ledger
+                    .record_skill_span("tdd", "operator_feedback", payload)
+                    .await;
+            }
+        }
+        let loop_ = MetacognitionLoop::with_config(
+            ledger,
+            MetacognitionConfig {
+                feedback_drift_min_samples: 10,
+                feedback_drift_window: 5,
+                ..Default::default()
+            },
+        );
+
+        loop_.tick().await;
+
+        assert_eq!(
+            loop_
+                .last_snapshot_blocking()
+                .expect("tick stores a snapshot")
+                .escalation_count,
+            0,
+            "two valid observations cannot become a ten-sample drift window"
+        );
     }
 }
 
@@ -449,7 +489,7 @@ impl MetacognitionLoop {
             }
         }
 
-        // Also trend operator_feedback disposition rates. A skill can have
+        // Also trend valid operator-feedback acceptance observations. A skill can have
         // 100% cascade success but declining operator acceptance (outputs are
         // technically successful but increasingly useless). This catches that
         // case — the outcome channel alone cannot (adversarial review finding 3).
@@ -458,21 +498,16 @@ impl MetacognitionLoop {
             let spans = ledger
                 .query_skill_feedback(&skill_id, "operator_feedback")
                 .await;
-            if spans.len() < self.config.feedback_drift_min_samples {
-                continue;
-            }
+            let observations = operator_acceptance_observations(&spans);
             let window = self.config.feedback_drift_window;
-            if spans.len() < window * 2 {
+            if observations.len() < self.config.feedback_drift_min_samples
+                || observations.len() < window * 2
+            {
                 continue;
             }
-            let split = spans.len() - window;
-            let prior_spans = &spans[split - window..split];
-            let current_spans = &spans[split..];
-            let (Some(prior_rate), Some(current_rate)) =
-                (acceptance_rate(prior_spans), acceptance_rate(current_spans))
-            else {
-                continue;
-            };
+            let split = observations.len() - window;
+            let prior_rate = acceptance_rate(&observations[split - window..split]);
+            let current_rate = acceptance_rate(&observations[split..]);
             if prior_rate > 0.0
                 && current_rate < prior_rate * self.config.feedback_drift_decline_ratio
             {
@@ -679,15 +714,15 @@ fn success_rate(spans: &[StoredSkillSpan]) -> f64 {
 /// The writer contract is `{"accepted": bool, "note"?: string}`. Malformed
 /// payloads are unavailable observations and do not count as rejection or enter
 /// the denominator. Returns `None` when no valid disposition was observed.
-fn acceptance_rate(spans: &[StoredSkillSpan]) -> Option<f64> {
-    let dispositions: Vec<bool> = spans
+fn operator_acceptance_observations(spans: &[StoredSkillSpan]) -> Vec<bool> {
+    spans
         .iter()
         .filter_map(|span| OperatorFeedbackObservation::from_payload(&span.payload))
         .map(|observation| observation.accepted)
-        .collect();
-    if dispositions.is_empty() {
-        return None;
-    }
-    let accepted = dispositions.iter().filter(|accepted| **accepted).count();
-    Some(accepted as f64 / dispositions.len() as f64)
+        .collect()
+}
+
+fn acceptance_rate(observations: &[bool]) -> f64 {
+    let accepted = observations.iter().filter(|accepted| **accepted).count();
+    accepted as f64 / observations.len() as f64
 }
