@@ -65,7 +65,7 @@ update_unit() {
     mv -f "$tmp" "$queue"
 }
 
-spent=$(jq -s '[.[] | if .status == "completed" then .reported_cost_usd elif .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
+spent=$(jq -s '[.[] | if .status == "completed" then .reported_cost_usd elif .status == "reconciled_partial" and .cost_reporting_complete == true then .reported_cost_usd elif .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
 mapfile -t units < "$queue"
 planned=${#units[@]}
 completed=$(jq -s '[.[] | select(.status == "completed")] | length' "$queue")

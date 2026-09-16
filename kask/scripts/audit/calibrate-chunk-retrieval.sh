@@ -83,6 +83,11 @@ fine_db="$output_dir/fine.db"
 run_identity="$output_dir/run-identity.json"
 costs="$output_dir/measured-costs.json"
 comparison="$output_dir/comparison.json"
+embed_shard_max_bytes=${HKASK_CALIBRATION_EMBED_SHARD_MAX_BYTES:-8000000}
+if [[ ! "$embed_shard_max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    echo "HKASK_CALIBRATION_EMBED_SHARD_MAX_BYTES must be a positive integer" >&2
+    exit 64
+fi
 
 sha_file() {
     sha256sum "$1" | cut -d' ' -f1
@@ -101,6 +106,36 @@ tool_content() {
       | if ($content | length) == 1 then $content[0]
         else error("unexpected corpus tool envelope") end
     ' "$1"
+}
+split_jsonl_by_bytes() {
+    local input=$1 destination=$2 max_bytes=$3 reassembled
+    mkdir -p "$destination"
+    LC_ALL=C awk -v destination="$destination" -v max_bytes="$max_bytes" '
+      BEGIN { shard = 0; shard_bytes = 0 }
+      {
+        line_bytes = length($0) + 1
+        if (line_bytes > max_bytes) {
+          printf "JSONL record exceeds embedding shard limit: %d > %d bytes\n", line_bytes, max_bytes > "/dev/stderr"
+          exit 65
+        }
+        if (shard_bytes > 0 && shard_bytes + line_bytes > max_bytes) {
+          shard++
+          shard_bytes = 0
+        }
+        path = sprintf("%s/shard-%05d.jsonl", destination, shard)
+        print $0 >> path
+        shard_bytes += line_bytes
+      }
+      END { if (NR == 0) exit 66 }
+    ' "$input"
+    reassembled=$(mktemp "$destination/.reassembled.XXXXXX")
+    cat "$destination"/shard-*.jsonl > "$reassembled"
+    if ! cmp "$input" "$reassembled"; then
+        rm -f "$reassembled"
+        echo "embedding shards do not reassemble to the source representation: $input" >&2
+        return 65
+    fi
+    rm -f "$reassembled"
 }
 verify_accepted_sources() {
     local row source raw_path canonical_path expected_raw expected_canonical actual_raw actual_canonical
@@ -178,54 +213,82 @@ if [[ "$resume" != true ]]; then
             current) representation=$current_representation; index_db=$current_db ;;
             fine) representation=$fine_representation; index_db=$fine_db ;;
         esac
-        arguments="$output_dir/embed/$policy-arguments.json"
-        response="$output_dir/embed/$policy-response.json"
-        log="$output_dir/embed/$policy-server.log"
-        jq -n \
-            --arg chunks_jsonl "$representation" \
-            --arg db_path "$index_db" \
-            --arg model "$requested_model" \
-            --argjson batch_size "$batch_size" \
-            '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,
-              model:$model,batch_size:$batch_size}' > "$arguments"
-        started=$(now_ns)
-        "$host_call" corpus_embed "$arguments" "$response" "$log"
-        ended=$(now_ns)
-        content=$(tool_content "$response")
-        reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
-        if [[ "$reported_requested_model" != "$requested_model" ]]; then
-            echo "embedding transport changed requested model identity for $policy: $reported_requested_model" >&2
-            exit 65
-        fi
-        actual_model_status=$(jq -er '.actual_model_status | select(type == "string")' <<<"$content")
-        if [[ "$actual_model_status" != "confirmed" ]]; then
-            echo "embedding provider did not confirm one model identity for $policy: $actual_model_status" >&2
-            exit 65
-        fi
-        model=$(jq -er '.actual_model | select(type == "string" and length > 0)' <<<"$content")
-        embedded=$(jq -er '.embedded' <<<"$content")
-        failed=$(jq -er '.failed' <<<"$content")
-        total=$(jq -er '.total' <<<"$content")
-        if [[ "$failed" -ne 0 || "$embedded" -ne "$total" ]]; then
-            echo "embedding reconciliation failed for $policy" >&2
-            exit 65
-        fi
-        if [[ -z "$actual_model" ]]; then
-            actual_model=$model
-        elif [[ "$actual_model" != "$model" ]]; then
-            echo "embedding policies used different actual models: $actual_model vs $model" >&2
+        shard_dir="$output_dir/embed/$policy-shards"
+        split_jsonl_by_bytes "$representation" "$shard_dir" "$embed_shard_max_bytes"
+        expected_total=$(wc -l < "$representation" | tr -d ' ')
+        policy_total=0
+        policy_embedded=0
+        policy_elapsed_ms=0
+        policy_shards=0
+        policy_model=
+        for shard in "$shard_dir"/shard-*.jsonl; do
+            shard_name=$(basename "$shard" .jsonl)
+            arguments="$output_dir/embed/$policy-$shard_name-arguments.json"
+            response="$output_dir/embed/$policy-$shard_name-response.json"
+            log="$output_dir/embed/$policy-$shard_name-server.log"
+            jq -n \
+                --arg chunks_jsonl "$shard" \
+                --arg db_path "$index_db" \
+                --arg model "$requested_model" \
+                --argjson batch_size "$batch_size" \
+                '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,
+                  model:$model,batch_size:$batch_size}' > "$arguments"
+            started=$(now_ns)
+            "$host_call" corpus_embed "$arguments" "$response" "$log"
+            ended=$(now_ns)
+            content=$(tool_content "$response")
+            reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
+            if [[ "$reported_requested_model" != "$requested_model" ]]; then
+                echo "embedding transport changed requested model identity for $policy/$shard_name: $reported_requested_model" >&2
+                exit 65
+            fi
+            actual_model_status=$(jq -er '.actual_model_status | select(type == "string")' <<<"$content")
+            if [[ "$actual_model_status" != "confirmed" ]]; then
+                echo "embedding provider did not confirm one model identity for $policy/$shard_name: $actual_model_status" >&2
+                exit 65
+            fi
+            model=$(jq -er '.actual_model | select(type == "string" and length > 0)' <<<"$content")
+            embedded=$(jq -er '.embedded' <<<"$content")
+            failed=$(jq -er '.failed' <<<"$content")
+            cancelled=$(jq -r '.cancelled' <<<"$content")
+            total=$(jq -er '.total' <<<"$content")
+            if [[ "$failed" -ne 0 || "$cancelled" != 0 && "$cancelled" != false || "$embedded" -ne "$total" ]]; then
+                echo "embedding reconciliation failed for $policy/$shard_name" >&2
+                exit 65
+            fi
+            if [[ -z "$policy_model" ]]; then
+                policy_model=$model
+            elif [[ "$policy_model" != "$model" ]]; then
+                echo "embedding shards used different actual models for $policy: $policy_model vs $model" >&2
+                exit 65
+            fi
+            if [[ -z "$actual_model" ]]; then
+                actual_model=$model
+            elif [[ "$actual_model" != "$model" ]]; then
+                echo "embedding policies used different actual models: $actual_model vs $model" >&2
+                exit 65
+            fi
+            policy_total=$((policy_total + total))
+            policy_embedded=$((policy_embedded + embedded))
+            policy_elapsed_ms=$((policy_elapsed_ms + $(elapsed_ms "$started" "$ended")))
+            policy_shards=$((policy_shards + 1))
+        done
+        if [[ "$policy_total" -ne "$expected_total" || "$policy_embedded" -ne "$expected_total" ]]; then
+            echo "embedding shard totals do not reconcile for $policy: expected=$expected_total total=$policy_total embedded=$policy_embedded" >&2
             exit 65
         fi
         if [[ ! -f "$index_db" ]]; then
             echo "corpus_embed did not create index: $index_db" >&2
             exit 65
         fi
-        jq -cn --arg policy "$policy" --arg model "$model" \
-            --argjson elapsed_ms "$(elapsed_ms "$started" "$ended")" \
-            --argjson total "$total" --argjson embedded "$embedded" \
+        jq -cn --arg policy "$policy" --arg model "$policy_model" \
+            --argjson elapsed_ms "$policy_elapsed_ms" \
+            --argjson total "$policy_total" --argjson embedded "$policy_embedded" \
+            --argjson shards "$policy_shards" --argjson shard_max_bytes "$embed_shard_max_bytes" \
             --argjson index_bytes "$(stat -c %s "$index_db")" \
             '{policy:$policy,actual_embedding_model:$model,elapsed_ms:$elapsed_ms,
-              total_rows:$total,embedded_rows:$embedded,index_bytes:$index_bytes}' \
+              total_rows:$total,embedded_rows:$embedded,shards:$shards,
+              shard_max_bytes:$shard_max_bytes,index_bytes:$index_bytes}' \
             >> "$embed_cost_rows"
     done
 

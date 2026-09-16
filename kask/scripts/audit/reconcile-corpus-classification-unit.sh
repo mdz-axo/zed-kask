@@ -136,7 +136,20 @@ mkdir -p "$(dirname "$recovery_input")"
 mv "$recovery_tmp" "$recovery_input"
 recovery_tmp=
 
-reserved_cost=$(jq -n --argjson rows "$rows" --argjson rate "$estimated_cost_per_chunk" '$rows * $rate')
+reported_cost=null
+cost_reporting_complete=false
+if summary=$(jq -cer '[.result.content[]? | select(.type == "text") | .text | fromjson | .content] | if length == 1 then .[0] else error("unexpected envelope") end' "$response" 2>/dev/null); then
+    candidate_cost=$(jq -r '.reported_cost_usd' <<<"$summary")
+    candidate_complete=$(jq -r '.cost_reporting_complete' <<<"$summary")
+    if [[ "$candidate_complete" == true ]] && jq -en --arg value "$candidate_cost" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
+        reported_cost=$candidate_cost
+        cost_reporting_complete=true
+    fi
+fi
+reserved_cost=null
+if [[ "$cost_reporting_complete" != true ]]; then
+    reserved_cost=$(jq -n --argjson rows "$rows" --argjson rate "$estimated_cost_per_chunk" '$rows * $rate')
+fi
 ordinal=$(jq -s '[.[].ordinal] | max + 1' "$queue")
 reconciled_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 output_sha256=$(sha256sum "$output" | cut -d' ' -f1)
@@ -151,11 +164,12 @@ recovery_row=$(jq -cn --arg unit "$recovery_unit" --arg parent_unit "$unit" \
 jq -c --arg unit "$unit" --arg recovery_unit "$recovery_unit" \
     --arg reconciled_at "$reconciled_at" --arg output_sha256 "$output_sha256" \
     --argjson classified "$classified" --argjson failed "$failed" \
+    --argjson reported_cost "$reported_cost" --argjson cost_complete "$cost_reporting_complete" \
     --argjson reserved_cost "$reserved_cost" --argjson recovery_row "$recovery_row" '
     if .unit == $unit then
       (. + {status:"reconciled_partial",reconciled_at:$reconciled_at,
             tagged:$classified,failed:$failed,recovery_unit:$recovery_unit,
-            reported_cost_usd:null,cost_reporting_complete:false,
+            reported_cost_usd:$reported_cost,cost_reporting_complete:$cost_complete,
             reserved_cost_usd:$reserved_cost,output_sha256:$output_sha256}),
       $recovery_row
     else . end
@@ -164,5 +178,5 @@ chmod --reference="$queue" "$queue_tmp"
 mv -f "$queue_tmp" "$queue"
 queue_tmp=
 
-printf 'unit=%s status=reconciled_partial classified=%d failed=%d recovery_unit=%s reserved_cost_usd=%s\n' \
-    "$unit" "$classified" "$failed" "$recovery_unit" "$reserved_cost" >&2
+printf 'unit=%s status=reconciled_partial classified=%d failed=%d recovery_unit=%s reported_cost_usd=%s reserved_cost_usd=%s\n' \
+    "$unit" "$classified" "$failed" "$recovery_unit" "$reported_cost" "$reserved_cost" >&2

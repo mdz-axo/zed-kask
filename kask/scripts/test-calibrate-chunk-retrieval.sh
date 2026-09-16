@@ -109,7 +109,11 @@ while IFS= read -r line; do
                     db=$(jq -r '.db_path' <<<"$arguments")
                     model=$(jq -r '.model' <<<"$arguments")
                     total=$(wc -l < "$chunks" | tr -d ' ')
-                    basename "$chunks" > "$db"
+                    if [[ -n ${FAKE_EMBED_CALL_LOG:-} ]]; then
+                        printf '%s\t%s\n' "$(basename "$db" .db)" "$(stat -c %s "$chunks")" \
+                            >> "$FAKE_EMBED_CALL_LOG"
+                    fi
+                    printf 'indexed\n' > "$db"
                     status=${FAKE_ACTUAL_MODEL_STATUS:-confirmed}
                     respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" \
                         '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,cancelled:false}')"
@@ -117,16 +121,16 @@ while IFS= read -r line; do
                 corpus_query)
                     db=$(jq -r '.db_path' <<<"$arguments")
                     query=$(jq -r '.query' <<<"$arguments")
-                    case "$(cat "$db")" in
-                        reference.jsonl)
+                    case "$(basename "$db")" in
+                        reference.db)
                             ref=calibration:e2e:reference:a:0
                             representation=reference.jsonl
                             ;;
-                        current.jsonl)
+                        current.db)
                             ref=calibration:e2e:current:a:0
                             representation=current.jsonl
                             ;;
-                        fine-children.jsonl)
+                        fine.db)
                             ref=calibration:e2e:fine:a:0
                             representation=fine-children.jsonl
                             ;;
@@ -164,6 +168,8 @@ export HKASK_EMBEDDING_MODEL="requested-test-embedding-model"
 export HKASK_CLASSIFIER_MODEL="requested-test-classifier-model"
 export HKASK_TEMPLATE_ROOT="$tmp"
 export HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS=10
+export HKASK_CALIBRATION_EMBED_SHARD_MAX_BYTES=1000
+export FAKE_EMBED_CALL_LOG="$tmp/embed-calls.log"
 
 printf '%s\n' '{"entity_ref":"test:tag:0","source":"source-a.txt","text":"alpha beta","word_count":2}' > "$tmp/tag-input.jsonl"
 jq -n --arg input "$tmp/tag-input.jsonl" --arg output "$tmp/tag-output.jsonl" \
@@ -199,6 +205,8 @@ for policy in reference current fine; do
     [[ -s "$tmp/run/$policy.db" ]]
     [[ $(wc -l < "$tmp/run/evaluation-$policy/raw-results.jsonl") -eq 1 ]]
 done
+awk -F '\t' '$2 > 1000 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
+[[ $(awk -F '\t' '$1 == "fine" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 
 costs_before_resume=$(sha256sum "$tmp/run/measured-costs.json" | cut -d' ' -f1)
 "$runner" --resume "$tmp/run-spec.json" "$tmp/run"
