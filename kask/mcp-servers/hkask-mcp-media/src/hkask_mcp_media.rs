@@ -5510,6 +5510,7 @@ mod gallery_lifecycle_tests {
             .await?;
         let value: serde_json::Value = serde_json::from_str(&result)?;
         assert!(!result.contains("\"error\":"), "{result}");
+        assert_eq!(value["content"]["gallery_changed"], true);
         Ok(value)
     }
 
