@@ -201,6 +201,12 @@ pub enum InferenceOutcome {
     Embeddings {
         #[serde(rename = "embeddings")]
         embeddings: Vec<Vec<f32>>,
+        /// Exact model identity supplied by the embedding caller.
+        #[serde(default)]
+        requested_model: String,
+        /// Exact model identity returned by the provider, when present.
+        #[serde(default)]
+        actual_model: Option<String>,
     },
     /// Model list from `InferenceMethod::ListModels`.
     ModelList {

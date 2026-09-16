@@ -1,6 +1,6 @@
-use super::EmbeddingGenerationError;
 use super::inference_types::InferenceStreamChunk;
 use super::inference_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
+use super::{EmbeddingBatch, EmbeddingGenerationError};
 use crate::template::LLMParameters;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,10 @@ use std::sync::Arc;
 /// see the trait-level comment).
 pub type EmbedFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>;
+
+/// Future returned by [`InferencePort::embed_with_identity`].
+pub type EmbedWithIdentityFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<EmbeddingBatch, EmbeddingGenerationError>> + Send + 'a>>;
 
 /// Future returned by [`InferencePort::media_generate`].
 ///
@@ -298,6 +302,27 @@ pub trait InferencePort: Send + Sync {
             Err(EmbeddingGenerationError::Connection(
                 "embed not supported by this InferencePort".into(),
             ))
+        })
+    }
+
+    /// Generate embeddings while preserving request and provider identities.
+    /// The compatibility default delegates to `embed` and reports actual model
+    /// identity as unavailable; implementations with provider response access
+    /// override this method.
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> EmbedWithIdentityFuture<'a> {
+        let requested_model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            let vectors = self.embed(&requested_model, &texts).await?;
+            Ok(EmbeddingBatch {
+                vectors,
+                requested_model,
+                actual_model: None,
+            })
         })
     }
 

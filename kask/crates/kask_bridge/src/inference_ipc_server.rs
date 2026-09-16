@@ -703,8 +703,12 @@ async fn dispatch(
         };
         let model = params.embed_model.as_deref().unwrap_or("");
         let texts = params.embed_texts.as_deref().unwrap_or(&[]);
-        return match emb_port.embed(model, texts).await {
-            Ok(embeddings) => InferenceOutcome::Embeddings { embeddings },
+        return match emb_port.embed_with_identity(model, texts).await {
+            Ok(batch) => InferenceOutcome::Embeddings {
+                embeddings: batch.vectors,
+                requested_model: batch.requested_model,
+                actual_model: batch.actual_model,
+            },
             Err(e) => {
                 let (code, message) = match e {
                     hkask_types::EmbeddingGenerationError::InvalidRequest(m) => {

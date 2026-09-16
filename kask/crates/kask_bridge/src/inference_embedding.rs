@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use futures::AsyncReadExt;
-use hkask_types::EmbeddingGenerationError;
+use hkask_types::{EmbeddingBatch, EmbeddingGenerationError};
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
@@ -25,13 +25,15 @@ struct EmbedRequest {
     /// Texts to embed.
     texts: Vec<String>,
     /// Reply channel.
-    reply: oneshot::Sender<Result<Vec<Vec<f32>>, EmbeddingGenerationError>>,
+    reply: oneshot::Sender<Result<EmbeddingBatch, EmbeddingGenerationError>>,
 }
 
 /// OpenAI-compatible embedding response (wire format).
 #[derive(Debug, Deserialize)]
 struct OpenAiEmbedResponse {
     data: Vec<OpenAiEmbeddingData>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,7 +149,11 @@ impl LanguageModelEmbeddingPort {
                         return Err(EmbeddingGenerationError::EmptyResponse);
                     }
 
-                    Ok(embeddings)
+                    Ok(EmbeddingBatch {
+                        vectors: embeddings,
+                        requested_model: req.model,
+                        actual_model: parsed.model,
+                    })
                 }
                 .await;
 
@@ -193,7 +199,11 @@ impl LanguageModelEmbeddingPort {
                 let result = if vectors.is_empty() {
                     Err(EmbeddingGenerationError::EmptyResponse)
                 } else {
-                    Ok(vectors)
+                    Ok(EmbeddingBatch {
+                        vectors,
+                        requested_model: req.model,
+                        actual_model: None,
+                    })
                 };
                 let _ = req.reply.send(result);
             }
@@ -206,11 +216,11 @@ impl LanguageModelEmbeddingPort {
     /// `model` is the provider-prefixed model string (e.g.
     /// `DEFAULT_EMBEDDING_MODEL`). The prefix must match the bound provider
     /// before it is stripped for the API call.
-    pub async fn embed(
+    pub async fn embed_with_identity(
         &self,
         model: &str,
         texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+    ) -> Result<EmbeddingBatch, EmbeddingGenerationError> {
         if texts.is_empty() {
             return Err(EmbeddingGenerationError::EmptyResponse);
         }
@@ -227,6 +237,15 @@ impl LanguageModelEmbeddingPort {
         rx_reply.await.map_err(|e| {
             EmbeddingGenerationError::Connection(format!("embedding port reply dropped: {e}"))
         })?
+    }
+
+    /// Compatibility wrapper for vector-only consumers.
+    pub async fn embed(
+        &self,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+        Ok(self.embed_with_identity(model, texts).await?.vectors)
     }
 }
 

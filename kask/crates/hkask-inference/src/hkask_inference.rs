@@ -726,6 +726,17 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
     }
 
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move { Ok(self.embed_with_identity(&model, &texts).await?.vectors) })
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let requested_model = model.to_string();
         // Strip any provider prefix — the API expects the bare model id.
         let model_id = model
             .split_once('/')
@@ -778,6 +789,8 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
             #[derive(serde::Deserialize)]
             struct EmbeddingResponse {
                 data: Vec<EmbeddingData>,
+                #[serde(default)]
+                model: Option<String>,
             }
 
             let parsed: EmbeddingResponse = response.json().await.map_err(|e| {
@@ -792,7 +805,11 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 return Err(hkask_types::EmbeddingGenerationError::EmptyResponse);
             }
 
-            Ok(embeddings)
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: embeddings,
+                requested_model,
+                actual_model: parsed.model,
+            })
         })
     }
 

@@ -465,7 +465,7 @@ impl InferenceIpcClient {
         &self,
         model: &str,
         texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+    ) -> Result<hkask_types::EmbeddingBatch, EmbeddingGenerationError> {
         let method = InferenceMethod::Embed;
         let params = InferenceParams {
             embed_model: Some(model.to_string()),
@@ -474,7 +474,19 @@ impl InferenceIpcClient {
         };
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
-            InferenceOutcome::Embeddings { embeddings } => Ok(embeddings),
+            InferenceOutcome::Embeddings {
+                embeddings,
+                requested_model,
+                actual_model,
+            } => Ok(hkask_types::EmbeddingBatch {
+                vectors: embeddings,
+                requested_model: if requested_model.is_empty() {
+                    model.to_string()
+                } else {
+                    requested_model
+                },
+                actual_model,
+            }),
             InferenceOutcome::Error { error } if error.code == "InvalidRequest" => {
                 Err(EmbeddingGenerationError::InvalidRequest(error.message))
             }
@@ -512,7 +524,7 @@ impl InferenceIpcClient {
         if texts.is_empty() {
             return Err(EmbeddingGenerationError::EmptyResponse);
         }
-        self.call_embed(model, texts).await
+        Ok(self.call_embed(model, texts).await?.vectors)
     }
 
     /// List available models from zed's `LanguageModelRegistry` via the IPC bridge.
@@ -774,6 +786,16 @@ impl InferencePort for InferenceIpcClient {
         let texts = texts.to_vec();
         let this = self;
         async move { this.embed(&model, &texts).await }.boxed()
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        async move { self.call_embed(&model, &texts).await }.boxed()
     }
 
     fn rerank<'a>(
