@@ -1336,8 +1336,13 @@ impl MediaServer {
             let gallery = self.capture_required_gallery()?;
             validate_tool_url_with_dns(&url).await?;
             let ytdlp = self.require_yt_dlp()?;
-            let output_path = crate::assets::generated_assets_dir()
-                .join(format!(".{}.fetch.mp4", uuid::Uuid::new_v4()));
+            let scratch = tempfile::Builder::new()
+                .prefix(".video-fetch-")
+                .tempdir_in(crate::assets::generated_assets_dir())
+                .map_err(|error| {
+                    McpToolError::internal(format!("create video_fetch scratch directory: {error}"))
+                })?;
+            let output_path = scratch.path().join("download.mp4");
 
             let fetch = ytdlp
                 .fetch(&url, &output_path)

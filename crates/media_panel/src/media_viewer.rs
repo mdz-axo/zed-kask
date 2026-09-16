@@ -775,6 +775,13 @@ impl MediaViewer {
         }
         match result {
             Ok(listing) => {
+                let visible_job_ids = listing
+                    .jobs
+                    .iter()
+                    .map(|job| job.id.clone())
+                    .collect::<HashSet<_>>();
+                self.processed_job_results
+                    .retain(|job_id| visible_job_ids.contains(job_id));
                 let completed_results = listing
                     .jobs
                     .iter()

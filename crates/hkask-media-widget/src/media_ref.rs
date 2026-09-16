@@ -80,7 +80,6 @@ pub const MAX_INLINE_MEDIA_BYTES: usize = 32 * 1024 * 1024;
 /// before a decoder or subprocess receives them.
 pub struct PathMediaStorage {
     allowed_roots: Vec<PathBuf>,
-    allowed_files: HashSet<PathBuf>,
 }
 
 static APPROVED_GALLERY_FILES: OnceLock<parking_lot::RwLock<HashSet<PathBuf>>> = OnceLock::new();
@@ -120,14 +119,7 @@ impl Default for PathMediaStorage {
         {
             allowed_roots.push(test_data);
         }
-        let allowed_files = APPROVED_GALLERY_FILES
-            .get_or_init(Default::default)
-            .read()
-            .clone();
-        Self {
-            allowed_roots,
-            allowed_files,
-        }
+        Self { allowed_roots }
     }
 }
 
@@ -146,10 +138,7 @@ impl PathMediaStorage {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(Self {
-            allowed_roots,
-            allowed_files: HashSet::new(),
-        })
+        Ok(Self { allowed_roots })
     }
 
     fn resolve_local(&self, source: &str, kind: MediaKind) -> anyhow::Result<ResolvedMedia> {
@@ -170,9 +159,11 @@ impl PathMediaStorage {
                 path.display()
             ));
         }
-        if !self.allowed_files.contains(&path)
-            && !self.allowed_roots.iter().any(|root| path.starts_with(root))
-        {
+        let gallery_approved = APPROVED_GALLERY_FILES
+            .get_or_init(Default::default)
+            .read()
+            .contains(&path);
+        if !gallery_approved && !self.allowed_roots.iter().any(|root| path.starts_with(root)) {
             return Err(anyhow::anyhow!(
                 "media path is outside approved media roots: {}",
                 path.display()
@@ -185,10 +176,16 @@ impl PathMediaStorage {
                     "media image exceeds {MAX_INLINE_MEDIA_BYTES} bytes"
                 ));
             }
+            let bytes = std::fs::read(&path)?;
+            if bytes.len() > MAX_INLINE_MEDIA_BYTES {
+                return Err(anyhow::anyhow!(
+                    "media image exceeds {MAX_INLINE_MEDIA_BYTES} bytes"
+                ));
+            }
             return Ok(ResolvedMedia {
                 kind,
                 path: None,
-                bytes: Some(std::fs::read(&path)?),
+                bytes: Some(bytes),
                 url: None,
             });
         }
@@ -308,12 +305,20 @@ pub(crate) fn validate_remote_url_with_addresses(
 }
 
 fn ipv4_is_public(address: Ipv4Addr) -> bool {
+    let [first, second, third, _] = address.octets();
     !(address.is_private()
         || address.is_loopback()
         || address.is_link_local()
         || address.is_unspecified()
         || address.is_multicast()
-        || address == Ipv4Addr::BROADCAST)
+        || first == 0
+        || first >= 240
+        || (first == 100 && (64..=127).contains(&second))
+        || (first == 192 && second == 0 && third == 0)
+        || (first == 192 && second == 0 && third == 2)
+        || (first == 198 && (second == 18 || second == 19))
+        || (first == 198 && second == 51 && third == 100)
+        || (first == 203 && second == 0 && third == 113))
 }
 
 fn ipv6_is_public(address: Ipv6Addr) -> bool {
@@ -325,7 +330,9 @@ fn ipv6_is_public(address: Ipv6Addr) -> bool {
         || address.is_unspecified()
         || address.is_multicast()
         || (segments[0] & 0xfe00) == 0xfc00
-        || (segments[0] & 0xffc0) == 0xfe80)
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] & 0xffc0) == 0xfec0
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
 }
 
 /// The parsed body of a ```` ```media ```` block. Carries the untrusted media
@@ -444,9 +451,10 @@ mod locator_policy_tests {
         let path = gallery.path().join("gallery.png");
         std::fs::write(&path, b"gallery")?;
         let reference = image_ref(&path.to_string_lossy());
-        assert!(PathMediaStorage::default().resolve(&reference).is_err());
+        let storage = PathMediaStorage::default();
+        assert!(storage.resolve(&reference).is_err());
         approve_gallery_media_path(&path)?;
-        assert!(PathMediaStorage::default().resolve(&reference).is_ok());
+        assert!(storage.resolve(&reference).is_ok());
         Ok(())
     }
 
@@ -500,7 +508,11 @@ mod locator_policy_tests {
             "http://127.0.0.1/media.mp4",
             "http://10.0.0.1/media.mp4",
             "http://169.254.1.1/media.mp4",
+            "http://100.64.0.1/media.mp4",
+            "http://198.18.0.1/media.mp4",
+            "http://192.0.2.1/media.mp4",
             "http://[::1]/media.mp4",
+            "http://[2001:db8::1]/media.mp4",
             "http://[::ffff:192.168.1.1]/media.mp4",
             "https://user:secret@example.com/media.mp4",
         ] {

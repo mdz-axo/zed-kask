@@ -206,6 +206,7 @@ impl MediaServer {
                 "images_restored": reconciled.restored, "images_missing": reconciled.missing,
                 "unchanged": reconciled.unchanged, "total_images": reconciled.total,
                 "scan_complete": scan.errors.is_empty(), "scan_errors": scan.errors,
+                "gallery_changed": true,
             });
             if auto_analyze && !reconciled.analysis_assets.is_empty() {
                 let _admission = self.admit_heavy_operation()?;
@@ -626,6 +627,7 @@ impl MediaServer {
             Ok(serde_json::json!({
                 "status": status,
                 "gallery_id": gid,
+                "gallery_changed": true,
                 "scan": {
                     "images_added": added,
                     "images_changed": reconciled.changed,

@@ -2143,7 +2143,7 @@ mod tool_behavior_tests {
     async fn video_fetch_cleans_download_failure_and_missing_output()
     -> Result<(), Box<dyn std::error::Error>> {
         for body in [
-            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf partial > \"$output\"; echo 'ERROR: video unavailable' >&2; exit 1",
+            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf partial > \"$output\"; printf fragment > \"$output.part\"; echo 'ERROR: video unavailable' >&2; exit 1",
             "exit 0",
         ] {
             let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
