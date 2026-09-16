@@ -36,7 +36,7 @@ use tokio::sync::RwLock as TokioRwLock;
 use tokio::sync::mpsc;
 
 use crate::loops::CurationInput;
-use crate::runtime::{RegulationLedger, StoredSkillSpan};
+use crate::runtime::{OperatorFeedbackObservation, RegulationLedger, StoredSkillSpan};
 
 /// Default tick interval for the metacognition loop (30 seconds).
 pub(crate) const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -71,6 +71,31 @@ mod tests {
                 crate::loops::OutcomeTrust::Unverified
             );
         }
+    }
+
+    /// expect: "Operator acceptance uses the emitted boolean payload and excludes malformed observations."
+    #[test]
+    fn operator_acceptance_reads_the_writer_contract() {
+        let spans = [
+            StoredSkillSpan {
+                skill_id: "tdd".to_string(),
+                phase: "operator_feedback".to_string(),
+                payload: OperatorFeedbackObservation::new(true, None).into_payload(),
+            },
+            StoredSkillSpan {
+                skill_id: "tdd".to_string(),
+                phase: "operator_feedback".to_string(),
+                payload: OperatorFeedbackObservation::new(false, None).into_payload(),
+            },
+            StoredSkillSpan {
+                skill_id: "tdd".to_string(),
+                phase: "operator_feedback".to_string(),
+                payload: serde_json::json!({"note": "missing disposition"}),
+            },
+        ];
+
+        assert_eq!(acceptance_rate(&spans), Some(0.5));
+        assert_eq!(acceptance_rate(&spans[2..]), None);
     }
 }
 
@@ -443,8 +468,11 @@ impl MetacognitionLoop {
             let split = spans.len() - window;
             let prior_spans = &spans[split - window..split];
             let current_spans = &spans[split..];
-            let prior_rate = acceptance_rate(prior_spans);
-            let current_rate = acceptance_rate(current_spans);
+            let (Some(prior_rate), Some(current_rate)) =
+                (acceptance_rate(prior_spans), acceptance_rate(current_spans))
+            else {
+                continue;
+            };
             if prior_rate > 0.0
                 && current_rate < prior_rate * self.config.feedback_drift_decline_ratio
             {
@@ -647,22 +675,19 @@ fn success_rate(spans: &[StoredSkillSpan]) -> f64 {
     successes as f64 / spans.len() as f64
 }
 
-/// Compute the operator acceptance rate from a slice of operator_feedback
-/// spans. Each span's payload is `{"disposition": "accepted"|"overridden"|
-/// "rejected"|"corrected", ...}`. "accepted" counts as acceptance; all others
-/// do not. Returns 0.0–1.0. Empty input returns 0.0.
-fn acceptance_rate(spans: &[StoredSkillSpan]) -> f64 {
-    if spans.is_empty() {
-        return 0.0;
-    }
-    let accepted = spans
+/// Compute the operator acceptance rate from valid operator-feedback spans.
+/// The writer contract is `{"accepted": bool, "note"?: string}`. Malformed
+/// payloads are unavailable observations and do not count as rejection or enter
+/// the denominator. Returns `None` when no valid disposition was observed.
+fn acceptance_rate(spans: &[StoredSkillSpan]) -> Option<f64> {
+    let dispositions: Vec<bool> = spans
         .iter()
-        .filter(|s| {
-            s.payload
-                .get("disposition")
-                .and_then(|v| v.as_str())
-                .is_some_and(|d| d == "accepted")
-        })
-        .count();
-    accepted as f64 / spans.len() as f64
+        .filter_map(|span| OperatorFeedbackObservation::from_payload(&span.payload))
+        .map(|observation| observation.accepted)
+        .collect();
+    if dispositions.is_empty() {
+        return None;
+    }
+    let accepted = dispositions.iter().filter(|accepted| **accepted).count();
+    Some(accepted as f64 / dispositions.len() as f64)
 }

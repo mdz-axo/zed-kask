@@ -107,6 +107,16 @@ if "$evaluator" resume-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tm
     exit 1
 fi
 [[ $(wc -l < "$tmp/resume-output/raw-results.jsonl") -eq 1 ]]
+export HKASK_EMBEDDING_MODEL="different-embedding-model"
+if "$evaluator" --resume resume-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tmp/direct.db" "$tmp/resume-output" 20 5; then
+    echo "resume accepted a changed embedding model" >&2
+    exit 1
+fi
+export HKASK_EMBEDDING_MODEL="test-embedding-model"
+if grep -F 'host-resolved' "$evaluator" >/dev/null; then
+    echo "evaluator still contains the model-identity wildcard" >&2
+    exit 1
+fi
 "$evaluator" --resume resume-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tmp/direct.db" "$tmp/resume-output" 20 5
 [[ $(wc -l < "$tmp/resume-output/raw-results.jsonl") -eq 2 ]]
 [[ $(grep -F -x -c 'find alpha' "$FAKE_CALL_LOG") -eq 1 ]]

@@ -633,7 +633,8 @@ so lessons survive the session without anyone choosing to save them.
   rolls back the complete batch and keeps the thread pending for retry.
   The watermark is therefore durable proof that every accepted lesson in
   the covered batch was stored. Pinned by
-  `lesson_store_failure_does_not_advance_the_watermark` and
+  `lesson_store_failure_does_not_advance_the_watermark`,
+  `watermark_failure_rolls_back_the_distillation_batch`, and
   `distillation_pass_respects_watermark`.
 - **Lessons are semantically recallable.** Each lesson's text is
   embedded under the lesson's entity (the entity_ref invariant, §3), so

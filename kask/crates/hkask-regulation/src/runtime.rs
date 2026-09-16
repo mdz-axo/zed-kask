@@ -47,6 +47,33 @@ use tracing;
 /// Unlike tracing events (which fire and vanish), StoredSkillSpan retains
 /// the structured payload so `query_skill_feedback` can return it to the
 /// next skill invocation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OperatorFeedbackObservation {
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl OperatorFeedbackObservation {
+    #[must_use]
+    pub fn new(accepted: bool, note: Option<String>) -> Self {
+        Self { accepted, note }
+    }
+
+    #[must_use]
+    pub fn into_payload(self) -> serde_json::Value {
+        serde_json::json!({
+            "accepted": self.accepted,
+            "note": self.note,
+        })
+    }
+
+    #[must_use]
+    pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(payload.clone()).ok()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StoredSkillSpan {
     /// Skill ID extracted from the invocation (e.g., "lora-training").

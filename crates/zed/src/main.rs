@@ -1012,10 +1012,10 @@ fn main() {
                     let ledger = ledger_for_operator_feedback.clone();
                     tokio_handle.spawn(async move {
                         let ledger = ledger.read().await;
-                        let mut payload = serde_json::json!({ "accepted": accepted });
-                        if let Some(note) = note {
-                            payload["note"] = serde_json::json!(note);
-                        }
+                        let payload = hkask_regulation::OperatorFeedbackObservation::new(
+                            accepted, note,
+                        )
+                        .into_payload();
                         ledger
                             .record_skill_span(&skill_id, "operator_feedback", payload)
                             .await;

@@ -10,6 +10,7 @@ use gpui::{
 };
 use std::time::Duration;
 use theme::ActiveTheme;
+use ui::{Color, Icon, IconName, IconSize};
 
 use crate::simple_slider::{SimpleSlider, SimpleSliderEvent};
 
@@ -211,7 +212,21 @@ impl gpui::Render for TransportBar {
                     .text_color(cx.theme().colors().text_muted)
                     .child(duration_text),
             )
-            .child(div().w(px(80.0)).child(self.volume_slider.clone()))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .w(px(80.0))
+                    .flex_shrink_0()
+                    .child(
+                        Icon::new(IconName::AudioOn)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(div().flex_1().child(self.volume_slider.clone())),
+            )
     }
 }
 

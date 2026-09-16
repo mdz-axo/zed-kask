@@ -1097,6 +1097,68 @@ mod tests {
         );
     }
 
+    /// expect: "A failing watermark rolls back lessons published by the real distillation path."
+    #[tokio::test]
+    async fn watermark_failure_rolls_back_the_distillation_batch() {
+        let (store, driver) = test_store_with_driver();
+        let webid = WebID::new();
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "watermark-rollback",
+            "What does the watermark prove?",
+            "That the lesson committed with it.",
+            now - chrono::Duration::hours(2),
+            webid,
+        );
+        driver
+            .execute_batch(
+                "CREATE TRIGGER fail_distillation_watermark \
+                 BEFORE INSERT ON hmems \
+                 WHEN NEW.entity = 'curator:distilled:watermark-rollback' \
+                 BEGIN SELECT RAISE(FAIL, 'injected watermark failure'); END;",
+            )
+            .expect("install watermark failure trigger");
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "watermark-rollback-lesson",
+                "atomicity",
+                "Lesson and watermark share one commit.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            60,
+            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
+            &[],
+            Some("test-model"),
+        )
+        .await;
+
+        assert_eq!(outcome.lessons_inserted, 0);
+        assert_eq!(outcome.publication_failures, 1);
+        assert!(outcome.threads_pending.contains_key("watermark-rollback"));
+        assert!(
+            store
+                .h_mems_by_entity_prefix("watermark-rollback-lesson")
+                .expect("query lessons")
+                .is_empty(),
+            "the lesson inserted before the failing watermark must roll back"
+        );
+        assert!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:watermark-rollback")
+                .expect("query watermarks")
+                .is_empty()
+        );
+    }
+
     /// Records the model override each `generate_with_model` call
     /// receives, then answers with `response` — pins the distillation
     /// pass's model routing (the port default is reasoning-mandatory and

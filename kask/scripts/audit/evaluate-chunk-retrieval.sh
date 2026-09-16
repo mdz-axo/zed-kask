@@ -166,6 +166,38 @@ else
     : > "$server_log"
 fi
 
+host_pid=
+ensure_host_pid() {
+    if [[ "$host_pid" =~ ^[0-9]+$ ]]; then
+        return 0
+    fi
+    local candidates
+    candidates=$(pgrep -f '^hkask-mcp-corpus$') || true
+    host_pid=${candidates%%$'\n'*}
+    if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
+        echo "running host-managed hkask-mcp-corpus process not found" >&2
+        return 69
+    fi
+}
+read_host_env() {
+    local name=$1
+    ensure_host_pid || return $?
+    tr '\0' '\n' < "/proc/$host_pid/environ" | sed -n "s/^${name}=//p"
+}
+
+if [[ -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
+    if [[ -n "$reuse_raw" ]]; then
+        echo "offline raw reuse requires HKASK_EMBEDDING_MODEL for provenance" >&2
+        exit 69
+    fi
+    HKASK_EMBEDDING_MODEL=$(read_host_env HKASK_EMBEDDING_MODEL)
+    export HKASK_EMBEDDING_MODEL
+fi
+if [[ -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
+    echo "host embedding model is unavailable" >&2
+    exit 69
+fi
+
 query_count=$(wc -l < "$queries" | tr -d ' ')
 chunk_count=$(wc -l < "$retrieval_representation" | tr -d ' ')
 index_bytes=$(stat -c %s "$index_db")
@@ -178,7 +210,7 @@ if [[ "$mode" == small-to-big ]]; then
     child_parent_map_sha256=$(sha256sum "$child_parent_map" | cut -d' ' -f1)
     parent_representation_sha256=$(sha256sum "$parent_representation" | cut -d' ' -f1)
 fi
-parameter_embedding_model=${HKASK_EMBEDDING_MODEL:-host-resolved}
+parameter_embedding_model=$HKASK_EMBEDDING_MODEL
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "$resume" == true ]]; then
     jq -e \
@@ -197,7 +229,7 @@ if [[ "$resume" == true ]]; then
           .index_sha256 == $index_sha256 and
           .child_parent_map_sha256 == $child_parent_map_sha256 and
           .parent_representation_sha256 == $parent_representation_sha256 and
-          ($embedding_model == "host-resolved" or .embedding_model == $embedding_model) and
+          .embedding_model == $embedding_model and
           .query_count == $query_count and .chunk_count == $chunk_count and
           .index_bytes == $index_bytes and .top_k == $top_k and .word_budget == $word_budget
         ' "$parameters" >/dev/null || {
@@ -250,15 +282,7 @@ if [[ -z "$reuse_raw" ]]; then
     fi
 
 if [[ -z ${HKASK_CORPUS_BINARY:-} || -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
-    host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
-    if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
-        echo "running host-managed hkask-mcp-corpus process not found" >&2
-        exit 69
-    fi
-    read_host_env() {
-        local name=$1
-        tr '\0' '\n' < "/proc/$host_pid/environ" | sed -n "s/^${name}=//p"
-    }
+
     HKASK_INFERENCE_SOCKET=$(read_host_env HKASK_INFERENCE_SOCKET)
     HKASK_INFERENCE_TIMEOUT_SECS=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
     HKASK_EMBEDDING_MODEL=$(read_host_env HKASK_EMBEDDING_MODEL)
@@ -269,10 +293,7 @@ if [[ -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ]]; then
     echo "corpus inference configuration is incomplete" >&2
     exit 69
 fi
-parameter_embedding_model=$HKASK_EMBEDDING_MODEL
-parameter_tmp=$(mktemp "$output_dir/.parameters.json.tmp.XXXXXX")
-jq --arg model "$parameter_embedding_model" '.embedding_model = $model' "$parameters" > "$parameter_tmp"
-mv -f "$parameter_tmp" "$parameters"
+
 unset HKASK_DB_PASSPHRASE
 response_timeout=${HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS:-$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))}
 if [[ ! "$response_timeout" =~ ^[1-9][0-9]*$ ]]; then
@@ -359,10 +380,6 @@ done < "$queries"
 cleanup
 trap - EXIT
 else
-    if [[ "$parameter_embedding_model" == host-resolved ]]; then
-        echo "offline raw reuse requires HKASK_EMBEDDING_MODEL for provenance" >&2
-        exit 69
-    fi
     printf 'reused_raw_results=%s queries=%d\n' "$reuse_raw" "$completed" >&2
 fi
 rm -f "$completed_ids"
