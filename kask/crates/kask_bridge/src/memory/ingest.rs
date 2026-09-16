@@ -65,6 +65,26 @@ pub(crate) struct WriteContext<'a> {
     pub consolidation_cadence_secs: u64,
 }
 
+/// Durable per-chunk outcomes from one turn ingestion attempt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct IngestionReport {
+    /// Chunks produced by the validated chunk contract.
+    pub(crate) attempted: usize,
+    /// Chunks whose h_mem row was stored successfully.
+    pub(crate) stored: usize,
+    /// Chunks whose embedding row and passage text were stored successfully.
+    pub(crate) embedded: usize,
+    /// Chunks missing any expected durable output. A partially stored chunk is
+    /// counted here as well as in `stored` or `embedded`.
+    pub(crate) failed: usize,
+}
+
+impl IngestionReport {
+    pub(crate) fn degraded(self) -> bool {
+        self.failed > 0
+    }
+}
+
 /// Write a completed turn into the curator's memory as cleaned, embedded,
 /// ontologically tagged chunks — one shared copy per turn.
 ///
@@ -84,8 +104,9 @@ pub(crate) struct WriteContext<'a> {
 ///    thread entity with its `passage_text` so KNN pinpoints the matched chunk.
 /// 6. Write one h_mem per chunk at the 0.5 confidence floor.
 ///
-/// `Ok(())` on success. Curator-side, embedding, and tagging failures are
-/// non-fatal — they warn and continue (the failure-signal rule: the operator
+/// Returns durable attempted/stored/embedded/failed counts. Curator-side,
+/// embedding, and tagging failures are non-fatal — they warn and continue
+/// (the failure-signal rule: the operator
 /// must be able to distinguish "not configured" from "configured but broken",
 /// so every degradation path logs).
 ///
@@ -98,7 +119,7 @@ pub(crate) struct WriteContext<'a> {
 pub(crate) async fn write_turn(
     ctx: &WriteContext<'_>,
     record: TurnRecord,
-) -> Result<(), MemoryError> {
+) -> Result<IngestionReport, MemoryError> {
     let thread_id = record.thread_id.clone();
     let model = record.model.clone();
     let is_curator_turn = record.agent_id.as_deref() == Some("Curator");
@@ -282,20 +303,27 @@ pub(crate) async fn write_turn(
             thread_id = %thread_id,
             "Empty turn — no chunk h_mems written"
         );
-        return Ok(());
+        return Ok(IngestionReport::default());
     }
 
     let entity = format!("curator:thread:{thread_id}");
-    let chunks = hkask_memory::chunk_text(
-        &cleaned,
-        &entity,
+    let chunk_config = hkask_memory::text_chunking::ChunkConfig::new(
         MIN_CHUNK_WORDS,
         MAX_CHUNK_WORDS,
+        0,
         SENTENCE_BOUNDARY,
-    );
-    let chunk_texts: Vec<String> = chunks.into_iter().map(|(_, text)| text).collect();
+    )
+    .map_err(|error| MemoryError::Ingestion(format!("invalid turn chunk contract: {error}")))?;
+    let chunking =
+        hkask_memory::text_chunking::chunk_text_with_config(&cleaned, &entity, chunk_config);
+    let chunking_report = chunking.report;
+    let chunk_texts: Vec<String> = chunking
+        .chunks
+        .into_iter()
+        .map(|chunk| chunk.text)
+        .collect();
     if chunk_texts.is_empty() {
-        return Ok(());
+        return Ok(IngestionReport::default());
     }
 
     // ── 3. Content tags — one batched classifier-model call per turn ──
@@ -365,6 +393,11 @@ pub(crate) async fn write_turn(
     };
 
     // ── 5. Write one h_mem per chunk + its embedding ──────────────────
+    let mut report = IngestionReport {
+        attempted: chunk_texts.len(),
+        ..Default::default()
+    };
+    let embedding_expected = ctx.embedding_port.is_some();
     for (index, chunk_text) in chunk_texts.iter().enumerate() {
         let mut ontology = structural_ontology(&thread_id, turn_ms, index);
         if let Some(tags) = content_tags.as_ref().and_then(|tags| tags.get(index)) {
@@ -381,47 +414,84 @@ pub(crate) async fn write_turn(
         .with_ontology(ontology)
         .with_confidence(Confidence::new(0.5));
 
+        let mut chunk_stored = false;
+        let mut chunk_embedded = !embedding_expected;
         if let Some(ref curator_store) = curator_store {
-            if let Err(e) = curator_store.store(chunk_h_mem) {
-                tracing::warn!(
+            match curator_store.store(chunk_h_mem) {
+                Ok(()) => {
+                    report.stored += 1;
+                    chunk_stored = true;
+                }
+                Err(e) => tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
                     chunk_index = index,
                     error = %e,
                     "Failed to store chunk h_mem"
-                );
+                ),
             }
             if let Some(vector) = vectors.as_ref().and_then(|v| v.get(index)) {
-                if let Err(e) = curator_store.store_embedding(
+                match curator_store.store_embedding(
                     &entity,
                     vector,
                     ctx.embedding_model,
                     Some(chunk_text),
                 ) {
-                    tracing::warn!(
+                    Ok(_embedding_id) => {
+                        report.embedded += 1;
+                        chunk_embedded = true;
+                    }
+                    Err(e) => tracing::warn!(
                         target: "reg.memory",
                         thread_id = %thread_id,
                         chunk_index = index,
                         error = %e,
                         "Failed to store chunk embedding"
-                    );
+                    ),
                 }
             }
         }
+        if !chunk_stored || !chunk_embedded {
+            report.failed += 1;
+        }
     }
 
-    tracing::info!(
-        target: "reg.memory",
-        thread_id = %thread_id,
-        model = %model,
-        is_curator_turn,
-        chunks = chunk_texts.len(),
-        tagged = content_tags.map(|tags| tags.len()).unwrap_or(0),
-        embedded = vectors.map(|v| v.len()).unwrap_or(0),
-        "Turn ingested into curator memory as tagged chunks"
-    );
+    let tagged = content_tags.as_ref().map_or(0, Vec::len);
+    if report.degraded() {
+        tracing::warn!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            model = %model,
+            is_curator_turn,
+            attempted = report.attempted,
+            stored = report.stored,
+            embedded = report.embedded,
+            failed = report.failed,
+            tagged,
+            source_words = chunking_report.source_words,
+            emitted_words = chunking_report.emitted_words,
+            overlap_words = chunking_report.overlap_words,
+            "Turn memory ingestion completed with degradation"
+        );
+    } else {
+        tracing::info!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            model = %model,
+            is_curator_turn,
+            attempted = report.attempted,
+            stored = report.stored,
+            embedded = report.embedded,
+            failed = report.failed,
+            tagged,
+            source_words = chunking_report.source_words,
+            emitted_words = chunking_report.emitted_words,
+            overlap_words = chunking_report.overlap_words,
+            "Turn ingested into curator memory as tagged chunks"
+        );
+    }
 
-    Ok(())
+    Ok(report)
 }
 
 /// Assemble the cleaned turn text with role prefixes.

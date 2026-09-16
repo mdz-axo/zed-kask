@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-28
-version: "1.3.0"
+last_updated: 2026-09-15
+version: "1.4.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [domain, lifecycle]
@@ -10,286 +10,119 @@ mds_categories: [domain, lifecycle]
 
 # hkask-condenser — Reference
 
-`hkask-condenser` is the pure domain crate for context condensation. It
-classifies each tool result into a `ContextCategory`, derives an
-`OntologyAnchor` from the tool name, selects a `CondenserAlgorithm` via
-the `AlgorithmRegistry`, and scores lines by TF-IDF word frequency,
-structural bonuses, and domain saliency. The crate provides three
-algorithms and a `CondenserEngine` that dispatches compression via the
-static `default_for()` mapping. No MCP, no HTTP, no async — the crate is
-fully testable in-process.
+`hkask-condenser` exposes synchronous compression domain logic. Public modules
+are `engine` and `types`; algorithms, ontology graph, and saliency remain
+crate-private (`kask/crates/hkask-condenser/src/hkask_condenser.rs:40-44`).
 
-## Source citations
+## Public types and methods
 
-All line numbers re-verified against the current tree on 2026-08-28 via
-`grep -n`. Surfaces that earlier revisions described —
-`derive_ontology_anchor`, `score_against_persona`, `extract_query_words`,
-`score_memory_results`, `PersistRequest`, `ThreadSummaryRequest`, and a
-`Contains` variant on `OntologyRelation` — do not exist in the current
-tree and are intentionally absent. The ontology types
-(`OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`,
-`select_ontology_anchor`) live in the shared `hkask-bridge-ontology`
-crate and are re-exported `pub(crate)` from `types.rs:19-21`.
+| Surface | Purpose | Evidence |
+| --- | --- | --- |
+| `CondenserEngine::new` | create a normal-profile engine | `kask/crates/hkask-condenser/src/engine.rs:40-46` |
+| `CondenserEngine::compress` | classify, select, compress, and report metrics | `kask/crates/hkask-condenser/src/engine.rs:48-98` |
+| `CondenserEngine::set_profile` / `profile` | mutate/read the active profile | `kask/crates/hkask-condenser/src/engine.rs:100-107` |
+| `Profile` | heavy, normal, soft, light budgets | `kask/crates/hkask-condenser/src/types.rs:27-104` |
+| `ContextCategory` | eight dispatch categories | `kask/crates/hkask-condenser/src/types.rs:107-149` |
+| `CompressedOutput` | content, route, profile, size, reduction, signals | `kask/crates/hkask-condenser/src/types.rs:152-168` |
+| `CondenserHealthSignal` | non-fatal algorithm anomaly data | `kask/crates/hkask-condenser/src/types.rs:170-192` |
 
-| Symbol | Location |
-|--------|----------|
-| `CondenserEngine` | `kask/crates/hkask-condenser/src/engine.rs:29` |
-| `CondenserEngine::new` | `kask/crates/hkask-condenser/src/engine.rs:41` |
-| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:48` |
-| `CondenserEngine::set_profile` | `kask/crates/hkask-condenser/src/engine.rs:100` |
-| `CondenserEngine::profile` | `kask/crates/hkask-condenser/src/engine.rs:105` |
-| `CondenserAlgorithm` trait (`pub(crate)`) | `kask/crates/hkask-condenser/src/algorithms.rs:33` |
-| `RtkStyleAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:48` |
-| `WordRankAlgorithm` (`pub(crate)`) | `kask/crates/hkask-condenser/src/algorithms.rs:115` |
-| `FlashrankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:319` |
-| `AlgorithmRegistry` (`pub(crate)`) | `kask/crates/hkask-condenser/src/algorithms.rs:463` |
-| `AlgorithmRegistry::new` | `kask/crates/hkask-condenser/src/algorithms.rs:474` |
-| `AlgorithmRegistry::select` | `kask/crates/hkask-condenser/src/algorithms.rs:483` |
-| `compute_budget` (`pub(crate)`) | `kask/crates/hkask-condenser/src/algorithms.rs:26` |
-| `line_score` (WordRank, private) | `kask/crates/hkask-condenser/src/algorithms.rs:124` |
-| `domain_saliency` (`pub(crate)`) | `kask/crates/hkask-condenser/src/algorithms.rs:224` |
-| `KEYWORD_CATEGORIES` const | `kask/crates/hkask-condenser/src/algorithms.rs:498` |
-| `classify_tool` | `kask/crates/hkask-condenser/src/algorithms.rs:518` |
-| `join_with_ellipsis` (private) | `kask/crates/hkask-condenser/src/algorithms.rs:6` |
-| `OntologyRelation` (`pub(crate)`) | `kask/crates/hkask-condenser/src/ontology_graph.rs:27` |
-| `OntologyGraph` (`pub(crate)`) | `kask/crates/hkask-condenser/src/ontology_graph.rs:41` |
-| `OntologyGraph::build` (private) | `kask/crates/hkask-condenser/src/ontology_graph.rs:48` |
-| `OntologyGraph::related` | `kask/crates/hkask-condenser/src/ontology_graph.rs:250` |
-| `OntologyGraph::graph_adjacency_bonus` | `kask/crates/hkask-condenser/src/ontology_graph.rs:260` |
-| `GRAPH` OnceLock | `kask/crates/hkask-condenser/src/ontology_graph.rs:275` |
-| `graph()` | `kask/crates/hkask-condenser/src/ontology_graph.rs:278` |
-| `anchor_keywords` (`pub(crate)`) | `kask/crates/hkask-condenser/src/ontology_graph.rs:284` |
-| `word_frequencies` (`pub(crate)`) | `kask/crates/hkask-condenser/src/saliency.rs:13` |
-| `Profile` enum | `kask/crates/hkask-condenser/src/types.rs:29` |
-| `Profile::retention_pct` | `kask/crates/hkask-condenser/src/types.rs:39` |
-| `Profile::action_threshold` | `kask/crates/hkask-condenser/src/types.rs:62` |
-| `Profile::max_lines` | `kask/crates/hkask-condenser/src/types.rs:71` |
-| `ContextCategory` enum | `kask/crates/hkask-condenser/src/types.rs:110` |
-| `CompressedOutput` | `kask/crates/hkask-condenser/src/types.rs:154` |
-| `CondenserHealthSignal` | `kask/crates/hkask-condenser/src/types.rs:177` |
-| `OntologyAnchor` (bridge re-export) | `kask/crates/hkask-bridge-ontology/src/axis.rs:126` |
-| `OntologyAxis` | `kask/crates/hkask-bridge-ontology/src/axis.rs:33` |
-| `OntologyNamespace` | `kask/crates/hkask-bridge-ontology/src/axis.rs:47` |
-| `select_ontology_anchor` | `kask/crates/hkask-bridge-ontology/src/axis.rs:210` |
-
-## Class diagram
-
-The `CondenserAlgorithm` trait (`algorithms.rs:33`) defines the
-compression interface: `name`, `default_for`, and `compress` (there is no
-`description` method). Three implementations are registered in
-`AlgorithmRegistry` (`algorithms.rs:463`). `CondenserEngine`
-(`engine.rs:29`) owns the registry and the active `Profile`. The ontology
-graph (`ontology_graph.rs:41`) supplies the adjacency bonus used by
-`domain_saliency`.
+## Class and integration diagram
 
 ```mermaid
 classDiagram
-    class CondenserAlgorithm {
-        <<interface>>
-        +name() str
-        +default_for() ~[ContextCategory]~
-        +compress(input, profile, cat, anchor) (String, Vec~HealthSignal~)
-    }
-    class RtkStyleAlgorithm {
-        +default_for() ShellCommand, TestOutput, BuildOutput
-    }
-    class WordRankAlgorithm {
-        +default_for() ConversationHistory, LogOutput
-    }
-    class FlashrankAlgorithm {
-        +default_for() FileContents, StructuredData, Unknown
-    }
-    class AlgorithmRegistry {
-        -algorithms: Vec~Box~dyn CondenserAlgorithm~~
-        +new()
-        +select(cat) CondenserAlgorithm
-    }
     class CondenserEngine {
-        +registry: AlgorithmRegistry
+        -registry: AlgorithmRegistry
         -profile: Profile
         +new()
-        +compress(tool, output, cat) CompressedOutput
-        +set_profile(p)
+        +compress(tool, output, category) CompressedOutput
+        +set_profile(profile)
         +profile() Profile
     }
-    class OntologyGraph {
-        -edges: HashMap~str, Vec~(str, OntologyRelation)~~
-        +related(kw) [(str, OntologyRelation)]
-        +graph_adjacency_bonus(line, kws) f64
+    class AlgorithmRegistry {
+        +select(category) CondenserAlgorithm
     }
-    class OntologyRelation {
-        <<enumeration>>
-        PartOf
-        Precedes
-        HasProperty
-        RelatedTo
-        CrossDomain
+    class RtkStyleAlgorithm
+    class WordRankAlgorithm
+    class FlashrankAlgorithm
+    class BridgeThreadCondenser {
+        +compress_tool_result(tool, output)
+        +precompress_history(messages, protected_tools)
     }
-    class Profile {
-        <<enumeration>>
-        Heavy
-        Normal
-        Soft
-        Light
-        +retention_pct() f64
-        +max_lines() Option~usize~
-        +action_threshold() f64
+    class NativeCompaction {
+        +stream_compaction()
     }
-    class ContextCategory {
-        <<enumeration>>
-        ShellCommand
-        TestOutput
-        BuildOutput
-        FileContents
-        ConversationHistory
-        StructuredData
-        LogOutput
-        Unknown
-    }
-    class CompressedOutput {
-        +content: String
-        +algorithm: String
-        +category: String
-        +profile: String
-        +original_lines: usize
-        +compressed_lines: usize
-        +original_bytes: usize
-        +compressed_bytes: usize
-        +reduction_pct: f64
-        +health_signals: Vec~CondenserHealthSignal~
-    }
-
-    CondenserAlgorithm <|.. RtkStyleAlgorithm
-    CondenserAlgorithm <|.. WordRankAlgorithm
-    CondenserAlgorithm <|.. FlashrankAlgorithm
-    AlgorithmRegistry --> CondenserAlgorithm : selects via default_for
-    CondenserEngine --> AlgorithmRegistry : owns
-    CondenserEngine --> Profile : holds active
-    CondenserEngine ..> ContextCategory : classifies via classify_tool
-    CondenserEngine ..> CompressedOutput : returns
-    WordRankAlgorithm ..> OntologyGraph : graph_adjacency_bonus
-    OntologyGraph --> OntologyRelation : edges typed by
+    CondenserEngine --> AlgorithmRegistry
+    AlgorithmRegistry --> RtkStyleAlgorithm
+    AlgorithmRegistry --> WordRankAlgorithm
+    AlgorithmRegistry --> FlashrankAlgorithm
+    BridgeThreadCondenser --> CondenserEngine
+    NativeCompaction --> BridgeThreadCondenser : manual request copy only
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-003
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-condenser/src/algorithms.rs:33,48,115,319,463,483; kask/crates/hkask-condenser/src/engine.rs:29,48,100,105; kask/crates/hkask-condenser/src/ontology_graph.rs:27,41,250,260; kask/crates/hkask-condenser/src/types.rs:29,110,154
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-condenser/src/engine.rs:20-108; kask/crates/hkask-condenser/src/algorithms.rs:33-45; kask/crates/hkask-condenser/src/algorithms.rs:463-492; kask/crates/kask_bridge/src/condenser_bridge.rs:19-125; crates/agent/src/thread.rs:3594-3643
 status: VERIFIED
 -->
 
-## Algorithms
+## Profiles
 
-### RtkStyleAlgorithm (`algorithms.rs:48`)
+| Profile | Retention | Action threshold | Maximum lines | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| `Heavy` | 0.10 | 0.10 | 30 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
+| `Normal` | 0.20 | 0.25 | 80 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
+| `Soft` | 0.60 | 0.50 | 200 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
+| `Light` | 0.95 | 0.90 | none | `kask/crates/hkask-condenser/src/types.rs:39-77` |
 
-Head/tail ellipsis truncation. Keeps the first N and last M lines with a
-`...` separator. The head/tail split is ontology-aware: the anchor's
-`density_factor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:162`)
-adjusts the head ratio via `(0.3 / density_factor).clamp(0.15, 0.5)`
-(`algorithms.rs:77`), so FIBO financial data (density 1.3) gets more
-tail. Emits a `negative_compression` health signal if the result is
-larger than the input (`algorithms.rs:95-110`).
+## Algorithm routes
 
-### WordRankAlgorithm (`algorithms.rs:115`)
+| Algorithm | Default categories | Evidence |
+| --- | --- | --- |
+| `RtkStyleAlgorithm` | shell command, test output, build output | `kask/crates/hkask-condenser/src/algorithms.rs:46-60` |
+| `WordRankAlgorithm` | conversation history, log output | `kask/crates/hkask-condenser/src/algorithms.rs:156-166` |
+| `FlashrankAlgorithm` | file contents, structured data, unknown | `kask/crates/hkask-condenser/src/algorithms.rs:365-375` |
 
-TF-IDF bag-of-words compression with structural bonus and ontology
-anchoring. Scores every line via `line_score` (`algorithms.rs:124`):
+`classify_tool` performs exact token matching before substring fallback
+(`kask/crates/hkask-condenser/src/algorithms.rs:516-546`). The engine derives
+an ontology anchor from the tool name before invoking the selected algorithm
+(`kask/crates/hkask-condenser/src/engine.rs:54-71`).
 
-```
-score = TF-IDF_average + structural_bonus + domain_saliency
-```
+## Runtime bridge contract
 
-- **TF-IDF_average:** mean word frequency across the input — rare words
-  score higher. Word frequencies are computed by
-  `saliency::word_frequencies` (`saliency.rs:13`), the canonical
-  implementation the algorithm delegates to.
-- **structural_bonus:** error/warning/heading/list weights in the
-  `line_score` body (`algorithms.rs:124-153`).
-- **domain_saliency:** direct domain keyword scoring plus the graph
-  adjacency bonus via `domain_saliency` (`algorithms.rs:224`).
+`BridgeThreadCondenser` owns a mutex-protected engine and the incoming-result
+auto-compression flag
+(`kask/crates/kask_bridge/src/condenser_bridge.rs:19-39`). Its two methods have
+different gates:
 
-Emits a `low_signal` health signal when most lines score 0.0 (see the
-`signal_type` field documentation, `types.rs:180`).
+| Method | Gate | Mutation target | Evidence |
+| --- | --- | --- | --- |
+| `compress_tool_result` | `auto_compress_tool_results` must be true | incoming stored result text | `kask/crates/kask_bridge/src/condenser_bridge.rs:42-73` |
+| `precompress_history` | manual compaction invokes it regardless of that flag | copied summary request only | `kask/crates/kask_bridge/src/condenser_bridge.rs:75-125`; `crates/agent/src/thread.rs:3609-3629` |
 
-### FlashrankAlgorithm (`algorithms.rs:319`)
+Manual precompression protects the latest exchange, prose, named source tools,
+errors, JSON, and non-text results. It installs only a nonempty excerpt that is
+smaller than the original (`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`).
+The exact protected source-tool list is at `crates/agent/src/thread.rs:160-185`.
 
-Greedy marginal-utility selection under a token budget, balancing
-relevance, novelty, and brevity. Emits a `budget_shortfall` health signal
-when fewer lines than the budget are selected (`signal_type` doc,
-`types.rs:180`). It is the universal fallback: registered last, and
-`AlgorithmRegistry::select` (`algorithms.rs:483`) returns the last
-algorithm when no `default_for()` matches (`algorithms.rs:489-492`).
+## Native manual-compaction lifecycle
 
-## Saliency module
+Manual compaction obtains the global condenser, precompresses a background
+request copy, plans zero or two halves, and then invokes native summary
+collection and merge. Automatic compaction does not obtain the condenser
+(`crates/agent/src/thread.rs:3594-3643`). The composition root installs the
+bridge even when incoming-result compression is off
+(`crates/zed/src/main.rs:2190-2202`).
 
-The `saliency` module (`saliency.rs`) exposes a single canonical helper —
-`word_frequencies` (`saliency.rs:13`): lowercase word → normalized
-frequency (0.0–1.0) for words with length > 2. `WordRankAlgorithm`
-delegates here instead of maintaining a copy. There are no other public
-saliency functions in the current tree.
+## Diagnostics
 
-## Ontology graph
+The engine emits diagnostic `hkask.condenser` events for routing and reduction;
+these are not `reg.*` feedback signals
+(`kask/crates/hkask-condenser/src/engine.rs:8-14,63-97`). Health signals are
+returned with content and describe anomalies rather than turning them into
+compression failures (`kask/crates/hkask-condenser/src/types.rs:164-192`).
 
-The `OntologyGraph` (`ontology_graph.rs:41`) is a lightweight
-cross-domain concept relationship index built once at startup via the
-`GRAPH` `OnceLock` (`:275`, initialized through `graph()` at `:278`). It
-encodes relationships across PKO, SUMO, FIBO, GOLEM, ML-Schema, and
-cross-domain bridges. The `OntologyRelation` enum (`:27`) defines five
-relation types: `PartOf`, `Precedes`, `HasProperty`, `RelatedTo`,
-`CrossDomain` (module doc table, `ontology_graph.rs:12-20`).
+## Further reading
 
-`anchor_keywords` (`:284`) maps an `OntologyAnchor` to the keywords used
-for graph lookup. `graph_adjacency_bonus` (`:260`) adds 0.15 per related
-concept found in a line, capped at 0.5 (doc comment, `:258-259`).
-
-## Tool classification and anchor derivation
-
-`classify_tool` (`algorithms.rs:518`) maps a tool name to a
-`ContextCategory` in two phases: exact token match on `_`/`-`-split
-parts (`:522-529`), then substring fallback (`:531-538`). The keyword
-table is `KEYWORD_CATEGORIES` (`:498`).
-
-The anchor is derived inside `CondenserEngine::compress`
-(`engine.rs:60`) by calling `select_ontology_anchor`
-(`kask/crates/hkask-bridge-ontology/src/axis.rs:210`) directly — there is
-no `derive_ontology_anchor` wrapper in the current tree. The anchor
-exposes `confidence_modifier` (`axis.rs:149`), `density_factor`
-(`axis.rs:162`), `axis` (`axis.rs:181`), and `tier_label` (`axis.rs:190`).
-
-## Telemetry spans
-
-The `hkask.condenser` tracing spans emitted at `engine.rs:68` and
-`engine.rs:84` are diagnostic logging for human inspection, NOT
-cybernetic feedback signals — which is why they ride the `hkask.*`
-prefix rather than the reserved `reg.*` prefix (module doc,
-`engine.rs:8-14`). Promoting a health signal to a ν-event would require
-registering a `reg.*` namespace and wiring a consumer — neither exists
-today (`types.rs:170-175`).
-
-| Span | Fields | When |
-|------|--------|------|
-| `hkask.condenser` compress | `algorithm`, `category`, `tool_name`, `ontology_tier` | Every compression (`engine.rs:68`) |
-| `hkask.condenser` compression_ratio | `reduction_pct`, `original_bytes`, `compressed_bytes`, `latency_ms` | Every compression (`engine.rs:84`) |
-
-## Consumers
-
-- `kask_bridge` — `BridgeThreadCondenser` in
-  `kask/crates/kask_bridge/src/condenser_bridge.rs`, installed through
-  `agent::set_thread_condenser`. `compress_tool_result` honors
-  `kask.condenser.auto_compress_tool_results` (default off);
-  `precompress_history` independently reduces eligible older tool text for
-  manual native summarization. The latter preserves the latest exchange,
-  prose, protected tools, failed results, JSON, and non-text content.
-
-## See also
-
-- [hkask-condenser Explanation](./explanation.md): state diagram of the
-  compression process and the ontology anchoring rationale.
-- [hkask-condenser How-to](./how-to.md): tuning profiles and keyword
-  weights.
-- [hkask-condenser Tutorial](./tutorial.md): compressing your first tool
-  output.
-
----
-
-[^salience]: Itti, L., Koch, C., & Niebur, E. (1998). *A model of saliency-based visual attention for rapid scene analysis.* IEEE Transactions on Pattern Analysis and Machine Intelligence, 20(11), 1254–1259. <https://ieeexplore.ieee.org/document/730558>. The saliency model that the `domain_saliency` function adapts for text.
+- [Condenser explanation](./explanation.md)
+- [Condenser tuning procedure](./how-to.md)

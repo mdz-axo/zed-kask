@@ -1,168 +1,172 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-09-13
-version: "1.2.0"
+last_updated: 2026-09-15
+version: "1.3.0"
 status: "Active"
 domain: "Media"
-mds_categories: [domain, composition]
+mds_categories: [domain, composition, lifecycle]
 ---
 
 # media_panel — Reference: Media Viewer Interaction Model
 
-The reference model for the media panel's viewing pane: the interaction
-patterns a media viewer must supply, audited against the implementation.
-Each capability is marked **supplied** (with file:line evidence), **missing**
-(absent from the tree — verified by grep), or **degraded** (present but
-defective, with the defect named). Playback citations and measurements were
-re-derived from disk on 2026-09-13. The implementation can be audited against this model after any
-change; a capability not listed here is out of model.
+The media viewer has four tabs backed by live state: selected media, paginated
+gallery assets, process-local generation jobs, and selected-asset detail. All
+server calls route through the governed `ToolInvoker` to the `media` server
+(`crates/media_panel/src/media_viewer.rs:1-15,27-31`).
 
-## Component map
+## Component and request map
 
 ```mermaid
 classDiagram
     class MediaPanel {
+        +viewer: MediaViewer
         +director: SteerSurface
-        +viewer: Entity~MediaViewer~
         +steer_split_fraction: f32
     }
     class MediaViewer {
         +assets: Vec~MediaAsset~
         +active_tab: ViewerTab
         +concat_queue: Vec~String~
-        +render_media()
-        +render_library()
-        +render_queue()
-        +render_detail()
+        +gallery_request: RequestLifecycle
+        +jobs_request: RequestLifecycle
+        +detail_request: RequestLifecycle
+        +edit_request: RequestLifecycle
     }
-    class MediaWidget {
-        +video_player: WidgetVideoPlayer
-        +current_frame: RenderImage
-        +mark_in() mark_out() clear_marks()
+    class RequestLifecycle {
+        +epoch: u64
+        +owner: RequestOwner
+        +state: ResourceState
+        +begin(owner)
+        +owns(epoch)
+        +complete(epoch, result)
+        +invalidate()
     }
-    class PlaybackWorker {
-        +VideoPlayer engine
-        +commands
-        +lossless lifecycle events
-        +capacity-one frame mailbox
+    class RequestOwner {
+        GalleryPage
+        Jobs
+        Detail
+        Edit
     }
-    class TransportBar {
-        +seek_slider: SimpleSlider
-        +volume_slider: SimpleSlider
-    }
-    MediaPanel --> MediaViewer : top pane (flex_1, min_h_0, min_w_0)
-    MediaPanel --> MediaViewer : split divider (1px, draggable)
-    MediaViewer --> MediaWidget : shared via viz-core cache
-    MediaWidget --> PlaybackWorker : commands, lifecycle events, latest frame
-    MediaWidget --> TransportBar : emits TransportEvent
+    MediaPanel --> MediaViewer
+    MediaViewer --> RequestLifecycle : one per resource
+    RequestLifecycle --> RequestOwner
 ```
 
-The panel is two rows split by a draggable 1px divider: the viewing pane on
-top and the director (Steer conversation) below, whose height is a fraction
-of the panel the divider drag adjusts (clamped to 20–80%; double-click resets
-to 50%) — `crates/media_panel/src/media_panel.rs:337-420`, handle at
-`:207-244`, drag math at `:327-335`. The viewer is four tabs over real
-state; the media widget is the same entity the conversation renders inline
-(one player per body — two would play two audio streams).
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-MEDIA-PANEL-001
+verified_date: 2026-09-15
+verified_against: crates/media_panel/src/media_panel.rs:337-420; crates/media_panel/src/media_viewer.rs:33-100; crates/media_panel/src/media_viewer.rs:140-196
+status: VERIFIED
+-->
 
-## Capability audit
+## Request ownership
 
-| Capability | Status | Evidence |
-| --- | --- | --- |
-| Playback: play/pause | supplied | `TransportEvent::TogglePlay` → `MediaWidget::handle_transport_event` |
-| Playback: seek/position | supplied | `TransportEvent::Seek` → `MediaWidget::handle_transport_event` → generation-scoped worker seek |
-| Playback: stop | supplied | `TransportEvent::Stop` stops the worker player and cancels widget polling |
-| Playback: first-frame paused | supplied | opening runs on the playback worker and returns a poster frame without entering `Playing` |
-| Playback: timestamp pacing | supplied | `VideoDecoderInner` retains one future frame and returns `Pending` until the media clock reaches its PTS; the first decoded PTS becomes timeline zero and remains stable across seeks; pinned by `future_frame_waits_for_its_presentation_timestamp` and `nonzero_source_pts_is_normalized_to_the_playback_timeline` |
-| Playback: bounded frame delivery | supplied | ordinary BGRA frames use a capacity-one latest-frame mailbox; later due frames replace an unconsumed frame, while `Opened`/`Completed`/`Failed` remain an ordered lossless event batch; open/seek/stop generations reject stale frames and events; pinned by `worker_frame_backlog_is_bounded_to_latest_frame`, `lifecycle_events_survive_frame_coalescing`, `polling_preserves_repeated_lifecycle_events_in_order`, and `replacement_open_invalidates_unconsumed_prior_generation` |
-| Playback: completion | supplied | FFmpeg EOF is drained into the lossless `Completed` event and `PlaybackState::Finished`; normal completion is not an error and closes polling |
-| Playback: loading/failure feedback | supplied | transport renders `Loading…`; worker failures or channel disconnection become one visible widget error and close polling |
-| Playback: responsiveness benchmark | supplied | isolated `hkask-media-benchmarks` GPUI benchmark uses production widget/decoder/viz-cache paths without `test-support`, for 1/8/32 visible and cached videos; asserts order/count/final frame/backlog and reports completion, foreground, draw, and frame-budget metrics |
-| Playback: rate control | missing | no rate/set-speed surface anywhere in `hkask-media-widget` or `media_panel` |
-| Audio: volume | supplied | `TransportEvent::VolumeChange` updates audio or worker-owned video playback |
-| Audio: mute | missing | no mute toggle; video and audio both load paused, so neither produces unsolicited sound |
-| Display: fit-to-pane, aspect preserved | supplied | `MediaWidget::render` applies `size_full` + `ObjectFit::Contain` to video and image paths; pinned by layout tests (below) |
-| Display: frame size adjustment | missing | no zoom / scale control |
-| Display: fullscreen | missing | zero hits in `media_panel` / `hkask-media-widget` |
-| Library: asset selection | supplied | `media_viewer.rs:895-912` (row click selects + switches to Media tab) |
-| Library: queue/concat | supplied | `media_viewer.rs:788` (queue), `:807` (concat), `:283` (dispatch) |
-| Library: trim to marks | supplied | `media_viewer.rs:779` (button), `:213` (dispatch); marks at `media_widget.rs:976/984/992` |
-| Library: delete asset | supplied | `media_viewer.rs:917-946` (two-step confirm) → `:516` (`delete_asset`); the post-delete reload reconciles the list (`merge_gallery_records`, `:1254`) so the deleted row drops |
-| Library: tracks gallery mutations | supplied | `media_viewer.rs:125-180` (`ingest_thread` reloads on a newly-completed gallery-mutating call, `:177`; classification `tool_mutates_gallery`, `:1298`) + `:364-411` (`merge_gallery_listing` re-locates selection/confirm by src) |
-| Library: detail inspector | supplied | `media_viewer.rs:1050` (`render_detail` — record/tags/lineage/faces) |
-| Chrome: refresh | supplied | `media_viewer.rs:1191` (rebuild widgets + reload tab); tab activation reloads its data (`:631`) |
+Each asynchronous resource has an independent `RequestLifecycle` with an epoch,
+owner, and `Idle | Loading | Ready | Failed` state
+(`crates/media_panel/src/media_viewer.rs:33-100`). `begin` suppresses duplicate
+requests for the same loading owner; a newer owner advances the epoch. Callback
+handlers mutate state only when they still own that epoch. This prevents a slow
+page, job, detail, or edit response from overwriting newer state.
 
-### Degraded register
+| Resource | Owner key | Latest-response gate | Evidence |
+| --- | --- | --- | --- |
+| Gallery | requested offset | `gallery_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:547-605` |
+| Jobs | queue resource | `jobs_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:696-760` |
+| Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:782-863` |
+| Edit | editing tool name | `edit_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:367-427` |
 
-None at 2026-09-13. Video decoding and remote packet reads run on a dedicated
-playback thread; the GPUI foreground consumes at most one pending BGRA frame per
-player. Future PTS frames remain decoder-owned until due, and non-zero source
-PTS is normalized to the first decoded frame. EOF, loading, fatal failure, and
-worker disconnection are ordered generation-scoped outcomes that cannot be
-overwritten by frame coalescing or leak across source replacement. The horizontal-fit defect remains
-fixed as described under Layout invariants.
+Failures retain last-good data and surface degraded status instead of clearing
+the resource (`crates/media_panel/src/media_viewer.rs:1631-1662`).
 
-## Playback performance baseline
+## Gallery pagination lifecycle
 
-The production-shaped benchmark is `crates/hkask-media-benchmarks/benches/playback.rs`.
-It runs the same 600ms, six-frame, 10 FPS fixture through 1, 8, and 32 visible
-or viz-cached `MediaWidget` entities. The measured 2026-09-13 Linux run used
-120 FPS, ten samples per input, 100ms warm-up, and a one-second requested
-measurement window (Criterion extended each input to ten complete iterations).
-Completion intervals were 695.97–777.57ms across visible workloads and
-700.38–724.51ms across cached workloads. Across the combined run, foreground
-work p95/p99/max was 1.800/2.490/6.259ms, draw p95/p99/max was
-1.753/2.456/6.033ms, and both reported zero 8.33ms frame-budget overruns.
-The Linux headless path measures CPU scheduling/render work, not real GPU
-submission. Correctness gates require monotonic consumed PTS, final PTS 500ms,
-a retained final frame, and mailbox high-water exactly one.
+The Library requests 100 rows per page
+(`crates/media_panel/src/media_viewer.rs:27-31,547-580`). A response commits only
+when its gallery ID, total, requested offset, positive limit, row count, row
+indices, and required asset fields validate
+(`crates/media_panel/src/media_viewer.rs:1664-1743`). Failed or superseded page
+requests preserve the prior page and cursor.
 
-## Layout invariants
+Previous/next navigation uses the server-confirmed page size and total, with
+saturating cursor arithmetic (`crates/media_panel/src/media_viewer.rs:678-694`).
+A gallery-root change removes prior indexed rows, clears pending selection and
+delete state, and invalidates detail; a same-gallery refresh reconciles by
+stable asset source (`crates/media_panel/src/media_viewer.rs:608-662`).
 
-The viewer's fit contract, pinned by tests so it cannot silently regress:
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading: request page offset
+    Loading --> Loading: newer offset supersedes epoch
+    Loading --> Ready: owned response validates and commits
+    Loading --> Failed: owned response fails; keep last-good page
+    Ready --> Loading: previous, next, or refresh
+    Failed --> Loading: retry
+```
 
-1. **Vertical**: the player fits the pane's height — `flex_1` + `min_h_0`
-   on the tab content root (`media_viewer.rs:838-844`), pinned by
-   `viewer_layout_tests::viewer_video_area_scales_with_window_size`
-   (`media_viewer.rs:1580`).
-2. **Horizontal**: no part of the viewer — media content, header, toolbar,
-   or tab bar — exceeds the pane's available width at any pane width or
-   video aspect ratio. The pane is a flex-column child of the top/bottom
-   split and MUST carry `min_w_0` (`media_panel.rs:412`): without it the
-   pane cannot shrink below its content's min-content width, and a long
-   untruncated header src or a wide toolbar inflates the pane past the
-   dock (the recurring horizontal-overflow bug). Row-level containment —
-   truncating labels (`media_viewer.rs:895`, tab bar `:1177`), a wrapping
-   toolbar (`media_viewer.rs:728-729`), `overflow_hidden` — is the presentation
-   layer; it does NOT stop min-content propagation (verified empirically:
-   removing only the pane's `min_w_0` re-inflates the pane to ~699px inside
-   a 316px pane). Pinned by
-   `viewer_layout_tests::viewer_content_fits_narrow_pane`
-   (`media_viewer.rs:1729`, host at `:1676`) across 700px/480px docks and
-   by `hkask-media-widget` `layout_tests::wide_frame_fits_narrow_host`
-   (`media_widget.rs:1574`) for a 21:9 frame in a 320px host.
-3. **Split**: the pane is a flex-column child and MUST carry `min_h_0`
-   (`media_panel.rs:411`): without it the pane cannot shrink below its
-   content's min-content height as the divider drags, and the director
-   (`media_panel.rs:372`) likewise — its content's min-content height
-   would override the dragged fraction. The drag math is pure and pinned
-   by `tests::split_fraction_follows_pointer_and_clamps` and
-   `tests::split_fraction_guards_zero_height_panel` (`media_panel.rs:549-580`).
-4. **Aspect preservation**: the video frame derives its laid-out size from
-   the video area (`size_full` + `Contain`), never from the frame's natural
-   dimensions — including when gpui injects the frame's intrinsic aspect
-   ratio into the img style (`crates/gpui/src/elements/img.rs:350-352`).
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-MEDIA-PANEL-002
+verified_date: 2026-09-15
+verified_against: crates/media_panel/src/media_viewer.rs:540-694; crates/media_panel/src/media_viewer.rs:1631-1743
+status: VERIFIED
+-->
 
-Known constraint (not a defect): the divider drag clamps the steer pane to
-20–80% of the panel height (`media_panel.rs:50-52`), so at very short panel
-heights both panes can get tight; the viewer degrades by truncation, never
-by overflow. The split fraction is in-memory only — it is not serialized
-with the workspace.
+## Bounded concatenation
 
-## Missing-capability register
+Only selected video assets can enter the concat queue. Duplicates are no-ops;
+an over-cap addition is rejected without truncating the queue. Dispatch requires
+at least two clips and rechecks the upper bound before calling `video_concat`
+(`crates/media_panel/src/media_viewer.rs:461-509`). The shared admission limit is
+64 inputs (`kask/crates/hkask-types/src/media_limits.rs:1-9`).
 
-Rate control, mute, frame-size adjustment, and fullscreen are absent. Any
-future addition should extend the transport bar (`transport.rs`) for
-rate/mute, and the viewer chrome for fullscreen/frame-size, then update the
-audit table above in the same change.
+## Job lifecycle
+
+The Queue calls `job_list` with the shared default limit of 20
+(`crates/media_panel/src/media_viewer.rs:696-725`;
+`kask/crates/hkask-types/src/media_limits.rs:14-18`). It records `total`,
+`limit`, and `has_more`, and accepts both the current object response and the
+legacy array shape (`crates/media_panel/src/media_viewer.rs:1745-1795`).
+
+While the Queue tab is active and any job remains nonterminal, one GPUI-native
+one-second poll task is scheduled. Polling stops on terminal state, tab change,
+or failure (`crates/media_panel/src/media_viewer.rs:762-779`). Queued or running
+jobs can be cancelled through `job_cancel`, followed by a fresh listing
+(`crates/media_panel/src/media_viewer.rs:913-930`). Job history is process-local,
+so a server restart may produce an empty ready queue.
+
+## Detail lifecycle
+
+Detail requests address the selected asset by stable gallery ID, never by its
+positional index. Assets not yet indexed surface a remediation message instead
+of dispatching (`crates/media_panel/src/media_viewer.rs:782-824`). Only an owned,
+object-shaped `gallery_asset_detail` response replaces the last-good detail;
+stale and failed responses do not blank it
+(`crates/media_panel/src/media_viewer.rs:825-863`). The renderer exposes image
+record, tags, lineage, and faces when present
+(`crates/media_panel/src/media_viewer.rs:1532-1583`).
+
+## Playback and layout contracts
+
+The selected media entity is owned directly by the viewer so trim marks and the
+playback clock remain reachable; selection replacement resolves through the
+stable asset registry (`crates/media_panel/src/media_viewer.rs:148-164`). The
+panel remains a vertically split viewer/director surface with a draggable split
+(`crates/media_panel/src/media_panel.rs:337-420`).
+
+The viewer pane must retain `min_h_0` and `min_w_0` so media and toolbars shrink
+inside the dock instead of propagating intrinsic dimensions. The selected media
+uses the shared media widget, preserving aspect ratio through the widget's
+contain fit. Playback speed, mute, zoom, and fullscreen controls are not
+implemented in `media_panel` as of this edit.
+
+## Capability summary
+
+| Capability | State |
+| --- | --- |
+| Play/pause, seek, stop, volume, trim marks | supplied |
+| Paginated gallery selection and refresh | supplied |
+| Stable-ID detail and delete operations | supplied |
+| Bounded video concatenation | supplied |
+| Job list, polling, status, and cancellation | supplied |
+| Playback speed, mute, zoom, fullscreen | absent |

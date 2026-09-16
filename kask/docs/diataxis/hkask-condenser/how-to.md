@@ -1,190 +1,114 @@
 ---
-title: "hkask-condenser — How-to: Tune Compression and Saliency"
+title: "hkask-condenser — How-to: Tune Compression and Manual Precompression"
 audience: [developers, operators]
-last_updated: 2026-08-28
-version: "1.3.0"
+last_updated: 2026-09-15
+version: "1.4.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [composition]
 ---
 
-# hkask-condenser — How-to: Tune Compression and Saliency
+# hkask-condenser — How-to: Tune Compression and Manual Precompression
 
-This guide shows how to change which lines the condenser preserves by
-selecting a `Profile`, naming tools to influence the `OntologyAnchor`,
-extending the ontology keyword sets, and wiring the condenser into the
-agent turn loop. The condenser scores each line of tool output against an
-`OntologyAnchor` and a `Profile`-derived budget; higher-scoring lines are
-kept, lower-scoring lines are dropped.
-
-## Source citations
-
-| Symbol | Location |
-|--------|----------|
-| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:48` |
-| `CondenserEngine::set_profile` | `kask/crates/hkask-condenser/src/engine.rs:100` |
-| `Profile` enum | `kask/crates/hkask-condenser/src/types.rs:29` |
-| `Profile::retention_pct` | `kask/crates/hkask-condenser/src/types.rs:39` |
-| `Profile::action_threshold` | `kask/crates/hkask-condenser/src/types.rs:62` |
-| `Profile::max_lines` | `kask/crates/hkask-condenser/src/types.rs:71` |
-| `RtkStyleAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:48` |
-| `WordRankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:115` |
-| `FlashrankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:319` |
-| `AlgorithmRegistry` | `kask/crates/hkask-condenser/src/algorithms.rs:463` |
-| `AlgorithmRegistry::select` | `kask/crates/hkask-condenser/src/algorithms.rs:483` |
-| `classify_tool` | `kask/crates/hkask-condenser/src/algorithms.rs:518` |
-| `KEYWORD_CATEGORIES` | `kask/crates/hkask-condenser/src/algorithms.rs:498` |
-| `domain_saliency` | `kask/crates/hkask-condenser/src/algorithms.rs:224` |
-| `anchor_keywords` | `kask/crates/hkask-condenser/src/ontology_graph.rs:284` |
-| `OntologyGraph::build` | `kask/crates/hkask-condenser/src/ontology_graph.rs:48` |
-| `graph_adjacency_bonus` | `kask/crates/hkask-condenser/src/ontology_graph.rs:260` |
-| `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
-| `KaskCondenserSettings` | `kask/crates/kask_bridge/src/settings.rs:253` |
-| `set_thread_condenser` | `crates/agent/src/agent.rs:3136` |
-| `NO_COMPRESS_TOOLS` | `crates/agent/src/thread.rs:185` |
-| Proptest suite | `kask/crates/hkask-condenser/src/algorithms.rs:916-1019` |
+Use this procedure to change compression aggressiveness and verify both runtime
+entry points without changing native summary persistence.
 
 ## Procedure
 
 ```mermaid
 flowchart TD
-    A[Step 1: Pick a Profile] --> B[Step 2: Verify algorithm selection]
-    B --> C[Step 3: Name tools to set the anchor]
-    C --> D[Step 4: Extend keyword weights]
-    D --> E[Step 5: Wire the condenser]
-    E --> F[Step 6: Test and iterate]
+    A[Choose profile] --> B[Verify category-to-algorithm route]
+    B --> C[Test incoming-result behavior]
+    C --> D[Test manual-compaction precompression]
+    D --> E[Verify protected content remains unchanged]
+    E --> F[Run focused tests]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-002
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-condenser/src/engine.rs:48,100; kask/crates/hkask-condenser/src/types.rs:29,39,62,71; kask/crates/hkask-condenser/src/algorithms.rs:224,498,518; kask/crates/hkask-condenser/src/ontology_graph.rs:284; kask/crates/kask_bridge/src/condenser_bridge.rs:22; kask/crates/kask_bridge/src/settings.rs:253; crates/agent/src/agent.rs:3136; crates/agent/src/thread.rs:185
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs:40-108; kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3594-3643
 status: VERIFIED
 -->
 
-### Step 1: Pick a Profile
+### 1. Choose a profile
 
-The `Profile` enum (`types.rs:29`) has four variants. Each fixes three
-knobs: `retention_pct` (`types.rs:39`), `action_threshold`
-(`types.rs:62`), and `max_lines` (`types.rs:71`).
+Set `kask.condenser.profile` to one of the four values parsed by `Profile`
+(`kask/crates/hkask-condenser/src/types.rs:27-104`):
 
-| Profile | Retention | Max lines | Action threshold | Use case |
-|---------|-----------|-----------|------------------|----------|
-| `Heavy` | 10% | 30 | 0.10 | Aggressive — minimal representation |
-| `Normal` | 20% | 80 | 0.25 | Default — balanced |
-| `Soft` | 60% | 200 | 0.50 | Light touch — preserves more context |
-| `Light` | 95% | none | 0.90 | Near-passthrough — user sovereignty |
+| Profile | Retention | Maximum lines |
+| --- | ---: | ---: |
+| `heavy` | 10% | 30 |
+| `normal` | 20% | 80 |
+| `soft` | 60% | 200 |
+| `light` | 95% | none |
 
-Set it on the engine via `set_profile` (`engine.rs:100`). In the wired
-runtime, the profile comes from `KaskCondenserSettings.profile`
-(`kask/crates/kask_bridge/src/settings.rs:259`), which defaults to
-`"normal"` (`settings.rs:278`).
+The bridge defaults to `normal`; incoming-result compression defaults off
+(`kask/crates/kask_bridge/src/settings.rs:289-319`). The composition root still
+installs the condenser when that flag is false so manual precompression remains
+available (`crates/zed/src/main.rs:2190-2202`).
 
-```rust
-engine.set_profile(Profile::Heavy);
-```
+### 2. Verify algorithm selection
 
-### Step 2: Verify algorithm selection
+Run a representative output through `CondenserEngine::compress`. Tool names are
+classified by `classify_tool`, and the registry selects the category's static
+default (`kask/crates/hkask-condenser/src/engine.rs:48-71`;
+`kask/crates/hkask-condenser/src/algorithms.rs:516-546`). Expected routes are:
 
-The `AlgorithmRegistry` (`algorithms.rs:463`) selects an algorithm per
-compression via the static `default_for()` mapping walked in `select`
-(`algorithms.rs:483`). There is no learning override — the previous
-learning subsystem was removed (doc comment, `engine.rs:22-28`).
+- shell/test/build → `rtk_style`;
+- conversation/log → `word_rank`;
+- file/structured/unknown → `flashrank`.
 
-| Algorithm | Default categories | File |
-|-----------|--------------------|------|
-| `RtkStyleAlgorithm` | ShellCommand, TestOutput, BuildOutput | `algorithms.rs:48` |
-| `WordRankAlgorithm` | ConversationHistory, LogOutput | `algorithms.rs:115` |
-| `FlashrankAlgorithm` | FileContents, StructuredData, Unknown | `algorithms.rs:319` |
+The mappings are declared at
+`kask/crates/hkask-condenser/src/algorithms.rs:46-60,156-166,365-375`.
 
-`FlashrankAlgorithm` is the universal fallback because it is registered
-last and `select` returns the last algorithm when no `default_for()`
-matches (`algorithms.rs:489-492`).
+### 3. Test incoming tool-result compression
 
-### Step 3: Name tools to set the anchor
+With `auto_compress_tool_results = false`, verify
+`compress_tool_result(tool, output)` returns the original. Enable it and verify
+the result is no larger than the source. The gate and dispatch are at
+`kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`; focused tests are at
+`kask/crates/kask_bridge/src/condenser_bridge.rs:202-249`.
 
-The engine derives the anchor by calling `select_ontology_anchor`
-(`kask/crates/hkask-bridge-ontology/src/axis.rs:210`) on the tool name
-inside `compress` (`engine.rs:60`) — there is no separate wrapper
-function. It maps a tool name to an `OntologyAnchor` (`axis.rs:126`) —
-`Core`, `DualAxis` (PKO/DC+BIBO), or `DomainSupplement` (FIBO, SEPIO,
-GOLEM, ML-Schema, SDMX, SUMO). You do not set the anchor directly; you
-influence it by naming tools with a domain-signaling prefix
-(`company_fundamentals`, `generate_image`, `training_run`). The keyword
-arms and their dispatch order live in `select_ontology_anchor`
-(`axis.rs:223-351`).
+### 4. Test manual-compaction precompression
 
-### Step 4: Extend keyword weights
+Invoke native manual compaction through `/compact` or the compact control. The
+thread copies the request, excludes the final summarization instruction, and
+calls `precompress_history` before native summary generation
+(`crates/agent/src/thread.rs:3594-3643`).
 
-The `domain_saliency` function (`algorithms.rs:224`) scores a line as
-`direct + graph_bonus`:
+This path is independent of incoming-result compression. Test it with that
+setting disabled and confirm eligible older terminal/build output is replaced
+by a smaller labelled excerpt
+(`kask/crates/kask_bridge/src/condenser_bridge.rs:75-125,132-199`).
 
-- `direct` is a per-namespace keyword-containment score (FIBO, SUMO, PKO,
-  GOLEM, ML-Schema match arms in the function body, `algorithms.rs:224`
-  onward). To prioritize different terms, extend the containment checks
-  in those match arms.
-- `graph_bonus` is computed by `OntologyGraph::graph_adjacency_bonus`
-  (`ontology_graph.rs:260`) using `anchor_keywords`
-  (`ontology_graph.rs:284`). Each related concept found in the line adds
-  0.15, capped at 0.5. To change which concepts count as related, extend
-  the `edges` map in `OntologyGraph::build` (`ontology_graph.rs:48`).
+### 5. Verify preservation boundaries
 
-Note: there is no persona-scoring function in the current crate —
-`saliency.rs` contains only `word_frequencies` (`saliency.rs:13`). The
-The `KaskCondenserSettings.persona_keywords` setting
-(`kask/crates/kask_bridge/src/settings.rs:268`) is emitted to MCP servers
-as `HKASK_CONDENSER_PERSONA_KEYWORDS`
-(`kask/crates/kask_bridge/src/mcp_env.rs:76-85`) but nothing in
-`hkask-condenser` reads it; the persona path is not yet enforced.
+Confirm the following remain byte-for-byte unchanged in the request copy:
 
-### Step 5: Wire the condenser
+- user and assistant prose;
+- the latest user-led exchange;
+- tools in `NO_COMPRESS_TOOLS`;
+- failed results;
+- valid JSON;
+- non-text content and reasoning metadata.
 
-The startup task in `crates/zed/src/main.rs` installs `BridgeThreadCondenser`
-via `agent::set_thread_condenser`. Its `CondenserEngine` is local;
-`auto_compress_tool_results` (default false) gates ingestion compression,
-not installation or explicit manual precompression.
+The preservation logic is enforced at
+`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`, and the protected tool
+list is `crates/agent/src/thread.rs:160-185`. Also verify an error from
+precompression prevents model dispatch and leaves history unchanged; the
+regression test is
+`crates/agent/src/thread.rs:9618-9649`.
 
-To compact a native thread, click **Compact context** to the right of the
-thinking control, or send `/compact`. Kask first reduces eligible older
-tool output in the summarizer's request copy. Native compaction then runs two
-concurrent half-summaries and merges them with a third call; histories without
-a safe internal split use one call. The original history stays stored. The most
-recent exchange, user/assistant prose, protected tool results, errors, JSON
-and non-text content are not reduced by this preprocessing step.
+### 6. Validate
 
-This still requires a configured inference provider and can incur inference
-charges. The split is approximately byte-balanced, not a tokenizer-based fit
-check. A half or the merge can still exceed context limits; failures are
-surfaced without saving a partial summary. There is no recursive splitting or
-retry queue. Only the final merged summary is installed, and cancellation at
-either stage leaves the original history unchanged.
+Run focused tests for `hkask-condenser`, `kask_bridge` condenser behavior, and
+the agent manual-compaction path. Inspect `CompressedOutput.reduction_pct` and
+`health_signals`, defined at
+`kask/crates/hkask-condenser/src/types.rs:152-192`. A smaller line-level output
+is evidence of reduction, not proof that the provider's token ceiling is met.
 
-Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS`
-(`crates/agent/src/thread.rs:185`): `read_file`, `grep`, `find_path`,
-`list_directory`, `diagnostics`, `find_references`, `get_code_actions`,
-`edit_file`. Their output passes through verbatim even when a condenser
-is wired, because the condenser's line-level elision is destructive for
-source code.
+## Further reading
 
-### Step 6: Test and iterate
-
-Run the condenser on a sample tool output and inspect the
-`CompressedOutput`'s `reduction_pct` and `health_signals`. Adjust the
-profile or keyword weights and repeat until the output preserves the
-right lines. The crate's proptest suite (`algorithms.rs:916-1019`)
-checks `compression_is_idempotent` (`:931`), `compression_never_expands`
-(`:959`), `flashrank_fallback_never_expands` (`:980`), and
-`compute_budget_invariants` (`:1000`) — useful oracles when tuning.
-
-## See also
-
-- [hkask-condenser Reference](./reference.md): class diagram of algorithms
-  and types.
-- [hkask-condenser Tutorial](./tutorial.md): compressing your first tool
-  output.
-- [hkask-condenser Explanation](./explanation.md): the compression cycle
-  and ontology anchoring rationale.
-
----
-
-[^salience]: Itti, L., Koch, C., & Niebur, E. (1998). *A model of saliency-based visual attention for rapid scene analysis.* IEEE Transactions on Pattern Analysis and Machine Intelligence, 20(11), 1254–1259. <https://ieeexplore.ieee.org/document/730558>. The saliency model adapted for text compression.
+- [Condenser explanation](./explanation.md)
+- [Condenser reference](./reference.md)

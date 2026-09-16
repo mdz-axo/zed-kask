@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — How-to: Compose and Steer a Swarm"
 audience: [operators, developers]
-last_updated: 2026-08-28
-version: "2.0.0"
+last_updated: 2026-09-15
+version: "2.1.0"
 status: "Active"
 domain: "Swarm"
 mds_categories: [composition]
@@ -10,239 +10,107 @@ mds_categories: [composition]
 
 # Swarm Systems — How-to: Compose and Steer a Swarm
 
-Procedural recipes for the panel modes and the steering execution modes.
-Each recipe names the exact tool calls, the gate that must precede a spend,
-and the feedback path that closes the loop. Read the
-[tutorial](./tutorial.md) first for the component layout and the
-[reference](./reference.md) for the full 82-tool surface.
+These procedures use the current 87-tool surface: 48 cloud tools and 39
+non-cloud tools (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-754`).
 
-## Source citations
-
-| Symbol / concept                    | Location                                                                |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| `steer_system_prompt`               | `crates/swarm_panel/src/swarm_panel.rs:155`                             |
-| `PanelMode` enum                    | `crates/swarm_panel/src/swarm_panel.rs:494-507`                        |
-| `set_mode`                          | `crates/swarm_panel/src/swarm_panel.rs:1175`                            |
-| `ensure_steer_conversation`         | `crates/swarm_panel/src/swarm_panel.rs:1303-1309`                       |
-| `begin_hire` / `confirm_hire`       | `crates/swarm_panel/src/hire.rs:21` / `:123`                            |
-| `create_swarm` / `ask_xaman`        | `crates/swarm_panel/src/swarm_panel.rs:1596` / `:1885`                 |
-| `fetch_all` (sequenced fetches)     | `crates/swarm_panel/src/fetch.rs:21-52`                                 |
-| `clone_to_local` / `push_to_cloud_swarm` | `crates/swarm_panel/src/fetch.rs:586` / `:629`                    |
-| `request_delete_swarm` / `confirm_destructive` | `crates/swarm_panel/src/swarm_ops.rs`                          |
-| 82-tool surface (generated)         | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:113`          |
-| Consent gate (mint/consume/refund)  | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs` (consume at `:462-470`) |
-| Spend gate (hire/delegate)          | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169` / `:377`      |
-| `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:529` / `:583` |
-| `swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:176` / `:294` / `:509` |
-| Planner PDCA                        | `.agents/skills/swarm-intelligence/SKILL.md`                            |
-| Actuator directive                  | `.agents/skills/swarm-steering/SKILL.md`                               |
-
-## Procedure map
+## Choose the execution path
 
 ```mermaid
 flowchart TD
-    P[Pick backend] --> Q{Task type}
-    Q -->|single dispatch| D[hire or delegate directly]
-    Q -->|multi-agent| F[fanout or pipeline]
-    Q -->|compose/steer| S[Steer mode + swarm-intelligence]
-    D --> G{abw or local?}
-    G -->|abw| H[consent or session token, then spend tool]
-    G -->|local| L[swarm_delegate_local, no gate]
-    F --> G
-    S --> R[swarm-steering emits delegate sequence]
-    R --> L
-    H --> REC[reconcile via swarm_run_status]
-    L --> REC
+    A[Choose a task] --> B{Cloud ABW or local substrate?}
+    B -->|Cloud| C[Preflight cost]
+    C --> D[Obtain consent or session token]
+    D --> E[Call cloud operation]
+    B -->|Local| F[Inspect agent with swarm_get_local_agent]
+    F --> G{Declared workflow?}
+    G -->|Yes| H[Validate with swarm_workflow_check_local]
+    H --> I[Run swarm_run_workflow_local]
+    G -->|No| J[Delegate, fan out, pipeline, or execute plan]
+    E --> K[Read result or run status]
+    I --> K
+    J --> K
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-010
-verified_date: 2026-08-28
-verified_against: crates/swarm_panel/src/swarm_panel.rs:494-507,155; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169-480; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:176-530
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:530-925; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-638; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-909
 status: VERIFIED
 -->
 
-## How-to: Hire an ABW agent (consent-gated)
+## Hire or delegate through ABW
 
-This is the canonical spend flow. The panel orchestrates it; the same shape
-applies to headless callers using a session token instead of a single-use
-consent token.
+1. Call `swarm_hire_cost` before hiring
+   (`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:530-605`).
+2. Obtain a single-use token with `swarm_request_consent`, or open a bounded
+   headless session with `swarm_authorize_session`
+   (`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:606-686`).
+3. Pass exactly one authorization form to `swarm_hire`, `swarm_delegate`,
+   `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_execute_agent`,
+   `swarm_create_swarm`, or `swarm_xaman`. These operations route through the
+   cloud authorization path in their definitions
+   (`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:467-528,687-925,1160-1387,1452-1555`).
+4. For asynchronous workspace work, inspect `swarm_run_status`
+   (`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:926-977`).
 
-```mermaid
-sequenceDiagram
-    participant Panel as Swarm Panel
-    participant Server as hkask-mcp-swarm
-    participant Gate as spend_gate
-    participant Consent as ConsentStore
-    participant ABW as ABW REST API
-    Panel->>Server: swarm_hire_cost(agent_name)
-    Server->>ABW: GET hire cost
-    ABW-->>Server: total_hire_cost, within_budget
-    Server-->>Panel: cost preflight (PendingHire)
-    Panel->>Panel: operator confirms banner
-    Panel->>Server: swarm_request_consent(action=hire, target, credits)
-    Server->>Consent: mint(action, target, credits)
-    Consent-->>Server: consent_token
-    Server-->>Panel: consent_token
-    Panel->>Server: swarm_hire(agent, consent_token)
-    Server->>Gate: authorize_hire(consent_token, cost)
-    Gate->>Consent: consume(token) — single-use, atomic
-    Gate->>ABW: re-verify cost
-    Gate-->>Server: HireAuthorization (carries refund grant)
-    Server->>Gate: complete_hire(auth)
-    Gate->>ABW: POST /add or /hire
-    alt success
-        Gate-->>Server: hired
-    else transient failure
-        Gate->>Consent: refund(refund_grant)
-        Gate-->>Server: error
-    end
-    Server-->>Panel: hire result
-```
+## Inspect and delegate to a local agent
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-SWARM-011
-verified_date: 2026-08-28
-verified_against: crates/swarm_panel/src/hire.rs:21-272; kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:456-684; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169-371; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:462-470
-status: VERIFIED
--->
+1. Use `swarm_list_local_agents` to discover cards
+   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:640-701`).
+2. Use `swarm_get_local_agent` before relying on a remembered model, prompt,
+   port, or execution statistic
+   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-747`).
+3. Call `swarm_delegate_local` with the agent name and task
+   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-337`).
+4. If the card has deterministic evaluators, read the returned task-success
+   verdict. Otherwise, call `swarm_evaluate_local`
+   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2575-2615`).
 
-1. **Preflight cost.** Panel calls `swarm_hire_cost`
-   (`cloud_swarm_tools.rs:456`; auth required at `:458-460`). The server
-   returns the cost fields; the panel populates `PendingHire` (`hire.rs`).
-2. **Operator confirms.** The consent banner renders against the populated
-   `PendingHire`.
-3. **Mint consent token.** Panel calls `swarm_request_consent`
-   (`cloud_swarm_tools.rs:529`). The server requires auth (`:536-539`) so a
-   prompt-injected agent cannot self-authorize. The token is single-use,
-   action-scoped (`consent.rs:15-30`), and expires after
-   `CONSENT_TTL_SECS = 3600` (`consent.rs:76`).
-4. **Execute the spend.** Panel calls `swarm_hire`
-   (`cloud_swarm_tools.rs:621`) with the consent token. `authorize_hire`
-   (`spend_gate.rs:169`) consumes the token (atomic single-use via the
-   DELETE-affected-rows check, `consent.rs:462-470`), re-verifies the cost
-   against ABW, and enforces the per-dispatch ceiling. `complete_hire`
-   (`spend_gate.rs:317`) executes the POST and refunds the authorization on
-   transient failure.
-5. **Reconcile.** Read `swarm_run_status` (`cloud_swarm_tools.rs:871`) for
-   the run state.
+Local calls require no ABW consent token. They remain subject to the local
+runtime's declared tool and output-contract checks
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:135-150`).
 
-## How-to: Use a pre-authorized session (headless pipelines)
+## Run a declared workflow safely
 
-For headless ABW pipelines where per-spend confirmation is impractical, open
-a session with a total budget upfront.
+1. Inspect the agent with `swarm_get_local_agent`.
+2. Call `swarm_workflow_check_local`; do not start execution if the declared
+   workflow is invalid (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:748-795`).
+3. Call `swarm_run_workflow_local`. It executes the declared stages and records
+   observed handoff seams (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:797-909`).
+4. Use `swarm_observed_seams_local` to compare observed handoffs with declared
+   ports (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:911-1014`).
 
-1. Call `swarm_authorize_session` (`cloud_swarm_tools.rs:583`) with
-   `total_credits` and an optional `actions` allowlist (empty = all
-   actions). Returns a `session_token`.
-2. Pass `session_token` (instead of `consent_token`) to the spend tools.
-   `resolve_auth` (`spend_gate.rs:44-60`) rejects both-set and neither-set;
-   empty strings are treated as absent.
-3. Each spend deducts from the session; `Settlement::Session`
-   (`spend_gate.rs:74-77`) deducts on success and does nothing on failure
-   (nothing was deducted to refund). When exhausted, open a new session.
+## Fan out, pipeline, or execute a plan
 
-## How-to: Delegate to a local agent (no gate)
+- Use `swarm_fanout_local` for independent local tasks; `parallel` selects
+  concurrent execution (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:339-518`).
+- Use `swarm_pipeline_local` when each step consumes `{prev_output}` from the
+  preceding step (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:519-638`).
+- Use `swarm_execute_plan_local` for a prepared delegation list with optional
+  deterministic evaluators (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2616-2810`).
+- Read persistent per-swarm progress with `swarm_task_board`
+  (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2812-2846`).
 
-Local mode has no consent token and no budget — local agents run on the
-operator's own substrate, so there is nothing to authorize, price, or
-reconcile (operator ruling 2026-09-04: the budget concept is deprecated;
-the local ledger was removed with it).
+## Measure agent or swarm reliability
 
-1. Ensure the agent exists in the local registry
-   (`mcp/swarm/agents/curated/<id>/agent_card.json`, default
-   `config.rs:151`).
-2. Call `swarm_delegate_local` (`local_tools.rs:176`) with `agent_name`
-   and `task`.
-3. The runtime runs the skill cascade + tool loop (`AgentExecutor`) and
-   measures the result (tokens, latency, model).
-4. Read the result's `task_success`. If the agent's card declares
-   `capabilities.evaluators`, the server runs them and stamps the verdict
-   with `provenance: DeterministicEvaluator`; with no declared evaluators
-   it stays `null` and the curator can stamp it via `swarm_evaluate_local`.
+Use `swarm_eval_agent_local` for repeated single-agent rollouts and
+`swarm_eval_suite_local` for multi-delegation cases. Both apply deterministic
+evaluators and bounded request sizes
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2848-3138`).
 
-## How-to: Fan out to N agents
+## Move agents and swarms between local and cloud
 
-- **Local:** `swarm_fanout_local` (`local_tools.rs:294`) defaults to
-  sequential dispatch; set `parallel=true` to run the inference calls
-  concurrently (`delegate_batch`). Capped at `MAX_FANOUT = 10`.
-- **ABW:** `swarm_fanout` (`cloud_swarm_tools.rs:1373`) dispatches in
-  parallel against ABW. Capped at `MAX_FANOUT_ABW = 10`
-  (`cloud_swarm_tools.rs:1393`). Each dispatch carries its own consent or
-  session token.
+- `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
+  `swarm_create_local_agent`, and `swarm_reconfigure_local_agent` manage local
+  cards and cloud linkage
+  (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1173-1905`).
+- Local swarm CRUD and membership tools are defined at
+  `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1906-2127`.
+- `swarm_push_local_swarm` and `swarm_pull_swarm_to_local` synchronize swarm
+  composition with ABW
+  (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2128-2335`).
 
-## How-to: Run a sequential pipeline
+## Further reading
 
-`swarm_pipeline_local` (`local_tools.rs:509`) runs a sequence of delegations
-where each step's output is substituted into the next step's `task` via
-`{{prev_output}}`. Capped at `MAX_PIPELINE_STEPS = 10`
-(`local_tools.rs:524`). No consent token — local mode.
-
-## How-to: Execute a plan and track task progress
-
-`swarm_execute_plan_local` (`local_tools.rs:1954`) runs a delegation
-sequence with optional per-step evaluators (cap `MAX_FANOUT`, `:1966`) and
-writes each task's status to the per-swarm task board
-(`<swarms dir>/<swarm_id>/task_board.json`, `task_board.rs:11-13`). The
-Curator's ORIENT phase reads durable progress ("task 3 failed twice")
-via `swarm_task_board` (`local_tools.rs:2176`) without re-deriving it from
-delegate results.
-
-## How-to: Evaluate an agent's reliability
-
-`swarm_eval_agent_local` (`local_tools.rs:2473`) is a rollout harness: run
-one agent against a task set N times each, evaluate every rollout with a
-deterministic evaluator, and report per-task pass rates with standard
-errors. Caps: `MAX_EVAL_TASKS = 10` tasks (`local_tools.rs:25`), repeats
-default 3 / cap 10 (`:30-31`), total rollouts cap 50 (`:36`). Rollout
-trajectories are recorded to the event store (`mcp/swarm/events.db`,
-`hkask_mcp_swarm.rs:285-300`). For multi-agent case datasets, use
-`swarm_eval_suite_local` (`local_tools.rs:2218`, cap 10 cases at `:2230`).
-
-## How-to: Steer a swarm via the panel
-
-1. Select a swarm in Browse mode (sets `selected_workspace`,
-   `swarm_panel.rs:671`).
-2. Switch to Steer mode (`set_mode`, `swarm_panel.rs:1175`). The panel
-   calls `ensure_steer_conversation` (`swarm_panel.rs:1303`), which
-   delegates to `hkask_steer::ensure_steer` (`:1305`) — the shared helper
-   verifies the prompt's tool advertisement against the server's generated
-   `TOOL_NAMES` and builds the system prompt via `steer_system_prompt`
-   (`swarm_panel.rs:155`).
-3. The curator runs the `swarm-intelligence` PDCA cascade (planner) and
-   emits a plan. The `swarm-steering` skill (actuator) takes the plan and
-   produces the `swarm_delegate_local` sequence plus the re-invoke
-   instruction.
-4. The curator's tool calls dispatch through the governed MCP server; local
-   delegations hit `swarm_delegate_local` and return measured results
-   (tokens, latency, model).
-
-## How-to: Clone an ABW agent to local
-
-`clone_to_local` (`fetch.rs:586`) calls `swarm_clone_to_local`
-(`local_tools.rs:667`). The cloned card's `capabilities.mcp_tools` are
-filtered against `allowed_tool_servers` (sourced from
-`HKASK_MCP_SERVER_IDS`, `config.rs:100-106`) so a third-party ABW card
-cannot extend the delegated tool surface beyond the operator's own
-governed servers. The cloned card carries `cloud_id` so the panel shows a
-"synced" badge (`local_registry.rs:93-97`). Port labels on the cloned card
-that are not built-in are imported via the `port_types.json` extension
-file so the typing gate resolves them on every subsequent load
-(`local_registry.rs:192-195`, `:294-332`).
-
-## How-to: Push a local agent to ABW
-
-`push_to_cloud_swarm` (`fetch.rs:629`) calls `swarm_push_to_cloud`
-(`local_tools.rs:854`). The local card is uploaded to ABW; the local card's
-`cloud_id` is set to the ABW agent id, marking it synced. Swarms have an
-analogous pair: `swarm_push_local_swarm` (`local_tools.rs:1453`) and
-`swarm_pull_swarm_to_local` (`:1596`), which set/read the swarm's
-`cloud_workspace_id` (`local_swarms.rs:50-52`).
-
-## How-to: Reconcile local spend
-
-There is nothing to reconcile: the local budget system (ledger, balance,
-history, fund) was removed entirely — local agents run on the operator's
-own substrate and no local spend is priced or recorded (operator ruling
-2026-09-04; removal executed 2026-09-08). Cloud (ABW) spend remains
-consent-gated and reconciled through the ABW wallet.
+- [Why the swarm loops are separated](./explanation.md)
+- [Complete swarm tool reference](./reference.md)

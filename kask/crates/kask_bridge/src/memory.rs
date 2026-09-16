@@ -399,7 +399,8 @@ impl MemoryPort for RealMemoryPort {
                 curator_consolidation: &self.curator_consolidation,
                 consolidation_cadence_secs: self.consolidation_cadence_secs,
             };
-            ingest::write_turn(&ctx, record).await
+            ingest::write_turn(&ctx, record).await?;
+            Ok(())
         })
     }
 
@@ -1613,6 +1614,41 @@ pub(crate) mod tests {
         assert!(port.curator_store.get().is_none());
     }
 
+    /// expect: [P9] A failed embedding is reported as partial ingestion while the stored turn remains non-fatal.
+    #[tokio::test]
+    async fn write_turn_reports_non_blocking_partial_embedding_failure() {
+        let port = in_memory_port();
+        let ctx = WriteContext {
+            curator_store: &port.curator_store,
+            embedding_port: port.embedding_port.as_ref(),
+            embedding_model: &port.embedding_model,
+            classifier_model: port.classifier_model.as_deref(),
+            curator_webid: port.curator_webid,
+            tokio_handle: &port.tokio_handle,
+            curator_consolidation: &port.curator_consolidation,
+            consolidation_cadence_secs: port.consolidation_cadence_secs,
+        };
+        let record = TurnRecord {
+            thread_id: "surfaced-embedding-degradation".to_string(),
+            user_input: "remember this turn".to_string(),
+            agent_response: "the conversation continues".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
+        };
+
+        let report = ingest::write_turn(&ctx, record)
+            .await
+            .expect("degraded ingestion remains non-fatal");
+
+        assert_eq!(report.attempted, 1);
+        assert_eq!(report.stored, 1);
+        assert_eq!(report.embedded, 0);
+        assert_eq!(report.failed, 1);
+        assert!(report.degraded());
+    }
+
     #[tokio::test]
     async fn ingest_turn_handles_empty_prompt_gracefully() {
         let port = in_memory_port();
@@ -1706,14 +1742,13 @@ pub(crate) mod tests {
         let embeddings = curator_store
             .all_embeddings_with_text()
             .expect("embeddings query should succeed");
-        let matched = embeddings
-            .iter()
-            .find(|(entity_ref, _, passage)| {
+        assert!(
+            embeddings.iter().any(|(entity_ref, _, passage)| {
                 entity_ref == "curator:thread:embedding-round-trip"
                     && passage.as_deref() == Some(chunk_text.as_str())
-            })
-            .expect("every chunk must have an embedding whose passage_text is the chunk text");
-        let _ = matched;
+            }),
+            "every chunk must have an embedding whose passage_text is the chunk text"
+        );
     }
 
     /// Chunk values are bounded: a huge turn becomes multiple chunks, each
@@ -1742,12 +1777,9 @@ pub(crate) mod tests {
             chunks.len() > 1,
             "a 2000-word turn must split into multiple chunks"
         );
-        // The chunker folds sub-min fragments forward into the next passage
-        // ("content is never dropped"), so a chunk can exceed the ceiling by
-        // up to MIN_CHUNK_WORDS. The design bound — no 500KB single-value
-        // rows — is what this pins.
-        let word_ceiling =
-            crate::memory::ingest::MAX_CHUNK_WORDS + crate::memory::ingest::MIN_CHUNK_WORDS;
+        // The shared chunk contract enforces the configured ceiling exactly;
+        // no structural boundary may make a chunk exceed it.
+        let word_ceiling = crate::memory::ingest::MAX_CHUNK_WORDS;
         for (index, chunk) in chunks.iter().enumerate() {
             let text = chunk.value.as_str().expect("chunk text");
             let words = text.split_whitespace().count();

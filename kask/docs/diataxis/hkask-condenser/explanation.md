@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-28
-version: "1.3.0"
+last_updated: 2026-09-15
+version: "1.4.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [trust, curation]
@@ -10,194 +10,88 @@ mds_categories: [trust, curation]
 
 # hkask-condenser — Explanation
 
-Tool-result compression solves a context-window problem. As an agent
-conversation grows, verbose tool output (shell commands, logs, file dumps)
-exceeds the model's context limit. The condenser compresses each tool
-result by classifying it, deriving an ontology anchor, selecting an
-algorithm, and scoring lines by domain saliency — discarding low-salience
-lines and keeping high-salience ones within a `Profile`-derived budget. The
-condenser is a deep module: a simple interface (`compress`) over a complex
-implementation (three algorithms + ontology graph + saliency scoring).
+`hkask-condenser` is a synchronous domain crate: it classifies tool output,
+selects one of three line-oriented algorithms, applies a profile budget and
+ontology-aware saliency, and returns a `CompressedOutput`. It has no MCP, HTTP,
+or async dependency (`kask/crates/hkask-condenser/src/hkask_condenser.rs:3-7,40-44`).
 
-## Source citations
+## One engine, two integration paths
 
-| Symbol | Location |
-|--------|----------|
-| `CondenserEngine` | `kask/crates/hkask-condenser/src/engine.rs:29` |
-| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:48` |
-| `CondenserAlgorithm` trait | `kask/crates/hkask-condenser/src/algorithms.rs:33` |
-| `AlgorithmRegistry::select` | `kask/crates/hkask-condenser/src/algorithms.rs:483` |
-| `classify_tool` | `kask/crates/hkask-condenser/src/algorithms.rs:518` |
-| `select_ontology_anchor` (anchor derivation, called at `engine.rs:60`) | `kask/crates/hkask-bridge-ontology/src/axis.rs:210` |
-| `domain_saliency` | `kask/crates/hkask-condenser/src/algorithms.rs:224` |
-| `compute_budget` | `kask/crates/hkask-condenser/src/algorithms.rs:26` |
-| `OntologyGraph::graph_adjacency_bonus` | `kask/crates/hkask-condenser/src/ontology_graph.rs:260` |
-| `word_frequencies` | `kask/crates/hkask-condenser/src/saliency.rs:13` |
-| `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
-| `KaskCondenserSettings` | `kask/crates/kask_bridge/src/settings.rs:253` |
-| `set_thread_condenser` | `crates/agent/src/agent.rs:3136` |
-| `NO_COMPRESS_TOOLS` | `crates/agent/src/thread.rs:185` |
-| Deferred-task wiring | `crates/zed/src/main.rs:2056` |
+The same `CondenserEngine` serves two distinct user-visible paths:
 
-## The compression cycle
-
-`CondenserEngine::compress` (`engine.rs:48`) runs a single-pass cycle.
-There is no re-classification loop and no learning override — each
-`compress` call is one pass. The previous learning subsystem (history
-ring buffer, `recommend_algorithm`, `compression_stats`, `suggest_profile`,
-`check_global_health`) was removed because it was dormant in the
-default-off configuration and existed only to justify MCP tools that
-surfaced it; the runtime bridge path (`BridgeThreadCondenser`) never used
-it (doc comment, `engine.rs:22-28`).
+1. **Incoming tool-result compression.** `compress_tool_result` runs before a
+   result is stored only when `auto_compress_tool_results` is enabled
+   (`kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`).
+2. **Manual-compaction precompression.** `precompress_history` runs regardless
+   of that setting. It changes only eligible older tool-result text in the
+   summarizer request copy; the native model still writes the summary
+   (`kask/crates/kask_bridge/src/condenser_bridge.rs:75-125`).
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Classify: receive tool output
-    Classify --> Anchor: classify_tool -> ContextCategory
-    Anchor --> Select: select_ontology_anchor -> OntologyAnchor
-    Select --> Budget: compute_budget(lines, profile)
-    Budget --> Compress: registry.select (static default_for)
-    Compress --> Emit: algorithm.compress -> (content, health_signals)
-    Emit --> [*]: return CompressedOutput
+flowchart TD
+    A[Tool output] --> B{Path}
+    B -->|Incoming result| C{auto compression enabled?}
+    C -->|No| D[Store original]
+    C -->|Yes| E[CondenserEngine.compress]
+    B -->|Manual compact| F[Copy native compaction request]
+    F --> G[Precompress eligible older tool results]
+    G --> H[Native summary calls]
+    E --> I[CompressedOutput]
+    I --> J[Store result text]
+    H --> K[Store only final native summary]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-004
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-condenser/src/engine.rs:48,54,60,63,70,86; kask/crates/hkask-condenser/src/algorithms.rs:26,483,518; kask/crates/hkask-bridge-ontology/src/axis.rs:210
+verified_date: 2026-09-15
+verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3594-3643; crates/zed/src/main.rs:2190-2202
 status: VERIFIED
 -->
 
-The cycle steps, in order:
+Manual precompression preserves user and assistant prose, the newest user-led
+exchange, protected tools, failed tool results, valid JSON, and non-text parts.
+It replaces text only when the labelled excerpt is nonempty and smaller than
+the original (`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`). The
+stored thread remains unchanged because preprocessing happens after the native
+request has been copied to the background task
+(`crates/agent/src/thread.rs:3609-3629`).
 
-1. **Classify** — `classify_tool` (`algorithms.rs:518`) maps the tool name
-   to a `ContextCategory` via exact token match, then substring fallback.
-2. **Anchor** — `select_ontology_anchor` (`axis.rs:210`), called directly
-   by the engine (`engine.rs:60`), maps the tool name to an
-   `OntologyAnchor`.
-3. **Select** — `AlgorithmRegistry::select` (`algorithms.rs:483`) walks
-   the registry in registration order and returns the first algorithm
-   whose `default_for()` contains the category.
-4. **Budget** — `compute_budget` (`algorithms.rs:26`) derives the line
-   budget from `retention_pct * lines`, capped by `max_lines` and
-   `lines`. If the budget meets or exceeds the input, the algorithm
-   returns the input unchanged (passthrough).
-5. **Compress** — the selected algorithm's `compress` method
-   (`algorithms.rs:39-45`) returns `(content, health_signals)`.
-6. **Emit** — the engine assembles a `CompressedOutput` (`engine.rs:86`)
-   and emits two diagnostic `hkask.condenser` spans (`engine.rs:68` and
-   `:84`).
+## Compression dispatch
 
-## Why ontology anchoring
+`CondenserEngine::compress` derives a `ContextCategory`, selects a registered
+algorithm, derives an ontology anchor, runs the algorithm, and calculates line
+and byte reductions (`kask/crates/hkask-condenser/src/engine.rs:48-97`). The
+selection is static rather than learned.
 
-The engine calls `select_ontology_anchor` (`axis.rs:210`) on the tool
-name (`engine.rs:60`) to get an `OntologyAnchor` (`axis.rs:126`). This
-anchor connects compression to the dual-axis ontology (PKO + DC+BIBO)
-plus domain supplements (FIBO, SEPIO, GOLEM, ML-Schema, SDMX, SUMO). The
-anchor provides the keywords that `domain_saliency`
-(`algorithms.rs:224`) uses to score lines.
+- `RtkStyleAlgorithm` handles shell, test, and build output
+  (`kask/crates/hkask-condenser/src/algorithms.rs:46-60`).
+- `WordRankAlgorithm` handles conversation history and logs
+  (`kask/crates/hkask-condenser/src/algorithms.rs:156-166`).
+- `FlashrankAlgorithm` handles files, structured data, and unknown categories
+  (`kask/crates/hkask-condenser/src/algorithms.rs:365-375`).
 
-Without ontology anchoring, the condenser would score lines by generic
-word frequency, which loses domain-specific signal. A line about
-`market_capitalization` is salient in a FIBO-anchored financial context
-but not in a GOLEM narrative context. The anchor tells the scorer which
-domain the conversation belongs to, and the ontology graph supplies the
-adjacency bonus — lines referencing concepts related to the anchor
-concept (e.g., `fibo-ind-mkt-bas:MarketCapitalization` when anchored to
-`fibo-be-le-cb:Corporation`) receive a bonus via
-`OntologyGraph::graph_adjacency_bonus` (`ontology_graph.rs:260`).
+Profiles set retention and maximum-line budgets: heavy 10%/30, normal 20%/80,
+soft 60%/200, and light 95%/unbounded
+(`kask/crates/hkask-condenser/src/types.rs:27-78`). These are line budgets, not
+a guarantee that a provider token limit will be met.
 
-The anchor is derived from the tool name alone because every MCP server
-links against the same bridge crates — no wire-protocol fields are
-needed. This keeps the condenser's interface narrow: `compress(tool_name,
-output, category)` is the entire surface.
+## Native compaction remains native
 
-## Why three algorithms
+Only manual compaction invokes Kask precompression. Automatic compaction skips
+the hook. After preprocessing, the existing compaction path may split a suitable
+history into two chronological halves, summarize them concurrently, and merge
+them; indivisible histories use one summary call
+(`crates/agent/src/thread.rs:3609-3642`). Cancellation, streaming, usage
+accounting, and summary persistence remain owned by the native thread lifecycle.
 
-The three algorithms offer different tradeoffs:
+## Protected source-oriented tools
 
-- `RtkStyleAlgorithm` (`algorithms.rs:48`) is a deterministic structural
-  scorer — head/tail preservation with an ontology-aware split ratio. It
-  is the right choice for shell, test, and build output, where the first
-  and last lines carry the command and the result.
-- `WordRankAlgorithm` (`algorithms.rs:115`) ranks by TF-IDF word
-  frequency, structural bonus, and ontology anchoring. It is the right
-  choice for conversation history and logs, where salient lines are
-  scattered through the input.
-- `FlashrankAlgorithm` (`algorithms.rs:319`) uses greedy marginal-utility
-  selection within a budget, balancing relevance, novelty, and brevity.
-  It is the right choice for file contents and structured data, and is
-  the universal fallback because it is registered last and `select`
-  returns the last algorithm when no `default_for()` matches
-  (`algorithms.rs:489-492`).
+The call site bypasses line elision for source code, searches, listings,
+diagnostics, references, code actions, and edits. The exact list is
+`NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:160-185`). Terminal output is
+intentionally eligible because build and test logs are a primary condenser use.
 
-There is no learning loop that could drift the selection — the static
-`default_for()` mapping is the only selection path.
+## Further reading
 
-## Why health signals, not errors
-
-`CondenserHealthSignal` (`types.rs:177`) is emitted when an algorithm
-exhibits unexpected behavior — `negative_compression` (rtk_style produced
-larger output), `low_signal` (word_rank found no usable signal),
-`budget_shortfall` (flashrank could not fill the budget). These are
-diagnostic ν-event *candidates*: they indicate deviation from expected
-bounds, not failure. Content is still returned. Promoting them to actual
-ν-events would require a `reg.*` namespace and a wired consumer —
-neither exists today (`types.rs:170-175`); **not yet enforced**. The
-condenser never blocks the agent turn on a compression anomaly — it logs
-the signal and moves on, so a misbehaving algorithm cannot stall the
-conversation.
-
-## Wiring: deferred startup task
-
-The re-settable `set_thread_condenser` hook is installed by
-`crates/zed/src/main.rs` regardless of `auto_compress_tool_results`.
-That flag, which defaults to false, controls ingestion compression only.
-
-Manual native compaction uses `ThreadCondenser::precompress_history` in
-`crates/agent/src/thread.rs::stream_compaction` before requesting the LLM
-summary. `BridgeThreadCondenser` processes a background request copy, not
-stored messages: eligible older tool text is compressed by category while
-prose, the latest exchange, protected tools, failed results, JSON and
-non-text content are preserved. Excerpts are labelled and used only when
-smaller. Precompression remains manual-only; it is input reduction, not a
-semantic summary or a token-fit guarantee.
-
-Native summarization now divides splittable histories near the byte midpoint,
-without separating tool calls from their results. Two half-summaries run
-concurrently, then a third call merges them in chronological order. Both manual
-and automatic compaction use this bounded, non-recursive process. An indivisible
-history uses one call. Only the final summary is stored, using the existing
-native marker/replay format; empty, truncated, or failed phases save nothing.
-Cancellation covers both halves and the merge. Token usage is tracked per call
-before being accumulated, including usage reported after a truncation stop.
-The prompt uses terse bullets but explicitly retains uncertainty, negations,
-conditions, exact identifiers, and later corrections.
-
-Code-reading tools (`read_file`, `grep`, `list_directory`, etc.) bypass
-the condenser via `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:185`).
-The condenser's line-level elision (joining non-consecutive selected
-lines with `...`) is destructive for source code, so these tools' output
-passes through verbatim even when a condenser is wired.
-
-Note: `KaskCondenserSettings.persona_keywords` (`settings.rs:268`)
-exists and is emitted to MCP servers as `HKASK_CONDENSER_PERSONA_KEYWORDS`
-(`kask/crates/kask_bridge/src/mcp_env.rs:76-85`), but the condenser
-domain crate does not read it — no persona-scoring function exists in
-`saliency.rs` (58 lines, `word_frequencies` only). The persona path is
-**not yet enforced** downstream of the env var.
-
-## See also
-
-- [hkask-condenser Reference](./reference.md): class diagram of the
-  algorithms, registry, and ontology graph.
-- [hkask-condenser How-to](./how-to.md): tuning profiles and keyword
-  weights.
-- [hkask-condenser Tutorial](./tutorial.md): compressing your first tool
-  output.
-
----
-
-[^salience]: Itti, L., Koch, C., & Niebur, E. (1998). *A model of saliency-based visual attention for rapid scene analysis.* IEEE Transactions on Pattern Analysis and Machine Intelligence, 20(11), 1254–1259. <https://ieeexplore.ieee.org/document/730558>. The saliency model adapted for text compression.
-
-[^ousterhout]: Ousterhout, J. (2018). *A Philosophy of Software Design.* Yakny Press. <https://web.stanford.edu/~ouster/cgi-bin/book.php>. The deep-module principle: the condenser exposes a simple interface (`compress`) over a complex implementation (three algorithms + ontology graph + saliency scoring).
+- [Condenser tuning procedure](./how-to.md)
+- [Condenser reference](./reference.md)

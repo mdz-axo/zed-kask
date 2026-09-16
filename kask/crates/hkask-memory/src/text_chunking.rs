@@ -65,6 +65,95 @@ pub fn sanitize_text(text: &str) -> String {
     out
 }
 
+/// Validated word-window parameters shared by corpus and turn-memory callers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkConfig<'a> {
+    min_words: usize,
+    max_words: usize,
+    overlap_words: usize,
+    sentence_boundary: &'a str,
+}
+
+impl<'a> ChunkConfig<'a> {
+    /// Build a valid chunk contract before processing source text.
+    pub fn new(
+        min_words: usize,
+        max_words: usize,
+        overlap_words: usize,
+        sentence_boundary: &'a str,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(min_words > 0, "min_words must be positive");
+        anyhow::ensure!(
+            max_words >= min_words,
+            "max_words must be at least min_words"
+        );
+        anyhow::ensure!(
+            overlap_words < max_words,
+            "overlap_words must be less than max_words"
+        );
+        Ok(Self {
+            min_words,
+            max_words,
+            overlap_words,
+            sentence_boundary,
+        })
+    }
+}
+
+/// One typed passage emitted by the shared chunk contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextChunk {
+    pub entity_ref: String,
+    pub text: String,
+}
+
+/// Deterministic accounting for one chunking operation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChunkingReport {
+    pub source_words: usize,
+    pub emitted_words: usize,
+    pub overlap_words: usize,
+    pub chunk_count: usize,
+}
+
+/// Typed chunks and their deterministic accounting report.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChunkingOutput {
+    pub chunks: Vec<TextChunk>,
+    pub report: ChunkingReport,
+}
+
+/// Chunk text using a validated shared contract.
+pub fn chunk_text_with_config(
+    text: &str,
+    entity_ref_prefix: &str,
+    config: ChunkConfig<'_>,
+) -> ChunkingOutput {
+    let source_words = sanitize_text(text).split_whitespace().count();
+    let chunks: Vec<TextChunk> = chunk_windows(
+        text,
+        entity_ref_prefix,
+        config.min_words,
+        config.max_words,
+        config.sentence_boundary,
+        config.overlap_words,
+    )
+    .into_iter()
+    .map(|(entity_ref, text)| TextChunk { entity_ref, text })
+    .collect();
+    let emitted_words = chunks
+        .iter()
+        .map(|chunk| chunk.text.split_whitespace().count())
+        .sum();
+    let report = ChunkingReport {
+        source_words,
+        emitted_words,
+        overlap_words: config.overlap_words,
+        chunk_count: chunks.len(),
+    };
+    ChunkingOutput { chunks, report }
+}
+
 /// Chunk text into passages for embedding.
 ///
 /// No-overlap entry point used by turn-memory ingestion. The shared window
@@ -73,8 +162,9 @@ pub fn sanitize_text(text: &str) -> String {
 /// until min_words is reached; the final remainder is always retained.
 ///
 /// # Panics
-/// Panics if max_words is zero (a programmer error in this infallible API).
-/// Caller-controlled budgets should use `chunk_text_with_overlap`.
+/// Panics if `min_words == 0` or `max_words < min_words` (programmer errors
+/// in this infallible compatibility API). Caller-controlled budgets should use
+/// [`ChunkConfig::new`].
 ///
 /// Returns (entity_ref, text) pairs with entity_ref formatted as
 /// `{entity_ref_prefix}:{chunk_index}`.
@@ -94,15 +184,13 @@ pub fn chunk_text(
     max_words: usize,
     sentence_boundary: &str,
 ) -> Vec<(String, String)> {
-    assert!(max_words > 0, "max_words must be positive");
-    chunk_windows(
-        text,
-        entity_ref_prefix,
-        min_words,
-        max_words,
-        sentence_boundary,
-        0,
-    )
+    let config = ChunkConfig::new(min_words, max_words, 0, sentence_boundary)
+        .expect("chunk_text requires a valid min/max word budget");
+    chunk_text_with_config(text, entity_ref_prefix, config)
+        .chunks
+        .into_iter()
+        .map(|chunk| (chunk.entity_ref, chunk.text))
+        .collect()
 }
 
 /// Chunk with explicit repeated context, measured in whitespace-delimited words.
@@ -110,7 +198,7 @@ pub fn chunk_text(
 /// expect: "Every overlapping passage repeats context and contributes new source words."
 /// [P3] Motivating: Generative Space — retain source content for retrieval.
 /// [P4] Constraining: bounded, advancing windows; no model-token guarantee.
-/// pre: max_words > 0, overlap_words < max_words
+/// pre: min_words > 0, max_words >= min_words, overlap_words < max_words
 /// post: positive overlap repeats exactly overlap_words from the previous suffix;
 ///       each passage contributes new words and contains at most max_words.
 /// post: zero overlap uses the same window rule, without repeated words.
@@ -128,19 +216,12 @@ pub fn chunk_text_with_overlap(
     sentence_boundary: &str,
     overlap_words: usize,
 ) -> anyhow::Result<Vec<(String, String)>> {
-    anyhow::ensure!(max_words > 0, "max_words must be positive");
-    anyhow::ensure!(
-        overlap_words < max_words,
-        "overlap_words must be less than max_words"
-    );
-    Ok(chunk_windows(
-        text,
-        entity_ref_prefix,
-        min_words,
-        max_words,
-        sentence_boundary,
-        overlap_words,
-    ))
+    let config = ChunkConfig::new(min_words, max_words, overlap_words, sentence_boundary)?;
+    Ok(chunk_text_with_config(text, entity_ref_prefix, config)
+        .chunks
+        .into_iter()
+        .map(|chunk| (chunk.entity_ref, chunk.text))
+        .collect())
 }
 
 fn chunk_windows(
@@ -825,9 +906,49 @@ fn boilerplate_page_reason(page: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// expect: [P3] Zero overlap obeys the same word bound and preserves every source word through either public entry point.
+    /// expect: [P3] A validated zero-overlap contract returns typed chunks at the exact word ceiling and reports lossless source reconstruction.
     #[test]
-    fn zero_overlap_obeys_current_bounds_and_rejects_invalid_budgets() -> anyhow::Result<()> {
+    fn typed_zero_overlap_chunks_obey_exact_bounds_and_reconstruct() -> anyhow::Result<()> {
+        let text = "one two three four five six. seven eight nine ten";
+        let config = ChunkConfig::new(3, 5, 0, ".!?")?;
+        let output = chunk_text_with_config(text, "test", config);
+
+        assert_eq!(output.report.source_words, 10);
+        assert_eq!(output.report.emitted_words, 10);
+        assert_eq!(output.report.overlap_words, 0);
+        assert_eq!(output.report.chunk_count, output.chunks.len());
+        assert!(
+            output
+                .chunks
+                .iter()
+                .all(|chunk| chunk.text.split_whitespace().count() <= 5)
+        );
+        assert_eq!(
+            output
+                .chunks
+                .iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            text
+        );
+        assert_eq!(output.chunks[0].entity_ref, "test:0");
+        Ok(())
+    }
+
+    /// expect: [P3] Invalid minimum, maximum, and overlap relationships are rejected before chunking.
+    #[test]
+    fn chunk_config_validates_min_max_and_overlap() {
+        assert!(ChunkConfig::new(0, 5, 0, ".!?").is_err());
+        assert!(ChunkConfig::new(6, 5, 0, ".!?").is_err());
+        assert!(ChunkConfig::new(1, 0, 0, ".!?").is_err());
+        assert!(ChunkConfig::new(1, 2, 2, ".!?").is_err());
+        assert!(ChunkConfig::new(1, 2, 3, ".!?").is_err());
+    }
+
+    /// expect: [P3] Existing tuple callers retain zero-overlap bounds and reconstruction behavior.
+    #[test]
+    fn compatibility_entry_points_preserve_tuple_behavior() -> anyhow::Result<()> {
         let text = "one two three four five six. seven eight";
         for chunks in [
             chunk_text(text, "test", 1, 5, ".!?"),
@@ -846,9 +967,6 @@ mod tests {
                     .join(" "),
                 text
             );
-        }
-        for (max, overlap) in [(0, 0), (2, 2), (2, 3)] {
-            assert!(chunk_text_with_overlap("", "test", 1, max, ".!?", overlap).is_err());
         }
         Ok(())
     }
