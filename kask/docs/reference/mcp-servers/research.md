@@ -1,7 +1,7 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Inference"
@@ -10,9 +10,9 @@ mds_categories: [domain, composition, lifecycle]
 
 # Research MCP Server Reference
 
-**Crate:** `mcp-servers/hkask-mcp-research`
+**Crate:** `kask/mcp-servers/hkask-mcp-research`
 **Tools:** 26 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 4 research-run/paper tools (`begin_research_run`, `get_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
-**Auto-start:** Yes (free providers work with no credentials)
+**Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted RSS and research-run persistence require `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:281-323`).
 
 The research server is the web-research surface: a provider pool
 (Exa/Tavily/Brave/SerpAPI/Firecrawl plus free Semantic Scholar/arXiv/RawFetch)
@@ -43,7 +43,7 @@ Three layered gates govern every destination a fetch connects to:
 2. **Pool boundary** — `extract_with_fallback` / `browse_with_fallback`
    re-validate (`validate_provider_url`) so each provider in the fallback
    chain is behind the same gate.
-3. **Raw-fetch transport** (`providers/raw_fetch.rs`) — the inner gate:
+3. **Raw-fetch transport** (`kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs`) — the inner gate:
    a custom reqwest redirect policy re-runs the strict literal checks on
    **every redirect hop** and bounds the chain (10 hops, cycles refused); a
    validating DNS resolver
@@ -56,7 +56,7 @@ Three layered gates govern every destination a fetch connects to:
 
 Redirect content is labeled with the final URL it actually came from.
 
-**Address-class policy** (`hkask-mcp-server/src/security.rs`): loopback,
+**Address-class policy** (`kask/crates/hkask-mcp-server/src/security.rs`): loopback,
    RFC1918/link-local IPv4, ULA/link-local IPv6, IPv4-mapped IPv6, IPv4
    compatible with NAT64 (`64:ff9b::/96`) unmasking, and unspecified
    destinations (`0.0.0.0/8`, `::` — connecting to `0.0.0.0` routes to
@@ -71,8 +71,8 @@ Redirect content is labeled with the final URL it actually came from.
    cannot be validated, so it is not silently used. Provider-API clients
    (Firecrawl/Tavily/Exa/Brave/SerpAPI) keep their own proxy support.
 
-Verified regressions (`providers/raw_fetch.rs` inline tests +
-`tests/tool_behavior.rs`): a redirect to a loopback literal, the 169.254.169.254
+Verified regressions (`kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs` inline tests +
+`kask/mcp-servers/hkask-mcp-research/tests/tool_behavior.rs`): a redirect to a loopback literal, the 169.254.169.254
 metadata address, or a `localhost` name never reaches the sentinel (request
 counters prove zero); chains are bounded; cycles refused; the pre-fix behavior
 (following the forbidden redirect and returning its content) was observed as
@@ -149,14 +149,14 @@ output's `rerank` field — never a silent fallback:
 
 **Canonical-pattern interactions.**
 
-- *RRF fusion* (`providers/mod.rs`): heuristic signals remain the base
+- *RRF fusion* (`kask/mcp-servers/hkask-mcp-research/src/research/providers.rs`): heuristic signals remain the base
   scoring; the rerank stage reorders on top and falls back to RRF order on
   total failure.
 - *Inference IPC bridge* (`InferenceMethod::Rerank`): the call routes to
   the zed side, which holds the OpenRouter key and calls the provider's
   rerank endpoint directly — the MCP server never sees the credential
   (same pattern as `GenerateBatch`).
-- *Model constants* (`hkask-inference/model_constants.rs`):
+- *Model constants* (`kask/crates/hkask-inference/src/model_constants.rs`):
   `DEFAULT_RERANK_MODEL` is the single source of truth. The settings chain
   (settings_content → `KaskModelsSettings` → `emit_models_env` →
   `HKASK_RERANK_MODEL` env → `rerank_model()` resolution) overrides it, and
@@ -297,7 +297,7 @@ commits landed, each TDD with observed RED:
    gate carried an internal contradiction (its arithmetic flips the
    ordering its prose says must not flip). The intent — a stable fixture
    whose ordering survives substitution — was preserved; the pinned
-   fixtures live in `research/evidence.rs` tests with the lisp agreement
+   fixtures live in `kask/mcp-servers/hkask-mcp-research/src/research/evidence.rs` tests with the lisp agreement
    checks passing.
 
 **Interface-budget note:** the essentialist pass during implementation
@@ -305,10 +305,7 @@ reduced C1 to 8 public items (the two heavy profiles became private;
 `SetSensitivity` was deleted as a one-field pass-through wrapper) — under
 the plan's own budgeted 9.
 
-The full design rationale (candidate ranking, module designs,
-verification gates, decisions) is in git history
-(`kask/docs/architecture/research-server-capability-plan.md`, deleted
-2026-09-09 after implementation; this section is its successor).
+The full design rationale (candidate ranking, module designs, verification gates, and decisions) remains recoverable from git history; this section is its active successor.
 
 ## References
 

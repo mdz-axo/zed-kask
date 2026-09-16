@@ -1,7 +1,7 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-08-28
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Companies"
@@ -10,9 +10,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # Companies MCP Server — Reference
 
-**Diataxis type:** Reference · **Crate:** `mcp-servers/hkask-mcp-companies` · **Server id:** `companies`
+**Diataxis type:** Reference · **Crate:** `kask/mcp-servers/hkask-mcp-companies` · **Server id:** `companies` · **Tools:** 40 (pinned at `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:482-492`)
 
-Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts (notes, file attachments, durable forecast snapshots). The portfolio ledger lives in the `portfolio` MCP server; this server reads the shared portfolio DB only for ledger context (positions, symbols) that its analytics and artifacts attach to. Tools are provider-agnostic: each financial-data tool routes to FMP or EODHD based on symbol characteristics, with automatic fallback and EODHD normalization to FMP format. This page documents the current behavior of the shipping code and the standing properties of its design. Task-oriented procedures live in this page's tool sections.
+Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts (notes, file attachments, durable forecast snapshots). The portfolio ledger and portfolio analytics live exclusively in the `portfolio` MCP server; the two domains share a database only so company research artifacts can retain their referenced portfolio parents safely. Tools are provider-agnostic: each financial-data tool routes to FMP or EODHD based on symbol characteristics, with automatic fallback and EODHD normalization to FMP format. This page documents the current behavior of the shipping code and the standing properties of its design. Task-oriented procedures live in this page's tool sections.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `execute_tool` | Framework wrapper: emits the `reg.tool.companies.*` span (tool name + outcome); the `reg.tool` span is the production recording surface |
 | `fetch_response` / `fetch` | One acquisition/cache path for raw and typed readers, targets and peers. Retains provider and warnings; normalizes metrics before caching. `fetch` projects the payload for calculation callers (warnings are logged, including on cache hits). |
 | `valuation_service` | Typed financial inputs/history and common DCF preparation for standalone DCF and comparable overlays; other valuation engines remain distinct. |
-| `LearningState` | `src/learning.rs` — Beta(α+1, β+1) conjugate prior per (symbol, provider); temporal price snapshots for staleness detection; `preferred_provider` override when a provider is flaky. Updated by the explicit `result_feedback` tool (`state.record(symbol, provider, score)`), not by an automatic per-fetch hook. Chronic-staleness threshold configurable via `with_staleness_days` or `HKASK_CHRONIC_STALENESS_DAYS` |
+| `LearningState` | `kask/mcp-servers/hkask-mcp-companies/src/learning.rs` — Beta(α+1, β+1) conjugate prior per (symbol, provider); temporal price snapshots for staleness detection; `preferred_provider` override when a provider is flaky. Updated by the explicit `result_feedback` tool (`state.record(symbol, provider, score)`), not by an automatic per-fetch hook. Chronic-staleness threshold configurable via `with_staleness_days` or `HKASK_CHRONIC_STALENESS_DAYS` |
 | `ResearchStore` | SQLite-backed company research store: notes, file attachments, durable forecasts, and saved-screen jobs; owner-scoped by `webid`. It exposes no portfolio ledger or analytics reads. |
 
 The framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + outcome) is the production recording surface per tool call. Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`.
@@ -37,7 +37,7 @@ The framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + out
 
 **Diataxis type:** Architecture
 **Status:** Active (v0.39.0)
-**Related:** `mcp-servers/hkask-mcp-scenarios` (scenario forecasting), `mcp-servers/hkask-mcp-companies` (financial modeling)
+**Related:** `kask/mcp-servers/hkask-mcp-scenarios` (scenario forecasting), `kask/mcp-servers/hkask-mcp-companies` (financial modeling)
 
 ## Purpose
 
@@ -51,24 +51,25 @@ The `scenario_from_companies` tool (companies → scenarios) has been **deleted*
 
 ### Scenarios → companies (exogenous events → financial forecast)
 
+```mermaid
+flowchart TD
+    Quantify["scenario_quantify<br/>resolved event tree"]
+    Author["Operator authors per-node<br/>Yes/No DCF assumption deltas"]
+    Impact["scenario_impact_valuation<br/>parse tree and mappings"]
+    Paths["Enumerate 2^N leaf paths<br/>and stack deltas"]
+    DCF["Run DCF for each path"]
+    Weight["Probability-weighted intrinsic value<br/>plus per-node sensitivity"]
+
+    Quantify --> Author --> Impact --> Paths --> DCF --> Weight
 ```
-hkask-mcp-scenarios                    hkask-mcp-companies
-─────────────────                      ───────────────────
-scenario_quantify                      scenario_impact_valuation
-  ↓                                      ↓
-  Resolved event tree               Parse tree + per-node impact mappings
-  (marginals, CPTs,                   ↓
-   dependency edges)                Enumerate 2^N leaf paths
-  ↓                                      ↓
-  User authors per-node              Apply stacked deltas per path
-  impact mappings (yes_deltas,         ↓
-  no_deltas on DCF assumptions)      Run DCF under each path
-  ↓                                      ↓
-                                     Weight by path probability
-                                       ↓
-                                     Probability-weighted intrinsic value
-                                     + per-node sensitivity
-```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-004A
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1111-1174; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs; kask/mcp-servers/hkask-mcp-companies/src/financial_model/scenario_impact.rs
+status: VERIFIED
+-->
+
 [^gamma-adapter]
 
 ## Ontology Translation
@@ -120,7 +121,7 @@ scenario_quantify                      scenario_impact_valuation
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 42 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `ResearchStore` operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
+The diagram traces the dispatch seam shared by all 40 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `ResearchStore` operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492` and `kask/mcp-servers/hkask-mcp-companies/src/tools.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD
@@ -162,9 +163,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004
-verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/research_store.rs (ResearchStore), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
-status: VERIFIED (v9 — 2026-09-14: the incomplete standalone driver-forecast surface was removed after its driver engine became the single projection implementation behind the existing valuation tools. Tool surface is pinned by `tool_surface_is_exactly_40_registered_tools`. Sub-router counts: financial_data 9, analysis 5, notes 6, analytics 3, valuation 11, economic_profit 1, expectations 1, transcript 1, artifacts 3 = 40. Portfolio analytics are exclusively owned by `hkask-mcp-portfolio`.)
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492; kask/mcp-servers/hkask-mcp-companies/src/tools.rs; kask/mcp-servers/hkask-mcp-companies/src/providers.rs; kask/mcp-servers/hkask-mcp-companies/src/research_store.rs; kask/mcp-servers/hkask-mcp-companies/src/learning.rs; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs
+status: VERIFIED
 -->
 
 ## Tools (40)
@@ -199,7 +200,7 @@ The approved acquisition/valuation-preparation slice preserves `160cef9fab` (typ
 
 Review hardening preserves this decision: acquisition request/body-read errors remove credential-bearing URLs before formatting the cause chain for public/cached warnings. History and preparation share `resolve_shares_outstanding` (income diluted/basic → metrics diluted/basic → profile); null/missing/nonnumeric candidates do not resolve, while explicit numeric nonpositive values are not bypassed. DCF validates the resolved value; other models keep the prior nominal fallback when nothing numeric resolves. `PreparedDcf` owns the existing `ModelInputQuality`; both views serialize it under `data_quality`, including `quality_warning`, without changing quality rules or projection math. One comparison-row builder applies empty/nonarray/failed-result validation to targets and peers alike, retaining an available target profile and overlay.
 
-Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP through actual provider request/normalization paths, including transport-timeout sentinel redaction across cold output, stored cache and reopen; rejection of seeded pre-sanitizer envelopes with captured-log assertions; share fallbacks/rejections; missing-capex quality parity; and empty target metrics. Run with provider keys removed; live schema checks are separate (see the crate README).
+Offline regression coverage: `kask/mcp-servers/hkask-mcp-companies/src/acquisition_tests.rs`, using loopback HTTP through actual provider request/normalization paths, including transport-timeout sentinel redaction across cold output, stored cache and reopen; rejection of seeded pre-sanitizer envelopes with captured-log assertions; share fallbacks/rejections; missing-capex quality parity; and empty target metrics. Run with provider keys removed; live schema checks are separate (see the crate README).
 
 ### Analysis and research (5)
 
@@ -209,7 +210,7 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 | `management_scorecard` | CEO capital allocation scorecard (ROIC vs invested capital) |
 | `working_capital_cycle` | Days payable, days sales outstanding, cash-conversion cycle |
 | `company_screener` | Universe-first equity screening. Immediate mode parses ad hoc criteria; saved-screen mode renders a registered Jinja template or accepts a direct typed definition, submits an asynchronous calculate job, exposes status, and pages an immutable column-organized result without recalculation. Expectations-gap screens apply liquidity before fundamentals, group by issuer/primary security, and retain structured exclusions. |
-| `research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims (bypasses `fetch`) |
+| `company_research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims (bypasses `fetch`) |
 
 #### Saved-screen lifecycle
 
@@ -222,7 +223,7 @@ Offline regression coverage: `src/acquisition_tests.rs`, using loopback HTTP thr
 - Every financial passer remains represented: enrichment failures and deadline-expired items become `unavailable` issuer rows carrying their eligible lines and reason. Candidate securities reconcile to financial-passing securities plus deterministic exclusions; issuer count reconciles to the four analysis states. Full exclusions appear only on the first result page.
 - The `expectations_gap` template filters USD capitalization and normalized 200-day traded value before one fundamentals request per provisional issuer. The highest-liquidity eligible line supplies the issuer analysis and price; the provider-reported primary ticker remains provenance. The request's investor target return is the equity component of modified WACC: `E/(D+E) × target return + D/(D+E) × debt cost × (1−tax)`. The production value comes from `kask.companies.investor_required_return`; MAIA's documented 15% target exists only as that setting's default. Saved screens receive the setting server-side, while the standalone expectations tool may explicitly override it. Financial issuers use the target return directly in the justified-P/B solve. The authoritative driver model reconciles SG&A, D&A, and other operating expenses to reported operating income before solving growth and profitability. Missing reconciliation is unavailable, not zero. Company research remains downstream of the screen.
 
-Investor-return reference: `/home/mdz-axolotl/Clones/Library/Guidebook/MA_Guidebook_July23.md`, lines 201–204 and 503–509. External numeric model oracles: Wall Street Prep reverse DCF (12.4%), AnalystPrep CFA DuPont (8.33%), and Wall Street Prep Higgins SGR (12.5%).
+Investor-return behavior is implemented at `kask/mcp-servers/hkask-mcp-companies/src/tools/expectations.rs` and configured through the built-in descriptor at `kask/crates/kask_bridge/src/mcp_servers.rs:98-112`. External numeric model oracles remain Wall Street Prep reverse DCF (12.4%), AnalystPrep CFA DuPont (8.33%), and Wall Street Prep Higgins SGR (12.5%).
 
 Primary screening reference: [FactSet Universal Screening API](https://developer.factset.com/api-catalog/universal-screening-api). Corroborating references: Bloomberg EQS and GuruFocus All-In-One Screener.
 
@@ -234,7 +235,7 @@ Primary screening reference: [FactSet Universal Screening API](https://developer
 | `reverse_dcf` | Solve for the revenue growth implied by the current market price |
 | `scenario_analysis` | Four growth-by-margin scenarios; returns intrinsic-value range |
 
-### Valuation and forecasting (9)
+### Valuation and forecasting (11)
 
 | Tool | Description |
 |------|-------------|
@@ -243,6 +244,8 @@ Primary screening reference: [FactSet Universal Screening API](https://developer
 | `equity_duration` | Equity duration (Macaulay-style, years) of projected FCFs plus terminal value; reports terminal/stage-1/stage-2 PV shares |
 | `monte_carlo_dcf` | N-simulation Monte Carlo; returns intrinsic-value distribution |
 | `calibrate_forecast` | Calibrate growth and margin estimates into scenario-weighted intrinsic value (Fermi + Bayesian) |
+| `scenario_impact_valuation` | Apply per-event Yes/No deltas to DCF assumptions across every event-tree path and return the probability-weighted valuation distribution |
+| `forecast_persist` | Persist a caller-computed price target and probability for later outcome scoring |
 | `forecast_get` | Retrieve one durable forecast and its recorded outcomes for the authenticated owner |
 | `forecast_list` | List an authenticated owner's durable forecasts for a symbol |
 | `forecast_record` | Record a forecast outcome, Brier scores, and optional return-gap decomposition |
@@ -261,7 +264,7 @@ The portfolio ledger tools that previously lived here (`portfolio_list`,
 `portfolio_delete`, `ledger_import`, `ledger_export`, `transaction_note_append`,
 `portfolio_comparison`, `portfolio_returns`) were removed when the portfolio
 MCP server took ownership of the ledger; they are pinned absent by the
-43-tool surface test.
+40-tool surface test.
 
 | Tool | Description |
 |------|-------------|
@@ -271,6 +274,20 @@ MCP server took ownership of the ledger; they are pinned absent by the
 | `file_attach` | Attach a base64-encoded file to a company or security |
 | `file_list` | List a portfolio's attached files for a symbol |
 | `file_delete` | Delete an attached file by ID |
+
+### Transcript retrieval (1)
+
+| Tool | Description |
+|------|-------------|
+| `company_transcript` | Fetch earnings transcripts or search the transcript corpus with explicit channel and recency controls |
+
+### Saved report artifacts (3)
+
+| Tool | Description |
+|------|-------------|
+| `report_list` | List saved report or screen artifact names |
+| `report_load` | Load a saved report or screen JSON artifact by name |
+| `report_save` | Persist a report or screen JSON artifact |
 
 ## Configuration
 
@@ -288,8 +305,12 @@ API keys can be configured in two ways:[^owasp-companies-config]
 | `HKASK_EXA_API_KEY` | No | Exa research-search provider key |
 | `HKASK_TAVILY_API_KEY` | No | Tavily research-search provider key |
 | `HKASK_BRAVE_API_KEY` | No | Brave research-search provider key |
+| `HKASK_SERPAPI_API_KEY` | No | SerpAPI key used by corpus-mode transcript search |
+| `HKASK_DATA_DIR` | No | Internal database root |
+| `HKASK_ARTIFACTS_DIR` | No | Visible report and screen artifact root |
 | `HKASK_FERMI_DEFAULTS` | No | JSON object with `growth` and `margin` Fermi-question arrays |
 | `HKASK_CHRONIC_STALENESS_DAYS` | No | Chronic-staleness threshold in days for the `LearningState` provider-learning loop (default `90`); a provider whose latest filing is older than this is bypassed by `preferred_provider` |
+| `HKASK_INVESTOR_REQUIRED_RETURN` | No | Investor required-return setting consumed by expectations analysis |
 
 Example Fermi defaults:
 
@@ -299,7 +320,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 ## Behavioral boundaries
 
-- **Provider routing.** Financial-data tools route eligible symbol lookups between FMP and EODHD. `is_international_symbol` (exchange-qualified symbols such as `VOD.L`, `BMW.DE`) selects EODHD as primary. `company_screener` parses prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts, sending USD market-cap bounds unconverted (EODHD's screener market_capitalization filter is USD-denominated) while annotating rows with `market_capitalization_usd` via cached EODHD FOREX daily closes; `research_search` uses its own research providers and bypasses `fetch`.
+- **Provider routing.** Financial-data tools route eligible symbol lookups between FMP and EODHD. `is_international_symbol` (exchange-qualified symbols such as `VOD.L`, `BMW.DE`) selects EODHD as primary. `company_screener` parses prompts into EODHD filter triples and fans out one query per exchange for multi-geography prompts, sending USD market-cap bounds unconverted (EODHD's screener market_capitalization filter is USD-denominated) while annotating rows with `market_capitalization_usd` via cached EODHD FOREX daily closes; `company_research_search` uses its own research providers and bypasses `fetch`.
 - **DCF projection.** The DCF is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.[^gordon-companies-ref]
 - **Scenario matrix.** `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix (Schwartz 2×2 framing).
 - **Forecast persistence.** DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition. The `revision_of` chain has no enforced depth limit — each revision references its predecessor by id, and revisions require the same owner and same symbol (`research_store.rs` `validate_forecast_revision`). Consumers should treat the chain as an unbounded linked list and cap traversal at the application layer if a bound is required.
@@ -312,9 +333,9 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 - **Owner scoping.** `ResearchStore` is constructed with the authenticated `webid`. Notes, file attachments, and durable forecasts are namespaced by owner; cross-owner access is rejected at the data layer (`research_store.rs` owner-isolation tests).
 - **Local persistence.** Research artifacts live in a local SQLite database per owner, opened on the same DB file the portfolio server owns (the companies-specific tables sit alongside the portfolio crate's schema). No data leaves the host.
-- **Recovery retention — D01, ratified 2026-09-07.** The operator confirmed that research notes and forecasts must survive portfolio schema recovery. This supersedes whole-file disposal for shared databases, not the disposal policy for portfolio-only legacy data. Preserve attachments and referenced portfolio parents as well; refuse an incompatible shared-database reset with an explicit error rather than delete research. See [the portfolio recovery decision](portfolio.md#shared-database-recovery--d01-ratified-2026-09-07). Enforced and verified 2026-09-07 by the five `schema_recovery_*` regressions in `hkask-mcp-portfolio/src/tests.rs` (refusal preserves notes/files/forecasts rows, parents, schema, and `PRAGMA foreign_key_check`; compatible shared startup opens unchanged; portfolio-only reset is transactional with rollback on failure), plus the companies crate's 68-test suite green over the shared DB.
+- **Recovery retention — D01, ratified 2026-09-07.** The operator confirmed that research notes and forecasts must survive portfolio schema recovery. This supersedes whole-file disposal for shared databases, not the disposal policy for portfolio-only legacy data. Preserve attachments and referenced portfolio parents as well; refuse an incompatible shared-database reset with an explicit error rather than delete research. See [the portfolio recovery decision](portfolio.md#shared-database-recovery--d01-ratified-2026-09-07). Enforced and verified 2026-09-07 by the five `schema_recovery_*` regressions in `kask/mcp-servers/hkask-mcp-portfolio/src/tests.rs` (refusal preserves notes/files/forecasts rows, parents, schema, and `PRAGMA foreign_key_check`; compatible shared startup opens unchanged; portfolio-only reset is transactional with rollback on failure), plus the companies crate's 68-test suite green over the shared DB.
 - **Attachment limits.** `file_attach` rejects encoded payloads above `MAX_ENCODED_ATTACHMENT_BYTES` and decoded payloads above `MAX_DECODED_ATTACHMENT_BYTES`.
-- **Dispatch is metered, not authorized.** `McpRuntime::invoke` / `ToolGovernance` in `crates/hkask-mcp/src/runtime.rs` charges one call against the calling agent's per-tick runaway ceiling and emits the outcome span before the request reaches this server. It performs **no** per-call capability check; `invoke`'s `agent: WebID` argument is an accounting identity, not a credential. Which tools a caller may reach at all is decided upstream, by the per-request `tool_allowlist` on the inference IPC dispatch, the calling agent card's `mcp_tools` allowlist, and the per-server env/credential allowlists (RR-0038). The companies server is the transport pipe; it does not re-check capabilities per call.[^ocap-companies-ref]
+- **Dispatch is metered, not authorized.** `McpRuntime::invoke` / `ToolGovernance` in `kask/crates/hkask-mcp/src/runtime.rs` charges one call against the calling agent's per-tick runaway ceiling and emits the outcome span before the request reaches this server. It performs **no** per-call capability check; `invoke`'s `agent: WebID` argument is an accounting identity, not a credential. Which tools a caller may reach at all is decided upstream, by the per-request `tool_allowlist` on the inference IPC dispatch, the calling agent card's `mcp_tools` allowlist, and the per-server env/credential allowlists (RR-0038). The companies server is the transport pipe; it does not re-check capabilities per call.[^ocap-companies-ref]
 - **Per-tool outcome recording is the `reg.tool` span.** After each tool call, the framework-level `execute_tool` emits the `reg.tool.companies.*` span (the production recording surface). There is no `DaemonClient`, no daemon field, and no fire-and-forget task. Durable narrative memory for the companies domain is owned by `kask_bridge`'s `RealMemoryPort` (D6) at thread-turn completion, not by this server.
 
 ## Regulation observability
@@ -331,7 +352,7 @@ The companies server is a builtin MCP server in zed-kask (a child process over s
 standalone CLI command is needed. It is registered alongside the other
 builtin MCP servers and started automatically by the host.[^mcp-spec-companies-quickstart]
 
-The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at launch; optional research keys enable `research_search`.
+The server receives only the credential and config allowlists declared at `kask/crates/kask_bridge/src/mcp_servers.rs:80-112`; optional research keys enable `company_research_search`.
 
 ## Validation
 

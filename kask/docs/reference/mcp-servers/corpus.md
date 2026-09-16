@@ -1,7 +1,7 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-09-11
+last_updated: 2026-09-15
 version: "0.40.0"
 status: "Active"
 domain: "MCP Servers"
@@ -13,7 +13,7 @@ mds_categories: [domain, composition]
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
 schema contract and **23 registered tools**, pinned by
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:264–290`.
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:250-279`.
 Parameter additions do not add tools.
 
 The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed
@@ -70,9 +70,9 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 ## Pipeline parameters
 
-Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843–945`,
-`tools/tagging/ops.rs:565–593`, `tools/corpus.rs:586–656`, and
-`tools/compose_tools.rs:125–175` under the same crate's `src/`.
+Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:565-593`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:586-656`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:125-175`.
 
 | Tool | Inputs and defaults |
 |---|---|
@@ -124,7 +124,7 @@ and publishes single-tier JSONL with `entity_ref`, original `source`, `text`,
 punctuation collisions. `zero_chunk_files` surfaces coverage loss. Directory
 multi-tier is rejected; per-file/text tiers default 2048/512/128 and share the
 same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:935–1113`;
-`src/text.rs:7–16` and `src/tools/document.rs:300–346` in that crate).
+`kask/mcp-servers/hkask-mcp-corpus/src/text.rs:7-16` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:300-346`).
 
 ### Classification and prompt context
 
@@ -199,7 +199,7 @@ Workers retain ownership until destroyed, including after an abort request; it i
 not a cross-process lock. Synchronous AIMD retries only typed
 Connection/Overloaded/Timeout errors, at most **3 total attempts** (2s/4s backoff).
 Permanent/configuration errors and response rejection are not retried
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs`; `src/batch.rs`).
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs`).
 
 Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
 `qa_rows_written`, prompt-level `tokens_used`, `completion_tokens_used`,
@@ -225,7 +225,7 @@ instructions. It neither deduplicates against the DB nor verifies semantics.
 `prompt_id`, `provenance`, citations and metadata survive into retained JSONL and
 QA h_mems; this tool creates no embeddings
 (`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53–112`;
-`src/tools/corpus.rs:181–354` in that crate).
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:181-354`).
 
 - `total_nonblank_rows = generator_errors + malformed + parsed`.
 - `parsed = filter_drops + duplicates + retained`; `filtered = duplicates + retained`;

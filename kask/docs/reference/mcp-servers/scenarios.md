@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-08-28
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -10,12 +10,11 @@ mds_categories: [composition, lifecycle]
 
 # Scenarios MCP Server Reference
 
-**Crate:** `mcp-servers/hkask-mcp-scenarios`
-**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. (2026-09-03 consolidation: `scenario_research` folded into `scenario_build` (which already takes research_text), `scenario_sensitivity` folded into `scenario_quantify` (which already returns sensitivity_ranking), `scenario_from_markets` folded into `scenario_from_markets_set` (set-of-1).)
-**Auto-start:** No (in `CORE_EXCLUDED` — requires explicit opt-in via KaskSettings toggle (D9a); the former kask panel D10 was deleted)
+**Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
+**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:324-338,664-667`).
 
-Tool count verified against `#[tool(description = ...)]` annotations in
-`mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` (2026-08-05 audit).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:267,1900-1916`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
@@ -23,97 +22,63 @@ This diagram shows the control flow between the 19 MCP tools in the scenarios se
 
 ```mermaid
 flowchart TD
-    subgraph Framing["Framing Phase (PKO)"]
-        frame["scenario_frame\n7-turn conversational protocol"]
-        frame_doc["scenario_frame_document\nStructure to FramingDocument"]
-        frame --> frame_doc
+    subgraph Framing["Framing and construction"]
+        frame["scenario_frame"] --> frame_doc["scenario_frame_document"]
+        frame_doc --> brainstorm["scenario_brainstorm"] --> build["scenario_build"]
     end
 
-    subgraph Ideation["Ideation Phase (PKO)"]
-        brainstorm["scenario_brainstorm\n4-round temperature protocol"]
-        frame_doc --> brainstorm
+    subgraph Bridges["Prediction-market bridges"]
+        markets["scenario_from_markets_set"]
+        cmp["scenario_from_cmp_indices"]
+        coherence["contract_price_coherence"]
     end
 
-    subgraph Structuring["Structuring Phase"]
-        build["scenario_build\nEvent tree scaffold"]
-        from_markets_set["scenario_from_markets_set\nMarket set to EventTree"]
-        brainstorm --> build
-        research -.-> build
-        from_markets --> quantify
-        from_markets_set --> quantify
+    subgraph Computation["Quantification and updating"]
+        quantify["scenario_quantify"]
+        propagate["scenario_propagate"]
+        calibrate["scenario_calibrate"]
+        update["scenario_update"]
+        cross_validate["scenario_cross_validate"]
     end
 
-    subgraph Computation["Computation Phase (Dublin Core)"]
-        quantify["scenario_quantify\nMarginal + joint probabilities"]
-        propagate["scenario_propagate\nPrior update + tatonnement journal"]
-        calibrate["scenario_calibrate\nFermi + outside view"]
-        update["scenario_update\nBayesian revision"]
-        build --> quantify
-        quantify --> propagate
-        quantify --> calibrate
-        calibrate --> update
-        quantify --> sensitivity
+    subgraph Synthesis["Synthesis, tracking, and assessment"]
+        synthesize["scenario_synthesize"]
+        score["scenario_score"]
+        calibration["scenario_calibration"]
+        triage["scenario_triage"]
+        assess["scenario_assess"]
     end
 
-    subgraph Aggregation["Aggregation Phase"]
-        synthesize["scenario_synthesize\nDragonfly-eye weighting"]
-        cross_validate["scenario_cross_validate\nLLM vs computation"]
-        calibrate --> synthesize
-        calibrate --> cross_validate
+    subgraph Batch["Batch and state"]
+        full["scenario_full"]
+        status["scenario_status"]
     end
 
-    subgraph Tracking["Tracking Phase"]
-        score["scenario_score\nBrier + ForecastStore"]
-        calibration["scenario_calibration\nCalibration curve"]
-        quantify --> score
-        score --> calibration
-    end
-
-    subgraph Assessment["Assessment Phase"]
-        assess["scenario_assess\nChermack 5-phase"]
-        synthesize --> assess
-    end
-
-    subgraph Independent["Independent Tools"]
-        triage["scenario_triage\nGoldilocks classification"]
-        status["scenario_status\nState snapshot"]
-        full["scenario_full\nAll-in-one pipeline"]
-    end
-
-    triage -.-> quantify
-    companies --> quantify
-    full -.-> |delegates to engine| quantify
-    full -.-> |delegates to engine| calibrate
-    full -.-> |delegates to engine| synthesize
-    full -.-> |delegates to engine| assess
-
-    subgraph Engine["superforecast.rs (shared engine)"]
-        engine_tree["build_event_tree"]
-        engine_fermi["calibrate_from_fermi"]
-        engine_bayes["bayesian_update"]
-        engine_brier["score_forecast"]
-        engine_curve["compute_calibration_curve"]
-        engine_synth["synthesize_perspectives"]
-        engine_assess["assess_project"]
-        engine_cross["cross_validate"]
-    end
-
-    quantify --> engine_tree
-    calibrate --> engine_fermi
-    update --> engine_bayes
-    score --> engine_brier
-    calibration --> engine_curve
-    synthesize --> engine_synth
-    assess --> engine_assess
-    cross_validate --> engine_cross
-    companies --> engine_companies
+    build --> quantify
+    markets --> quantify
+    cmp --> quantify
+    quantify --> propagate
+    quantify --> calibrate
+    calibrate --> update
+    calibrate --> cross_validate
+    calibrate --> synthesize
+    quantify --> score --> calibration
+    synthesize --> assess
+    triage -.-> build
+    full -.-> quantify
+    full -.-> calibrate
+    full -.-> synthesize
+    full -.-> assess
+    markets -.-> coherence
+    quantify -.-> coherence
+    status -.-> calibration
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
-verified_date: 2026-08-11
-verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (19 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 19 #[tool] annotations (pinned by tool_surface_is_exactly_19_registered_tools)
-status: VERIFIED (v6 — 2026-09-03: tool count 19 after folding scenario_research into scenario_build, scenario_sensitivity into scenario_quantify, and scenario_from_markets into scenario_from_markets_set; scenario_from_cmp_indices producer is market_cmp_indices on hkask-mcp-prediction-markets)
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,267,273-1769,1900-1916; kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+status: VERIFIED
 -->
 
 ## Tool reference
@@ -131,19 +96,21 @@ status: VERIFIED (v6 — 2026-09-03: tool count 19 after folding scenario_resear
 |------|-------------|------------|
 | `scenario_brainstorm` | Generate a 4-round structured brainstorming protocol (DIVERGE → GROUND → LINK → PRUNE) with persona rotation, temperature guidance, and quality gates. | `frame` (FramingDocument) |
 
-### Structuring (2)
+### Structuring (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_build` | Build a scenario event-tree scaffold from web research: returns an extraction template (event schema, dependency format, certainty tiers, Tetlock's 10 commandments) the LLM fills against `research_text`. | `frame`, `research_text` |
 
-### Market bridges (2)
+### Market bridges (3)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates, duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
+| `scenario_from_cmp_indices` | Compose provenance-carrying constant-maturity prediction indices into an `EventTree`, optionally with caller-authored dependencies. | `cmp_indices`, `observation_date`, `dependency_specs` |
+| `contract_price_coherence` | Compare a tree-implied joint or marginal probability with an observed contract price and cost band. | `market_price`, `cost_band`, `tree_implied` |
 
-### Computation (5)
+### Computation (4)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
@@ -193,12 +160,12 @@ status: VERIFIED (v6 — 2026-09-03: tool count 19 after folding scenario_resear
 ## Forecast persistence
 
 `scenario_score` durably tracks every forecast and outcome in `ForecastStore`
-(`src/superforecast/store.rs`): an append-only JSON-line journal (one line per
+(`kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/store.rs`): an append-only JSON-line journal (one line per
 mutation, `fsync`ed before the record is admitted to memory) plus a full
 snapshot compacted from it. On load, the snapshot is applied first and the
 journal is replayed on top of it, last write wins.
 
-Durability ordering — verified by regression (`tests/tool_behavior.rs`):
+Durability ordering — verified by regression (`kask/mcp-servers/hkask-mcp-scenarios/tests/tool_behavior.rs`):
 
 - A failed snapshot publication leaves the journal intact, so reopening
   recovers every acknowledged record exactly once

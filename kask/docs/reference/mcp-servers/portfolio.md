@@ -1,7 +1,7 @@
 ---
 title: "Portfolio MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-06
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -10,9 +10,9 @@ mds_categories: [domain, composition, lifecycle]
 
 # Portfolio MCP Server Reference
 
-**Crate:** `mcp-servers/hkask-mcp-portfolio`
+**Crate:** `kask/mcp-servers/hkask-mcp-portfolio`
 **Tools:** 13 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`. (2026-09-03: `portfolio_roll` removed — it was a thin wrapper emitting one Roll transaction with hardcoded fields; emit the roll via `ledger_apply` with tx_type "roll" instead. `portfolio_seed_price` gained a batch `prices` array — one call instead of N per (symbol, date).)
-**Auto-start:** No (requires explicit opt-in via KaskSettings toggle (D9a))
+**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.portfolio=false` disables this server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-79,664-667`).
 
 The portfolio server is the general-purpose transaction-ledger portfolio store.
 It is provider-agnostic — it knows nothing about FMP/EODHD stock prices or
@@ -43,11 +43,11 @@ and attachments. An incompatible shared database may report an explicit startup
 error rather than lose data. Compatible shared databases continue to open.
 
 Enforced transactionally in `open_with_schema_recovery`
-(`src/store.rs`): an IMMEDIATE transaction wraps DDL, the `sqlite_schema`
+(`kask/mcp-servers/hkask-mcp-portfolio/src/store.rs`): an IMMEDIATE transaction wraps DDL, the `sqlite_schema`
 ownership inspection (internal `sqlite_*` names excluded via GLOB), and the
 portfolio-only drop-and-rebuild; any other table, an inspection error, or a
 failed reset rolls back. Verified 2026-09-07: the five `schema_recovery_*`
-regressions in `src/tests.rs` pass, including observed pre-fix RED (the
+regressions in `kask/mcp-servers/hkask-mcp-portfolio/src/tests.rs` pass, including observed pre-fix RED (the
 unlink/recreate recovery destroyed seeded research rows) and post-fix GREEN;
 the companies crate's 68-test suite is green over the shared DB. The
 user-visible trade-off stands: incompatible shared databases now error at
@@ -75,9 +75,10 @@ one over the guideline; each has a distinct purpose).
 
 | Module | Role |
 |--------|------|
-| `hkask_mcp_portfolio.rs` | The `PortfolioStore` — ledger, holdings, returns, import/export |
-| `server.rs` | MCP server — 16 tools + schema-compliance tests |
-| `main.rs` | Binary entrypoint |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs` | Library root and generated tool-name pin |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/store.rs` | `PortfolioStore` — ledger, holdings, returns, import/export |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs` | MCP server — 13 tools and live router |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/main.rs` | Binary entrypoint |
 
 ## Tool surface
 
@@ -110,11 +111,7 @@ materialize-then-seed never serves stale rows.
 
 ## Consumers
 
-- **`hkask-mcp-companies`** — registers `portfolio_attribution` and
-  `portfolio_characteristics`, which read this crate's ledger for
-  positions; prices are fetched from FMP/EODHD at call time (the price
-  cache here is seeded by the caller via `portfolio_seed_price`, not by
-  the companies server). Provenance points to `hkask-mcp-portfolio`.
+- **`hkask-mcp-companies`** — shares the database for owner-scoped company research artifacts, but does not register portfolio analytics or ledger tools; the 40-tool pin keeps ownership with this server (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:482-492`).
 - **`hkask-mcp-prediction-markets`** — stores CMP indices as transaction-ledger
   portfolios via `market_cmp_index_store` and `market_cmp_portfolio_store`.
 - **`hkask-portfolio-widget`** — renders holdings + returns for any portfolio
@@ -122,6 +119,4 @@ materialize-then-seed never serves stale rows.
 
 ## Credential allowlist
 
-The portfolio server is provider-agnostic: `credentials: Some(&[])`,
-`config_env: Some(&[])`. It reads only `HKASK_WEBID` (identity, injected by the
-runtime) and writes to the owner-scoped SQLite DB under the config dir.
+The portfolio server is provider-agnostic: `credentials: Some(&[])`. Its current config allowlist is exactly `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, and `HKASK_TRANSACTIONS_DIR`: the database remains under the internal data root, while transaction import files resolve under the visible artifacts root. The descriptor and an allowlist-alignment test pin this boundary (`kask/crates/kask_bridge/src/mcp_servers.rs:55-79,1037-1074`).

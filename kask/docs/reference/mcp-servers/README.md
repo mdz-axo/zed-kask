@@ -1,7 +1,7 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -28,32 +28,33 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-11 on-disk MCP servers, **377 registered tools** fleet-wide (verified 2026-09-09; methods below).
+11 built-in MCP servers, **374 registered tools** fleet-wide (verified 2026-09-15 against the live routers, generated tool-name sets, and pinning tests below). `KaskMcpSettings::default()` sets `load_default: true`, so all eleven auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-506`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server; companies delegates to it) | 43 |
-| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 23 |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 20 |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 |
-| [Media](media.md) | `mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 80 |
-| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 13 |
-| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
-| [Research](research.md) | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
-| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 87 |
-| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
+| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server) | 40 |
+| [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 23 |
+| Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 20 |
+| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 25 |
+| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 80 |
+| [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 13 |
+| [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
+| [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
+| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
+| [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 87 |
+| Training | `kask/mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
 ### Count verification methods (per row)
 
-- **Media = 80** — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` asserting `MediaServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:435`). The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80).
-- **Companies = 43** — pinned end-to-end by `tool_surface_is_exactly_43_registered_tools` asserting `CompaniesServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`). The pin also guards absence: the portfolio ledger tools (portfolio_delete, ledger_import, ledger_export, portfolio_comparison, portfolio_returns, transaction_note_append) were removed from companies when the portfolio server took ownership, and any re-introduction fails this test. `company_research_search` was registered after shipping un-routed while two skills called it; `stock_universe` was removed (a market-cap-only `company_screener` prompt covers it).
-- **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` asserting `ScenariosServer::scenario_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`). The 2026-09-03 consolidation folded `scenario_research` into `scenario_build`, `scenario_sensitivity` into `scenario_quantify`, and `scenario_from_markets` into `scenario_from_markets_set`.
-- **Swarm = 87** — pinned end-to-end by `tool_surface_is_exactly_87_registered_tools` asserting `SwarmServer::combined_router().list_all().len()` (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:751`), with `tool_names_const_matches_registered_surface` keeping the build.rs-generated `TOOL_NAMES` const in agreement with the live router. Router composition: `cloud_swarm_router + local_router + a2a_router + knowledge_router` (48 cloud + 32 local + 3 a2a + 4 knowledge; the former `ledger_router` was removed with `hkask-ledger` and the local budget system, 2026-09-08). Two tools were added 2026-09-09 with the fermi absorption (`swarm_fleet_digest_local`, `swarm_select_agent_local`, commit `256f87307c`; earlier additions 2026-09-03: `swarm_update_agent` for fermi API alignment, `swarm_get_local_agent` for local parity with `swarm_get_agent`).
-- **All others** — `#[tool`-attribute grep over `src/**/*.rs` excluding `#[cfg(test)]` regions, `#[tool_router]` attributes, and comment lines (re-verified 2026-09-09). This method reproduces the pinned counts exactly for companies (43), corpus (23), media (80), scenarios (19), and swarm (87), which is why it is trusted for the unpinned servers. Caveat: grep cannot catch a `#[tool]` method whose impl block is not wired into a router — media, scenarios, companies, corpus, and swarm have mechanical pins against that failure mode.
+- **Companies = 40** — pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`, which asserts the live nine-router sum (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492`).
+- **Corpus = 23** — pinned end-to-end by `tool_surface_is_exactly_23_registered_tools` over its seven-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:250-279`).
+- **Media = 80** — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live eight-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:431-488`).
+- **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` over `scenario_router` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:267,1900-1916`). The only direct market-record bridge is `scenario_from_markets_set`; CMP indices use `scenario_from_cmp_indices`.
+- **Swarm = 87** — pinned end-to-end by `tool_surface_is_exactly_87_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:173-178,731-792`). The live partition is 48 cloud plus 39 non-cloud: 32 local + 3 A2A + 4 knowledge.
+- **Kata Kanban = 25 and Portfolio = 13** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1906-1923`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:149-520`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
+- **Curator = 20, Prediction Markets = 32, Research = 26, Training = 9** — verified from their currently wired router blocks and registered `#[tool]` methods (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:357`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:161`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:285-309`).
 
-> The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 11 build clean.
+Arithmetic: `40 + 23 + 20 + 25 + 80 + 13 + 32 + 26 + 19 + 87 + 9 = 374`.
 
 ## Common Patterns
 
@@ -61,10 +62,10 @@ All servers follow these patterns:
 
 1. **Bootstrap:** `main.rs` calls `<crate>::run()`, which calls `hkask_mcp_server::run_server(name, version, factory, credentials)`. The `factory: FnOnce(ServerContext) -> Result<S, McpError>` closure receives a `ServerContext` (no ambient authority — all deps injected) and constructs the server struct. There is no separate `bootstrap_mcp_server` / `MCPBootstrap` step; that API was removed along with the `HKASK_MCP_HOST` / userpod identity concept.
 2. **Identity:** `ServerContext.webid: WebID` is the sole agent-identity source, resolved in transport from `HKASK_WEBID` (or an anonymous fallback). The `mcp_server!` macro generates a struct with `pub webid: WebID` plus the caller's custom domain fields — and nothing else (no `userpod`, no `daemon` field; the daemon was deleted in the 2026-07-25 cleanup and `DaemonClient` / `record_via_daemon` / `RealMemoryPort` are no longer part of the server contract).
-3. **Tool dispatch:** wrap each tool body in `execute_tool(self, "tool_name", async { ... })` (or `execute_tool_semantic(self, "tool_name", Some("pko:ChangeOfStatus"), async { ... })` to tag the Regulation span with a domain ontology concept). Both emit the `reg.tool` span and serialize errors; the `reg.tool` span is the production recording surface. Thread-level memory via `RealMemoryPort` (D6) is the richer path; per-tool debug logging is available via `tracing::debug!` at the call site if a server needs it.
-4. **Tool attribute:** use rmcp's built-in `#[tool(description = "...")]` on each tool method and `#[tool_router(server_handler)]` on the `impl` block that holds them (imported from `rmcp`). There is no custom `#[tool_handler(router = ...)]` attribute; per-call routing happens at the `McpRuntime` dispatch port, not on the server struct.
+3. **Tool dispatch:** wrap each tool body in `execute_tool(self, "tool_name", async { ... })`. It emits the `reg.tool` span and serializes errors; ontology concepts belong in structured tool output, not span tags (`kask/crates/hkask-mcp-server/src/server.rs`). Thread-level memory is the richer narrative path; per-tool debug logging remains available at the call site.
+4. **Tool routing:** use rmcp's `#[tool(description = "...")]` on tool methods and `#[tool_router(...)]` on the impl blocks that generate routers. Servers with multiple tool impls sum those sub-routers and wire the result with `#[tool_handler(router = Self::combined_router())]`; single-router servers may use `#[tool_router(server_handler)]` directly. Current examples are Companies (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294`) and Research (`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:161`).
 5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors.
-6. **Governance:** `McpRuntime::invoke` (`crates/hkask-mcp/src/runtime.rs`) **meters and dispatches; it does not authorize.** The pipeline is: charge one call against the agent's per-tick runaway ceiling → dispatch → emit the `reg.tool` span. Its fourth argument, `agent: WebID`, is an accounting identity, not a credential, and the only pre-dispatch refusal is `EnergyBudgetExceeded` (the runaway-loop breaker; resets each regulation tick). Tool authority is enforced at boundaries whose list the caller does not choose: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`crates/kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists (RR-0038). The composition root passes the `Arc<McpRuntime>` directly wherever a `ToolPort` is needed (no adapter).
+6. **Governance:** `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`) **meters and dispatches; it does not authorize.** The pipeline is: charge one call against the agent's per-tick runaway ceiling → dispatch → emit the `reg.tool` span. Its fourth argument, `agent: WebID`, is an accounting identity, not a credential, and the only pre-dispatch refusal is `EnergyBudgetExceeded` (the runaway-loop breaker; resets each regulation tick). Tool authority is enforced at boundaries whose list the caller does not choose: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists (RR-0038). The composition root passes the `Arc<McpRuntime>` directly wherever a `ToolPort` is needed (no adapter).
 
 ## Testing standard
 
@@ -121,39 +122,28 @@ The separation of skill, canonical-math, and domain-server layers follows the de
 discipline: each module has a narrow interface and deep implementation, and domain logic
 stays where it is entangled with domain types and I/O.[^ousterhout-deep]
 
+```mermaid
+flowchart TD
+    Skill["Superforecasting skill<br/>natural-language judgment and process"]
+    Math["hkask-forecast<br/>deterministic forecasting primitives"]
+    Scenarios["hkask-mcp-scenarios<br/>event trees and calibration"]
+    Companies["hkask-mcp-companies<br/>financial valuation"]
+    Markets["hkask-mcp-prediction-markets<br/>market base rates and CMP indices"]
+
+    Skill -->|"conformance contract"| Math
+    Math --> Scenarios
+    Math --> Companies
+    Math --> Markets
+    Markets -->|"scenario_from_markets_set<br/>scenario_from_cmp_indices"| Scenarios
+    Scenarios -->|"scenario_impact_valuation inputs"| Companies
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Skill layer  — registry/templates/superforecasting/*.j2     │
-│  Natural-language Tetlock pipeline (8 stages + gate +        │
-│  convergence). LLM reasoning: triage judgment, hypothesis     │
-│  generation, counterfactual analysis, dragonfly synthesis,   │
-│  calibration, record, quality gate. PDCA loop + quality gate.  │
-└──────────────────────────────────────────────────────────────┘
-                          │  documents the formulas
-                          │  it relies on (conformance contract)
-                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Canonical-math layer  — crates/hkask-forecast                │
-│  Pure-math Tetlock primitives only. No domain types, no NLP,  │
-│  no I/O. calibrate_from_fermi, outside_view_adjustment,        │
-│  bayesian_update, brier_score, brier_score_multi,             │
-│  brier_interpretation. The single source of truth for the     │
-│  deterministic core.                                           │
-└──────────────────────────────────────────────────────────────┘
-                          ▲  consumed via hkask_forecast::*
-                          │  (adapters convert domain types)
-              ┌───────────┴───────────┬─────────────────┐
-              ▼                       ▼                 ▼
-┌────────────────────────┐ ┌────────────────────┐ ┌────────────────────┐
-│ hkask-mcp-scenarios    │ │ hkask-mcp-companies │ │ hkask-mcp-         │
-│ Event-tree forecasting,│ │ FIBO-anchored       │ │ prediction-markets │
-│ ForecastStore journal, │ │ financial           │ │ Polymarket/Kalshi  │
-│ calibration curve,     │ │ forecasting,        │ │ base rates feeding │
-│ triage heuristic,      │ │ WeightedScenario    │ │ scenario_from_     │
-│ certainty tiers.       │ │ intrinsic-value     │ │ markets.           │
-│                        │ │ distribution.       │ │                   │
-└────────────────────────┘ └────────────────────┘ └────────────────────┘
-```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-003
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,510-723; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88
+status: VERIFIED
+-->
 
 ### What each layer owns
 
@@ -165,7 +155,7 @@ calibration, structured record, independent quality gate, and convergence check.
 stages are not reducible to pure math — "steelman the strongest opposing argument" is LLM
 judgment, not a formula.
 
-**Canonical-math layer** (`crates/hkask-forecast/`) — owns the deterministic primitives:
+**Canonical-math layer** (`kask/crates/hkask-forecast/`) — owns the deterministic primitives:
 confidence-weighted averaging (Fermi), shrinkage estimation (outside view), Bayes' theorem
 (evidence update), and Brier scoring (calibration tracking). Pure math, no domain types, no
 NLP, no I/O. The MCP servers consume it via `hkask_forecast::*`.
@@ -175,8 +165,8 @@ NLP, no I/O. The MCP servers consume it via `hkask_forecast::*`.
 primitives with domain-specific types and I/O. Domain logic stays here, not in
 `hkask-forecast`, because it is entangled with domain types and I/O — moving it up would
 violate the deep-module discipline. The prediction-markets server is the outside-view sense
-arm: its `MarketRecord`s feed `scenario_from_markets` / `scenario_from_markets_set` in the
-scenarios server, and `equity_duration` in the companies server pairs cash-flow maturity
+arm: its `MarketRecord`s feed `scenario_from_markets_set` in the scenarios server,
+its CMP outputs feed `scenario_from_cmp_indices`, and `equity_duration` in the companies server pairs cash-flow maturity
 profiles with prediction-market `time_to_maturity`.
 
 ### Why `SubQuestion` survives in scenarios but not in companies
@@ -257,11 +247,11 @@ three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-com
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 43 `#[tool]` methods, dual-provider routing, forecast store (the portfolio ledger lives in the portfolio server; DIAG-RF-004 inline)
+- [Companies MCP Server Reference](companies.md) — 40 registered tools, dual-provider routing, forecast store (the portfolio ledger lives in the portfolio server; DIAG-RF-004 inline)
 - [Corpus MCP Server Reference](corpus.md) — 23 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 19 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 85 `#[tool]` methods (pinned; ABW cloud + local substrate), dual mode, swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend
+- [Swarm MCP Server Reference](swarm.md) — 87 registered tools (48 cloud + 39 non-cloud), dual mode, swarm-intelligence skill ecosystem, consent-gated cloud spend
 - [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets + companies layer over `hkask-forecast` (folded from the deleted explanation page)
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - Companies MCP Code Review — adversarial code review of the companies server
@@ -271,13 +261,6 @@ three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-com
 - Research MCP Adversarial Review (Follow-Up 2026-07-20) — 11 new findings: dead CapabilityContext, edit_tags feed-relabeling bug, missing transactions, stored SSRF, stub health checks; 7 follow-up items including panic-safe transactions, permissive SSRF for RSS, and circuit-breaker ADR
 
 ## Kata-Kanban Server Architecture (DIAG-IC-017)
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-IC-017
-verified_date: 2026-09-04
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:37,45 (KanbanService store + goal_store); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:1059 (kanban_task_kata_prompt); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44 (reg.kata span); kask/crates/hkask-types/src/kanban_status.rs:24 (TaskStatus)
-status: VERIFIED
--->
 
 ```mermaid
 classDiagram
@@ -289,10 +272,15 @@ classDiagram
     }
     class KanbanService {
         +store: HMemStore
-        +goal_store: Option~HMemStore~
     }
     class HMemStore {
-        boards and tasks persisted as RDF h_mems
+        boards, tasks, and unresolved goals persisted as RDF h_mems
+    }
+    class Goal {
+        +goal_id: GoalID
+        +criteria: Vec~VerificationCriterion~
+        +prediction: Option~f64~
+        +verdicts: Vec~GoalVerdict~
     }
     class Board {
         +board_id: BoardId
@@ -317,11 +305,19 @@ classDiagram
     KanbanService --> HMemStore : persists via
     HMemStore "1" o-- "many" Board : contains
     HMemStore "1" o-- "many" Task : contains
+    HMemStore "1" o-- "many" Goal : contains until resolution
     Board "1" o-- "many" Task : holds
     Task "1" --> "1" TaskStatus : has
 ```
 
-The Kata-Kanban server persists boards and tasks as RDF h_mems via `HMemStore` (`kanban/service_impl/service.rs:37`), alongside an ephemeral in-memory goal store (`service.rs:45` — goals die with the process, operator ruling 2026-08-29). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per-task by the `kanban_task_kata_prompt` tool (`hkask_mcp_kata_kanban.rs:1059` → `kanban/service_impl/kata.rs`, emitting `reg.kata` spans). `TaskStatus` is defined in `hkask-types/src/kanban_status.rs:24`.
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-IC-017
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,271-321; kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-78; kask/crates/hkask-types/src/kanban_status.rs:24
+status: VERIFIED
+-->
+
+The Kata-Kanban server persists boards, tasks, and unresolved functional goals as RDF h_mems in the same DB-backed `HMemStore` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60`; `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,315-321`). Goals survive server restarts until `kanban_goal_score` records the resolution and prunes the active row; the turn-ingestion path retains the durable outcome record (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:271-301`). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per task by `kanban_task_kata_prompt`. `TaskStatus` is defined in `kask/crates/hkask-types/src/kanban_status.rs:24`.
 
 ## Footnotes
 
