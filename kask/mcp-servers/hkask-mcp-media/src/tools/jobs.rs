@@ -103,6 +103,9 @@ impl MediaServer {
                     ))
                 })?;
 
+            let effective_params = serde_json::to_value(&media_params).map_err(|error| {
+                McpToolError::internal(format!("encode job effective parameters: {error}"))
+            })?;
             let job_id = uuid::Uuid::new_v4().to_string();
             let now = hkask_types::time::now_rfc3339();
 
@@ -245,7 +248,12 @@ impl MediaServer {
                     }
                 }
 
-                let slim = match publication.publish_and_slim(gallery.as_ref(), &gallery_store) {
+                let slim = match publication.publish_and_slim(
+                    gallery.as_ref(),
+                    &gallery_store,
+                    &op_for_task,
+                    &effective_params,
+                ) {
                     Ok(slim) => slim,
                     Err(error) => {
                         let outcome = if token.is_cancelled() {
@@ -401,7 +409,7 @@ impl MediaServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jobs::MAX_CONCURRENT_JOBS;
+    use crate::jobs::MAX_CONCURRENT_HEAVY_OPERATIONS;
 
     struct NoInference;
 
@@ -419,7 +427,15 @@ mod tests {
                     + '_,
             >,
         > {
-            panic!("job_list must not invoke inference")
+            panic!("control and overloaded tool tests must not invoke inference")
+        }
+
+        fn media_generate<'a>(
+            &'a self,
+            _: &str,
+            _: &hkask_types::MediaGenerateParams,
+        ) -> hkask_types::MediaFuture<'a> {
+            panic!("an overloaded direct operation must fail before provider work")
         }
     }
 
@@ -582,6 +598,48 @@ mod tests {
         Ok(())
     }
 
+    /// expect: A fifth combined direct operation fails before provider work while control reads stay available.
+    #[tokio::test]
+    async fn saturated_combined_capacity_rejects_direct_tool_but_keeps_job_list_available()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = crate::jobs::new_job_store();
+        let server = server_with_port(Arc::new(NoInference), store.clone())?;
+        let _direct = (0..3)
+            .map(|_| store.admit_direct())
+            .collect::<Result<Vec<_>, _>>()?;
+        let _job = store.admit(JobRecord {
+            id: "combined-capacity-job".to_string(),
+            op: "generate_image".to_string(),
+            status: "queued".to_string(),
+            created_at: hkask_types::time::now_rfc3339(),
+            completed_at: None,
+            result: None,
+            error: None,
+        })?;
+
+        let error = server
+            .generate_image(Parameters(GenerateImageRequest {
+                prompt: "must not reach provider".to_string(),
+                image_size: None,
+                num_images: Some(1),
+                style: None,
+            }))
+            .await
+            .expect_err("fifth combined operation must fail visibly");
+        assert!(error.message.contains("capacity exhausted"));
+
+        let list = server
+            .job_list(Parameters(JobListRequest {
+                status: None,
+                limit: Some(20),
+            }))
+            .await?;
+        let value: serde_json::Value = serde_json::from_str(&list)?;
+        let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
+        assert_eq!(payload["total"], 1);
+        Ok(())
+    }
+
     /// expect: Cancelling one of four running jobs returns only after its provider future is
     /// dropped, its active slot is released, and a fifth job can be admitted immediately.
     #[tokio::test]
@@ -592,7 +650,9 @@ mod tests {
         let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
 
-        let barrier = Arc::new(tokio::sync::Barrier::new(MAX_CONCURRENT_JOBS + 1));
+        let barrier = Arc::new(tokio::sync::Barrier::new(
+            MAX_CONCURRENT_HEAVY_OPERATIONS + 1,
+        ));
         let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let store = crate::jobs::new_job_store();
         let server = server_with_port(
@@ -603,7 +663,7 @@ mod tests {
             store.clone(),
         )?;
         let mut job_ids = Vec::new();
-        for _ in 0..MAX_CONCURRENT_JOBS {
+        for _ in 0..MAX_CONCURRENT_HEAVY_OPERATIONS {
             job_ids.push(submit(&server).await?);
         }
         barrier.wait().await;
@@ -618,7 +678,7 @@ mod tests {
         assert_eq!(cancel_payload["history_scope"], JOB_HISTORY_SCOPE);
 
         assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
-        assert_eq!(store.active_count()?, MAX_CONCURRENT_JOBS - 1);
+        assert_eq!(store.active_count()?, MAX_CONCURRENT_HEAVY_OPERATIONS - 1);
         let fifth_job_id = submit(&server).await?;
         assert!(!fifth_job_id.is_empty());
 

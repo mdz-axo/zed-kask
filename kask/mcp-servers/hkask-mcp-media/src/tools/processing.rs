@@ -248,6 +248,7 @@ impl MediaServer {
         }): Parameters<RemoveBackgroundRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_remove_background", async {
+            let _admission = self.admit_heavy_operation()?;
             let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
@@ -290,6 +291,7 @@ impl MediaServer {
         }): Parameters<ApplyStyleRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_apply_style", async {
+            let _admission = self.admit_heavy_operation()?;
             if style_prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "style_prompt must not be empty",
@@ -344,6 +346,7 @@ impl MediaServer {
         }): Parameters<CreateCollageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_create_collage", async {
+            let _admission = self.admit_heavy_operation()?;
             let mode_count =
                 search_terms.is_some() as u8 + similar_to_index.is_some() as u8 + image_indices.is_some() as u8;
             if mode_count == 0 {
@@ -539,6 +542,7 @@ impl MediaServer {
         }): Parameters<VideoClipRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_clip", async {
+            let _admission = self.admit_heavy_operation()?;
             if start_sec < 0.0 || end_sec <= 0.0 {
                 return Err(McpToolError::invalid_argument(
                     "timestamps must be non-negative",
@@ -598,6 +602,7 @@ impl MediaServer {
         }): Parameters<VideoToGifRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_to_gif", async {
+            let _admission = self.admit_heavy_operation()?;
             let start = start_sec.unwrap_or(0.0);
             let dur = duration_sec.unwrap_or(5.0);
             let w = width.unwrap_or(480);
@@ -671,6 +676,7 @@ impl MediaServer {
         }): Parameters<ImageToVideoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_to_video", async {
+            let _admission = self.admit_heavy_operation()?;
             if let Some(d) = duration
                 && d <= 0.0
             {
@@ -721,6 +727,7 @@ impl MediaServer {
         }): Parameters<VideoAddCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_add_caption", async {
+            let _admission = self.admit_heavy_operation()?;
             let pos = position.as_deref().unwrap_or("bottom");
             let size = font_size.unwrap_or(24);
             if size == 0 {
@@ -779,6 +786,7 @@ impl MediaServer {
         }): Parameters<VideoRemixRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_remix", async {
+            let _admission = self.admit_heavy_operation()?;
             if start_sec >= end_sec {
                 return Err(McpToolError::invalid_argument(
                     "start_sec must be less than end_sec.",
@@ -871,6 +879,7 @@ impl MediaServer {
         }): Parameters<VideoFromImagesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_from_images", async {
+            let _admission = self.admit_heavy_operation()?;
             validate_item_count(
                 "image_indices",
                 image_indices.len(),
@@ -943,6 +952,7 @@ impl MediaServer {
         Parameters(VideoConcatRequest { video_urls }): Parameters<VideoConcatRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_concat", async {
+            let _admission = self.admit_heavy_operation()?;
             validate_item_count(
                 "video_urls",
                 video_urls.len(),
@@ -992,6 +1002,7 @@ impl MediaServer {
         Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_caption", async {
+            let _admission = self.admit_heavy_operation()?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -1080,6 +1091,7 @@ impl MediaServer {
         }): Parameters<VideoExtractFramesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_extract_frames", async {
+            let _admission = self.admit_heavy_operation()?;
             if !interval_sec.is_finite() || interval_sec <= 0.0 {
                 return Err(McpToolError::invalid_argument(
                     "interval_sec must be finite and greater than 0",
@@ -1194,6 +1206,7 @@ impl MediaServer {
         }): Parameters<VideoMemeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_meme", async {
+            let _admission = self.admit_heavy_operation()?;
             // Admission-time gallery capture — before the local composition
             // and the motion-generation await.
             let gallery = self.capture_gallery();
@@ -1290,6 +1303,7 @@ impl MediaServer {
         Parameters(VideoInfoRequest { video_url }): Parameters<VideoInfoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_info", async {
+            let _admission = self.admit_heavy_operation()?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -1314,6 +1328,7 @@ impl MediaServer {
         Parameters(VideoFetchRequest { url }): Parameters<VideoFetchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_fetch", async {
+            let _admission = self.admit_heavy_operation()?;
             if url.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("url must not be empty"));
             }

@@ -18,6 +18,7 @@ impl MediaServer {
         }): Parameters<GenerateImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "generate_image", async {
+            let _admission = self.admit_heavy_operation()?;
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -182,6 +183,7 @@ impl MediaServer {
         }): Parameters<TransformImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transform_image", async {
+            let _admission = self.admit_heavy_operation()?;
             // Admission-time gallery capture — before every await (DNS
             // validation included): the gallery active when the operation is
             // admitted is the gallery the output is indexed into.
@@ -237,6 +239,7 @@ impl MediaServer {
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "upscale_image", async {
+            let _admission = self.admit_heavy_operation()?;
             let gallery = self.capture_gallery();
             validate_tool_url_with_dns(&image_url).await?;
             let media_params = hkask_types::MediaGenerateParams {
@@ -277,6 +280,7 @@ impl MediaServer {
         }): Parameters<GenerateVideoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "generate_video", async {
+            let _admission = self.admit_heavy_operation()?;
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -325,6 +329,7 @@ impl MediaServer {
         Parameters(ExpandPromptRequest { prompt, style }): Parameters<ExpandPromptRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "expand_prompt", async {
+            let _admission = self.admit_heavy_operation()?;
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -395,6 +400,7 @@ impl MediaServer {
         }): Parameters<ImageEditRegionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_edit_region", async {
+            let _admission = self.admit_heavy_operation()?;
             validate_tool_url_with_dns(&image_url).await?;
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));

@@ -106,6 +106,24 @@ observed recovery. A reopen or a typed permanent failure escalates to Curation.
 This folds inference resilience into Regulation without inventing an unhandled
 central action.
 
+## Why harness-summary acknowledgment follows queue admission
+
+The rollout harness writes ordered `harness_summary` events to the shared event
+store. `HarnessRegressionMonitor` scans those events and offers each material
+pass-rate regression to `CyberneticsLoop::submit_rollout_impact_check`. The
+monitor owns its cursor: a summary that requires an impact check is acknowledged
+only after the bounded queue returns `RolloutImpactSubmission::Accepted`.
+`QueueFull` preserves both the queue and the monitor cursor at the accepted
+contiguous prefix, while any event-store query failure preserves the cursor from
+before the poll (`kask/crates/kask_bridge/src/rollout_event_bridge.rs`).
+
+This acknowledgment is admission, not a verdict. The next Regulation tick drains
+accepted checks into `verify_impact`; metric assessment and event-store verdict
+write-back remain separate later phases
+(`kask/crates/hkask-regulation/src/cybernetics_loop.rs`). The production 60-second
+scheduler invokes the same behavior-tested `poll_once` operation rather than
+assigning a scan cursor before submission (`crates/zed/src/main.rs`).
+
 ## Why escalation has several sinks
 
 Escalation is an algedonic channel: it carries a condition that operational

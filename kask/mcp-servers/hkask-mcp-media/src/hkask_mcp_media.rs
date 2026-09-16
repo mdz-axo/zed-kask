@@ -46,9 +46,7 @@ pub mod tools;
 
 // Extracted implementation modules (C2 split). Re-exported so the
 // `use crate::*` imports in tools/ keep resolving without churn.
-#[cfg(test)]
-pub(crate) use assets::persist_generated_asset;
-pub(crate) use assets::{media_op_kind, persist_and_slim_result, persist_slim_and_enrich};
+pub(crate) use assets::{media_op_kind, persist_slim_and_enrich};
 pub(crate) use faces::default_face_folder;
 pub(crate) use text::{draw_text_mut, load_meme_font, measure_text};
 
@@ -280,6 +278,23 @@ mod levenshtein_tests {
 }
 
 impl MediaServer {
+    /// Fail fast before a direct heavy RPC reaches provider, FFmpeg, or analysis work.
+    pub(crate) fn admit_heavy_operation(
+        &self,
+    ) -> Result<crate::jobs::HeavyOperationPermit, McpToolError> {
+        self.job_store.admit_direct().map_err(|error| match error {
+            crate::jobs::JobStoreError::Overloaded { .. } => {
+                McpToolError::rate_limited(error.to_string())
+            }
+            crate::jobs::JobStoreError::AdmissionClosed => {
+                McpToolError::internal(error.to_string())
+            }
+            _ => McpToolError::internal(format!(
+                "unexpected direct media admission failure: {error}"
+            )),
+        })
+    }
+
     /// The admission-time gallery snapshot for generation tools: the gallery
     /// (if any) active when the operation is admitted, captured once before
     /// the first inference await. In-flight generation must never retarget to
@@ -1537,9 +1552,18 @@ mod tool_behavior_tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
         let result = serde_json::json!({"data": [{"b64_json": b64}]});
 
-        let path = persist_generated_asset(None, &server.gallery_store, &result, "image")
-            .await
-            .expect("persist jpeg payload");
+        let published = persist_slim_and_enrich(
+            None,
+            &server.gallery_store,
+            &result,
+            "generate_image",
+            "image",
+            serde_json::json!({"prompt": "format sniff"}),
+        )
+        .await
+        .expect("publish jpeg payload");
+        let path =
+            std::path::PathBuf::from(published["output"].as_str().expect("published output path"));
 
         // The alignment invariant, checked three ways: the extension on
         // disk, the byte round-trip, and a re-sniff of the written file.
@@ -1563,12 +1587,12 @@ mod tool_behavior_tests {
     }
 
     /// Regression pin for the 2026-08-31 context bomb: the slim tool result
-    /// a media tool returns after `persist_and_slim_result` carries the
+    /// a media tool returns after authoritative staged publication carries the
     /// persisted path and the provider's non-payload metadata — never the
     /// base64 payload. Two raw b64 results (~65K tokens each) breached the
     /// 262144-token context limit on the following turn.
     #[tokio::test]
-    async fn persist_and_slim_result_strips_payload_and_returns_paths() {
+    async fn generated_publication_strips_payload_and_returns_paths() {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
@@ -1586,11 +1610,13 @@ mod tool_behavior_tests {
             "data": [{ "b64_json": encode(&jpeg) }],
             "model": "flux-1-schnell",
         });
-        let slim = persist_and_slim_result(
+        let slim = persist_slim_and_enrich(
             server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
+            "generate_image",
             "image",
+            serde_json::json!({"prompt": "single"}),
         )
         .await
         .expect("persist + slim must succeed");
@@ -1620,11 +1646,13 @@ mod tool_behavior_tests {
                 { "b64_json": encode(&png_magic) },
             ],
         });
-        let slim = persist_and_slim_result(
+        let slim = persist_slim_and_enrich(
             server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
+            "generate_image",
             "image",
+            serde_json::json!({"prompt": "multiple"}),
         )
         .await
         .expect("persist + slim must succeed");
@@ -1648,11 +1676,13 @@ mod tool_behavior_tests {
         // (3) Unrecognized shape: a surfaced error — the raw provider
         // response is never the fallback.
         let result = serde_json::json!({"something": "else"});
-        let error = persist_and_slim_result(
+        let error = persist_slim_and_enrich(
             server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
+            "generate_image",
             "image",
+            serde_json::json!({"prompt": "invalid"}),
         )
         .await
         .expect_err("unrecognized shape must fail the tool");
@@ -1683,6 +1713,19 @@ mod tool_behavior_tests {
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
 
         let server = make_server();
+        let gallery = server
+            .gallery_store
+            .open(
+                temp.path().to_str().expect("UTF-8 gallery root"),
+                GalleryMode::ReadOnly,
+            )
+            .expect("open publication gallery");
+        let mut state = GalleryState::new(temp.path().to_path_buf(), GalleryMode::ReadOnly);
+        state.gallery_id = Some(gallery.id.clone());
+        *server
+            .gallery_state
+            .lock()
+            .expect("gallery state lock") = Some(state);
         use base64::Engine;
         let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
         let result = serde_json::json!({
@@ -1717,8 +1760,20 @@ mod tool_behavior_tests {
             "the media block must reference the persisted path — hint: {hint}"
         );
         assert!(hint.starts_with("```media"), "fenced media block: {hint}");
-
-        match prior {
+        let asset_id = enriched["gallery_asset_id"]
+            .as_str()
+            .expect("stable gallery Asset id");
+        let task_id = enriched["omc_task_id"]
+            .as_str()
+            .expect("durable OMC Task id");
+        let generation = server
+            .gallery_store
+            .get_generation(asset_id)
+            .expect("read lineage")
+            .expect("lineage exists");
+        assert_eq!(generation.id, task_id);
+        assert_eq!(generation.prompt.as_deref(), Some("a cat"));
+        leth prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
             None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
         }

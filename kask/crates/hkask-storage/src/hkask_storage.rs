@@ -38,6 +38,6 @@ pub use hmem::{HMem, HMemError, HMemStore};
 pub use regulation_store::{DecayConfig, RegulationArchive};
 
 pub use gallery::{
-    FaceRegistryRecord, GalleryMode, GalleryRecord, GalleryStore, GalleryStoreError, ImageRecord,
-    TagRecord,
+    AssetCreationPublication, AssetObservation, FaceRegistryRecord, GalleryMode, GalleryRecord,
+    GalleryStore, GalleryStoreError, ImageRecord, PublishedAssetCreation, TagRecord,
 };

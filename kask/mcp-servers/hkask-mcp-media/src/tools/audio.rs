@@ -169,6 +169,7 @@ impl MediaServer {
         }): Parameters<VoiceDesignRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "voice_design", async {
+            let _admission = self.admit_heavy_operation()?;
             if character_description.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "character_description must not be empty",
@@ -222,6 +223,7 @@ impl MediaServer {
         Parameters(GenerateSpeechRequest { text, voice_design }): Parameters<GenerateSpeechRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "generate_speech", async {
+            let _admission = self.admit_heavy_operation()?;
             if text.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("text must not be empty"));
             }
@@ -274,6 +276,7 @@ impl MediaServer {
         }): Parameters<TranscribeBundleRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
+            let _admission = self.admit_heavy_operation()?;
             // Local recordings and fetched media are the primary transcript
             // sources; the SSRF validator is for network URLs (see
             // `is_local_media_path`).
@@ -312,6 +315,7 @@ impl MediaServer {
         }): Parameters<TranscribeAndStoreRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_and_store", async {
+            let _admission = self.admit_heavy_operation()?;
             // Same local-path rule as transcribe_bundle: the SSRF validator
             // is for network URLs (see `is_local_media_path`).
             if !crate::is_local_media_path(&audio_url) {
@@ -361,6 +365,7 @@ impl MediaServer {
         Parameters(AudioCaptureRequest { duration_secs }): Parameters<AudioCaptureRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_capture", async {
+            let _admission = self.admit_heavy_operation()?;
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
                 return Err(McpToolError::invalid_argument(
                     "duration_secs must be between 0.1 and 3600 (1 hour).",
@@ -406,6 +411,7 @@ impl MediaServer {
         }): Parameters<RecordAndTranscribeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "record_and_transcribe", async {
+            let _admission = self.admit_heavy_operation()?;
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
                 return Err(McpToolError::invalid_argument(
                     "duration_secs must be between 0.1 and 3600 (1 hour).",
@@ -506,6 +512,7 @@ impl MediaServer {
         }): Parameters<AudioTrimRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_trim", async {
+            let _admission = self.admit_heavy_operation()?;
             if start_sec < 0.0 || end_sec <= start_sec {
                 return Err(McpToolError::invalid_argument(
                     "start_sec must be >= 0 and end_sec must be > start_sec",
@@ -556,6 +563,7 @@ impl MediaServer {
         Parameters(AudioConcatRequest { audio_urls }): Parameters<AudioConcatRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_concat", async {
+            let _admission = self.admit_heavy_operation()?;
             validate_item_count(
                 "audio_urls",
                 audio_urls.len(),

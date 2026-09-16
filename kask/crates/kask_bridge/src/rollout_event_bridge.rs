@@ -13,16 +13,17 @@
 //!
 //! ## Harness regression monitor
 //!
-//! `check_harness_regressions` is the producer side of the phase 6 seam. The
+//! `HarnessRegressionMonitor` is the producer side of the phase 6 seam. The
 //! harness writes a `harness_summary` event (kind `"harness_summary"`,
-//! `rollout_id` = agent name) after each run. This function scans for new
-//! summaries since the last cursor, compares each to the previous run for the
-//! same agent, and returns a `HarnessRegression` when the pass rate drops
-//! materially. The zed-side background task calls `submit_rollout_impact_check`
-//! for each regression — the first live traffic through the seam.
+//! `rollout_id` = agent name) after each run. The monitor scans new summaries,
+//! compares each to the previous run for the same agent, and offers a rollout
+//! impact check when the pass rate drops materially. It acknowledges summaries
+//! only through the contiguous prefix whose required checks were accepted.
 
 use hkask_event_store::{EventFilter, EventStore};
-use hkask_regulation::{RolloutEventError, RolloutEventSource};
+use hkask_regulation::{
+    CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
+};
 use hkask_storage::database::driver::DatabaseDriver;
 use std::sync::Arc;
 
@@ -39,20 +40,104 @@ pub struct BridgeRolloutEventSource {
 /// A detected harness pass-rate regression — the producer-side signal that
 /// triggers `submit_rollout_impact_check` on the `CyberneticsLoop`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct HarnessRegression {
+struct HarnessRegression {
     /// The agent whose pass rate regressed. Used as the `rollout_id` for the
     /// impact check so `metric_before_and_after` queries the agent's
     /// `harness_summary` event group.
-    pub agent_name: String,
+    agent_name: String,
     /// The event position of the previous (better) harness run. Passed as
     /// `before_position` to `submit_rollout_impact_check` — `verify_impact`
     /// reads the metric at this position (the previous run's pass rate) and
     /// at the latest event after it (the current run's pass rate).
-    pub before_position: i64,
+    before_position: i64,
     /// The previous run's pass rate.
-    pub previous_pass_rate: f64,
+    previous_pass_rate: f64,
     /// The current run's pass rate.
-    pub current_pass_rate: f64,
+    current_pass_rate: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScannedHarnessSummary {
+    event_position: i64,
+    regression: Option<HarnessRegression>,
+}
+
+/// Result of one scheduler-driven harness-monitor poll.
+///
+/// `Complete` consumed every queried summary. `Backpressured` consumed only
+/// the contiguous prefix ending before `blocked_event_position`; the blocked
+/// event remains queryable from the monitor's retained cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessMonitorPoll {
+    Complete {
+        accepted_checks: usize,
+        cursor: Option<i64>,
+    },
+    Backpressured {
+        accepted_checks: usize,
+        blocked_event_position: i64,
+        capacity: usize,
+    },
+}
+
+/// Stateful harness-summary monitor used by the production scheduler.
+///
+/// The cursor is owned beside the handoff operation so callers cannot advance
+/// it independently of queue admission. Cancellation after acceptance but
+/// before cursor mutation may retry a check; it cannot skip one.
+#[derive(Debug, Default)]
+pub struct HarnessRegressionMonitor {
+    cursor: Option<i64>,
+}
+
+impl HarnessRegressionMonitor {
+    #[cfg(test)]
+    fn new(cursor: Option<i64>) -> Self {
+        Self { cursor }
+    }
+
+    #[cfg(test)]
+    fn cursor(&self) -> Option<i64> {
+        self.cursor
+    }
+
+    /// Query new summaries, derive all regressions, then offer checks in event
+    /// order. Query failure leaves the cursor untouched. Queue refusal leaves
+    /// it at the accepted contiguous prefix so the blocked event is retried.
+    pub async fn poll_once(
+        &mut self,
+        store: &EventStore,
+        regulation: &CyberneticsLoop,
+    ) -> Result<HarnessMonitorPoll, String> {
+        let scanned = scan_harness_summaries(store, self.cursor)?;
+        let mut accepted_checks = 0;
+        for summary in scanned {
+            if let Some(regression) = summary.regression {
+                match regulation
+                    .submit_rollout_impact_check(
+                        regression.agent_name,
+                        regression.before_position,
+                        "pass_rate".to_string(),
+                    )
+                    .await
+                {
+                    RolloutImpactSubmission::Accepted => accepted_checks += 1,
+                    RolloutImpactSubmission::QueueFull { capacity } => {
+                        return Ok(HarnessMonitorPoll::Backpressured {
+                            accepted_checks,
+                            blocked_event_position: summary.event_position,
+                            capacity,
+                        });
+                    }
+                }
+            }
+            self.cursor = Some(summary.event_position);
+        }
+        Ok(HarnessMonitorPoll::Complete {
+            accepted_checks,
+            cursor: self.cursor,
+        })
+    }
 }
 
 impl BridgeRolloutEventSource {
@@ -191,21 +276,13 @@ impl RolloutEventSource for BridgeRolloutEventSource {
     }
 }
 
-/// Scan the event store for new `harness_summary` events since `last_cursor`,
-/// compare each to the previous run for the same agent, and return any
-/// pass-rate regressions. The zed-side background task calls this
-/// periodically and submits each regression to `CyberneticsLoop::submit_rollout_impact_check`.
-///
-/// Returns the updated cursor (the position of the last-processed event) and
-/// the list of detected regressions. A query failure returns `Err` — the
-/// caller warns and retries on the next tick (never silently drops).
-pub fn check_harness_regressions(
+/// Scan without acknowledging. The monitor applies cursor changes only after
+/// this complete query/derivation phase succeeds and each required handoff is
+/// accepted.
+fn scan_harness_summaries(
     store: &EventStore,
     last_cursor: Option<i64>,
-) -> Result<(Option<i64>, Vec<HarnessRegression>), String> {
-    // Fetch new harness_summary events since the last cursor. The cursor
-    // advances monotonically — a missed event is a missed regression, never
-    // silently skipped.
+) -> Result<Vec<ScannedHarnessSummary>, String> {
     let new_events = store
         .query(&EventFilter {
             kind: Some("harness_summary".to_string()),
@@ -213,13 +290,8 @@ pub fn check_harness_regressions(
             ..EventFilter::default()
         })
         .map_err(|e| format!("harness_summary query failed: {e}"))?;
-    if new_events.is_empty() {
-        return Ok((last_cursor, Vec::new()));
-    }
-    let mut new_cursor = last_cursor;
-    let mut regressions = Vec::new();
+    let mut scanned = Vec::with_capacity(new_events.len());
     for event in &new_events {
-        new_cursor = Some(event.position);
         // The harness writes harness_summary events with rollout_id = agent
         // name, so the agent is the rollout_id — no payload parsing needed
         // for grouping.
@@ -235,8 +307,12 @@ pub fn check_harness_regressions(
                     target: "hkask.bridge.harness",
                     agent = %agent_name,
                     position = event.position,
-                    "harness_summary event missing overall_pass_rate — skipping"
+                    "harness_summary event missing overall_pass_rate — acknowledging without impact check"
                 );
+                scanned.push(ScannedHarnessSummary {
+                    event_position: event.position,
+                    regression: None,
+                });
                 continue;
             }
         };
@@ -253,6 +329,10 @@ pub fn check_harness_regressions(
         let previous = all_for_agent.iter().rfind(|e| e.position < event.position);
         let Some(previous) = previous else {
             // First run for this agent — no baseline to regress from.
+            scanned.push(ScannedHarnessSummary {
+                event_position: event.position,
+                regression: None,
+            });
             continue;
         };
         let previous_pass_rate = match previous
@@ -266,36 +346,49 @@ pub fn check_harness_regressions(
                     target: "hkask.bridge.harness",
                     agent = %agent_name,
                     position = previous.position,
-                    "previous harness_summary event missing overall_pass_rate — skipping"
+                    "previous harness_summary event missing overall_pass_rate — acknowledging current summary without impact check"
                 );
+                scanned.push(ScannedHarnessSummary {
+                    event_position: event.position,
+                    regression: None,
+                });
                 continue;
             }
         };
         let drop = previous_pass_rate - current_pass_rate;
-        if drop > REGRESSION_THRESHOLD {
+        let regression = if drop > REGRESSION_THRESHOLD {
             tracing::info!(
                 target: "hkask.bridge.harness",
                 agent = %agent_name,
                 previous_pass_rate,
                 current_pass_rate,
                 drop,
-                "harness pass-rate regression detected — submitting impact check"
+                "harness pass-rate regression detected — offering impact check"
             );
-            regressions.push(HarnessRegression {
+            Some(HarnessRegression {
                 agent_name: agent_name.clone(),
                 before_position: previous.position,
                 previous_pass_rate,
                 current_pass_rate,
-            });
-        }
+            })
+        } else {
+            None
+        };
+        scanned.push(ScannedHarnessSummary {
+            event_position: event.position,
+            regression,
+        });
     }
-    Ok((new_cursor, regressions))
+    Ok(scanned)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_regulation::{CyberneticsLoop, RegulationLedger, RolloutImpactSubmission};
     use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_storage::database::value::DbValue;
+    use tokio::sync::RwLock;
 
     fn memory_store() -> EventStore {
         EventStore::from_driver(SqliteDriver::in_memory_driver()).expect("store")
@@ -315,6 +408,22 @@ mod tests {
         store
             .append(agent, "harness_summary", &harness_summary(agent, pass_rate))
             .unwrap()
+    }
+
+    fn scan_results(
+        store: &EventStore,
+        cursor: Option<i64>,
+    ) -> (Option<i64>, Vec<HarnessRegression>) {
+        let scanned = scan_harness_summaries(store, cursor).unwrap();
+        let new_cursor = scanned
+            .last()
+            .map(|summary| summary.event_position)
+            .or(cursor);
+        let regressions = scanned
+            .into_iter()
+            .filter_map(|summary| summary.regression)
+            .collect();
+        (new_cursor, regressions)
     }
 
     #[test]
@@ -421,12 +530,12 @@ mod tests {
     }
 
     #[test]
-    fn check_harness_regressions_detects_material_drop() {
+    fn scan_harness_summaries_detects_material_drop() {
         let store = memory_store();
         let first = write_summary(&store, "alpha", 0.80);
         let _second = write_summary(&store, "alpha", 0.60);
         // 0.80 - 0.60 = 0.20 > 0.10 threshold
-        let (cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (cursor, regressions) = scan_results(&store, None);
         assert_eq!(regressions.len(), 1);
         assert_eq!(regressions[0].agent_name, "alpha");
         assert_eq!(regressions[0].before_position, first);
@@ -436,22 +545,22 @@ mod tests {
     }
 
     #[test]
-    fn check_harness_regressions_skips_improvement() {
+    fn scan_harness_summaries_skips_improvement() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.50);
         write_summary(&store, "alpha", 0.80);
         // 0.50 - 0.80 = -0.30 < 0.10 — an improvement, not a regression
-        let (_cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (_cursor, regressions) = scan_results(&store, None);
         assert!(regressions.is_empty(), "improvement is not a regression");
     }
 
     #[test]
-    fn check_harness_regressions_skips_marginal_drop() {
+    fn scan_harness_summaries_skips_marginal_drop() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.70);
         write_summary(&store, "alpha", 0.65);
         // 0.70 - 0.65 = 0.05 < 0.10 — within noise
-        let (_cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (_cursor, regressions) = scan_results(&store, None);
         assert!(
             regressions.is_empty(),
             "marginal drop is within the threshold"
@@ -459,40 +568,119 @@ mod tests {
     }
 
     #[test]
-    fn check_harness_regressions_skips_first_run() {
+    fn scan_harness_summaries_skips_first_run() {
         let store = memory_store();
         let pos = write_summary(&store, "alpha", 0.30);
         // First run — no baseline to regress from
-        let (cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (cursor, regressions) = scan_results(&store, None);
         assert!(regressions.is_empty(), "first run has no baseline");
         assert_eq!(cursor, Some(pos));
     }
 
     #[test]
-    fn check_harness_regressions_is_incremental() {
+    fn scan_harness_summaries_is_incremental() {
         let store = memory_store();
         let first = write_summary(&store, "alpha", 0.80);
         // First check: processes first event, no regression (no previous)
-        let (cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (cursor, regressions) = scan_results(&store, None);
         assert!(regressions.is_empty());
         assert_eq!(cursor, Some(first));
         // Second run: regression
         let second = write_summary(&store, "alpha", 0.50);
-        let (cursor, regressions) = check_harness_regressions(&store, cursor).unwrap();
+        let (cursor, regressions) = scan_results(&store, cursor);
         assert_eq!(regressions.len(), 1);
         assert_eq!(cursor, Some(second));
     }
 
     #[test]
-    fn check_harness_regressions_independent_per_agent() {
+    fn scan_harness_summaries_is_independent_per_agent() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.80);
         write_summary(&store, "beta", 0.90);
         write_summary(&store, "alpha", 0.50); // alpha regresses
         write_summary(&store, "beta", 0.85); // beta marginal — no regression
-        let (_cursor, regressions) = check_harness_regressions(&store, None).unwrap();
+        let (_cursor, regressions) = scan_results(&store, None);
         assert_eq!(regressions.len(), 1);
         assert_eq!(regressions[0].agent_name, "alpha");
+    }
+
+    #[tokio::test]
+    async fn blocked_submission_retains_cursor_at_contiguous_accepted_prefix() {
+        let store = memory_store();
+        write_summary(&store, "alpha", 0.80);
+        let baseline_cursor = write_summary(&store, "beta", 0.90);
+        let alpha_regression = write_summary(&store, "alpha", 0.50);
+        let beta_regression = write_summary(&store, "beta", 0.60);
+        let regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        for position in 0..63 {
+            assert_eq!(
+                regulation
+                    .submit_rollout_impact_check(
+                        format!("preloaded-{position}"),
+                        position,
+                        "pass_rate".to_string(),
+                    )
+                    .await,
+                RolloutImpactSubmission::Accepted
+            );
+        }
+        let mut monitor = HarnessRegressionMonitor::new(Some(baseline_cursor));
+
+        let result = monitor.poll_once(&store, &regulation).await.unwrap();
+
+        assert_eq!(
+            result,
+            HarnessMonitorPoll::Backpressured {
+                accepted_checks: 1,
+                blocked_event_position: beta_regression,
+                capacity: 64,
+            }
+        );
+        assert_eq!(monitor.cursor(), Some(alpha_regression));
+
+        regulation.tick().await;
+        let retry = monitor.poll_once(&store, &regulation).await.unwrap();
+        assert_eq!(
+            retry,
+            HarnessMonitorPoll::Complete {
+                accepted_checks: 1,
+                cursor: Some(beta_regression),
+            }
+        );
+        assert_eq!(monitor.cursor(), Some(beta_regression));
+    }
+
+    #[tokio::test]
+    async fn query_failure_leaves_monitor_cursor_unchanged() {
+        let store = memory_store();
+        let baseline_cursor = write_summary(&store, "alpha", 0.80);
+        store
+            .driver()
+            .execute(
+                "INSERT INTO events (rollout_id, kind, payload, created_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                &[
+                    DbValue::Text("alpha".to_string()),
+                    DbValue::Text("harness_summary".to_string()),
+                    DbValue::Text("not-json".to_string()),
+                    DbValue::Text("2026-09-16T00:00:00Z".to_string()),
+                ],
+            )
+            .unwrap();
+        let regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        let mut monitor = HarnessRegressionMonitor::new(Some(baseline_cursor));
+
+        assert!(monitor.poll_once(&store, &regulation).await.is_err());
+        assert_eq!(monitor.cursor(), Some(baseline_cursor));
+    }
+
+    #[test]
+    fn production_scheduler_uses_behavior_tested_monitor_handoff() {
+        let main = include_str!("../../../../crates/zed/src/main.rs");
+        assert!(main.contains("HarnessRegressionMonitor::default()"));
+        assert!(main.contains(".poll_once(&store, &loop_guard)"));
+        assert!(!main.contains("last_cursor = new_cursor"));
+        assert!(!main.contains("check_harness_regressions("));
     }
 
     #[test]

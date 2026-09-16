@@ -291,6 +291,32 @@ pub struct OmcCreationGraphRecord {
     pub graph_json: String,
     pub created_at: String,
 }
+
+/// One caller-planned creation aggregate committed under a single gallery Asset parent.
+#[derive(Debug, Clone)]
+pub struct AssetCreationPublication {
+    pub asset_id: String,
+    pub task_id: String,
+    pub created_at: String,
+    pub observation: AssetObservation,
+    pub op: String,
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub seed: Option<i64>,
+    pub params: Option<String>,
+    pub workflow_id: Option<String>,
+    pub parent_image_id: Option<String>,
+    pub graph_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PublishedAssetCreation {
+    pub asset: ImageRecord,
+    pub generation: GenerationRecord,
+    pub omc_graph: OmcCreationGraphRecord,
+}
+
 define_driver_store!(GalleryStore);
 impl GalleryStore {
     /// Initialize gallery tables in the database.
@@ -595,10 +621,108 @@ impl GalleryStore {
         transaction.commit().map_err(database_error)?;
         Ok(record)
     }
+
+    /// Commit an Asset, its generation Task lineage, and its canonical OMC graph together.
+    pub fn publish_asset_creation(
+        &self,
+        gallery_id: &str,
+        publication: &AssetCreationPublication,
+    ) -> std::result::Result<PublishedAssetCreation, GalleryStoreError> {
+        let gallery = self.get(gallery_id)?;
+        let pool = self
+            .driver
+            .sqlite_pool()
+            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
+        let mut connection = pool.get().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let asset = Self::observe_with_id(
+            &transaction,
+            &gallery,
+            &publication.observation,
+            &publication.asset_id,
+        )?;
+        if asset.id != publication.asset_id {
+            return Err(GalleryStoreError::Conflict(format!(
+                "creation publication path already belongs to Asset {} instead of {}",
+                asset.id, publication.asset_id
+            )));
+        }
+        transaction
+            .execute(
+                "INSERT INTO gallery_generation
+                 (id, image_id, op, prompt, model, provider, seed, params, workflow_id, parent_image_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    publication.task_id,
+                    publication.asset_id,
+                    publication.op,
+                    publication.prompt,
+                    publication.model,
+                    publication.provider,
+                    publication.seed,
+                    publication.params,
+                    publication.workflow_id,
+                    publication.parent_image_id,
+                    publication.created_at,
+                ],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO gallery_omc_creation_graph (image_id, graph_json, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![
+                    publication.asset_id,
+                    publication.graph_json,
+                    publication.created_at,
+                ],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+
+        Ok(PublishedAssetCreation {
+            asset,
+            generation: GenerationRecord {
+                id: publication.task_id.clone(),
+                image_id: publication.asset_id.clone(),
+                op: publication.op.clone(),
+                prompt: publication.prompt.clone(),
+                model: publication.model.clone(),
+                provider: publication.provider.clone(),
+                seed: publication.seed,
+                params: publication.params.clone(),
+                workflow_id: publication.workflow_id.clone(),
+                parent_image_id: publication.parent_image_id.clone(),
+                created_at: publication.created_at.clone(),
+            },
+            omc_graph: OmcCreationGraphRecord {
+                image_id: publication.asset_id.clone(),
+                graph_json: publication.graph_json.clone(),
+                created_at: publication.created_at.clone(),
+            },
+        })
+    }
+
     fn observe(
         transaction: &rusqlite::Transaction<'_>,
         gallery: &GalleryRecord,
         observation: &AssetObservation,
+    ) -> Result<ImageRecord, GalleryStoreError> {
+        Self::observe_with_id(
+            transaction,
+            gallery,
+            observation,
+            &uuid::Uuid::new_v4().to_string(),
+        )
+    }
+
+    fn observe_with_id(
+        transaction: &rusqlite::Transaction<'_>,
+        gallery: &GalleryRecord,
+        observation: &AssetObservation,
+        asset_id: &str,
     ) -> Result<ImageRecord, GalleryStoreError> {
         let absolute = asset_path(&observation.absolute_path)?;
         let relative = absolute
@@ -612,7 +736,7 @@ impl GalleryStore {
                 height = excluded.height, format = excluded.format, size_bytes = excluded.size_bytes,
                 media_type = excluded.media_type, missing = 0,
                 metadata_stale = gallery_images.metadata_stale OR gallery_images.hash != excluded.hash",
-            params![uuid::Uuid::new_v4().to_string(), gallery.id, relative.to_string_lossy(), absolute.to_string_lossy(),
+            params![asset_id, gallery.id, relative.to_string_lossy(), absolute.to_string_lossy(),
                 observation.hash, observation.width, observation.height, observation.format, observation.size_bytes,
                 now_rfc3339(), observation.media_type],
         ).map_err(database_error)?;
@@ -2127,6 +2251,81 @@ mod tests {
             )
             .unwrap();
         assert!(store.get_generation(&img.id).unwrap().is_none());
+    }
+
+    /// expect: Asset identity, generation lineage, and OMC graph commit as one creation aggregate.
+    #[test]
+    fn asset_creation_publication_round_trips_and_cascades() {
+        let store = setup();
+        let root = tempfile::tempdir().expect("gallery root");
+        let gallery = store
+            .open(
+                root.path().to_str().expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .expect("open gallery");
+        let asset_id = "asset-publication-1";
+        let task_id = "task-publication-1";
+        let created_at = "2026-09-16T00:00:00Z";
+        let graph_json = format!(
+            r#"{{"asset_id":"{asset_id}","task_id":"{task_id}","entities":[],"relationships":[]}}"#
+        );
+        let publication = AssetCreationPublication {
+            asset_id: asset_id.to_string(),
+            task_id: task_id.to_string(),
+            created_at: created_at.to_string(),
+            observation: AssetObservation {
+                absolute_path: root
+                    .path()
+                    .join("generated.png")
+                    .to_string_lossy()
+                    .into_owned(),
+                hash: "hash".to_string(),
+                width: 64,
+                height: 64,
+                format: "png".to_string(),
+                size_bytes: 128,
+                media_type: "image".to_string(),
+            },
+            op: "generate_image".to_string(),
+            prompt: Some("a durable image".to_string()),
+            model: Some("provider/model".to_string()),
+            provider: Some("provider".to_string()),
+            seed: Some(7),
+            params: Some(r#"{"size":"64x64"}"#.to_string()),
+            workflow_id: None,
+            parent_image_id: None,
+            graph_json: graph_json.clone(),
+        };
+
+        let records = store
+            .publish_asset_creation(&gallery.id, &publication)
+            .expect("publish creation aggregate");
+        assert_eq!(records.asset.id, asset_id);
+        assert_eq!(records.generation.id, task_id);
+        assert_eq!(records.omc_graph.graph_json, graph_json);
+        assert_eq!(
+            store
+                .get_generation(asset_id)
+                .expect("read generation")
+                .expect("generation exists")
+                .id,
+            task_id
+        );
+
+        store.delete_image(asset_id).expect("delete asset");
+        assert!(
+            store
+                .get_generation(asset_id)
+                .expect("read deleted generation")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_omc_creation_graph(asset_id)
+                .expect("read deleted graph")
+                .is_none()
+        );
     }
 
     #[test]

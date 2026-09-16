@@ -12,8 +12,41 @@ use tokio_util::sync::CancellationToken;
 
 use crate::types::JobRecord;
 
-pub const MAX_CONCURRENT_JOBS: usize = 4;
+pub const MAX_CONCURRENT_HEAVY_OPERATIONS: usize = 4;
 pub const MAX_TERMINAL_RECORDS: usize = 256;
+
+/// One fail-fast capacity authority shared by direct heavy RPCs and background jobs.
+#[derive(Clone)]
+pub struct HeavyOperationAdmission {
+    slots: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+pub struct HeavyOperationPermit {
+    _permit: OwnedSemaphorePermit,
+}
+
+impl HeavyOperationAdmission {
+    fn new() -> Self {
+        Self {
+            slots: Arc::new(Semaphore::new(MAX_CONCURRENT_HEAVY_OPERATIONS)),
+        }
+    }
+
+    fn try_admit(&self) -> Result<HeavyOperationPermit, JobStoreError> {
+        let permit = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|error| match error {
+                tokio::sync::TryAcquireError::NoPermits => JobStoreError::Overloaded {
+                    limit: MAX_CONCURRENT_HEAVY_OPERATIONS,
+                },
+                tokio::sync::TryAcquireError::Closed => JobStoreError::AdmissionClosed,
+            })?;
+        Ok(HeavyOperationPermit { _permit: permit })
+    }
+}
 
 /// Shared controller for records, cancellation, admission, and retention.
 pub type JobStore = Arc<JobController>;
@@ -21,7 +54,7 @@ pub type JobStore = Arc<JobController>;
 pub struct JobController {
     records: Mutex<HashMap<String, JobRecord>>,
     active: Mutex<HashMap<String, ActiveJob>>,
-    slots: Arc<Semaphore>,
+    admission: HeavyOperationAdmission,
     #[cfg(test)]
     publication_gate: Mutex<Option<TestPublicationGate>>,
 }
@@ -72,7 +105,7 @@ pub struct JobLease {
     pub job_id: String,
     token: CancellationToken,
     completion: watch::Sender<bool>,
-    permit: Option<OwnedSemaphorePermit>,
+    permit: Option<HeavyOperationPermit>,
     finished: bool,
 }
 
@@ -81,7 +114,7 @@ impl JobController {
         Self {
             records: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
-            slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOBS)),
+            admission: HeavyOperationAdmission::new(),
             #[cfg(test)]
             publication_gate: Mutex::new(None),
         }
@@ -125,18 +158,14 @@ impl JobController {
         Ok(())
     }
 
-    /// Admit a job only when it can immediately own one of the bounded slots.
+    /// Admit a direct heavy operation only when a shared slot is immediately available.
+    pub fn admit_direct(&self) -> Result<HeavyOperationPermit, JobStoreError> {
+        self.admission.try_admit()
+    }
+
+    /// Admit a job only when it can immediately own one of the shared bounded slots.
     pub fn admit(self: &Arc<Self>, record: JobRecord) -> Result<JobLease, JobStoreError> {
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|error| match error {
-                tokio::sync::TryAcquireError::NoPermits => JobStoreError::Overloaded {
-                    limit: MAX_CONCURRENT_JOBS,
-                },
-                tokio::sync::TryAcquireError::Closed => JobStoreError::AdmissionClosed,
-            })?;
+        let permit = self.admission.try_admit()?;
         let job_id = record.id.clone();
         let token = CancellationToken::new();
         let (completion, completion_rx) = watch::channel(false);
@@ -524,16 +553,46 @@ mod tests {
     #[test]
     fn admission_is_bounded_at_four_active_jobs() -> Result<(), Box<dyn std::error::Error>> {
         let store = new_job_store();
-        let leases = (0..MAX_CONCURRENT_JOBS)
+        let leases = (0..MAX_CONCURRENT_HEAVY_OPERATIONS)
             .map(|id| store.admit(record(id)))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let error = match store.admit(record(MAX_CONCURRENT_JOBS)) {
+        let error = match store.admit(record(MAX_CONCURRENT_HEAVY_OPERATIONS)) {
             Ok(_) => return Err("the fifth active job was admitted".into()),
             Err(error) => error,
         };
         assert!(matches!(error, JobStoreError::Overloaded { limit: 4 }));
-        assert_eq!(leases.len(), MAX_CONCURRENT_JOBS);
+        assert_eq!(leases.len(), MAX_CONCURRENT_HEAVY_OPERATIONS);
+        Ok(())
+    }
+
+    /// expect: Direct heavy calls and jobs exhaust one shared four-operation capacity.
+    #[test]
+    fn direct_and_job_admission_share_one_fail_fast_capacity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = new_job_store();
+        let direct_leases = (0..3)
+            .map(|_| store.admit_direct())
+            .collect::<Result<Vec<_>, _>>()?;
+        let job = store.admit(record(1))?;
+
+        let direct_error = store
+            .admit_direct()
+            .expect_err("the fifth combined operation was admitted directly");
+        assert!(matches!(
+            direct_error,
+            JobStoreError::Overloaded { limit: 4 }
+        ));
+        let job_error = match store.admit(record(2)) {
+            Ok(_) => return Err("the fifth combined operation was admitted as a job".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(job_error, JobStoreError::Overloaded { limit: 4 }));
+
+        drop(direct_leases);
+        let replacement = store.admit(record(2))?;
+        assert_eq!(replacement.job_id, "job-002");
+        drop(job);
         Ok(())
     }
 

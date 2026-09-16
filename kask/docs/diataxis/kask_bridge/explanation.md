@@ -25,6 +25,14 @@ memory, model resolution, settings, metacognition, directives, algedonic and
 health sources, OCR health, and rollout events
 (`kask/crates/kask_bridge/src/kask_bridge.rs:23-46,90-108`).
 
+The rollout-event bridge also owns the harness monitor's acknowledgment
+boundary. `HarnessRegressionMonitor::poll_once` completes event-store queries
+before handoff, offers regressions to the bounded Regulation queue in event
+order, and advances its cursor only through the accepted contiguous prefix.
+Typed queue backpressure and query failure retain unaccepted summaries for
+retry; later impact assessment and verdict publication remain Regulation
+responsibilities (`kask/crates/kask_bridge/src/rollout_event_bridge.rs`).
+
 That width is deliberate: moving any of those adapters into a portable hKask
 crate would reverse the dependency direction. Skill body execution remains in
 the Zed `agent` crate rather than the bridge; the bridge root exports no skill

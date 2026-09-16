@@ -24,171 +24,6 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     dir
 }
 
-/// Persist a single generated asset to the artifacts directory and index it
-/// in the gallery — the extraction step of [`persist_and_slim_result`],
-/// the composition helper every media tool routes its `media_generate`
-/// result through.
-///
-/// Downloads the asset from a URL or decodes a base64 payload, saves it to
-/// `{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and registers it in
-/// the gallery store (a gallery-less persist still returns
-/// the path, with a warning naming the skipped indexing). Returns the local
-/// file path on success.
-///
-/// Takes an immutable activation snapshot so neither downloads nor multiple
-/// variants can retarget to a gallery activated while persistence is awaiting.
-///
-/// `kind` is "image", "video", or "audio" — determines the file extension.
-/// `result` is the raw provider response JSON. The recognized shapes:
-/// - `data[0].b64_json` (DeepInfra image generation)
-/// - `data[0].url` (OpenRouter image generation)
-/// - `audio` (TTS — base64 data URI)
-/// - `video_url` (DeepInfra video — data URI)
-/// - `url` (OpenRouter video — HTTP URL)
-pub(crate) async fn persist_generated_asset(
-    gallery: Option<&GalleryState>,
-    gallery_store: &Arc<GalleryStore>,
-    result: &serde_json::Value,
-    kind: &str,
-) -> Result<std::path::PathBuf, MediaError> {
-    let asset_dir = generated_assets_dir();
-    let id = uuid::Uuid::new_v4();
-
-    // Extract the asset data from the provider response.
-    let (bytes, ext) = match kind {
-        "image" => {
-            // DeepInfra: data[0].b64_json. The extension comes from the
-            // decoded bytes, never a hardcoded label — DeepInfra's FLUX
-            // serve returns JPEG, and the old `(bytes, "png")` hardcode
-            // saved those files as .png.
-            if let Some(b64) = result
-                .get("data")
-                .and_then(|d| d.get(0))
-                .and_then(|d| d.get("b64_json"))
-                .and_then(|v| v.as_str())
-            {
-                use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(b64)
-                    .map_err(|e| MediaError::AssetPersistence(format!("decode b64_json: {e}")))?;
-                let ext = image_ext_from_bytes(&bytes);
-                (bytes, ext)
-            }
-            // OpenRouter: data[0].url — download. The bytes are sniffed
-            // after download; a URL's suffix is a label and can lie.
-            else if let Some(url) = result
-                .get("data")
-                .and_then(|d| d.get(0))
-                .and_then(|d| d.get("url"))
-                .and_then(|v| v.as_str())
-            {
-                let bytes = download_asset(url).await?;
-                let ext = image_ext_from_bytes(&bytes);
-                (bytes, ext)
-            } else {
-                return Err(MediaError::AssetPersistence(format!(
-                    "unrecognized {kind} provider response shape: no \
-                     data[0].b64_json / data[0].url field"
-                )));
-            }
-        }
-        "video" => {
-            // DeepInfra: video_url (data URI)
-            if let Some(url) = result.get("video_url").and_then(|v| v.as_str()) {
-                if url.starts_with("data:") {
-                    decode_data_uri(url)?
-                } else {
-                    let bytes = download_asset(url).await?;
-                    (bytes, "mp4")
-                }
-            }
-            // OpenRouter: url
-            else if let Some(url) = result.get("url").and_then(|v| v.as_str()) {
-                let bytes = download_asset(url).await?;
-                (bytes, "mp4")
-            } else {
-                return Err(MediaError::AssetPersistence(format!(
-                    "unrecognized {kind} provider response shape: no video_url / url field"
-                )));
-            }
-        }
-        "audio" => {
-            // TTS: audio field (data URI)
-            if let Some(audio) = result.get("audio").and_then(|v| v.as_str()) {
-                decode_data_uri(audio)?
-            } else {
-                return Err(MediaError::AssetPersistence(format!(
-                    "unrecognized {kind} provider response shape: no audio field"
-                )));
-            }
-        }
-        _ => {
-            return Err(MediaError::AssetPersistence(format!(
-                "unknown asset kind '{kind}' (expected image, video, or audio)"
-            )));
-        }
-    };
-
-    let filename = format!("{id}.{ext}");
-    let path = asset_dir.join(&filename);
-
-    // Write the file.
-    if let Err(e) = std::fs::write(&path, &bytes) {
-        return Err(MediaError::AssetPersistence(format!(
-            "write {}: {e}",
-            path.display()
-        )));
-    }
-    tracing::info!(
-        target: "hkask.mcp.media",
-        path = %path.display(),
-        kind,
-        "Generated asset persisted"
-    );
-
-    // Gallery-less generation still returns its saved path with a warning.
-    // A configured gallery's persistence failure propagates with that saved path.
-    let media_type = match kind {
-        "video" => "video",
-        "audio" => "audio",
-        _ => "image",
-    };
-    let Some(gallery_id) = gallery.and_then(|state| state.gallery_id.as_deref()) else {
-        tracing::warn!(target: "hkask.mcp.media", "Gallery not initialized — generated {media_type} not indexed");
-        return Ok(path);
-    };
-    let hash = {
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(&bytes);
-        format!("{:x}", hasher.finalize())
-    };
-    let (width, height) = if media_type == "image" {
-        infer_image_dimensions(&bytes)
-    } else {
-        (0, 0)
-    };
-    gallery_store
-        .add_media(
-            gallery_id,
-            &path.to_string_lossy(),
-            &hash,
-            width,
-            height,
-            ext,
-            bytes.len() as u64,
-            media_type,
-        )
-        .map_err(|error| {
-            MediaError::AssetPersistence(format!(
-                "File saved at {}, but indexing failed: {error}",
-                path.display()
-            ))
-        })?;
-
-    Ok(path)
-}
-
 /// A job asset whose final file and gallery row remain rollback-armed until the
 /// job controller atomically accepts completion over cancellation.
 pub(crate) struct StagedJobPublication {
@@ -199,6 +34,9 @@ pub(crate) struct StagedJobPublication {
 struct StagedJobAsset {
     staged_path: std::path::PathBuf,
     final_path: std::path::PathBuf,
+    asset_id: String,
+    task_id: String,
+    created_at: String,
     bytes: Vec<u8>,
     ext: String,
     media_type: &'static str,
@@ -246,6 +84,9 @@ impl StagedJobAsset {
         &mut self,
         gallery: Option<&GalleryState>,
         gallery_store: &Arc<GalleryStore>,
+        op: &str,
+        effective_params: &serde_json::Value,
+        provider_metadata: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), MediaError> {
         std::fs::rename(&self.staged_path, &self.final_path).map_err(|error| {
             MediaError::AssetPersistence(format!("publish {}: {error}", self.final_path.display()))
@@ -254,7 +95,7 @@ impl StagedJobAsset {
         let Some(gallery_id) = gallery.and_then(|state| state.gallery_id.as_deref()) else {
             tracing::warn!(
                 target: "hkask.mcp.media",
-                "Gallery not initialized — generated {} not indexed",
+                "Gallery not initialized — generated {} has no durable gallery OMC graph",
                 self.media_type
             );
             return Ok(());
@@ -270,25 +111,56 @@ impl StagedJobAsset {
         } else {
             (0, 0)
         };
-        let record = gallery_store
-            .add_media(
-                gallery_id,
-                &self.final_path.to_string_lossy(),
-                &hash,
+        let params_json = serde_json::to_string(effective_params).map_err(|error| {
+            MediaError::AssetPersistence(format!("serialize {op} effective parameters: {error}"))
+        })?;
+        let graph = crate::omc::creation_graph(&self.asset_id, &self.task_id, &self.created_at);
+        let graph_json = serde_json::to_string(&graph).map_err(|error| {
+            MediaError::AssetPersistence(format!("serialize {op} OMC creation graph: {error}"))
+        })?;
+        let string_field = |name: &str| {
+            effective_params
+                .get(name)
+                .or_else(|| provider_metadata.get(name))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        };
+        let publication = hkask_storage::AssetCreationPublication {
+            asset_id: self.asset_id.clone(),
+            task_id: self.task_id.clone(),
+            created_at: self.created_at.clone(),
+            observation: hkask_storage::AssetObservation {
+                absolute_path: self.final_path.to_string_lossy().into_owned(),
+                hash,
                 width,
                 height,
-                &self.ext,
-                self.bytes.len() as u64,
-                self.media_type,
-            )
+                format: self.ext.clone(),
+                size_bytes: self.bytes.len() as u64,
+                media_type: self.media_type.to_string(),
+            },
+            op: op.to_string(),
+            prompt: string_field("prompt"),
+            model: string_field("model"),
+            provider: string_field("provider"),
+            seed: effective_params
+                .get("seed")
+                .or_else(|| provider_metadata.get("seed"))
+                .and_then(serde_json::Value::as_i64),
+            params: Some(params_json),
+            workflow_id: string_field("workflow_id"),
+            parent_image_id: string_field("parent_image_id"),
+            graph_json,
+        };
+        let records = gallery_store
+            .publish_asset_creation(gallery_id, &publication)
             .map_err(|error| {
                 MediaError::AssetPersistence(format!(
-                    "index staged asset {}: {error}",
+                    "publish staged Asset creation {}: {error}",
                     self.final_path.display()
                 ))
             })?;
         self.gallery_store = Some(gallery_store.clone());
-        self.gallery_image_id = Some(record.id);
+        self.gallery_image_id = Some(records.asset.id);
         Ok(())
     }
 
@@ -352,9 +224,17 @@ impl StagedJobPublication {
         &mut self,
         gallery: Option<&GalleryState>,
         gallery_store: &Arc<GalleryStore>,
+        op: &str,
+        effective_params: &serde_json::Value,
     ) -> Result<serde_json::Value, MediaError> {
         for asset in &mut self.assets {
-            if let Err(error) = asset.publish(gallery, gallery_store) {
+            if let Err(error) = asset.publish(
+                gallery,
+                gallery_store,
+                op,
+                effective_params,
+                &self.provider_metadata,
+            ) {
                 let rollback_error = self.rollback().err();
                 return match rollback_error {
                     Some(rollback_error) => Err(MediaError::AssetPersistence(format!(
@@ -374,6 +254,18 @@ impl StagedJobPublication {
             "output".to_string(),
             serde_json::Value::String(output_path.to_string_lossy().into_owned()),
         );
+        if let Some(asset_id) = self.gallery_asset_id() {
+            slim.insert(
+                "gallery_asset_id".to_string(),
+                serde_json::Value::String(asset_id.to_string()),
+            );
+        }
+        if let Some(task_id) = self.assets.first().map(|asset| asset.task_id.as_str()) {
+            slim.insert(
+                "omc_task_id".to_string(),
+                serde_json::Value::String(task_id.to_string()),
+            );
+        }
         if self.assets.len() > 1 {
             slim.insert(
                 "outputs".to_string(),
@@ -396,6 +288,10 @@ impl StagedJobPublication {
         self.assets
             .first()
             .and_then(|asset| asset.gallery_image_id.as_deref())
+    }
+
+    fn created_at(&self) -> Option<&str> {
+        self.assets.first().map(|asset| asset.created_at.as_str())
     }
 
     pub(crate) fn commit(&mut self) {
@@ -571,6 +467,9 @@ pub(crate) fn stage_local_media_publication(
     let asset = StagedJobAsset {
         staged_path,
         final_path,
+        asset_id: uuid::Uuid::new_v4().to_string(),
+        task_id: uuid::Uuid::new_v4().to_string(),
+        created_at: hkask_types::time::now_rfc3339(),
         bytes,
         ext,
         media_type: format.media_type(),
@@ -686,7 +585,7 @@ fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
     );
 
     let mut result = publication
-        .publish_and_slim(Some(gallery), gallery_store)
+        .publish_and_slim(Some(gallery), gallery_store, op, &effective_value)
         .map_err(map_media_error)?;
     let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
         return Err(rollback_local_publication_error(
@@ -697,58 +596,21 @@ fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
         ));
     };
 
-    let lineage_params_json = match serde_json::to_string(&effective_value) {
-        Ok(json) => json,
-        Err(error) => {
-            return Err(rollback_local_publication_error(
-                &mut publication,
-                MediaError::AssetPersistence(format!("serialize {op} lineage: {error}")),
-            ));
-        }
-    };
-    let generation = match gallery_store.record_generation(
-        &gallery_asset_id,
-        op,
-        None,
-        None,
-        None,
-        None,
-        Some(&lineage_params_json),
-        None,
-        None,
-    ) {
-        Ok(generation) => generation,
-        Err(lineage_error) => {
-            return Err(rollback_local_publication_error(
-                &mut publication,
-                MediaError::AssetPersistence(format!("record {op} lineage: {lineage_error}")),
-            ));
-        }
-    };
-    let creation_graph =
-        crate::omc::creation_graph(&gallery_asset_id, &generation.id, &generation.created_at);
-    let graph_json = match serde_json::to_string(&creation_graph) {
-        Ok(graph_json) => graph_json,
-        Err(error) => {
-            return Err(rollback_local_publication_error(
-                &mut publication,
-                MediaError::AssetPersistence(format!("serialize {op} OMC creation graph: {error}")),
-            ));
-        }
-    };
-    if let Err(error) = gallery_store.record_omc_creation_graph(&gallery_asset_id, &graph_json) {
+    let Some(created_at) = publication.created_at().map(str::to_string) else {
         return Err(rollback_local_publication_error(
             &mut publication,
-            MediaError::AssetPersistence(format!("record {op} OMC creation graph: {error}")),
+            MediaError::AssetPersistence(format!(
+                "{op} publication produced no creation timestamp"
+            )),
         ));
-    }
+    };
     if let Some((transcript_id, edl_layer_id)) = transcript_render {
         if let Err(error) = crate::transcript_store::record_render(
             &**gallery_store.driver(),
             &gallery_asset_id,
             transcript_id,
             edl_layer_id,
-            &generation.created_at,
+            &created_at,
         ) {
             return Err(rollback_local_publication_error(
                 &mut publication,
@@ -785,10 +647,7 @@ fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
         "gallery_asset_id".to_string(),
         serde_json::Value::String(gallery_asset_id),
     );
-    result_object.insert(
-        "omc_task_id".to_string(),
-        serde_json::Value::String(generation.id),
-    );
+
     let result = crate::media_block::enrich_with_omc_and_provenance(
         result,
         op,
@@ -884,6 +743,9 @@ async fn stage_job_asset_in_dir(
     let asset = StagedJobAsset {
         staged_path,
         final_path,
+        asset_id: uuid::Uuid::new_v4().to_string(),
+        task_id: uuid::Uuid::new_v4().to_string(),
+        created_at: hkask_types::time::now_rfc3339(),
         bytes,
         ext: ext.to_string(),
         media_type,
@@ -927,101 +789,16 @@ pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
     }
 }
 
-/// Persist a generated-media provider response and compose the slim tool
-/// result every media tool returns.
-///
-/// Provider responses carry megabyte-scale base64 payloads. Returning the
-/// raw JSON puts those payloads in the model's context — the 2026-08-31
-/// context bomb: two ~65K-token base64 results plus the prompt breached the
-/// 262144-token limit on the following turn. This is the single composition
-/// site for every `media_generate` caller: the payload is decoded/downloaded
-/// exactly once, written under `{artifacts_dir}/media-mcp/generated/`,
-/// gallery-indexed, and the tool result becomes the persisted path plus the
-/// provider's non-payload metadata. Multi-image responses (`data[]` with
-/// several entries) persist every image — `outputs` lists each path,
-/// `output` the first.
-///
-/// `gallery` is the caller's admission-time snapshot (see
-/// `MediaServer::capture_gallery`) — never the live state handle, so neither
-/// downloads nor multiple variants can retarget to a gallery activated while
-/// the operation is in flight. Persist failure returns `Err` — the raw
-/// payload is never the fallback.
-pub(crate) async fn persist_and_slim_result(
-    gallery: Option<&GalleryState>,
-    gallery_store: &Arc<GalleryStore>,
-    result: &serde_json::Value,
-    kind: &str,
-) -> Result<serde_json::Value, MediaError> {
-    // Multi-image responses persist every entry — the singular persist
-    // extracts only data[0], which silently dropped all but the first
-    // image of a `num_images > 1` request.
-    let multi_image_entries = if kind == "image" {
-        result
-            .get("data")
-            .and_then(|data| data.as_array())
-            .filter(|entries| entries.len() > 1)
-    } else {
-        None
-    };
-    let paths = match multi_image_entries {
-        Some(entries) => {
-            let mut paths = Vec::with_capacity(entries.len());
-            for entry in entries {
-                let single = serde_json::json!({ "data": [entry] });
-                paths.push(persist_generated_asset(gallery, gallery_store, &single, kind).await?);
-            }
-            paths
-        }
-        None => vec![persist_generated_asset(gallery, gallery_store, result, kind).await?],
-    };
-
-    let Some(output_path) = paths.first() else {
-        return Err(MediaError::AssetPersistence(
-            "no assets persisted — empty provider response".to_string(),
-        ));
-    };
-    let mut slim = serde_json::Map::new();
-    slim.insert(
-        "output".to_string(),
-        serde_json::Value::String(output_path.to_string_lossy().into_owned()),
-    );
-    if paths.len() > 1 {
-        slim.insert(
-            "outputs".to_string(),
-            serde_json::Value::Array(
-                paths
-                    .iter()
-                    .map(|path| serde_json::Value::String(path.to_string_lossy().into_owned()))
-                    .collect(),
-            ),
-        );
-    }
-
-    // Carry the provider's non-payload metadata (model name, usage, seed).
-    // The payload fields are the exact fields `persist_generated_asset`
-    // consumes — never copy them into the tool result.
-    if let Some(object) = result.as_object() {
-        for (field, value) in object {
-            if !matches!(field.as_str(), "data" | "video_url" | "url" | "audio") {
-                slim.entry(field.clone()).or_insert_with(|| value.clone());
-            }
-        }
-    }
-
-    Ok(serde_json::Value::Object(slim))
-}
-
 /// Persist a provider payload and compose the complete slim tool result
 /// every `media_generate` tool returns: the persisted path plus the
 /// provider's non-payload metadata, enriched with the OMC-tagged,
 /// provenance-carrying display hint (so the media widget can dispatch the
 /// "Explain" affordance and compose back the "I disagree" gesture).
 ///
-/// The single composition path — call this instead of re-assembling
-/// `persist_and_slim_result` + `enrich_with_omc_and_provenance` by hand at
-/// each call site; a hand-rolled variant is how the base64 payload once
-/// leaked into the model's context. `gallery` is the caller's admission-time
-/// snapshot (`MediaServer::capture_gallery`).
+/// The single composition and publication path. It stages provider payloads,
+/// commits each Asset with its generation lineage and OMC creation graph, then
+/// attaches the display hint without allowing base64 payloads into model context.
+/// `gallery` is the caller's admission-time snapshot (`MediaServer::capture_gallery`).
 pub(crate) async fn persist_slim_and_enrich(
     gallery: Option<&GalleryState>,
     gallery_store: &Arc<GalleryStore>,
@@ -1030,12 +807,15 @@ pub(crate) async fn persist_slim_and_enrich(
     kind: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, McpToolError> {
-    let slim = crate::persist_and_slim_result(gallery, gallery_store, result, kind)
+    let mut publication = stage_job_publication(result, kind)
         .await
         .map_err(map_media_error)?;
-    Ok(crate::media_block::enrich_with_omc_and_provenance(
-        slim, tool, kind, args, None,
-    ))
+    let slim = publication
+        .publish_and_slim(gallery, gallery_store, tool, &args)
+        .map_err(map_media_error)?;
+    let enriched = crate::media_block::enrich_with_omc_and_provenance(slim, tool, kind, args, None);
+    publication.commit();
+    Ok(enriched)
 }
 
 /// Download asset bytes from an HTTP URL.

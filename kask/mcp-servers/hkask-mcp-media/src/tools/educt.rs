@@ -479,6 +479,7 @@ impl MediaServer {
         }): Parameters<EductParagraphPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_paragraph_pass", async {
+            let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -535,6 +536,7 @@ impl MediaServer {
         }): Parameters<EductSpeakerPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_speaker_pass", async {
+            let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -619,6 +621,7 @@ impl MediaServer {
         }): Parameters<EductCorrectionPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_correction_pass", async {
+            let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -756,6 +759,7 @@ impl MediaServer {
         }): Parameters<EductHighlightPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_highlight_pass", async {
+            let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -923,6 +927,7 @@ impl MediaServer {
         }): Parameters<EductRenderEdlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_render_edl", async {
+            let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?

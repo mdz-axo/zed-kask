@@ -208,6 +208,7 @@ impl MediaServer {
                 "scan_complete": scan.errors.is_empty(), "scan_errors": scan.errors,
             });
             if auto_analyze && !reconciled.analysis_assets.is_empty() {
+                let _admission = self.admit_heavy_operation()?;
                 let pipelines =
                     ["faces", "objects", "colors", "composition", "scene"].map(String::from);
                 let analysis = self
@@ -276,6 +277,7 @@ impl MediaServer {
 
             match mode {
                 "semantic" => {
+                    let _admission = self.admit_heavy_operation()?;
                     self.gallery_search_semantic(query, image_index, limit, min_similarity)
                         .await
                 }
@@ -568,6 +570,11 @@ impl MediaServer {
                 .cloned()
                 .collect();
             let analysis_requested = analysis_assets.len();
+            let _admission = if analysis_requested > 0 || include_faces {
+                Some(self.admit_heavy_operation()?)
+            } else {
+                None
+            };
             let analysis = self
                 .run_analysis_on_assets_detailed(&analysis_assets, &pipelines)
                 .await;
@@ -668,6 +675,7 @@ impl MediaServer {
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "describe_image", async {
+            let _admission = self.admit_heavy_operation()?;
             // Gallery asset paths are local files; the SSRF validator is for
             // network URLs (see `is_local_media_path`).
             if !crate::is_local_media_path(&image_url) {
@@ -757,6 +765,7 @@ impl MediaServer {
                 }));
             }
 
+            let _admission = self.admit_heavy_operation()?;
             let analysis = self
                 .run_analysis_on_indices_detailed(&ga, &indices, &pipelines)
                 .await;
@@ -862,6 +871,7 @@ impl MediaServer {
         Parameters(FaceValidateRequest { image_index }): Parameters<FaceValidateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_validate", async {
+            let _admission = self.admit_heavy_operation()?;
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -895,6 +905,11 @@ impl MediaServer {
         }): Parameters<FaceRegisterRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_register", async {
+            let _admission = if force {
+                None
+            } else {
+                Some(self.admit_heavy_operation()?)
+            };
             let image_id = self
                 .resolve_image_id(image_index)
                 .map_err(map_media_error)?;
@@ -926,6 +941,11 @@ impl MediaServer {
         Parameters(FaceScanFolderRequest { folder_path, force }): Parameters<FaceScanFolderRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_scan_folder", async {
+            let _admission = if force {
+                None
+            } else {
+                Some(self.admit_heavy_operation()?)
+            };
             let folder = if let Some(p) = folder_path {
                 std::path::PathBuf::from(p)
             } else {
@@ -1291,6 +1311,7 @@ impl MediaServer {
         Parameters(GalleryReproduceRequest { image_index }): Parameters<GalleryReproduceRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_reproduce", async {
+            let _admission = self.admit_heavy_operation()?;
             // Admission-time gallery capture: the reproduction is indexed
             // into the gallery active when it was requested, never a root
             // activated while the replayed generation is in flight.

@@ -105,7 +105,7 @@ pub use ocr_health_bridge::BridgeOcrHealthSource;
 mod rollout_event_bridge;
 
 pub use rollout_event_bridge::{
-    BridgeRolloutEventSource, HarnessRegression, check_harness_regressions,
+    BridgeRolloutEventSource, HarnessMonitorPoll, HarnessRegressionMonitor,
 };
 
 // The credential namespace constant and the test-email helper live in the

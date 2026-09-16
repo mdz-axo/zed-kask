@@ -126,6 +126,19 @@ struct CalibratedThresholds {
     block_worsening_ratio: f64,
 }
 
+const MAX_SUBMITTED_ROLLOUT_CHECKS: usize = 64;
+
+/// Admission result for a rollout impact check.
+///
+/// Acceptance means only that the check is retained for the next assessment
+/// pass. It does not imply that assessment ran or that a verdict was written.
+#[must_use = "the producer must retain its source event until submission is accepted"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RolloutImpactSubmission {
+    Accepted,
+    QueueFull { capacity: usize },
+}
+
 #[derive(Clone)]
 struct RolloutImpactCheck {
     rollout_id: String,
@@ -517,32 +530,34 @@ impl CyberneticsLoop {
     /// caller that observed a metric-relevant event on a rollout (e.g. the
     /// harness observing a pass-rate regression after a card change) asks
     /// the loop to verify the before/after movement from the rollout event
-    /// store. The check is queued and answered on the next tick — the
-    /// submitter never blocks on the answer.
+    /// store. An accepted check is queued and answered on the next tick — the
+    /// submitter never blocks on assessment. A full queue returns typed
+    /// backpressure without replacing an earlier accepted check.
     ///
     /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
-    /// post: the check is queued for the next tick's verify_impact
+    /// post: returns whether the check was retained for the next tick's verify_impact
     pub async fn submit_rollout_impact_check(
         &self,
         rollout_id: String,
         before_position: i64,
         metric: String,
-    ) {
+    ) -> RolloutImpactSubmission {
         let check = RolloutImpactCheck {
             rollout_id,
             before_position,
             metric,
         };
         let mut queue = self.submitted_rollout_checks.lock().await;
-        // Bound the queue: a producer runaway must not grow it unboundedly.
-        // Dropping the OLDEST check is correct — the newest observations are
-        // the most relevant, and the drop is visible (the queue is drained
-        // and reported per tick).
-        const MAX_SUBMITTED_CHECKS: usize = 64;
-        if queue.len() >= MAX_SUBMITTED_CHECKS {
-            queue.remove(0);
+        // Bound the queue without invalidating an earlier acceptance. When the
+        // queue is full, the producer retains its event cursor and retries
+        // after the next tick drains accepted checks.
+        if queue.len() >= MAX_SUBMITTED_ROLLOUT_CHECKS {
+            return RolloutImpactSubmission::QueueFull {
+                capacity: MAX_SUBMITTED_ROLLOUT_CHECKS,
+            };
         }
         queue.push(check);
+        RolloutImpactSubmission::Accepted
     }
 
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
@@ -828,5 +843,52 @@ impl CyberneticsLoop {
                 self.emit_tool_outcome_breakdown().await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::{CyberneticsLoop, MAX_SUBMITTED_ROLLOUT_CHECKS, RolloutImpactSubmission};
+    use crate::runtime::RegulationLedger;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn saturated_rollout_queue_refuses_without_evicting_accepted_checks() {
+        let regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+
+        for position in 0..MAX_SUBMITTED_ROLLOUT_CHECKS {
+            assert_eq!(
+                regulation
+                    .submit_rollout_impact_check(
+                        format!("accepted-{position}"),
+                        position as i64,
+                        "pass_rate".to_string(),
+                    )
+                    .await,
+                RolloutImpactSubmission::Accepted
+            );
+        }
+
+        assert_eq!(
+            regulation
+                .submit_rollout_impact_check(
+                    "refused".to_string(),
+                    MAX_SUBMITTED_ROLLOUT_CHECKS as i64,
+                    "pass_rate".to_string(),
+                )
+                .await,
+            RolloutImpactSubmission::QueueFull {
+                capacity: MAX_SUBMITTED_ROLLOUT_CHECKS,
+            }
+        );
+
+        let queue = regulation.submitted_rollout_checks.lock().await;
+        assert_eq!(queue.len(), MAX_SUBMITTED_ROLLOUT_CHECKS);
+        assert_eq!(
+            queue.first().map(|check| check.rollout_id.as_str()),
+            Some("accepted-0")
+        );
+        assert!(queue.iter().all(|check| check.rollout_id != "refused"));
     }
 }

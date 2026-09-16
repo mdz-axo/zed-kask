@@ -1252,31 +1252,39 @@ fn main() {
             // (degraded, not broken — the re-sense fallback still verifies).
             if let Some(store) = harness_event_store {
                 gpui_tokio::Tokio::spawn(cx, async move {
-                    let mut last_cursor: Option<i64> = None;
+                    let mut harness_monitor = kask_bridge::HarnessRegressionMonitor::default();
                     let mut interval =
                         tokio::time::interval(std::time::Duration::from_secs(60));
                     interval.tick().await; // skip the first immediate tick
                     loop {
                         interval.tick().await;
-                        match kask_bridge::check_harness_regressions(
-                            &store,
-                            last_cursor,
-                        ) {
-                            Ok((new_cursor, regressions)) => {
-                                last_cursor = new_cursor;
-                                if !regressions.is_empty() {
-                                    let loop_guard =
-                                        cybernetics_loop_for_harness.read().await;
-                                    for regression in regressions {
-                                        loop_guard
-                                            .submit_rollout_impact_check(
-                                                regression.agent_name,
-                                                regression.before_position,
-                                                "pass_rate".to_string(),
-                                            )
-                                            .await;
-                                    }
+                        let loop_guard = cybernetics_loop_for_harness.read().await;
+                        match harness_monitor.poll_once(&store, &loop_guard).await {
+                            Ok(kask_bridge::HarnessMonitorPoll::Complete {
+                                accepted_checks,
+                                cursor,
+                            }) => {
+                                if accepted_checks > 0 {
+                                    tracing::info!(
+                                        target: "hkask.regulation",
+                                        accepted_checks,
+                                        ?cursor,
+                                        "harness regression impact checks accepted for assessment"
+                                    );
                                 }
+                            }
+                            Ok(kask_bridge::HarnessMonitorPoll::Backpressured {
+                                accepted_checks,
+                                blocked_event_position,
+                                capacity,
+                            }) => {
+                                tracing::warn!(
+                                    target: "hkask.regulation",
+                                    accepted_checks,
+                                    blocked_event_position,
+                                    capacity,
+                                    "harness regression monitor backpressured — blocked event will retry next tick"
+                                );
                             }
                             Err(error) => {
                                 tracing::warn!(
