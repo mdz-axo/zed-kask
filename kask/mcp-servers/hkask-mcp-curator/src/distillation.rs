@@ -22,8 +22,8 @@
 //! turns newer than the watermark, so restarts and re-runs insert no
 //! duplicates. Pinned by `distillation_pass_respects_watermark`.
 //!
-//! Pending work: a thread skipped as active, or failing before its
-//! watermark advances (inference, parse, or watermark-store failure), is
+//! Pending work: a thread skipped as active, or whose extraction or atomic
+//! lesson-plus-watermark publication fails, is
 //! carried in the timer's in-memory pending set and re-examined on every
 //! later pass — its turns fall behind the scan cursor, so without this
 //! tracking no later pass would ever see them again. The set is bounded
@@ -225,6 +225,7 @@ pub(crate) fn spawn_distillation_timer(
                 lessons_inserted = outcome.lessons_inserted,
                 lessons_skipped = outcome.lessons_skipped,
                 extraction_failures = outcome.extraction_failures,
+                publication_failures = outcome.publication_failures,
                 threads_pending = cursor.pending.len(),
                 "Memory distillation pass complete"
             );
@@ -388,18 +389,17 @@ pub(crate) struct DistillationOutcome {
     /// earlier first-seen times for eviction ordering.
     pub threads_pending: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Generate/parse failures this pass — threads that could not be
-    /// extracted (model rejection, unparseable output). The pass emits a
-    /// `memory_distillation_stalled` regulation span when this is
-    /// nonzero so a dead extraction loop is a sensed regulation event,
-    /// not log noise (observed live 2026-09-09: five days of failures
-    /// surfaced nowhere readable).
+    /// extracted (model rejection, unparseable output).
     pub extraction_failures: usize,
+    /// Atomic lesson-plus-watermark publications that failed. These threads
+    /// remain pending and no watermark from the failed batch survives.
+    pub publication_failures: usize,
 }
 
 /// The distillation core, directly testable against a `MemoryStore`.
 ///
-/// Additive-only: the only store mutation is `store(h_mem)` — no update
-/// or delete call exists in this function.
+/// Additive-only: accepted lessons and their watermark are inserted in one
+/// atomic batch; no update or delete call exists in this function.
 pub(crate) async fn distill_store(
     memory: &hkask_memory::MemoryStore,
     inference_port: &dyn hkask_types::InferencePort,
@@ -539,20 +539,40 @@ pub(crate) async fn distill_store(
                     break;
                 }
             };
-            // Recover model-corrupted evidence IDs against the batch's
-            // actual turn IDs before validation rejects them — a skipped
-            // lesson is permanently lost (the watermark advances before
-            // insertion), and the observed corruption is character-level
-            // (dropped hyphens, truncated groups; ~1.3% of lessons).
+            // Recover model-corrupted evidence IDs against the batch's actual
+            // turn IDs before validating and preparing the durable records.
             for candidate in &mut candidates {
                 recover_evidence_ids(candidate, batch);
             }
-            // Advance the watermark BEFORE inserting lessons: a failure
-            // after lessons are stored would re-distill the same turns
-            // next pass and duplicate them — the exact redundancy this
-            // pass exists to end. A failure before lessons loses them
-            // once, loudly, with the raw turns still in memory for
-            // therapy.
+            let mut prepared = Vec::new();
+            let mut preparation_failed = false;
+            for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
+                match prepare_lesson(memory, &candidate, &thread_id, webid) {
+                    Ok(Some(lesson)) => prepared.push(lesson),
+                    Ok(None) => outcome.lessons_skipped += 1,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.curator.distillation",
+                            thread_id = %thread_id,
+                            %error,
+                            "Failed to validate distilled lesson — batch retried next pass"
+                        );
+                        outcome.publication_failures += 1;
+                        outcome.threads_pending.insert(thread_id.clone(), now);
+                        thread_distilled = false;
+                        preparation_failed = true;
+                        break;
+                    }
+                }
+            }
+            if preparation_failed {
+                break;
+            }
+
+            // The watermark is the commit marker consumed by the forgetting
+            // pass. Publish every accepted lesson and the trailing watermark
+            // in one transaction so no covered turn can exist without its
+            // durable lessons and a failed batch is safe to retry.
             let through_newest = batch
                 .last()
                 .expect("chunks yields non-empty slices")
@@ -568,38 +588,36 @@ pub(crate) async fn distill_store(
             )
             .with_confidence(hkask_types::Confidence::new(0.5))
             .with_visibility(hkask_types::Visibility::Private);
-            if let Err(error) = memory.store(watermark) {
+            let mut publication: Vec<HMem> =
+                prepared.iter().map(|lesson| lesson.h_mem.clone()).collect();
+            publication.push(watermark);
+            if let Err(error) = memory.store_batch_atomic(&publication) {
                 tracing::warn!(
                     target: "hkask.mcp.curator.distillation",
                     thread_id = %thread_id,
                     %error,
-                    "Failed to store distillation watermark — batch retried next pass"
+                    "Failed to publish distilled lessons and watermark atomically — batch retried next pass"
                 );
+                outcome.publication_failures += 1;
                 outcome.threads_pending.insert(thread_id.clone(), now);
                 thread_distilled = false;
                 break;
             }
-            for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
-                match insert_lesson(memory, inference_port, &candidate, &thread_id, webid).await {
-                    Ok(true) => {
-                        outcome.lessons_inserted += 1;
-                        prior_lessons.push((
-                            candidate.entity.clone(),
-                            candidate.attribute.clone(),
-                            candidate.text.clone(),
-                        ));
-                    }
-                    Ok(false) => outcome.lessons_skipped += 1,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.curator.distillation",
-                            thread_id = %thread_id,
-                            %error,
-                            "Failed to store distilled lesson"
-                        );
-                        outcome.lessons_skipped += 1;
-                    }
-                }
+
+            outcome.lessons_inserted += prepared.len();
+            for lesson in prepared {
+                prior_lessons.push((
+                    lesson.entity.clone(),
+                    lesson.attribute.clone(),
+                    lesson.text.clone(),
+                ));
+                crate::embed_for_semantic_recall(
+                    inference_port,
+                    memory,
+                    &lesson.entity,
+                    &lesson.text,
+                )
+                .await;
             }
         }
         if thread_distilled {
@@ -609,7 +627,7 @@ pub(crate) async fn distill_store(
     if outcome.threads_distilled > 0 {
         RegulationSpan::Curation.emit("memory_distilled");
     }
-    if outcome.extraction_failures > 0 {
+    if outcome.extraction_failures > 0 || outcome.publication_failures > 0 {
         RegulationSpan::Curation.emit("memory_distillation_stalled");
     }
     outcome
@@ -654,15 +672,10 @@ fn parse_lessons(text: &str) -> Result<Vec<LessonCandidate>, LessonParseError> {
     Ok(parsed)
 }
 
-/// Insert one distilled lesson. Returns `Ok(false)` when the candidate is
-/// malformed or cites evidence that does not exist — the same
-/// evidence-verification invariant `memory_insert` enforces.
-/// Recover model-corrupted evidence IDs against the batch's actual
-/// turn IDs. The model corrupts UUIDs at the character level (dropped
-/// hyphens, truncated groups — observed ~1.3% of lessons, e.g.
-/// `4d56f468f7` for a 36-char id), and `insert_lesson`'s validation
-/// rejects the lesson permanently: the watermark already advanced, so
-/// the lesson's content is lost. A recovery replaces the corrupted id
+/// Recover model-corrupted evidence IDs against the batch's actual turn IDs.
+/// The model corrupts UUIDs at the character level (dropped hyphens, truncated
+/// groups — observed ~1.3% of lessons, e.g. `4d56f468f7` for a 36-char id).
+/// A recovery replaces the corrupted id
 /// only when exactly one turn id in the batch is within
 /// [`EVIDENCE_RECOVERY_MAX_DISTANCE`] edits — an ambiguous or absent
 /// match leaves the id untouched and validation rejects as before.
@@ -714,13 +727,21 @@ fn levenshtein(a: &str, b: &str) -> usize {
     previous[b.len()]
 }
 
-async fn insert_lesson(
+/// One evidence-validated lesson prepared for atomic publication. Invalid
+/// candidates return `Ok(None)`; storage read failures remain retryable errors.
+struct PreparedLesson {
+    h_mem: HMem,
+    entity: String,
+    attribute: String,
+    text: String,
+}
+
+fn prepare_lesson(
     memory: &hkask_memory::MemoryStore,
-    inference_port: &dyn hkask_types::InferencePort,
     candidate: &LessonCandidate,
     thread_id: &str,
     webid: WebID,
-) -> Result<bool, hkask_memory::MemoryStoreError> {
+) -> Result<Option<PreparedLesson>, hkask_memory::MemoryStoreError> {
     let entity = candidate.entity.trim();
     let attribute = candidate.attribute.trim();
     let text = candidate.text.trim();
@@ -735,7 +756,7 @@ async fn insert_lesson(
             target: "hkask.mcp.curator.distillation",
             "Skipping malformed lesson candidate (empty or oversized entity/attribute, empty text, or no evidence)"
         );
-        return Ok(false);
+        return Ok(None);
     }
     let evidence: Vec<String> = candidate
         .evidence
@@ -753,16 +774,16 @@ async fn insert_lesson(
                     %error,
                     "Lesson cites malformed evidence h_mem id — skipping lesson"
                 );
-                return Ok(false);
+                return Ok(None);
             }
         };
-        if memory.get_by_id(&parsed).ok().flatten().is_none() {
+        if memory.get_by_id(&parsed)?.is_none() {
             tracing::warn!(
                 target: "hkask.mcp.curator.distillation",
                 evidence_id = %id,
                 "Lesson cites nonexistent evidence h_mem — skipping lesson"
             );
-            return Ok(false);
+            return Ok(None);
         }
     }
     let text = truncate_chars(text, MAX_TEXT_CHARS);
@@ -771,19 +792,16 @@ async fn insert_lesson(
         "evidence": evidence,
         "source_thread": thread_id,
     });
-    let lesson = HMem::new(entity, attribute, value, webid)
+    let h_mem = HMem::new(entity, attribute, value, webid)
         .with_confidence(hkask_types::Confidence::new(0.5))
         .with_visibility(hkask_types::Visibility::Shared)
         .with_dimension(hkask_types::Dimension::Why);
-    memory.store(lesson)?;
-    // Embed the lesson text under the lesson's entity so semantic recall
-    // finds it by meaning — the shared insert-path embedding contract
-    // (`embed_for_semantic_recall`), which also serves `memory_insert` and
-    // the skill-use issue path. The embedded text is the same truncated
-    // text that was stored, so the vector always represents the durable
-    // lesson (the previous inline copy embedded the untruncated original).
-    crate::embed_for_semantic_recall(inference_port, memory, entity, &text).await;
-    Ok(true)
+    Ok(Some(PreparedLesson {
+        h_mem,
+        entity: entity.to_string(),
+        attribute: attribute.to_string(),
+        text,
+    }))
 }
 
 /// Truncate on a character boundary — byte slicing at a fixed index can
@@ -876,13 +894,25 @@ mod tests {
     use std::sync::Arc;
 
     fn test_store() -> hkask_memory::MemoryStore {
+        test_store_with_driver().0
+    }
+
+    fn test_store_with_driver() -> (
+        hkask_memory::MemoryStore,
+        Arc<dyn hkask_storage::DatabaseDriver>,
+    ) {
         let driver = SqliteDriver::in_memory_driver();
         let h_mem_store =
             hkask_storage::HMemStore::from_driver(Arc::clone(&driver)).expect("h_mem store");
-        let embedding_store =
-            hkask_storage::EmbeddingStore::from_driver(driver, hkask_storage::embedding_dim())
-                .expect("embedding store");
-        hkask_memory::MemoryStore::new(h_mem_store, embedding_store)
+        let embedding_store = hkask_storage::EmbeddingStore::from_driver(
+            Arc::clone(&driver),
+            hkask_storage::embedding_dim(),
+        )
+        .expect("embedding store");
+        (
+            hkask_memory::MemoryStore::new(h_mem_store, embedding_store),
+            driver,
+        )
     }
 
     fn turn_h_mem(
@@ -972,6 +1002,99 @@ mod tests {
             "evidence": evidence,
         }])
         .to_string()
+    }
+
+    /// expect: "A lesson-store failure cannot mark its source turns as distilled."
+    #[tokio::test]
+    async fn lesson_store_failure_does_not_advance_the_watermark() {
+        let (store, driver) = test_store_with_driver();
+        let webid = WebID::new();
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "atomic-publication",
+            "What must be durable?",
+            "Lessons before acknowledgment.",
+            now - chrono::Duration::hours(2),
+            webid,
+        );
+        driver
+            .execute_batch(
+                "CREATE TRIGGER fail_distilled_lesson \
+                 BEFORE INSERT ON hmems \
+                 WHEN NEW.entity = 'atomic-failure-lesson' \
+                 BEGIN SELECT RAISE(FAIL, 'injected lesson failure'); END;",
+            )
+            .expect("install failure trigger");
+        let port = ScriptedDistillPort {
+            response: lesson_response(
+                "atomic-failure-lesson",
+                "publication_order",
+                "The watermark follows durable lessons.",
+                &[&turn_id.to_string()],
+            ),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            60,
+            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
+            &[],
+            Some("test-model"),
+        )
+        .await;
+
+        assert_eq!(outcome.lessons_inserted, 0);
+        assert_eq!(outcome.publication_failures, 1);
+        assert!(
+            outcome.threads_pending.contains_key("atomic-publication"),
+            "the failed batch must remain pending for retry"
+        );
+        assert!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:atomic-publication")
+                .expect("query watermarks")
+                .is_empty(),
+            "the source turns must not be acknowledged before their lesson is durable"
+        );
+
+        driver
+            .execute_batch("DROP TRIGGER fail_distilled_lesson;")
+            .expect("remove failure trigger");
+        let recovered = distill_store(
+            &store,
+            &port,
+            webid,
+            now + chrono::Duration::minutes(1),
+            60,
+            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
+            &["atomic-publication".to_string()],
+            Some("test-model"),
+        )
+        .await;
+
+        assert_eq!(recovered.lessons_inserted, 1);
+        assert_eq!(recovered.publication_failures, 0);
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("atomic-failure-lesson")
+                .expect("query lessons")
+                .len(),
+            1,
+            "retry publishes the lesson exactly once"
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:atomic-publication")
+                .expect("query watermarks")
+                .len(),
+            1,
+            "retry publishes one watermark after the lesson"
+        );
     }
 
     /// Records the model override each `generate_with_model` call

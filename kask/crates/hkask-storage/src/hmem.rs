@@ -286,6 +286,72 @@ impl HMemStore {
         )?;
         Ok(())
     }
+
+    /// Insert a batch of h_mems atomically on one SQLite connection.
+    ///
+    /// All values are serialized before the transaction begins. If any insert
+    /// fails, dropping the transaction rolls back every earlier insert, so a
+    /// trailing commit marker cannot survive without the records it covers.
+    pub fn insert_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), HMemError> {
+        if h_mems.is_empty() {
+            return Ok(());
+        }
+        let rows = h_mems
+            .iter()
+            .map(|h_mem| {
+                let value = serde_json::to_string(&h_mem.value)?;
+                let ontology = h_mem
+                    .ontology
+                    .as_ref()
+                    .map(|ontology| ontology.to_json_string())
+                    .transpose()?;
+                Ok((
+                    h_mem.id.to_string(),
+                    h_mem.entity.clone(),
+                    h_mem.attribute.clone(),
+                    value,
+                    h_mem.observed_at.to_rfc3339(),
+                    h_mem.recalled_at.to_rfc3339(),
+                    h_mem.confidence.value(),
+                    h_mem.access.perspective.as_ref().map(ToString::to_string),
+                    h_mem.access.visibility.to_string(),
+                    h_mem.access.owner_webid.to_string(),
+                    ontology,
+                ))
+            })
+            .collect::<Result<Vec<_>, HMemError>>()?;
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "HMemStore::insert_batch_atomic requires a SqliteDriver",
+            ))
+        })?;
+        let mut conn = pool
+            .get()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let transaction = conn
+            .transaction()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        for row in rows {
+            transaction
+                .execute(
+                    &format!(
+                        "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
+                    ),
+                    rusqlite::params![
+                        row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9,
+                        row.10
+                    ],
+                )
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        Ok(())
+    }
+
     /// Query h_mems by entity.
     ///
     /// expect: "The system provides durable storage for h_mem data"
@@ -866,6 +932,40 @@ mod tests {
         let (count, entities) = store.delete_by_entity_prefix_with_entities("qa:")?;
         assert_eq!(count, 0);
         assert!(entities.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_batch_rolls_back_earlier_inserts_when_commit_marker_fails() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let lesson = HMem::new(
+            "lesson:atomic",
+            "fact",
+            serde_json::json!("durable lesson"),
+            WebID::new(),
+        );
+        let watermark = HMem::new(
+            "curator:distilled:atomic",
+            "distilled_through",
+            serde_json::json!({"through": chrono::Utc::now().to_rfc3339()}),
+            WebID::new(),
+        );
+        store.driver().execute_batch(
+            "CREATE TRIGGER fail_atomic_watermark BEFORE INSERT ON hmems
+             WHEN NEW.entity = 'curator:distilled:atomic'
+             BEGIN SELECT RAISE(FAIL, 'forced watermark failure'); END;",
+        )?;
+
+        assert!(
+            store
+                .insert_batch_atomic(&[lesson.clone(), watermark])
+                .is_err()
+        );
+        assert!(
+            store.get_by_id(&lesson.id)?.is_none(),
+            "the lesson inserted before the failing watermark must roll back"
+        );
+        assert_eq!(store.count()?, 0);
         Ok(())
     }
 

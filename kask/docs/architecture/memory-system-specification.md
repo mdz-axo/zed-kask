@@ -619,8 +619,8 @@ so lessons survive the session without anyone choosing to save them.
 - **Finished means idle.** A thread is distilled when its newest turn is
   at least `distillation_idle_secs` old (default 300s) — an active
   conversation is never distilled mid-flight.
-- **Additive-only.** The pass's only store mutation is `store(h_mem)`. It
-  inserts lesson h_mems (Shared visibility, the 0.5 confidence floor,
+- **Additive-only.** The pass atomically inserts lesson h_mems (Shared
+  visibility, the 0.5 confidence floor,
   every cited evidence h_mem verified to exist — the same invariants
   `memory_insert` enforces) plus one Private watermark h_mem per
   distilled thread. It never edits or deletes anything. Pinned
@@ -628,11 +628,13 @@ so lessons survive the session without anyone choosing to save them.
 - **Idempotent by watermark.** Each thread carries
   `curator:distilled:{thread_id}` / `distilled_through` watermark h_mems;
   a pass distills only turns newer than the newest watermark, so
-  restarts and re-runs insert no duplicates. The watermark advances
-  BEFORE lessons insert — a failure after insertion would duplicate
-  lessons on retry, the exact redundancy this pass exists to end; a
-  failure before insertion loses them once, loudly, with the raw turns
-  still in memory. Pinned by `distillation_pass_respects_watermark`.
+  restarts and re-runs insert no duplicates. Accepted lessons and the
+  trailing watermark publish in one transaction; any insertion failure
+  rolls back the complete batch and keeps the thread pending for retry.
+  The watermark is therefore durable proof that every accepted lesson in
+  the covered batch was stored. Pinned by
+  `lesson_store_failure_does_not_advance_the_watermark` and
+  `distillation_pass_respects_watermark`.
 - **Lessons are semantically recallable.** Each lesson's text is
   embedded under the lesson's entity (the entity_ref invariant, §3), so
   future sessions find them by meaning, not just by entity name.
@@ -647,13 +649,13 @@ so lessons survive the session without anyone choosing to save them.
   the one turn-discovery contract, shared with `curator_memory_extract`.
   The scan is complete because ingest writes a shared copy for **every**
   turn, curator and non-curator alike; the time-bounded prefix query
-  means the pass never loads the whole store. The first pass after
-  startup looks back 6 hours; turns older than that which were never
-  distilled are missed (raw transcript remains; therapy can still
-  distill them).
+  means steady-state passes never load the whole store. The first pass
+  after startup scans from the Unix epoch and uses per-thread watermarks
+  to skip already-covered work, so older undistilled turns remain
+  discoverable after restart.
 - **Pending-work revisit** (T04, 2026-09-08): a thread skipped as
-  active, or failing before its watermark advances (inference, parse,
-  or watermark-store failure), is carried in the timer's in-memory
+  active, or whose inference, parse, validation, or atomic publication
+  fails, is carried in the timer's in-memory
   pending set and re-examined on every later pass — its turns were
   observed before the scan cursor, so the window scan alone would never
   see it again. The set is bounded (`MAX_PENDING_THREADS = 128`);
@@ -661,9 +663,8 @@ so lessons survive the session without anyone choosing to save them.
   and its re-discovery paths (a new turn, or the restart lookback). A
   pass that cannot read the store does not advance the cursor, so
   turns observed during an outage stay visible to the healed pass.
-  Pending state is in-memory only: a restart clears it, and the bounded
-  first-pass lookback re-discovers recent undistilled work (the
-  older-than-lookback miss boundary above is unchanged). The timer
+  Pending state is in-memory only: a restart clears it, and the
+  epoch-based first-pass scan re-discovers undistilled work. The timer
   polls at the configured cadence with a 60s floor — no upper clamp
   (the obsolete 3600s cap silently shortened longer cadences; removed
   with the same T17 ruling that removed the consolidation cap).

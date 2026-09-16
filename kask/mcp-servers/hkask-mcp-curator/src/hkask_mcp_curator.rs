@@ -1815,8 +1815,8 @@ pub(crate) fn memory_embed_text(
 /// the embedding landed, so callers can surface the degradation.
 ///
 /// The one insert-path embedding contract, shared by `memory_insert`,
-/// `curator_report_skill_use_issue`, and the distillation pass's
-/// `insert_lesson`. Consolidated 2026-09-04: `memory_insert` and the
+/// `curator_report_skill_use_issue`, and the distillation pass after its
+/// atomic lesson-plus-watermark commit. Consolidated 2026-09-04: `memory_insert` and the
 /// skill-use path stored h_mems without embeddings, leaving the entire
 /// agent-inserted knowledge layer invisible to `curator_semantic_search`.
 pub(crate) async fn embed_for_semantic_recall(

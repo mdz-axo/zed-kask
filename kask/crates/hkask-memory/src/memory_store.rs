@@ -215,6 +215,24 @@ impl MemoryStore {
     /// Emits a `reg.memory.encode` span for observability.
     pub fn store(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
         self.h_mem_store.insert(&h_mem)?;
+        self.emit_store_event(&h_mem);
+        Ok(())
+    }
+
+    /// Store related h_mems as one atomic publication.
+    ///
+    /// The final item may be a commit marker or watermark: no item becomes
+    /// visible unless every item is inserted successfully. Regulation events
+    /// are emitted only after the database transaction commits.
+    pub fn store_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), MemoryStoreError> {
+        self.h_mem_store.insert_batch_atomic(h_mems)?;
+        for h_mem in h_mems {
+            self.emit_store_event(h_mem);
+        }
+        Ok(())
+    }
+
+    fn emit_store_event(&self, h_mem: &HMem) {
         if let Some(sink) = &self.event_sink {
             let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "stored");
             let event = RegulationRecord::new(
@@ -228,7 +246,6 @@ impl MemoryStore {
                 tracing::warn!(target: "hkask.memory", error = %e, "Failed to persist reg.memory span");
             }
         }
-        Ok(())
     }
 
     // ── Recall ─────────────────────────────────────────────────────────────
